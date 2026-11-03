@@ -42,7 +42,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0011\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0014\.\d{8}T\d{6}Z\.bak$", backup);
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(4242UL, bundle.SimulationSeed);
         Assert.Equal(1234L, bundle.WorldTimeTicks);
@@ -57,10 +57,11 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
             PlayerInventorySnapshot inventory = server.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(Session))!.Value;
             // The hammer is worn (migration 0010 dropped its bag row); the blade, maul and lantern sit at the
             // anchors the migration gave them (old slots 1, 2, 3 -> 2, 4, 6) and the torch granted by the
-            // top-up took the first fit, the hammer's block at anchor 0. Kit v3 also tops up two heal potions.
-            bool IsPotion(InventorySlotSnapshot slot) => slot.Item?.ItemKind.StartsWith("consumable.", StringComparison.Ordinal) == true;
+            // top-up took the first fit, the hammer's block at anchor 0. Kits v3 and v4 also top up four potions.
+            bool IsPotion(InventorySlotSnapshot slot) => slot.Item?.ItemKind.StartsWith("consumable.", StringComparison.Ordinal) == true
+                || slot.Item?.ItemKind.StartsWith("potion.", StringComparison.Ordinal) == true;
             Assert.Equal(4, inventory.Slots.Count(slot => slot.Item is not null && !IsPotion(slot)));
-            Assert.Equal(2, inventory.Slots.Count(IsPotion));
+            Assert.Equal(4, inventory.Slots.Count(IsPotion));
             Assert.Equal(0, Assert.Single(inventory.Slots, slot => slot.Item?.ItemKind == "tool.torch").SlotIndex);
             Assert.Equal([0, 2, 4, 6], inventory.Slots.Where(slot => !IsPotion(slot)).Select(slot => slot.SlotIndex).Order());
             Assert.Equal("tool.builder-hammer", inventory.EquippedSlot?.Item?.ItemKind);

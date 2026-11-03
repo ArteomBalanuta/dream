@@ -538,9 +538,9 @@ public sealed class BagActionRulesTests
         using (writes)
         {
             Assert.All(kinds, kind => Assert.Equal(1, Count(world, kind)));
-            // Only the torch and the two potions, which came after the kit this player is taken to hold, are granted.
+            // Only the torch and the four potions, which came after the kit this player is taken to hold, are granted.
             Assert.Equal(1, Count(world, "tool.torch"));
-            Assert.Equal(7, world.LoadItemInstances().Count);
+            Assert.Equal(9, world.LoadItemInstances().Count);
             Assert.Equal(ToolCatalog.CurrentStarterKitVersion, world.LoadPlayerInventory(Player).StarterKitVersion);
         }
     }
@@ -558,8 +558,8 @@ public sealed class BagActionRulesTests
         using (writes)
         {
             Assert.Equal(1, Count(world, "tool.torch"));
-            // The hammer and the worn torch, plus the two potions of kit v3.
-            Assert.Equal(4, world.LoadItemInstances().Count);
+            // The hammer and the worn torch, plus the four potions of kits v3 and v4.
+            Assert.Equal(6, world.LoadItemInstances().Count);
         }
     }
 

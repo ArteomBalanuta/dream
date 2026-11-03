@@ -28,24 +28,24 @@ public static class CharacterSheetModel
 {
     public const string ClassName = "Wanderer";
 
+    // The points and every "+" come from CharacterPanelModel (PlayerStatRules, the rule the server checks).
     public static CharacterSheetRow[] Build(in HudStatusSnapshot s)
     {
-        bool canSpend = s.StatPoints > 0 && !s.IsDead;
         return
         [
             Header("Class", ClassName),
             Header("Level", Int(s.Level)),
             Header("Experience", $"{Int(s.Experience)}/{Int(s.ExperienceToNextLevel)}"),
-            Header("Points", Int(s.StatPoints)),
-            Attribute(StatId.Strength, "Strength", s.BaseStrength, s.Strength, canSpend),
+            Header("Points", Int(CharacterPanelModel.PointsAvailable(s))),
+            Attribute(StatId.Strength, "Strength", s.BaseStrength, s.Strength, CharacterPanelModel.CanSpend(s, StatId.Strength)),
             Derived("Damage", $"{Int(s.MinDamage)}-{Int(s.MaxDamage)}"),
-            Attribute(StatId.Agility, "Agility", s.BaseAgility, s.Agility, canSpend),
+            Attribute(StatId.Agility, "Agility", s.BaseAgility, s.Agility, CharacterPanelModel.CanSpend(s, StatId.Agility)),
             Derived("Defense", Int(s.Defense + s.Armor)),
             Derived("Attack Speed", s.AttackSpeed.ToString("0.00", CultureInfo.InvariantCulture) + "/s"),
-            Attribute(StatId.Vitality, "Vitality", s.BaseVitality, s.Vitality, canSpend),
+            Attribute(StatId.Vitality, "Vitality", s.BaseVitality, s.Vitality, CharacterPanelModel.CanSpend(s, StatId.Vitality)),
             Derived("Health", $"{Int(s.CurrentHealth)}/{Int(s.MaxHealth)}"),
-            Attribute(StatId.Energy, "Energy", s.BaseEnergy, s.Energy, canSpend),
-            Derived("Mana", $"{Int(s.Mana)}/{Int(s.MaxMana)}"),
+            Attribute(StatId.Energy, "Energy", s.BaseEnergy, s.Energy, CharacterPanelModel.CanSpend(s, StatId.Energy)),
+            Derived("Mana", $"{Int(s.CurrentMana)}/{Int(s.MaxMana)}"),
             Derived("Magic Damage", $"{Int(s.MagicMinDamage)}-{Int(s.MagicMaxDamage)}")
         ];
     }
@@ -65,7 +65,6 @@ public static class CharacterSheetModel
         string value = baseValue > 0 && bonus != 0
             ? $"{Int(baseValue)} {(bonus > 0 ? "+" : "-")}{Int(Math.Abs(bonus))} = {Int(effective)}"
             : Int(effective);
-        bool belowCap = baseValue < StatRules.MaxBase(stat);
-        return new CharacterSheetRow(CharacterSheetRowKind.Attribute, stat, label, value, canSpend && belowCap);
+        return new CharacterSheetRow(CharacterSheetRowKind.Attribute, stat, label, value, canSpend);
     }
 }

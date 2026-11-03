@@ -17,6 +17,14 @@ public class ViewModelCatalogTests
 
         foreach (string itemKind in Dream.Simulation.Inventory.ToolCatalog.StarterItemKinds)
         {
+            // Consumables (potions) have no equip slot and are used from the quickbar, never held, so
+            // the held view-model catalog has no entry for their visuals by design.
+            Dream.Simulation.Content.ItemDefinition item = Dream.Simulation.Content.ContentCatalog.Shipped.Items.First(i => i.Key == itemKind);
+            if (item.EquipSlots.Count == 0)
+            {
+                continue;
+            }
+
             string visualId = Dream.Simulation.Inventory.ToolCatalog.Resolve(itemKind).VisualId;
             Assert.Equal(ViewModelSlot.HeldItem, catalog.GetDefinition(visualId).Slot);
         }

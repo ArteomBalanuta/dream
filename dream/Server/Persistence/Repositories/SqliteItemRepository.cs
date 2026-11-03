@@ -86,6 +86,40 @@ public sealed partial class SqliteItemRepository(IWorldStore store, WorldId worl
 
     private const string DeleteSql = "DELETE FROM item_instances WHERE world_id = $worldId AND item_instance_id = $itemInstanceId;";
 
+    // Ground items: state 'Ground' that no slot references (ix_item_instances_ground covers the filter).
+    private const string LoadGroundSql = """
+        SELECT
+            item_instance_id,
+            item_kind,
+            display_name,
+            visual_id,
+            owner_player_name,
+            world_position_x,
+            world_position_y,
+            world_position_z,
+            state,
+            stack_count,
+            created_utc,
+            updated_utc,
+            rolled_modifiers
+        FROM item_instances AS i
+        WHERE world_id = $worldId AND state = 'Ground'
+          AND NOT EXISTS (
+              SELECT 1 FROM player_inventory_slots AS s
+              WHERE s.world_id = i.world_id AND s.item_instance_id = i.item_instance_id)
+        ORDER BY item_instance_id;
+        """;
+
+    // Guarded by the state: without it a stale despawn could delete an item that has since entered an
+    // inventory, and the cascade would take its slot row.
+    private const string DeleteGroundSql = "DELETE FROM item_instances WHERE world_id = $worldId AND item_instance_id = $itemInstanceId AND state = 'Ground';";
+
+    public IReadOnlyList<PersistedItemInstance> LoadGroundItems() =>
+        QueryList(LoadGroundSql, static reader => ReadItem(reader, 0));
+
+    public void DeleteGroundItem(long itemInstanceId) =>
+        Execute(DeleteGroundSql, itemInstanceId, static (command, id) => command.BindInt64("$itemInstanceId", id));
+
     public IReadOnlyList<PersistedItemInstance> LoadItemInstances() =>
         QueryList(LoadSql, static reader => ReadItem(reader, 0));
 

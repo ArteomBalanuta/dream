@@ -125,16 +125,14 @@ public static class SimulationStateChecksum
                 BitConverter.SingleToUInt32Bits(stats.AttackSpeed),
                 Seed.FromInt(stats.Vitality))
             : Seed.Combine(mode, 0UL);
-        // Agility, Energy, the points and the mana pool (protocol 14) only when any is set, so a stats block
-        // without them hashes as it did before.
-        if (actor.CombatStats is { } extra
-            && (extra.Agility | extra.Energy | extra.StatPoints | extra.Mana | extra.MaxMana) != 0)
+        // Agility and Energy (protocol 19) only when either is set, so a stats block without them hashes as
+        // it did before.
+        if (actor.CombatStats is { } extra && (extra.Agility | extra.Energy) != 0)
         {
             combat = Seed.Combine(
                 combat,
                 CombatAttributesSalt,
-                Seed.Combine(Seed.FromInt(extra.Agility), Seed.FromInt(extra.Energy), Seed.FromInt(extra.StatPoints)),
-                Seed.Combine(Seed.FromInt(extra.Mana), Seed.FromInt(extra.MaxMana)));
+                Seed.Combine(Seed.FromInt(extra.Agility), Seed.FromInt(extra.Energy)));
         }
 
         ulong hash = actor.EnemyBehaviorState is { } behavior

@@ -60,10 +60,24 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // players. Checkpoints 1-5 are unchanged (the test now places the first wolf at (5.5, 1, 2.5) and ends the
     // join windows, which reproduces the old run exactly up to the wolf's death). The previous values were
     // 0x8118838F28D2A8DB, 0x896E506A472FAAF5, 0x7FB267DD0A1ED1E7, 0xA399D97471F2108A, 0x626AC8A4F7C77C1E.
+    // Re-pinned once by M2-C (fair kills): the XP curve default is now 100 + level * 50 (was 1000 + level * 23),
+    // which reaches the snapshot from checkpoint 1, and the wolf's kill shares XP among its contributors and
+    // sends the loot to the top damage dealer. The previous values were 0x154E692D35B2DD4E, 0x308F1C0DD0CD35B4,
+    // 0xB2C035E98C54CB57, 0x58DC81E03DE29867, 0x73E33D5492ADD38C, 0x47B5F355035AF99E, 0x1A65C2CE9810486A,
+    // 0xB2A5C4A1D0C2DEE1, 0xA0CDA305A4CCCCD4, 0x55BC8DA8232AA9FB.
+    // Re-pinned once by the stats sheet merge (protocol 19): every player's PlayerCombatStatsSnapshot now
+    // carries Agility and Energy, so the record text of each actor in the envelope differs from checkpoint 1;
+    // the run itself (hits, deaths, mutations, results) is unchanged. The previous values were
+    // 0x57811F4CEEEA1202, 0x2254F43763F2C692, 0x49DC4557820EEEDB, 0x79937DA447E64F03, 0xAC348FD10F524A0D,
+    // 0xB079B6B30288666D, 0x92535FAA16E90FE5, 0xB516BC543298CF5A, 0x13A524EB4D26ADD3, 0x3DCDD6A338F05900.
+    // Re-pinned again: a fresh PlayerCombatStats now defaults Agility and Energy to 10 (StartAgility/StartEnergy)
+    // instead of 0, so the actor record text carries 10,10; the run itself is unchanged. Previous values:
+    // 0x6A91D3B7679F05EA, 0xD8D71AAABAD4E890, 0x15B1892906AE5247, 0xB059BEBAC4DB7E91, 0x42F4E81D5A5D3325,
+    // 0x8A59A8D602033E65, 0xBDE658AA2C0D89EF, 0xA048351F730747CC, 0x46384E948B877B11, 0xCC7D87F23B421C08.
     private static readonly ulong[] GoldenCheckpoints =
     [
-        0x154E692D35B2DD4EUL, 0x308F1C0DD0CD35B4UL, 0xB2C035E98C54CB57UL, 0x58DC81E03DE29867UL, 0x73E33D5492ADD38CUL,
-        0x47B5F355035AF99EUL, 0x1A65C2CE9810486AUL, 0xB2A5C4A1D0C2DEE1UL, 0xA0CDA305A4CCCCD4UL, 0x55BC8DA8232AA9FBUL
+        0x47C9098CA55E6A2AUL, 0x75C725B66AC87974UL, 0xC5C7582BCA65AB27UL, 0xFA8959A59E2744C9UL, 0xB1D85FAD2772C596UL,
+        0xD2EF1B9E1AE71866UL, 0xBF218B5A237681DAUL, 0x589E0C5D08B17BC1UL, 0xA1F2C1A7DCC7D338UL, 0xC3A8C27C48C84BA2UL
     ];
 
     [Fact]

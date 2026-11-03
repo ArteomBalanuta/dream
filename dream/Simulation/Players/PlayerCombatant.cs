@@ -43,15 +43,6 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     public int MagicMaxDamage { get; private set; }
 
-    public int Mana { get; private set; }
-
-    public int MaxMana { get; private set; }
-
-    // Unspent attribute points.
-    public int StatPoints => BaseStats.StatPoints;
-
-    private float _manaRegenRemainder;
-
     public int Level { get; private set; } = 1;
 
     public int Experience { get; private set; }
@@ -59,6 +50,60 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     public HealthState Health { get; }
 
     public CombatActorHandle Actor { get; }
+
+    // M4: mana. The maximum comes from the level and the effective Energy (PlayerManaRules); the current value starts full,
+    // is clamped, never topped up, when the maximum falls, and is not part of AdvanceCombat (which the
+    // client runs too). Regeneration and persistence belong to the session runtime.
+    public int CurrentMana { get; private set; }
+
+    public int MaxMana { get; private set; }
+
+    // Spends amount when that much is available; a negative amount is refused. Nothing changes on false.
+    public bool TrySpendMana(int amount)
+    {
+        if (amount < 0 || amount > CurrentMana)
+        {
+            return false;
+        }
+
+        CurrentMana -= amount;
+        return true;
+    }
+
+    // Returns the mana actually added (0 for an amount of 0 or less, or when already full).
+    public int RestoreMana(int amount)
+    {
+        if (amount <= 0)
+        {
+            return 0;
+        }
+
+        int applied = Math.Min(amount, MaxMana - CurrentMana);
+        CurrentMana += applied;
+        return applied;
+    }
+
+    // Returns the health actually added: 0 for an amount of 0 or less, for a dead player and when full.
+    public int RestoreHealth(int amount)
+    {
+        if (amount <= 0 || !Health.IsAlive)
+        {
+            return 0;
+        }
+
+        int applied = Math.Min(amount, Health.MaxHealth - Health.CurrentHealth);
+        if (applied > 0)
+        {
+            Health.SetAuthoritativeState(Health.CurrentHealth + applied, Health.MaxHealth);
+        }
+
+        return applied;
+    }
+
+    public void SetMana(int current)
+    {
+        CurrentMana = Math.Clamp(current, 0, MaxMana);
+    }
 
     public PlayerCombatant(
         Func<Vector3> positionProvider,
@@ -79,10 +124,7 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         BaseStats.Vitality = (stats ?? new PlayerCombatStats()).Vitality;
         BaseStats.Agility = (stats ?? new PlayerCombatStats()).Agility;
         BaseStats.Energy = (stats ?? new PlayerCombatStats()).Energy;
-        BaseStats.StatPoints = (stats ?? new PlayerCombatStats()).StatPoints;
         RecalculateEffectiveStats();
-        Mana = MaxMana;
-        MirrorMana();
         Health = new HealthState(DerivedStats.MaxHealth);
         Actor = new CombatActorHandle(actorId, CreatureKind.Player, Health, this);
     }
@@ -113,115 +155,12 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     public void AdvanceCombat(float deltaTime)
     {
         _attackCooldownRemaining = Math.Max(0f, _attackCooldownRemaining - Math.Max(0f, deltaTime));
-        if (Mana < MaxMana && Health.IsAlive)
-        {
-            _manaRegenRemainder += PlayerAttributeRules.ManaRegenPerSecond * Math.Max(0f, deltaTime);
-            int whole = (int)_manaRegenRemainder;
-            if (whole > 0)
-            {
-                _manaRegenRemainder -= whole;
-                Mana = Math.Min(MaxMana, Mana + whole);
-                MirrorMana();
-            }
-        }
-        else
-        {
-            _manaRegenRemainder = 0f;
-        }
-    }
-
-    // Returns the mana actually restored (0 when full or the amount is not positive).
-    // Fills the pool to the current maximum. For a joining or respawning player only: ApplyBaseStats
-    // raises MaxMana without refilling, so a fresh combatant would otherwise start part empty.
-    public void RefillMana()
-    {
-        Mana = MaxMana;
-        _manaRegenRemainder = 0f;
-        MirrorMana();
-    }
-
-    public int RestoreMana(int amount)
-    {
-        if (amount <= 0 || Mana >= MaxMana)
-        {
-            return 0;
-        }
-
-        int restored = Math.Min(amount, MaxMana - Mana);
-        Mana += restored;
-        MirrorMana();
-        return restored;
-    }
-
-    public void GrantStatPoints(int points)
-    {
-        if (points <= 0)
-        {
-            return;
-        }
-
-        BaseStats.StatPoints = (int)Math.Min((long)BaseStats.StatPoints + points, PlayerCombatStats.MaxStatPoints);
-    }
-
-    // Spends points on one of Strength, Agility, Vitality, Energy. Nothing changes on a refusal.
-    public bool TrySpendPoint(StatId attribute, int points, out string? reason)
-    {
-        if (!PlayerAttributeRules.IsSpendable(attribute))
-        {
-            reason = $"{attribute} cannot be raised with attribute points.";
-            return false;
-        }
-
-        if (points <= 0)
-        {
-            reason = "Spend at least one attribute point.";
-            return false;
-        }
-
-        if (points > BaseStats.StatPoints)
-        {
-            reason = "Not enough attribute points.";
-            return false;
-        }
-
-        long current = attribute switch
-        {
-            StatId.Strength => BaseStats.Strength,
-            StatId.Agility => BaseStats.Agility,
-            StatId.Vitality => BaseStats.Vitality,
-            _ => BaseStats.Energy
-        };
-        if (current + points > StatRules.MaxBase(attribute))
-        {
-            reason = $"{attribute} is already at its maximum.";
-            return false;
-        }
-
-        int value = (int)(current + points);
-        switch (attribute)
-        {
-            case StatId.Strength: BaseStats.Strength = value; break;
-            case StatId.Agility: BaseStats.Agility = value; break;
-            case StatId.Vitality: BaseStats.Vitality = value; break;
-            default: BaseStats.Energy = value; break;
-        }
-
-        BaseStats.StatPoints -= points;
-        RecalculateEffectiveStats();
-        reason = null;
-        return true;
     }
 
     // The base block with the pool values of this moment, as it goes on the wire.
     public PlayerCombatStatsSnapshot CaptureStatsSnapshot()
     {
-        return PlayerCombatStatsSnapshot.From(BaseStats) with { Mana = Mana, MaxMana = MaxMana };
-    }
-
-    private void MirrorMana()
-    {
-        Stats.MaxMana = MaxMana;
-        Stats.Mana = Mana;
+        return PlayerCombatStatsSnapshot.From(BaseStats);
     }
 
     public void ApplyBaseStats(PlayerCombatStats updatedStats)
@@ -231,15 +170,8 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         BaseStats.Vitality = updatedStats.Vitality;
         BaseStats.Agility = updatedStats.Agility;
         BaseStats.Energy = updatedStats.Energy;
-        BaseStats.StatPoints = updatedStats.StatPoints;
 
         RecalculateEffectiveStats();
-        // A block from the wire carries the server's current mana; a stored profile does not.
-        if (updatedStats.MaxMana > 0)
-        {
-            Mana = Math.Clamp(updatedStats.Mana, 0, MaxMana);
-            MirrorMana();
-        }
     }
 
     public void ApplyStats(PlayerCombatStats updatedStats)
@@ -287,20 +219,21 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         Stats.Vitality = (int)effective[StatId.Vitality];
         Stats.Agility = (int)effective[StatId.Agility];
         Stats.Energy = (int)effective[StatId.Energy];
-        Stats.AttackSpeed = PlayerAttributeRules.EffectiveAttackSpeed(effective[StatId.AttackSpeed], Stats.Agility);
+        Stats.AttackSpeed = PlayerStatRules.EffectiveAttackSpeed(effective[StatId.AttackSpeed], Stats.Agility);
         DerivedStats = Stats.Derive(_combatFormulaService, Level);
-        Defense = PlayerAttributeRules.Defense(Stats.Agility);
-        MagicMinDamage = PlayerAttributeRules.MagicMinDamage(Stats.Energy);
-        MagicMaxDamage = PlayerAttributeRules.MagicMaxDamage(Stats.Energy);
-        MaxMana = PlayerAttributeRules.MaxMana(Stats.Energy);
-        Mana = Math.Min(Mana, MaxMana);
-        MirrorMana();
+        Defense = PlayerStatRules.Defense(Stats.Agility);
+        MagicMinDamage = PlayerStatRules.MagicMinDamage(Stats.Energy);
+        MagicMaxDamage = PlayerStatRules.MagicMaxDamage(Stats.Energy);
         int armor = EffectiveArmor + Defense;
         if (armor != _factorArmor)
         {
             _factorArmor = armor;
             DamageTakenFactor = _combatFormulaService.EvaluateDamageTakenFactor(armor);
         }
+
+        int maxMana = PlayerManaRules.MaxMana(Level, Stats.Energy);
+        CurrentMana = MaxMana == 0 ? maxMana : Math.Min(CurrentMana, maxMana);
+        MaxMana = maxMana;
 
         if (Health != null)
         {

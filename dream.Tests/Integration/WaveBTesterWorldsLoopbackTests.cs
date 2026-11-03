@@ -317,7 +317,13 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
         // 58,107 B at protocol v9 plus one digit per frame is 58,307 B; the wolf bite change (a chasing wolf stops
         // in bite range and bites) moved it to 58,827 B; the last fix loop (far wolf spawn, join protection: the
         // wolf stands still and nobody is bitten in 200 ticks) moves it to 58,140 B.
-        Assert.Equal(58_140L, total);
+        // The lowered experience curve (100 + level * 50, M2) shortens experienceToNextLevel at level 1 from 1023 to 150,
+        // one byte per progression it carries (8 in all): 58,132 B.
+        // The stats sheet merge (protocol 19) widens the combat group to [str, as, vit, agi, energy]: ",0,0" more
+        // in each of the 8 combat groups these frames carry: 58,164 B.
+        // Defaulting a fresh PlayerCombatStats to Agility/Energy 10 (not 0) writes "10,10" for ",0,0"'s "0,0": +2 bytes
+        // in each of the 8 combat groups: 58,180 B.
+        Assert.Equal(58_180L, total);
     }
 
     [Fact]
@@ -328,9 +334,9 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
         byte[] v7 = codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, hello.MessageKind, 1), hello);
         Assert.Equal(hello.MessageKind, codec.DecodeFromClient(v7).Envelope.MessageKind);
 
-        byte[] v6 = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(v7).Replace("\"protocolVersion\":14", "\"protocolVersion\":6", StringComparison.Ordinal));
+        byte[] v6 = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(v7).Replace("\"protocolVersion\":19", "\"protocolVersion\":6", StringComparison.Ordinal));
         Assert.NotEqual(v7, v6);
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => codec.DecodeFromClient(v6));
-        Assert.Equal("Unsupported protocol version 6. Supported version: 14.", error.Message);
+        Assert.Equal("Unsupported protocol version 6. Supported version: 19.", error.Message);
     }
 }

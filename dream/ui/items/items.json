@@ -28,7 +28,7 @@
  "origin": "top-left",
  "scale": 4,
  "size": [
-  2087,
+  2100,
   1672
  ],
  "sprites": {
@@ -44,7 +44,7 @@
    "slice": null,
    "tile": "none",
    "w": 120,
-   "x": 684,
+   "x": 956,
    "y": 1540
   },
   "item.armor.bone": {
@@ -1109,7 +1109,7 @@
    "x": 220,
    "y": 1324
   },
-  "item.relic.disc": {
+  "item.potion.health": {
    "h": 128,
    "meta": {
     "footprint": [
@@ -1125,6 +1125,42 @@
    "tile": "none",
    "w": 128,
    "x": 548,
+   "y": 1540
+  },
+  "item.potion.mana": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 684,
+   "y": 1540
+  },
+  "item.relic.disc": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 820,
    "y": 1540
   },
   "item.shield.kite": {

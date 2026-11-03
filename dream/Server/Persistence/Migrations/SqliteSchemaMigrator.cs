@@ -11,6 +11,13 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
     private const string CreateVersionTableSql =
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL, applied_utc TEXT NOT NULL);";
 
+    // The stats-sheet line shipped its own migration 11 (character_stat_points: player_profiles.stat_points)
+    // before the multiplayer line's 0011..0014 were merged in. A database that ran it records version 11
+    // under that name and has no enemy_instances.camp_key (0011_spawn_camps). Such a file is repaired
+    // inside the migration transaction: the column is dropped, the row deleted, and 0011..0014 run from 10.
+    internal const int DivergentVersion = 11;
+    internal const string DivergentName = "character_stat_points";
+
     private readonly IReadOnlyList<ISchemaMigration> _migrations;
 
     public SqliteSchemaMigrator(IReadOnlyList<ISchemaMigration> migrations)
@@ -78,7 +85,8 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
                 throw new SchemaTooNewException(from, to);
             }
 
-            if (from == to)
+            bool divergent = IsDivergentStatPointsDatabase(connection, transaction);
+            if (from == to && !divergent)
             {
                 // Another process migrated while this one waited for the lock.
                 return new SchemaMigrationResult(from, to, null);
@@ -91,8 +99,19 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
                 log?.Invoke($"Database backed up to {backupPath} before the schema migration.");
             }
 
+            int first = from;
+            if (divergent)
+            {
+                Execute(connection, transaction, "ALTER TABLE player_profiles DROP COLUMN stat_points;");
+                Execute(connection, transaction, $"DELETE FROM schema_version WHERE version = {DivergentVersion};");
+                first = DivergentVersion - 1;
+                log?.Invoke(
+                    $"Database ran the retired migration {DivergentVersion:D4} ('{DivergentName}'): dropped player_profiles.stat_points " +
+                    $"(points are derived from the level now) and running the migrations from version {first}.");
+            }
+
             Execute(connection, transaction, CreateVersionTableSql);
-            for (int i = from; i < to; i++)
+            for (int i = first; i < to; i++)
             {
                 ISchemaMigration migration = _migrations[i];
                 migration.Apply(connection, transaction);
@@ -122,6 +141,28 @@ public sealed class SqliteSchemaMigrator : ISchemaMigrator
             ? $"Database schema created at version {to}."
             : $"Database schema migrated from version {from} to {to}.");
         return new SchemaMigrationResult(from, to, backupPath);
+    }
+
+    // True for a file that recorded the stats-sheet line's migration 11 (see DivergentVersion).
+    private static bool IsDivergentStatPointsDatabase(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_version') > 0 " +
+            "AND EXISTS (SELECT 1 FROM pragma_table_info('player_profiles') WHERE name = 'stat_points') " +
+            "AND NOT EXISTS (SELECT 1 FROM pragma_table_info('enemy_instances') WHERE name = 'camp_key');";
+        if (Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) == 0)
+        {
+            return false;
+        }
+
+        using SqliteCommand row = connection.CreateCommand();
+        row.Transaction = transaction;
+        row.CommandText = "SELECT COUNT(*) FROM schema_version WHERE version = $version AND name = $name;";
+        row.Parameters.AddWithValue("$version", DivergentVersion);
+        row.Parameters.AddWithValue("$name", DivergentName);
+        return Convert.ToInt64(row.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
     }
 
     private static bool GetForeignKeys(SqliteConnection connection)

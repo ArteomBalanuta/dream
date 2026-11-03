@@ -261,17 +261,20 @@ public sealed class SqlitePersistenceRepositoryTests
             UpdatedUtc: createdUtc);
 
         repository.SaveItemInstance(item);
+        repository.SaveItemInstance(item with { ItemInstanceId = 102 });
         repository.SaveInventorySlot(new PersistedInventorySlot("player-one", 0, 101, createdUtc));
-        repository.SaveInventorySlot(new PersistedInventorySlot("player-one", 100, 101, createdUtc));
+        repository.SaveInventorySlot(new PersistedInventorySlot("player-one", 100, 102, createdUtc));
 
-        PersistedItemInstance loadedItem = Assert.Single(repository.LoadItemInstances());
-        Assert.Equal("Builder Hammer", loadedItem.DisplayName);
+        PersistedItemInstance[] loadedItems = repository.LoadItemInstances().OrderBy(loaded => loaded.ItemInstanceId).ToArray();
+        Assert.Equal(new[] { 101L, 102L }, loadedItems.Select(loaded => loaded.ItemInstanceId));
+        Assert.Equal("Builder Hammer", loadedItems[0].DisplayName);
         PersistedInventorySlot[] slots = repository.LoadInventorySlots().OrderBy(slot => slot.SlotIndex).ToArray();
         Assert.Equal(2, slots.Length);
         Assert.Equal(0, slots[0].SlotIndex);
         Assert.Equal(100, slots[1].SlotIndex);
 
         repository.DeleteItemInstance(101);
+        repository.DeleteItemInstance(102);
 
         Assert.Empty(repository.LoadItemInstances());
     }
@@ -297,7 +300,7 @@ public sealed class SqlitePersistenceRepositoryTests
             definition.Enabled);
         Assert.Contains(formulas, definition =>
             definition.FormulaKey == "player.experience_to_next_level" &&
-            definition.ExpressionText == "1000 + level * 23");
+            definition.ExpressionText == "100 + level * 50");
         Assert.Contains(formulas, definition =>
             definition.FormulaKey == "enemy.experience_reward" &&
             definition.ExpressionText == "enemy_level * 14");

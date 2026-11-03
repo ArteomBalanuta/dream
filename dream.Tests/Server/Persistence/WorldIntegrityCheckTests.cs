@@ -30,6 +30,16 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
         return db;
     }
 
+    // For the tests that seed one item in several slot rows (the finding the check reports): the unique
+    // index of migration 0012 would refuse those rows, so it is dropped in their setup.
+    private static MigrationTestDatabase MigratedWithSharedRows()
+    {
+        MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;");
+        SqliteConnection.ClearAllPools();
+        return db;
+    }
+
     private static WorldIntegrityReport Check(MigrationTestDatabase db, WorldIntegrityOptions? options = null)
     {
         using SqliteConnection connection = db.Schema.CreateOpenConnection();
@@ -114,7 +124,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     [Fact]
     public void SoftFindings_AreCounted_NotFatal_AndTheServerStillStarts()
     {
-        using MigrationTestDatabase db = Migrated();
+        using MigrationTestDatabase db = MigratedWithSharedRows();
         db.ExecuteScript(
             Profile +
             // A worn item (100) that also still has a bag row.
@@ -163,7 +173,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     [Fact]
     public void AWornItemThatStillHasABagRow_IsASoftFinding_NotASharedReference()
     {
-        using MigrationTestDatabase db = Migrated();
+        using MigrationTestDatabase db = MigratedWithSharedRows();
         db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(3, 10) + Slot(100, 10));
         WorldIntegrityReport report = Check(db);
         Assert.True(report.HasSoftFindings);
@@ -191,7 +201,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     [Fact]
     public void OneItemInSeveralBackpackSlots_IsASoftFinding_ThatIsNeverFatal()
     {
-        using MigrationTestDatabase db = Migrated();
+        using MigrationTestDatabase db = MigratedWithSharedRows();
         db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(1, 10) + Slot(2, 10) + Slot(3, 10));
         WorldIntegrityReport report = Check(db);
         Assert.Equal(2, report.SharedItemReferences);
@@ -203,7 +213,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     [Fact]
     public void OneItemHeldByTwoPlayers_IsASoftFinding_AndAnAliasIsNotCountedTwice()
     {
-        using MigrationTestDatabase db = Migrated();
+        using MigrationTestDatabase db = MigratedWithSharedRows();
         db.ExecuteScript(
             Profile + SecondProfile + Item(10, "tool.a") +
             SlotOf("p1", 0, 10) + SlotOf("p1", 100, 10) + SlotOf("p2", 4, 10));
@@ -395,7 +405,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     [Fact]
     public void OneItemInTwoEquipmentSlots_IsCountedOnItsOwn()
     {
-        using MigrationTestDatabase db = Migrated();
+        using MigrationTestDatabase db = MigratedWithSharedRows();
         db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(100, 10) + Slot(101, 10));
         WorldIntegrityReport report = Check(db);
         Assert.Equal(1, report.ItemsInTwoEquipmentSlots);
@@ -409,7 +419,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     [Fact]
     public void OneItemInTwoEquipmentSlots_WithNoBackpackRow_IsNotAlsoASharedReference()
     {
-        using MigrationTestDatabase db = Migrated();
+        using MigrationTestDatabase db = MigratedWithSharedRows();
         db.ExecuteScript(Profile + Item(10, "tool.a") + Slot(100, 10) + Slot(101, 10));
         WorldIntegrityReport report = Check(db);
         Assert.Equal(1, report.ItemsInTwoEquipmentSlots);

@@ -43,18 +43,18 @@ public sealed class InventoryActionTests
             long hammerId = MainHandId(inventory);
             long bladeId = inventory.BuildSnapshot(Player).IdAt(2);
 
-            // The blade is a 2x3: rows 3-5, columns 0-1 are free.
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryMove(Player, 2, 24));
+            // The blade is a 2x3: rows 3-5, columns 2-3 are free (the kit potions sit at 24 and 25).
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryMove(Player, 2, 26));
 
             PlayerInventorySnapshot snapshot = inventory.BuildSnapshot(Player);
-            Assert.Equal(bladeId, snapshot.IdAt(24));
+            Assert.Equal(bladeId, snapshot.IdAt(26));
             Assert.Null(snapshot.ItemAt(2));
             Assert.Equal(hammerId, MainHandId(inventory));
             Assert.True(snapshot.BoardIsConsistent());
 
             Dictionary<int, long> rows = world.SlotsOf(Player);
             Assert.False(rows.ContainsKey(2));
-            Assert.Equal(bladeId, rows[24]);
+            Assert.Equal(bladeId, rows[26]);
             Assert.Equal(hammerId, rows[100]);
 
             PlayerInventoryService restarted = Create(world, out PersistenceWriteQueue restartWrites);
@@ -62,7 +62,7 @@ public sealed class InventoryActionTests
             {
                 Assert.True(restarted.Ensure(Player));
                 Assert.Equal(hammerId, MainHandId(restarted));
-                Assert.Equal(bladeId, restarted.BuildSnapshot(Player).IdAt(24));
+                Assert.Equal(bladeId, restarted.BuildSnapshot(Player).IdAt(26));
             }
         }
     }
@@ -370,7 +370,7 @@ public sealed class InventoryActionTests
             Dictionary<int, long> before = world.SlotsOf(Player);
             int writesBefore = world.SlotWrites;
             allow = false;
-            Assert.Equal(InventoryEquipOutcome.Throttled, inventory.TryMove(Player, 2, 24));
+            Assert.Equal(InventoryEquipOutcome.Throttled, inventory.TryMove(Player, 2, 26));
             Assert.Equal(InventoryEquipOutcome.Throttled, inventory.TryEquip(Player, 2));
             Assert.Equal(InventoryEquipOutcome.Throttled, inventory.TryUnequip(Player, 100));
             Assert.Equal(InventoryEquipOutcome.Throttled, inventory.TryDestroy(Player, 2, before[2]));

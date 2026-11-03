@@ -496,8 +496,13 @@ public sealed class HudCapturePointerPlanTests : IDisposable
         Assert.Equal((int)(HudCaptureKeys.W | HudCaptureKeys.Space), keys.A);
         Assert.Equal(30, keys.B);
 
-        Assert.True(HudCaptureStepSpec.TryParse("keys:q+e:3", out HudCaptureStepSpec potions));
-        Assert.Equal((int)(HudCaptureKeys.Q | HudCaptureKeys.E), potions.A);
+        Assert.True(HudCaptureStepSpec.TryParse("keys:q+r:3", out HudCaptureStepSpec potions));
+        Assert.Equal((int)(HudCaptureKeys.Q | HudCaptureKeys.R), potions.A);
+        Assert.True(HudCaptureStepSpec.TryParse("keys:b:2", out HudCaptureStepSpec building));
+        Assert.Equal((int)HudCaptureKeys.Building, building.A);
+        Assert.True(HudCaptureStepSpec.TryParse("keys:g:2", out HudCaptureStepSpec combat));
+        Assert.Equal((int)HudCaptureKeys.Combat, combat.A);
+        Assert.False(HudCaptureStepSpec.TryParse("keys:e:2", out _));
 
         Assert.True(HudCaptureStepSpec.TryParse("status", out HudCaptureStepSpec status));
         Assert.Equal(HudCaptureVerb.Status, status.Verb);

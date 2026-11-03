@@ -120,6 +120,48 @@
         { "item": "consumable.greater-mana", "weight": 4 }
       ],
       "rarity": { "common": 60, "uncommon": 32, "rare": 8 }
+    },
+    {
+      "key": "ashen-prowler",
+      "drops": 2,
+      "nothingWeight": 35,
+      "items": [
+        { "item": "gear.leather-cap", "weight": 3 },
+        { "item": "gear.leather-vest", "weight": 3 },
+        { "item": "gear.iron-blade", "weight": 5 },
+        { "item": "gear.ward-lantern", "weight": 4 },
+        { "item": "gear.iron-gauntlets", "weight": 5 },
+        { "item": "gear.iron-boots", "weight": 5 },
+        { "item": "gear.plated-leggings", "weight": 5 },
+        { "item": "gear.ward-pendant", "weight": 4 },
+        { "item": "gear.iron-band", "weight": 4 },
+        { "item": "gear.travel-cloak", "weight": 3 },
+        { "item": "gear.gossamer-wings", "weight": 2 },
+        { "item": "gear.ember-wisp", "weight": 2 },
+        { "item": "gear.hunting-spear", "weight": 3 }
+      ],
+      "rarity": { "common": 45, "uncommon": 40, "rare": 15 }
+    },
+    {
+      "key": "grave-howler",
+      "drops": 3,
+      "nothingWeight": 15,
+      "items": [
+        { "item": "gear.leather-cap", "weight": 2 },
+        { "item": "gear.leather-vest", "weight": 2 },
+        { "item": "gear.iron-blade", "weight": 5 },
+        { "item": "gear.ward-lantern", "weight": 5 },
+        { "item": "gear.iron-gauntlets", "weight": 4 },
+        { "item": "gear.iron-boots", "weight": 4 },
+        { "item": "gear.plated-leggings", "weight": 5 },
+        { "item": "gear.ward-pendant", "weight": 5 },
+        { "item": "gear.iron-band", "weight": 5 },
+        { "item": "gear.travel-cloak", "weight": 4 },
+        { "item": "gear.gossamer-wings", "weight": 4 },
+        { "item": "gear.ember-wisp", "weight": 4 },
+        { "item": "gear.hunting-spear", "weight": 5 }
+      ],
+      "rarity": { "common": 25, "uncommon": 50, "rare": 25 }
     }
   ]
 }

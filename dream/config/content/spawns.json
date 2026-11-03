@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "camps": [
+    { "key": "north-east-wolves", "template": "Wolf", "x": 42.5, "z": 8.5, "count": 2, "respawnSeconds": 90, "maxWorldSize": 99 },
+    { "key": "south-west-wolves", "template": "Wolf", "x": 8.5, "z": 40.5, "count": 2, "respawnSeconds": 90, "maxWorldSize": 99 },
+    { "key": "south-east-dire-wolf", "template": "DireWolf", "x": 44.5, "z": 44.5, "count": 1, "respawnSeconds": 180, "maxWorldSize": 99 },
+    { "key": "moonlit-dire-wolves", "template": "DireWolf", "x": 40.5, "z": 30.5, "count": 2, "respawnSeconds": 120, "night": true, "maxWorldSize": 99 },
+    { "key": "frontier-east-wolves", "template": "Wolf", "x": 30.5, "z": 7.5, "count": 3, "respawnSeconds": 60, "minWorldSize": 100 },
+    { "key": "frontier-south-wolves", "template": "Wolf", "x": 8.5, "z": 30.5, "count": 3, "respawnSeconds": 60, "minWorldSize": 100 },
+    { "key": "frontier-ridge-dire", "template": "DireWolf", "x": 44.5, "z": 28.5, "count": 2, "respawnSeconds": 120, "minWorldSize": 100 },
+    { "key": "frontier-hollow-dire", "template": "DireWolf", "x": 28.5, "z": 44.5, "count": 2, "respawnSeconds": 120, "minWorldSize": 100 },
+    { "key": "frontier-ash-east", "template": "AshenProwler", "x": 70.5, "z": 20.5, "count": 3, "respawnSeconds": 150, "minWorldSize": 100 },
+    { "key": "frontier-ash-south", "template": "AshenProwler", "x": 20.5, "z": 70.5, "count": 3, "respawnSeconds": 150, "minWorldSize": 100 },
+    { "key": "frontier-ash-heart", "template": "AshenProwler", "x": 60.5, "z": 60.5, "count": 3, "respawnSeconds": 180, "minWorldSize": 100 },
+    { "key": "frontier-night-hunt", "template": "AshenProwler", "x": 50.5, "z": 78.5, "count": 3, "respawnSeconds": 120, "night": true, "minWorldSize": 100 },
+    { "key": "frontier-howlers-pass", "template": "GraveHowler", "x": 88.5, "z": 62.5, "count": 2, "respawnSeconds": 300, "minWorldSize": 100 },
+    { "key": "frontier-howlers-barrow", "template": "GraveHowler", "x": 85.5, "z": 85.5, "count": 3, "respawnSeconds": 300, "minWorldSize": 100 }
+  ]
+}

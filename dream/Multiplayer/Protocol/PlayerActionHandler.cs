@@ -60,6 +60,15 @@ public sealed class PlayerActionHandler : IServerMessageHandler
             return;
         }
 
+        if (actionMessage.Payload is PlayerStatsUpdateIntent && !context.Authority.DevCommandsAllowed)
+        {
+            context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
+                actionMessage,
+                serverTick: 0,
+                "Stat changes are disabled on this server.")));
+            return;
+        }
+
         if (!context.ActionQueue.TryEnqueue(actionMessage, out _))
         {
             context.OutboundMessages.Add(new ServerActionMessage(CreateRejectedResult(
@@ -72,13 +81,22 @@ public sealed class PlayerActionHandler : IServerMessageHandler
     // Build and combat use intents are created only by the server, from command-frame primary use,
     // which applies the use cadence and targeting. Over the wire a client may send only these. The
     // build material selection places nothing by itself; it only picks what later uses place.
-    // PlayerAttributeSpendIntent raises one attribute with the character's unspent points; the server
-    // checks the budget and the caps. The old development stat sliders (PlayerStatsUpdateIntent) are
-    // no longer client-sendable.
+    // PlayerStatsUpdateIntent is the development stat sliders (decision U4): any client can set its own
+    // base stats within the validated range, and they persist and travel between worlds with the
+    // character. It goes away when levels give stat points.
+    // PlayerStatSpendIntent is the real thing: points the level earned, checked by the runtime and
+    // allowed on every server, so it is not gated on DevCommandsAllowed.
+    // The M3 intents (ground pickup, NPC interact, vendor buy and sell) name what they act on; the
+    // server rechecks existence, claim, range and budget for each.
     private static bool IsClientSendable(IPlayerActionPayload payload)
     {
         return payload is InventoryEquipIntent or InventoryUnequipIntent or InventoryMoveIntent or InventoryDestroyIntent
-            or PlayerAttributeSpendIntent or BuildMaterialSelectIntent;
+            or PlayerStatsUpdateIntent or PlayerStatSpendIntent or BuildMaterialSelectIntent
+            or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent
+            or SkillUseIntent or ItemUseIntent or QuickbarBindIntent
+            or PartyInviteIntent or PartyRespondIntent or PartyLeaveIntent
+            or TradeRequestIntent or TradeRespondIntent or TradeOfferIntent or TradeLockIntent or TradeConfirmIntent or TradeCancelIntent
+            or QuestAcceptIntent or QuestTurnInIntent or QuestAbandonIntent;
     }
 
     private static string DescribePayload(IPlayerActionPayload? payload)

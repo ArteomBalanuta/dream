@@ -92,7 +92,7 @@ public sealed class NavPathing : IClickPathing
             return false;
         }
 
-        _follower.SetPath(_path, viaStartCentre);
+        _follower.SetPath(_path, viaStartCentre, _finder.StartRelocated);
         return true;
     }
 

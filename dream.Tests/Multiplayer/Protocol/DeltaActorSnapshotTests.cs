@@ -545,7 +545,7 @@ public sealed class DeltaActorSnapshotTests(ITestOutputHelper output)
         // The keyframe of the same frame carries every actor whole.
         ServerSnapshotMessage key = new(Envelope(2, new Dictionary<string, ulong>(), first) with { ActorDelta = keyframe }) { SharedBody = true };
         string keyJson = Encoding.UTF8.GetString(EncodePayload(new TransportJsonCodec(), key));
-        Assert.Contains("[17,255,0,\"session-17\",\"name-17\",40960,8192,122880,0,0,-4096,100,100,1,0,null,[10,2,10,0,0,0,0,0],[1,0,1000],0]", keyJson, StringComparison.Ordinal);
+        Assert.Contains("[17,255,0,\"session-17\",\"name-17\",40960,8192,122880,0,0,-4096,100,100,1,0,null,[10,2,10,0,0],[1,0,1000],0]", keyJson, StringComparison.Ordinal);
         output.WriteLine(keyJson);
     }
 

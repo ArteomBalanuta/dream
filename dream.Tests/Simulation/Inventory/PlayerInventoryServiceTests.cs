@@ -46,7 +46,7 @@ public sealed class PlayerInventoryServiceTests
         }
 
         Assert.Equal(1, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
-        Assert.Equal(new[] { 2, 4, 6, 7, 22, 23 }, snapshot.BagItems().Select(slot => slot.SlotIndex).ToArray());
+        Assert.Equal(new[] { 2, 4, 6, 7, 22, 23, 24, 25 }, snapshot.BagItems().Select(slot => slot.SlotIndex).ToArray());
         Assert.All(snapshot.Slots, slot => Assert.False(slot.IsEquipped));
         Assert.True(snapshot.BoardIsConsistent());
         Assert.Equal(StarterCount, world.ItemSaves);
@@ -157,13 +157,14 @@ public sealed class PlayerInventoryServiceTests
 
         Assert.True(inventory.Ensure("Bob"));
         // The main hand first, then the starter top-up: Bob has items but no recorded kit version, so
-        // he is taken to hold kit v1 and only the torch (v2) is granted, at the first fit (anchor 0,
+        // he is taken to hold kit v1 and the torch (v2) and four potions (v3, v4) are granted, at the first fit (anchor 0,
         // a 1x2 in the free corner).
-        Assert.Equal(3, world.ItemSaves);
-        Assert.Equal(3 + 1, world.SlotSaves);
+        Assert.Equal(5, world.ItemSaves);
+        Assert.Equal(5 + 1, world.SlotSaves);
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Bob");
         Assert.Equal(11, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
-        Assert.Null(snapshot.ItemAt(3));
+        // Item 11 left the bag for the main hand (a top-up potion may now take its cell).
+        Assert.DoesNotContain(snapshot.Slots, slot => slot.Item?.ItemInstanceId == 11);
         Assert.Equal(12, snapshot.IdAt(5));
         // The torch is the topped-up one, not the ignored second load's item 99.
         Assert.Equal("tool.torch", snapshot.ItemAt(0)!.Value.ItemKind);
@@ -375,7 +376,7 @@ public sealed class PlayerInventoryServiceTests
     public void StarterItems_EndWithTheTorch_AndKeepTheHammerEquipped()
     {
         Assert.Equal(
-            ["tool.builder-hammer", "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch", "consumable.weak-heal", "consumable.minor-heal"],
+            ["tool.builder-hammer", "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch", "consumable.weak-heal", "consumable.minor-heal", "potion.health", "potion.mana"],
             ToolCatalog.StarterItemKinds);
 
         PlayerInventoryService inventory = new(worldPersistence: null, writes: null, objectIds: new ObjectIdAllocator());
@@ -413,15 +414,15 @@ public sealed class PlayerInventoryServiceTests
         Assert.True(inventory.Ensure("Ken"));
 
         // The maul is worn, so its block (anchor 4) is free and the torch, a 1x2, is the first fit there;
-        // the two potions of kit v3 follow it.
+        // the four potions of kits v3 and v4 follow it.
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Ken");
         int torchAnchor = snapshot.AnchorOf("tool.torch");
         InventoryItemSnapshot torch = snapshot.ItemAt(torchAnchor)!.Value;
         Assert.Equal(4, torchAnchor);
         Assert.Equal("tool.torch", torch.ItemKind);
         Assert.Equal(5, torch.ItemInstanceId);
-        Assert.Equal(3, world.ItemSaves);
-        Assert.Equal(3, world.SlotSaves);
+        Assert.Equal(5, world.ItemSaves);
+        Assert.Equal(5, world.SlotSaves);
         Assert.Equal(5, world.Rows[("Ken", torchAnchor)].ItemInstanceId);
         // The equipped slot is untouched.
         Assert.Equal(3, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
@@ -430,8 +431,8 @@ public sealed class PlayerInventoryServiceTests
 
         // Idempotent: a second Ensure finds nothing missing and writes nothing.
         Assert.True(inventory.Ensure("Ken"));
-        Assert.Equal(3, world.ItemSaves);
-        Assert.Equal(3, world.SlotSaves);
+        Assert.Equal(5, world.ItemSaves);
+        Assert.Equal(5, world.SlotSaves);
         Assert.Equal(StarterCount, inventory.LoadedItemInstanceCount);
     }
 
@@ -535,7 +536,7 @@ public sealed class PlayerInventoryServiceTests
             PlayerInventoryService inventory = new(world, writes, ids);
             // The persistence bridge seeds the shared allocator at startup.
             ids.Restore(NextIdAboveStored(world));
-            Assert.Equal(8, inventory.NextItemInstanceId);
+            Assert.Equal(10, inventory.NextItemInstanceId);
             Assert.True(inventory.Ensure("Nia"));
 
             PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Nia");
@@ -546,7 +547,7 @@ public sealed class PlayerInventoryServiceTests
             Assert.Equal(5, torch.ItemInstanceId);
             Assert.Equal(StarterCount, inventory.LoadedItemInstanceCount);
             // No second torch after the restart.
-            Assert.Equal(8, inventory.NextItemInstanceId);
+            Assert.Equal(10, inventory.NextItemInstanceId);
             Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Nia"));
             Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Nia", 0));
             Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Nia"));
@@ -564,10 +565,12 @@ public sealed class PlayerInventoryServiceTests
                 new StarterKitEntry("tool.survey-lantern", 1),
                 new StarterKitEntry("tool.torch", 2),
                 new StarterKitEntry("consumable.weak-heal", 3),
-                new StarterKitEntry("consumable.minor-heal", 3)
+                new StarterKitEntry("consumable.minor-heal", 3),
+                new StarterKitEntry("potion.health", 4),
+                new StarterKitEntry("potion.mana", 4)
             ],
             ToolCatalog.StarterKit);
-        Assert.Equal(3, ToolCatalog.CurrentStarterKitVersion);
+        Assert.Equal(4, ToolCatalog.CurrentStarterKitVersion);
         Assert.Equal(ToolCatalog.CurrentStarterKitVersion, ToolCatalog.StarterKit.Max(entry => entry.IntroducedVersion));
         Assert.Equal(1, ToolCatalog.UnrecordedStarterKitVersion);
         Assert.Equal(ToolCatalog.StarterKit.Select(entry => entry.ItemKind), ToolCatalog.StarterItemKinds);
@@ -602,9 +605,9 @@ public sealed class PlayerInventoryServiceTests
 
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Pia");
         Assert.Single(snapshot.Slots, slot => slot.Item?.ItemKind == "tool.torch");
-        // The torch (kit v2) and the two potions (kit v3) are the whole top-up.
-        Assert.Equal(3, world.ItemSaves);
-        Assert.Equal(3, world.Grants["Pia"]);
+        // The torch (kit v2) and the four potions (kits v3 and v4) are the whole top-up.
+        Assert.Equal(5, world.ItemSaves);
+        Assert.Equal(4, world.Grants["Pia"]);
         Assert.Equal(1, world.GrantSaves);
     }
 
@@ -631,7 +634,7 @@ public sealed class PlayerInventoryServiceTests
 
         PlayerInventorySnapshot snapshot = rejoined.BuildSnapshot("Quin");
         Assert.DoesNotContain(snapshot.Slots, slot => slot.Item?.ItemKind == "tool.torch");
-        Assert.Equal(3, world.ItemSaves);
+        Assert.Equal(5, world.ItemSaves);
         Assert.Equal(1, world.GrantSaves);
     }
 
@@ -664,7 +667,7 @@ public sealed class PlayerInventoryServiceTests
         Assert.True(inventory.Ensure("Sam"));
 
         Assert.Equal(0, world.ItemSaves);
-        Assert.Equal(3, world.Grants["Sam"]);
+        Assert.Equal(4, world.Grants["Sam"]);
         Assert.Equal(1, world.GrantSaves);
     }
 
@@ -782,7 +785,7 @@ public sealed class PlayerInventoryServiceTests
         }
 
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        Assert.Equal(3L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
+        Assert.Equal(4L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
         Assert.Equal(1L, database.Count("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
         // The torch (first fit: the free block of the worn hammer, anchor 0) leaves the backpack: its
         // slot and item rows are deleted.
@@ -799,7 +802,7 @@ public sealed class PlayerInventoryServiceTests
         using (SqliteWorldPersistenceRepository world = new(database.Schema))
         {
             PersistedPlayerInventory loaded = world.LoadPlayerInventory("Vic");
-            Assert.Equal(3, loaded.StarterKitVersion);
+            Assert.Equal(4, loaded.StarterKitVersion);
             using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
             ObjectIdAllocator ids = new();
             PlayerInventoryService inventory = new(world, writes, ids);
@@ -813,7 +816,7 @@ public sealed class PlayerInventoryServiceTests
 
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         Assert.Equal(0L, database.Count("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
-        Assert.Equal(3L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
+        Assert.Equal(4L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
     }
 
     // The starter inventory as seeded before wave T2 and migrated to the footprint bag (migration
@@ -887,7 +890,7 @@ public sealed class PlayerInventoryServiceTests
         // lantern and torch at their first fits (anchors 2, 4, 6 and 7).
         public void Seed(string playerName, long firstItemId)
         {
-            int[] anchors = [InventoryConstants.EquippedSlotIndex, 2, 4, 6, 7, 22, 23];
+            int[] anchors = [InventoryConstants.EquippedSlotIndex, 2, 4, 6, 7, 22, 23, 24, 25];
             for (int i = 0; i < StarterCount; i++)
             {
                 // One item of each starter kind, so the starter top-up finds nothing missing.
@@ -971,6 +974,14 @@ public sealed class PlayerInventoryServiceTests
 
         public void DeleteInventorySlot(string playerName, int slotIndex, long expectedItemInstanceId)
         {
+            // An action's closure deletes before it upserts, and a real closure aborts as a whole (the
+            // queue's savepoint); this fake has no rollback, so the failing closure fails at its first
+            // slot write and changes nothing.
+            if (FailSlotWrites)
+            {
+                throw new InvalidOperationException("Simulated slot write failure.");
+            }
+
             if (Rows.TryGetValue((playerName, slotIndex), out PersistedInventorySlot row) && row.ItemInstanceId == expectedItemInstanceId)
             {
                 Rows.Remove((playerName, slotIndex));

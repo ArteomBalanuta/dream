@@ -16,6 +16,16 @@ public sealed class WorldCliTests
     }
 
     [Fact]
+    public void CreateWithoutSize_UsesTheServerNewWorldSize()
+    {
+        using WorldCatalogTestDatabase db = new();
+
+        (int exit, string created, _) = Run(db, "create", "Frontier");
+        Assert.Equal(0, exit);
+        Assert.Equal("100x8x100", created.TrimEnd().Split('	')[2]);
+    }
+
+    [Fact]
     public void CreateListCopyDelete_RoundTripWithTabSeparatedOutputAndNoSeed()
     {
         using WorldCatalogTestDatabase db = new();
@@ -93,6 +103,7 @@ public sealed class WorldCliTests
         Assert.True(Program.TrySelectProcessMode(["--server"], out mode, out var options, out _));
         Assert.Equal(ProcessMode.Server, mode);
         Assert.Null(options.WorldSelector);
+        Assert.Equal(100, options.NewWorldSize);
 
         Assert.True(Program.TrySelectProcessMode(["--server", "--world", "Alpha"], out mode, out options, out _));
         Assert.Equal("Alpha", options.WorldSelector);

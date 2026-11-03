@@ -5,15 +5,6 @@ namespace Dream.Multiplayer.Protocol;
 
 public sealed class PlayerCommandHandler : IServerMessageHandler
 {
-    private readonly bool _allowDevMovement;
-
-    // allowDevMovement: whether client noclip and freeze toggles reach the simulation. Off by
-    // default (dedicated servers); the integrated single-player host turns it on.
-    public PlayerCommandHandler(bool allowDevMovement = false)
-    {
-        _allowDevMovement = allowDevMovement;
-    }
-
     public string MessageKind => "player.command";
 
     public void Handle(ServerRoutingContext context, IClientToServerMessage message)
@@ -33,20 +24,19 @@ public sealed class PlayerCommandHandler : IServerMessageHandler
             return;
         }
 
-        context.CommandInbox?.Enqueue(SanitizeCommandFrame(commandMessage.CommandFrame, _allowDevMovement));
-    }
-
-    // As below; without allowDevMovement the noclip and freeze toggles are cleared.
-    public static PlayerCommandFrame SanitizeCommandFrame(PlayerCommandFrame frame, bool allowDevMovement)
-    {
-        PlayerCommandFrame sanitized = SanitizeCommandFrame(frame);
-        PlayerMoveIntent move = sanitized.MoveIntent;
-        if (allowDevMovement || (!move.FreezePressed && !move.ToggleNoclipPressed))
+        PlayerCommandFrame sanitized = SanitizeCommandFrame(commandMessage.CommandFrame);
+        if (context.Authority?.DevCommandsAllowed != true)
         {
-            return sanitized;
+            // Noclip and freeze are development commands; a server that has not enabled them
+            // drops the flags and keeps the rest of the frame.
+            PlayerMoveIntent move = sanitized.MoveIntent;
+            if (move.FreezePressed || move.ToggleNoclipPressed)
+            {
+                sanitized = sanitized with { MoveIntent = move with { FreezePressed = false, ToggleNoclipPressed = false } };
+            }
         }
 
-        return sanitized with { MoveIntent = move with { FreezePressed = false, ToggleNoclipPressed = false } };
+        context.CommandInbox?.Enqueue(sanitized);
     }
 
     // Client command frames are untrusted. Move axes become finite and are clamped to [-1, 1]: a

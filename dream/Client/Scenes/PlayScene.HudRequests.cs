@@ -4,6 +4,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
 using Dream.Simulation.Players;
+using Dream.Simulation.Stats;
 
 namespace Dream.Client.Scenes;
 
@@ -52,15 +53,6 @@ public partial class PlayScene
             _settings.SetShowPerformanceCounters(request.ShowPerformanceCounters.Value);
         }
 
-        if (request.SpendAttribute is Dream.Simulation.Stats.StatId attribute)
-        {
-            _remoteClient.QueuePlayerAction(new PlayerActionMessage(
-                new PlayerSessionId(_remoteClient.SessionId),
-                _actionSequences.NextActionSequence(),
-                new PlayerAttributeSpendIntent(attribute)));
-            CurrentGameAudio.Instance.Play(SoundId.StatSpend);
-        }
-
         if (request.FloatingCombatText.HasValue)
         {
             _settings.ApplyFloatingCombatTextTuning(request.FloatingCombatText.Value);
@@ -98,6 +90,22 @@ public partial class PlayScene
                 new PlayerSessionId(_remoteClient.SessionId),
                 _actionSequences.NextActionSequence(),
                 ToInventoryIntent(inventoryAction)));
+            if (inventoryAction.Kind == InventoryHudActionKind.Use)
+            {
+                CurrentGameAudio.Instance.Play(SoundId.PotionDrink);
+            }
+            else if (inventoryAction.Kind == InventoryHudActionKind.SpendStat)
+            {
+                CurrentGameAudio.Instance.Play(SoundId.StatSpend);
+            }
+        }
+
+        // M3: a clicked ground or NPC label, and the vendor window's picks (PlayScene.Economy.cs).
+        ApplyEconomyRequest(in request);
+
+        if (request.QuickbarCycleSlot is int quickbarSlot)
+        {
+            ApplyQuickbarCycle(quickbarSlot);
         }
 
         if (request.BuildMaterial is BuildMaterialChoice buildMaterial)
@@ -141,6 +149,8 @@ public partial class PlayScene
             action.Target == CharacterPanelModel.FirstFitCell ? null : action.Target),
         InventoryHudActionKind.Move => new InventoryMoveIntent(action.SlotIndex, action.Target),
         InventoryHudActionKind.Destroy => new InventoryDestroyIntent(action.SlotIndex, action.ItemInstanceId),
+        InventoryHudActionKind.SpendStat => new PlayerStatSpendIntent((StatId)action.SlotIndex, action.Target),
+        InventoryHudActionKind.Use => new ItemUseIntent(action.SlotIndex, action.ItemInstanceId),
         _ => new InventoryEquipIntent(action.SlotIndex, action.Target)
     };
 

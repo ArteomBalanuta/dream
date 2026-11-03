@@ -90,8 +90,8 @@ public sealed partial class WorldSessionRuntime
 
         public void DeletePersistedEnemy(int enemyId) => runtime.DeletePersistedEnemy(enemyId);
 
-        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
-            => runtime.GrantLoot(killer, enemyKind, enemyActorId, tick);
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick, OpenTK.Mathematics.Vector3 deathPosition)
+            => runtime.GrantLoot(killer, enemyKind, enemyActorId, tick, deathPosition);
 
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record)
             => runtime.RepairCubeRecordFromPersistence(record);
@@ -105,5 +105,70 @@ public sealed partial class WorldSessionRuntime
 
         public void PersistTerrainCellRemoved(WorldObjectRecord record, GeometryCellKey cell)
             => runtime.PersistTerrainCellRemoved(record, cell);
+
+        public bool CanDamageCube(PlayerSessionId attacker, WorldObjectRecord record)
+            => runtime.CanDamageCube(attacker, record);
+
+        public bool TryGetNearbyPartyMembers(PlayerSessionId member, OpenTK.Mathematics.Vector3 at, List<PlayerSessionId> into)
+            => runtime.TryGetNearbyPartyMembers(member, at, into);
+
+        public void RecordEnemyKill(ReadOnlySpan<Dream.Simulation.Enemies.EnemyDamageContribution> contributors, string enemyKind, OpenTK.Mathematics.Vector3 at)
+            => runtime.RecordEnemyKill(contributors, enemyKind, at);
+
+        public CombatTargetPolicy TargetPolicy => new(runtime.PvpEnabled);
+
+        public void FillPvpTargets(PlayerSessionId attacker, List<CombatTargetCandidate> into)
+            => runtime.FillPvpTargets(attacker, into);
+
+        public PlayerCombatant? ResolvePvpVictim(int actorId)
+            => runtime.TryFindListedPlayerTarget(actorId, out IAuthoritativePlayerTarget? target) ? target!.Combatant : null;
+    }
+
+    // Build protection (M4). A cube with no owner (terrain, unowned) can be damaged by anyone; an owned
+    // cube only by its owner. The owner is stored as the attacker's character key (see ProcessBuildUseAction),
+    // compared ordinally. With PartyCubeAccess an online party mate of the owner may damage it too.
+    private bool CanDamageCube(PlayerSessionId attacker, WorldObjectRecord record)
+    {
+        string? owner = record.OwnerPlayerName;
+        if (string.IsNullOrWhiteSpace(owner))
+        {
+            return true;
+        }
+
+        string? attackerKey = TryResolveCharacterKey(attacker);
+        return string.Equals(owner, attackerKey, StringComparison.Ordinal)
+            || (PartyCubeAccess && attackerKey != null && AreInSameParty(owner, attackerKey));
+    }
+
+    private readonly List<IAuthoritativePlayerTarget> _pvpPlayerScratch = [];
+
+    // PvP candidates: spawned, alive players other than the attacker and not under spawn protection (the
+    // same test enemies use in FillEnemyTargets). Reused scratch, no allocation.
+    private void FillPvpTargets(PlayerSessionId attacker, List<CombatTargetCandidate> into)
+    {
+        FillAuthoritativePlayerTargets(_pvpPlayerScratch, spawnedAndAliveOnly: true);
+        ulong tick = CurrentServerTick;
+        for (int i = 0; i < _pvpPlayerScratch.Count; i++)
+        {
+            IAuthoritativePlayerTarget target = _pvpPlayerScratch[i];
+            if (target.SessionId == attacker
+                || (_sessions.TryGet(target.SessionId, out ConnectedPlayer? player)
+                    && player != null
+                    && player.ProtectedThroughTick != 0
+                    && player.ProtectedThroughTick >= tick))
+            {
+                continue;
+            }
+
+            // The body centre, not the combatant's combat anchor: that one is 1.2 above the position, which
+            // puts it above the head of a player whose eye is 0.35 above the position (an eye-height ray
+            // would miss by more than the hit radius). Floating text still uses the actor's own anchor.
+            into.Add(new CombatTargetCandidate(
+                target.Combatant.Actor,
+                target.Position,
+                Priority: 20));
+        }
+
+        _pvpPlayerScratch.Clear();
     }
 }

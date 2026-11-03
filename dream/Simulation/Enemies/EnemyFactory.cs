@@ -42,7 +42,7 @@ internal static class EnemyFactory
             () => position,
             events,
             actorId: actorId,
-            maxHealth: derived.MaxHealth,
+            maxHealth: template.MaxHealth ?? derived.MaxHealth,
             attackDamage: derived.AttackDamage,
             attackIntervalSeconds: derived.AttackIntervalSeconds,
             anchorHeightOffset: WolfDefinition.CombatAnchorHeight,

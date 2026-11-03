@@ -104,11 +104,11 @@ public sealed class EquipmentSqliteActionTests
             hammerId = MainHandId(run.Inventory);
 
             // The blade is a 2x3: rows 3-5 of columns 0-1 are free.
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryMove(Player, 2, 24));
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryMove(Player, 2, 26));
 
             Dictionary<int, long> rows = run.Rows();
             Assert.False(rows.ContainsKey(2));
-            Assert.Equal(bladeId, rows[24]);
+            Assert.Equal(bladeId, rows[26]);
             Assert.Equal(hammerId, rows[100]);
         }
 
@@ -116,7 +116,7 @@ public sealed class EquipmentSqliteActionTests
         {
             Assert.True(restarted.Inventory.Ensure(Player));
             Assert.Equal(hammerId, MainHandId(restarted.Inventory));
-            Assert.Equal(bladeId, restarted.Inventory.BuildSnapshot(Player).IdAt(24));
+            Assert.Equal(bladeId, restarted.Inventory.BuildSnapshot(Player).IdAt(26));
             Assert.Null(restarted.Inventory.BuildSnapshot(Player).ItemAt(2));
         }
     }
@@ -296,6 +296,7 @@ public sealed class EquipmentSqliteActionTests
     public void Destroy_OfASharedLegacyItem_LeavesTheOtherPlayersRowAndTheItem()
     {
         using MigrationTestDatabase db = Migrated();
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;"); // the setup shares one item between two players
         using (Run setup = new(db))
         {
             Give(setup.World, Player, 0, 90, "tool.torch");

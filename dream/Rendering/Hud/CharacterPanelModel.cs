@@ -1,6 +1,7 @@
 using System.Globalization;
 using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Players;
 using Dream.Simulation.Stats;
 
 namespace Dream.Rendering.Hud;
@@ -105,6 +106,46 @@ public static class CharacterPanelModel
             IntRow(CharacterStat.Armor, "Armor", 0, status.Armor, ArmorNote)
         ];
     }
+
+    // Unspent stat points, from the level and base stats the server sent. The same rule the server
+    // checks a spend against (PlayerStatRules), so the panel never offers what would be refused.
+    public static int PointsAvailable(in HudStatusSnapshot status) =>
+        PlayerStatRules.PointsAvailable(status.Level, status.BaseStrength, status.BaseAttackSpeed, status.BaseVitality, status.BaseAgility, status.BaseEnergy);
+
+    // True when the attribute can take a point now: the player is alive, a point is free and the
+    // attribute (Strength, Agility, Vitality or Energy; PlayerStatRules.IsSpendable) is below its cap.
+    public static bool CanSpend(in HudStatusSnapshot status, StatId stat)
+    {
+        if (status.IsDead || !PlayerStatRules.IsSpendable(stat) || PointsAvailable(status) <= 0)
+        {
+            return false;
+        }
+
+        return stat switch
+        {
+            StatId.Strength => status.BaseStrength < PlayerCombatStats.MaxStrength,
+            StatId.Agility => status.BaseAgility < PlayerCombatStats.MaxAgility,
+            StatId.Vitality => status.BaseVitality < PlayerCombatStats.MaxVitality,
+            _ => status.BaseEnergy < PlayerCombatStats.MaxEnergy
+        };
+    }
+
+    // The action a "+" plate sends: one point on the attribute, as PlayerStatSpendIntent. Null for a
+    // stat that takes none.
+    public static InventoryHudAction? SpendAction(StatId stat)
+    {
+        return PlayerStatRules.IsSpendable(stat)
+            ? new InventoryHudAction(InventoryHudActionKind.SpendStat, (int)stat, 1)
+            : null;
+    }
+
+    // The panel table's stats: Strength and Vitality take points (Attack Speed comes from Agility).
+    public static InventoryHudAction? SpendAction(CharacterStat stat) => stat switch
+    {
+        CharacterStat.Strength => SpendAction(StatId.Strength),
+        CharacterStat.Vitality => SpendAction(StatId.Vitality),
+        _ => null
+    };
 
     // Always the twelve slots in slot order. A slot the snapshot does not fill, or fills with a bad
     // index, is empty. EquippedSlot is the main hand; Equipment holds 101..111, and an entry
@@ -237,12 +278,12 @@ public static class CharacterPanelModel
             return entries;
         }
 
-        if (TryGetUse(item.ItemKind, out ItemUse? use) && use != null)
+        if (TryGetUse(item.ItemKind, out _))
         {
-            // Target -1 tells the server this is a use, not an equip to a worn slot.
+            // Sent as an ItemUseIntent naming the anchor and the item.
             entries.Add(new CharacterMenuEntry(
                 "Use",
-                new InventoryHudAction(InventoryHudActionKind.EquipTo, backpackSlotIndex, FirstFitCell),
+                new InventoryHudAction(InventoryHudActionKind.Use, backpackSlotIndex, 0, item.ItemInstanceId),
                 RequiresConfirm: false));
         }
 
@@ -275,7 +316,7 @@ public static class CharacterPanelModel
     }
 
     // The use an item kind has (a consumable), from the shipped catalog.
-    public static bool TryGetUse(string? itemKind, out ItemUse? use)
+    public static bool TryGetUse(string? itemKind, out ItemUseDefinition? use)
     {
         use = null;
         if (itemKind is null || !ContentCatalog.Shipped.TryGetItem(itemKind, out ItemDefinition? definition))
@@ -287,9 +328,9 @@ public static class CharacterPanelModel
         return use != null;
     }
 
-    // The consumable with the effect at the lowest bag anchor (what Q and E use), and how many such
-    // consumables the bag holds. Allocation free.
-    public static bool TryFindConsumable(in PlayerInventorySnapshot inventory, ItemUseEffect effect, out int anchor, out string itemKind, out int count)
+    // The consumable that restores the pool at the lowest bag anchor (what Q and R use), and how many
+    // such consumables the bag holds. Allocation free.
+    public static bool TryFindConsumable(in PlayerInventorySnapshot inventory, ConsumablePool pool, out int anchor, out string itemKind, out int count)
     {
         anchor = -1;
         itemKind = string.Empty;
@@ -302,8 +343,8 @@ public static class CharacterPanelModel
             if (slot.Item is not InventoryItemSnapshot item
                 || slot.SlotIndex < 0
                 || slot.SlotIndex >= BagGrid.CellCount
-                || !TryGetUse(item.ItemKind, out ItemUse? use)
-                || use!.Effect != effect)
+                || !TryGetUse(item.ItemKind, out ItemUseDefinition? use)
+                || (pool == ConsumablePool.Mana ? use!.RestoreMana : use!.RestoreHealth) <= 0)
             {
                 continue;
             }
@@ -318,6 +359,23 @@ public static class CharacterPanelModel
         }
 
         return anchor >= 0;
+    }
+
+    // The id of the item anchored at a bag cell (0..63).
+    public static bool TryGetBagItemId(in PlayerInventorySnapshot inventory, int anchor, out long itemInstanceId)
+    {
+        itemInstanceId = 0;
+        IReadOnlyList<InventorySlotSnapshot> slots = inventory.Slots;
+        for (int i = 0; i < slots.Count; i++)
+        {
+            if (slots[i].SlotIndex == anchor && slots[i].Item is InventoryItemSnapshot item)
+            {
+                itemInstanceId = item.ItemInstanceId;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // The context menu of an equipment slot: Unequip.

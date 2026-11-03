@@ -24,6 +24,10 @@ public static class InventoryWindow
     public const float HeldBackLeftUnits = 15f;
     public const float HeldBackTopUnits = 364f;
 
+    // The wallet line under it (M3).
+    public const float GoldTopUnits = 376f;
+    private static readonly UiColor GoldColor = new(0xD8, 0xB4, 0x5A, 255);
+
     // The body line height on this canvas (doubled when the glyphs are).
     internal static float BodyHeight(IUiCanvas c) => BodyTextPx * c.TextScale;
 
@@ -142,6 +146,7 @@ public static class InventoryWindow
         }
 
         DrawHeldBackLine(c, v, l, win);
+        DrawGoldLine(c, v, l, win);
 
         if (i.TryEndDrag(out int payload, out Vector2 dropPosition))
         {
@@ -712,6 +717,18 @@ public static class InventoryWindow
         b.Append(CharacterPanelModel.HeldBackSuffix(v.HeldBackCount));
         UiRect band = l.FromUnits(win, HeldBackLeftUnits, HeldBackTopUnits, BagColumns * CellUnits, 8f);
         DrawText(c, b.Text, new Vector2(band.X, band.Y), ItemTierStyle.Danger);
+    }
+
+    // "Gold 120" in the band under the held-back line: the wallet of the snapshot (M3).
+    private static void DrawGoldLine(IUiCanvas c, HudView v, in UiLayout l, UiRect win)
+    {
+        long gold = v.Inventory?.Gold ?? 0;
+        Span<char> mem = stackalloc char[32];
+        UiTextBuilder b = new(mem);
+        b.Append("Gold ");
+        b.Append((int)Math.Clamp(gold, 0L, int.MaxValue));
+        UiRect band = l.FromUnits(win, HeldBackLeftUnits, GoldTopUnits, BagColumns * CellUnits, 8f);
+        DrawText(c, b.Text, new Vector2(band.X, band.Y), GoldColor);
     }
 
     // An item with no sprite shows the start of its name, so it is never invisible.

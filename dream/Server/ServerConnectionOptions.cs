@@ -31,6 +31,22 @@ public sealed record ServerConnectionOptions
 
     public int MaxCoalescedDamageEvents { get; init; } = 4096;
 
+    public const int DefaultMaxConnections = 64;
+
+    public const string MaxConnectionsEnvironmentVariable = "DREAM_MAX_CONNECTIONS";
+
+    // Service-wide: a connection accepted while this many are open is closed at once. Zero or less
+    // turns the cap off. Overridden by DREAM_MAX_CONNECTIONS.
+    public int MaxConnections { get; init; } = DefaultMaxConnections;
+
+    // Closes a connection that has not joined within this long of being accepted, whatever it
+    // sends meanwhile (keepalives and garbage frames keep the idle timeout satisfied), so unjoined
+    // connections cannot hold MaxConnections slots forever. Zero or less turns it off.
+    public TimeSpan JoinDeadline { get; init; } = TimeSpan.FromSeconds(15);
+
+    // Sent once, best effort, to a client refused at the connection cap before its socket closes.
+    public const string ServerFullRejectionReason = "Server is full.";
+
     // Clock for the liveness checks; tests pass a fake one.
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
@@ -60,7 +76,55 @@ public sealed record ServerConnectionOptions
     // MaxSnapshotIntervalOverrideTicks is clamped to it with a log line.
     public ServerConnectionOptions WithEnvironmentOverrides(Action<string>? log = null)
     {
-        return WithSnapshotIntervalOverride(Environment.GetEnvironmentVariable(SnapshotIntervalEnvironmentVariable), log);
+        return WithSnapshotIntervalOverride(Environment.GetEnvironmentVariable(SnapshotIntervalEnvironmentVariable), log)
+            .WithMaxConnectionsOverride(Environment.GetEnvironmentVariable(MaxConnectionsEnvironmentVariable), log);
+    }
+
+    // Sockets kept free above the player cap when the connection cap is derived from it: joins in flight,
+    // a returning player's new connection beside its old one, and clients still choosing a character.
+    public const int PlayerCapHeadroom = 8;
+
+    // At startup: a connection cap at or below the player cap would refuse sockets before the player cap
+    // could (and would lock a full server's own players out of reconnecting). Unless DREAM_MAX_CONNECTIONS
+    // was set explicitly, the effective cap becomes maxPlayers + PlayerCapHeadroom; an explicit one is kept
+    // with a warning. The effective number is always logged when the two clash.
+    public ServerConnectionOptions WithPlayerCapHeadroom(int maxPlayers, string? maxConnectionsVariable, Action<string>? log = null)
+    {
+        if (maxPlayers <= 0 || MaxConnections <= 0 || maxPlayers < MaxConnections)
+        {
+            return this;
+        }
+
+        if (!string.IsNullOrWhiteSpace(maxConnectionsVariable))
+        {
+            log?.Invoke(
+                $"Warning: DREAM_MAX_PLAYERS ({maxPlayers}) is not below {MaxConnectionsEnvironmentVariable} ({MaxConnections}); " +
+                $"the effective connection cap stays {MaxConnections}, so players may be refused at the socket.");
+            return this;
+        }
+
+        int effective = maxPlayers + PlayerCapHeadroom;
+        log?.Invoke(
+            $"DREAM_MAX_PLAYERS ({maxPlayers}) is not below the default connection cap ({MaxConnections}); " +
+            $"the effective connection cap is {effective} (players + {PlayerCapHeadroom}). Set {MaxConnectionsEnvironmentVariable} to choose it.");
+        return this with { MaxConnections = effective };
+    }
+
+    public ServerConnectionOptions WithMaxConnectionsOverride(string? value, Action<string>? log = null)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return this;
+        }
+
+        if (int.TryParse(value.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int max) &&
+            max > 0)
+        {
+            return this with { MaxConnections = max };
+        }
+
+        log?.Invoke($"{MaxConnectionsEnvironmentVariable} is not a positive integer; keeping {MaxConnections}.");
+        return this;
     }
 
     public ServerConnectionOptions WithSnapshotIntervalOverride(string? value, Action<string>? log = null)
@@ -96,5 +160,7 @@ public enum ServerConnectionCloseReason
     // More than ServerConnection.MaxPendingOutboundMessages unmerged messages queued.
     BacklogOverflow,
     IdleTimeout,
-    SendStall
+    SendStall,
+    // Accepted but not joined within ServerConnectionOptions.JoinDeadline.
+    JoinTimeout
 }

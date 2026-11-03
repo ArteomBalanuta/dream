@@ -197,7 +197,9 @@ public sealed class WorldTransferServiceFixTests(ITestOutputHelper output)
             clock.Advance(DedicatedServerHost.TakeoverSilence + TimeSpan.FromSeconds(0.5));
             host.HandleClientMessage("connection-new", new ClientJoinRequestMessage("session-a", "Player A"));
             await AdvanceUntilAsync(service, () => service.ConnectionCount == 1);
-            Assert.True(oldTransport.IsDisposed);
+            // The takeover close runs on a background task since the M0 fix loop (notice flush, then close), so the
+            // transport is disposed shortly after the connection leaves the list, not before.
+            await AdvanceUntilAsync(service, () => oldTransport.IsDisposed);
             Assert.True(host.IsConnectionJoined("connection-new"));
 
             // The old loop sees its transport closed and ends; its mark goes with it.

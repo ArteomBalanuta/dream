@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Application;
+using Dream.Client.Input;
 using Dream.Client.Networking;
 using Dream.Client.Presentation;
 using Dream.Client.Scenes;
@@ -10,6 +11,7 @@ using Dream.Client.World;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Ui.Panels;
 using Dream.Rendering.ViewModels;
 using Dream.Server;
 using Dream.Simulation.Inventory;
@@ -57,6 +59,14 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
     public ClientDeathTracker Death => Get<ClientDeathTracker>("_deathTracker");
 
     public LootFeedbackSystem Loot => Get<LootFeedbackSystem>("_lootFeedback");
+
+    public Dream.Client.Replication.ClientGroundItemCache GroundItems => Get<Dream.Client.Replication.ClientGroundItemCache>("_groundItems");
+
+    public Dream.Client.Replication.ClientNpcCache Npcs => Get<Dream.Client.Replication.ClientNpcCache>("_npcs");
+
+    public VendorHudState Vendor => Get<VendorHudState>("_vendorHud");
+
+    public QuickbarHudState Quickbar => Get<QuickbarHudState>("_quickbarHud");
 
     public PlayerInventorySnapshot? Inventory =>
         (PlayerInventorySnapshot?)typeof(PlayScene).GetField("_inventory", Fields)!.GetValue(Scene);
@@ -107,6 +117,8 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
         Set(scene, "_scenePresenter", new ClientScenePresenter(session.SessionId));
         Set(scene, "_combatFeedback", new CombatFeedbackSystem(events, new FloatingCombatTextSystem()));
         Set(scene, "_actionFeedback", new AuthoritativeActionFeedbackSystem(events));
+        // An uninitialized object skips BindNewChat, and the fill below needs a parameterless constructor.
+        Set(scene, "_chatInput", new ChatInput(new ChatHudState()));
         Set(scene, "_lastWorldResyncRequestSeconds", double.NegativeInfinity);
         Set(scene, "_snapshotLogKey", string.Empty);
         Set(scene, "_commandLogKey", string.Empty);
@@ -121,6 +133,14 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
             {
                 field.SetValue(scene, constructor.Invoke([.. constructor.GetParameters().Select(p => p.DefaultValue)]));
             }
+        }
+
+        // M3: these live in a partial and have field initialisers, which an uninitialized object skips.
+        // The fill loop above builds them by their parameterless constructors; a type that loses one
+        // would be null here and fail every economy test far from the cause.
+        foreach (string economyField in new[] { "_groundItems", "_npcs", "_vendorHud", "_quickbarHud" })
+        {
+            Assert.NotNull(typeof(PlayScene).GetField(economyField, Fields)!.GetValue(scene));
         }
 
         return scene;

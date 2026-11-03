@@ -361,7 +361,7 @@ public sealed class Wave12DeltaActorLoopbackTests(ITestOutputHelper output)
             return Task.FromResult(new Rig(host, service, transport, output, recordExpected));
         }
 
-        public IReadOnlyList<ActorSnapshot> Actors() => Runtime.CaptureActorSnapshots();
+        public IReadOnlyList<ActorSnapshot> Actors() => Runtime.CaptureWireActorSnapshots();
 
         public IEnumerable<ActorSnapshot[]> AllExpected() => _expected.Values;
 
@@ -492,7 +492,7 @@ public sealed class Wave12DeltaActorLoopbackTests(ITestOutputHelper output)
             Assert.Equal(before + 1, Tick);
             if (_recordExpected)
             {
-                _expected[Tick] = [.. Runtime.CaptureActorSnapshots()];
+                _expected[Tick] = [.. Runtime.CaptureWireActorSnapshots()];
             }
 
             if (flush)

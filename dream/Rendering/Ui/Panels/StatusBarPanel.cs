@@ -1,7 +1,5 @@
 using System.Globalization;
 using Dream.Rendering.Hud;
-using Dream.Simulation.Content;
-using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using OpenTK.Mathematics;
 
@@ -10,10 +8,12 @@ namespace Dream.Rendering.Ui.Panels;
 // The bottom bar: left, centre and right groups on the three base sprites, the tiled filler between
 // them, then the dragons last. Positions are the art's own layout in units (u), read from the
 // generator: a rect given in bar units x is group-relative x minus the group's start (0, 199, 441).
-// Real data only: HP gem fill, EXP trough and level, mode, coordinates, satchel. Everything the game
-// has no system for (the two gauges, the stone slabs, Q/W/E, banner and lens) is drawn as an
-// empty art socket with no number, no key letter and no input. The one exception is the MP gem, see
-// ManaGemFill.
+// Real data only: HP gem fill, EXP trough and level, mode, coordinates, satchel. The six sockets of the
+// centre group (Q, W, E, the skill tile, banner and lens) are the quickbar's tiles: QuickbarPanel draws
+// a bound entry over each and reports a click while the inventory is open. An empty slot, and a bar that
+// was never given a state, leave the socket as art. What the game has no system for (the two gauges, the
+// stone slabs) is drawn as an empty art socket with no number, no key letter and no input. The MP gem
+// follows the server's mana once it has sent any, and ManaGemFill until then.
 //
 // The gems are liquid: the panel hands the canvas the eased level the surface computed (HudView
 // HealthLevel and ManaLevel) and the canvas draws the stone in its Gem mode, one quad on the Hud page.
@@ -24,9 +24,10 @@ public static class StatusBarPanel
 {
     public const int SatchelButtonId = 0x5B01;
 
-    // How full the MP gem is drawn. A visual choice, not data: the game has no mana system, so there is
-    // no value to show and no number is ever drawn on this gem. The stone is drawn full and lit so it
-    // does not read as a dead black socket next to the HP gem. 0 draws it empty again.
+    // How full the MP gem is drawn while no mana is known (HudStatusSnapshot.MaxMana is 0: the menus, and
+    // the first moments of a session before the server's first vitals). A visual choice, not data. The
+    // stone is drawn full and lit so it does not read as a dead black socket next to the HP gem. 0 draws
+    // it empty again.
     public const float ManaGemFill = 1f;
 
     private const float CentreStart = UiLayout.LeftGroupUnits;
@@ -95,11 +96,13 @@ public static class StatusBarPanel
         // gem and dragons are under them. A number the art has no glyph for falls back to text.
         bool hpNumerals = TryDrawHealthNumerals(c, v, l, s);
         bool levelNumerals = TryDrawLevelNumerals(c, v, l, s);
+        bool manaNumerals = TryDrawManaNumerals(c, v, l, s);
 
         // All the bar's text last, in one draw command: no text overlaps the dragons, and the talons
         // and gem must never cover it.
         BuildLeftText(c, v, l, hpNumerals);
-        BuildCentreText(c, v, l, levelNumerals);
+        BuildCentreText(c, v, l, s, levelNumerals);
+        BuildRightText(c, v, l, manaNumerals);
     }
 
     private static void BuildLeft(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
@@ -199,14 +202,9 @@ public static class StatusBarPanel
         Sprite(c, s, UiSpriteNames.ExpCup, cup, white);
 
         // Q/W/E: empty sockets, no letters, no input.
-        UiRect slotQ = l.FromUnits(g, 199f - CentreStart, 18f, 33f, 28f);
-        UiRect slotE = l.FromUnits(g, 266f - CentreStart, 18f, 28f, 28f);
-        Sprite(c, s, UiSpriteNames.QweSlotQ, slotQ, white);
+        Sprite(c, s, UiSpriteNames.QweSlotQ, l.FromUnits(g, 199f - CentreStart, 18f, 33f, 28f), white);
         Sprite(c, s, UiSpriteNames.QweSlotW, l.FromUnits(g, 235f - CentreStart, 18f, 29f, 28f), white);
-        Sprite(c, s, UiSpriteNames.QweSlotE, slotE, white);
-        // Q drinks the first healing potion in the bag, E the first mana potion: icon and count.
-        DrawPotionSlot(c, s, v, l, slotQ, ItemUseEffect.RestoreHealth);
-        DrawPotionSlot(c, s, v, l, slotE, ItemUseEffect.RestoreMana);
+        Sprite(c, s, UiSpriteNames.QweSlotE, l.FromUnits(g, 266f - CentreStart, 18f, 28f, 28f), white);
         for (int k = 0; k < NotchX.Length; k++)
         {
             Sprite(c, s, UiSpriteNames.QweNotch, l.FromUnits(g, NotchX[k] - CentreStart, 14f, 18f, 14f), white);
@@ -242,10 +240,13 @@ public static class StatusBarPanel
 
         Sprite(c, s, satchelFrame, satchel, white);
         Sprite(c, s, UiSpriteNames.IconSatchel, l.FromUnits(g, 411f - CentreStart, 21f, 22f, 22f), white);
+
+        // The quickbar's tiles over the six sockets above.
+        QuickbarPanel.Build(c, i, v, l, s, a);
     }
 
     // Level in the cup, EXP percent when the trough is tall enough, and the mode label.
-    private static void BuildCentreText(IUiCanvas c, HudView v, in UiLayout l, bool levelNumeralsDrawn)
+    private static void BuildCentreText(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s, bool levelNumeralsDrawn)
     {
         UiRect g = l.CentreGroup;
         HudStatusSnapshot st = v.Status;
@@ -268,7 +269,30 @@ public static class StatusBarPanel
         // The mode label stands on top of the bar, centred over the skill tile: the EXP trough runs
         // across the space just above the tile, and the label used to sit on it.
         PanelText.HaloCentred(c, st.InteractionMode.ToHudLabel(), bracket.X + bracket.W * 0.5f, ModeLabelY(c, g, l), UiTextStyle.Body, NumberColor);
+
+        QuickbarPanel.BuildText(c, v, l, s);
     }
+
+    // Mana as text on the MP gem when the bar art has no numerals; nothing until the server has sent any.
+    private static void BuildRightText(IUiCanvas c, HudView v, in UiLayout l, bool manaNumeralsDrawn)
+    {
+        HudStatusSnapshot st = v.Status;
+        if (manaNumeralsDrawn || st.MaxMana <= 0)
+        {
+            return;
+        }
+
+        UiRect gem = ManaGemRect(l);
+        UiTextStyle big = l.Scale >= 3f ? UiTextStyle.Large : UiTextStyle.Body;
+        Span<char> buf = stackalloc char[48];
+        if (PanelText.TryWritePair(buf, st.CurrentMana, '/', st.MaxMana, out int n))
+        {
+            PanelText.HaloCentred(c, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - PanelText.Height(c, big) - 4f * l.Scale, big, NumberColor);
+        }
+    }
+
+    private static UiRect ManaGemRect(in UiLayout l) =>
+        l.FromUnits(l.RightGroup, UiLayout.BarWidthUnits - GemX - GemSize - RightStart, GemY, GemSize, GemSize);
 
     // Top of the mode label: its bottom edge two scaled units above the bar group.
     internal static float ModeLabelY(IUiCanvas c, UiRect centreGroup, in UiLayout l) =>
@@ -332,6 +356,25 @@ public static class StatusBarPanel
         }
 
         UiRect gem = l.FromUnits(l.LeftGroup, GemX, GemY, GemSize, GemSize);
+        return TryDrawNumerals(c, s, l, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - 4f * l.Scale, false, gem.W, 14f * l.Scale);
+    }
+
+    // Mana as bar numerals on the MP gem, as the health ones sit on the HP gem. Nothing is drawn, and false
+    // is returned, until the server has sent a maximum.
+    private static bool TryDrawManaNumerals(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s)
+    {
+        if (v.Status.MaxMana <= 0)
+        {
+            return false;
+        }
+
+        Span<char> buf = stackalloc char[48];
+        if (!PanelText.TryWritePair(buf, v.Status.CurrentMana, '/', v.Status.MaxMana, out int n))
+        {
+            return false;
+        }
+
+        UiRect gem = ManaGemRect(in l);
         return TryDrawNumerals(c, s, l, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - 4f * l.Scale, false, gem.W, 14f * l.Scale);
     }
 
@@ -405,28 +448,6 @@ public static class StatusBarPanel
         string? name = ch == '/' ? UiSpriteNames.HudNumSlash : ch is >= '0' and <= '9' ? UiSpriteNames.HudNum(ch - '0') : null;
         glyph = default;
         return name is not null && s.TryGet(name, out glyph);
-    }
-
-    private static void DrawPotionSlot(IUiCanvas c, UiSpriteTable s, HudView v, in UiLayout l, UiRect slot, ItemUseEffect effect)
-    {
-        if (v.Inventory is not PlayerInventorySnapshot inventory
-            || !CharacterPanelModel.TryFindConsumable(inventory, effect, out _, out string kind, out int count)
-            || !s.TryGet("item." + kind, out UiSprite icon))
-        {
-            return;
-        }
-
-        // The icon sprite carries a 6 u margin round its 1 x 1 cell: draw it square, centred on the socket.
-        float size = MathF.Min(slot.W, slot.H) * 1.15f;
-        c.Sprite(icon, new UiRect(slot.X + (slot.W - size) * 0.5f, slot.Y + (slot.H - size) * 0.5f, size, size), UiColor.White);
-        if (count > 1)
-        {
-            Span<char> buf = stackalloc char[8];
-            if (PanelText.TryWriteInt(buf, count, out int n))
-            {
-                TryDrawNumerals(c, s, l, buf[..n], slot.X + slot.W * 0.78f, slot.Y + slot.H * 0.95f, false, slot.W * 0.5f, slot.H * 0.4f);
-            }
-        }
     }
 
     private static void Sprite(IUiCanvas c, UiSpriteTable s, string name, UiRect dst, UiColor tint)

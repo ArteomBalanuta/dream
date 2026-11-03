@@ -27,6 +27,11 @@ public static class CharacterWindow
     // Widget ids of the "+" plates, in sheet order. Clear of the inventory's ids.
     internal const int IdSpendBase = InventoryWindow.IdBase + 0x310;
 
+    // The spend button beside a stat row, shown only while a point is free and the stat can take it.
+    private const float SpendW = 14f;
+    private const float SpendGap = 2f;
+    private const int IdSpend = InventoryWindow.IdBase + 0x310;
+
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
     {
         if (!v.InventoryOpen)
@@ -78,9 +83,11 @@ public static class CharacterWindow
                 c.Sprite(art, plate, rows[n].CanSpend ? UiColor.White : new UiColor(150, 150, 150, 255));
             }
 
-            if (enabled && i.Button(id, plate) && rows[n].Attribute is StatId stat)
+            if (enabled && i.Button(id, plate) && rows[n].Attribute is StatId stat
+                && CharacterPanelModel.SpendAction(stat) is InventoryHudAction spend)
             {
-                a.SpendAttribute(stat);
+                // One point, as PlayerStatSpendIntent; the server checks the budget and the cap.
+                a.Inventory(spend);
             }
 
             spendSlot++;

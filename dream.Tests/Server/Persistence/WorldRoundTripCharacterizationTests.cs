@@ -239,7 +239,18 @@ public sealed class WorldRoundTripCharacterizationTests
         world.SaveItemInstance(held with { ItemInstanceId = 102 });
         world.DeleteItemInstance(102);
 
+        // Migration 0012 allows one slot row per item (ux_player_inventory_slots_item), and a slot upsert never
+        // overwrites a different item. This test shares one item between two slots and two players, so it drops
+        // the index, and it empties the slot before the second occupant (a legitimate move deletes first).
+        using (SqliteConnection connection = schema.CreateOpenConnection())
+        using (SqliteCommand drop = connection.CreateCommand())
+        {
+            drop.CommandText = "DROP INDEX ux_player_inventory_slots_item;";
+            drop.ExecuteNonQuery();
+        }
+
         world.SaveInventorySlot(new PersistedInventorySlot(" alpha ", 0, 101, default));
+        world.DeleteInventorySlot("alpha", 0, 101);
         world.SaveInventorySlot(new PersistedInventorySlot("alpha", 0, 100, default));
         world.SaveInventorySlot(new PersistedInventorySlot("alpha", 3, 100, default));
         world.SaveInventorySlot(new PersistedInventorySlot("beta", 0, 101, default));

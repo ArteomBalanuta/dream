@@ -27,6 +27,10 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         "terrain_cell_overrides",
         "player_inventory_slots",
         "player_starter_grants",
+        "player_wallets",
+        "player_quickbar_slots",
+        "player_quests",
+        "character_presence",
         "item_instances",
         "enemy_instances",
         "cube_fracture_pieces",
@@ -49,7 +53,7 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         ("enemy_instances",
             "object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, " +
             "facing_z, current_hp, max_hp, strength, agility, vitality, energy, movement_speed, attack_speed, " +
-            "level, created_utc, updated_utc"),
+            "level, created_utc, updated_utc, camp_key"),
         ("item_instances",
             "item_instance_id, item_kind, display_name, visual_id, owner_player_name, world_position_x, " +
             "world_position_y, world_position_z, state, stack_count, created_utc, updated_utc, rolled_modifiers"),
@@ -57,7 +61,10 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
             "object_id, cell_x, cell_y, cell_z, kind, cell_data, created_utc, updated_utc"),
         ("terrain_chunks", "chunk_x, chunk_z, format_version, cell_count, data, updated_utc"),
         ("player_inventory_slots", "player_name, slot_index, item_instance_id, updated_utc"),
-        ("player_starter_grants", "player_name, kit_version, updated_utc")
+        ("player_starter_grants", "player_name, kit_version, updated_utc"),
+        ("player_wallets", "player_name, gold, updated_utc"),
+        ("player_quickbar_slots", "player_name, slot, kind, ref_key, updated_utc"),
+        ("player_quests", "player_name, quest_key, state, progress, updated_utc")
     ];
 
     private readonly IWorldStore _store;
@@ -478,7 +485,7 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         created = false;
         if (selector.Id is WorldId id)
         {
-            return TryGet(id) ?? throw new WorldNotFoundException(id.ToString());
+            return ResizeIfPristineDefault(TryGet(id) ?? throw new WorldNotFoundException(id.ToString()), newWorldSize);
         }
 
         if (selector.Name is string name)
@@ -486,7 +493,7 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
             WorldRecord? existing = TryGetByName(name);
             if (existing != null)
             {
-                return existing;
+                return ResizeIfPristineDefault(existing, newWorldSize);
             }
 
             WorldRecord made = Create(new WorldCreateOptions(name, newWorldSize));
@@ -497,12 +504,59 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         WorldRecord? world = TryGet(WorldId.Default) ?? List().FirstOrDefault();
         if (world != null)
         {
-            return world;
+            return ResizeIfPristineDefault(world, newWorldSize);
         }
 
         WorldRecord first = Create(new WorldCreateOptions(WorldDescriptor.DefaultName, newWorldSize));
         created = true;
         return first;
+    }
+
+    // Per-world tables: a world with a row in any of them has been played in (or authored) and keeps its size.
+    private static readonly string[] WorldDataTables =
+    [
+        "player_world_state", "placed_cube_instances", "cube_fracture_pieces", "enemy_instances", "item_instances",
+        "player_inventory_slots", "player_starter_grants", "terrain_cell_overrides", "terrain_chunks",
+        "player_wallets", "player_quickbar_slots", "player_quests", "character_presence",
+    ];
+
+    // Migration 0003 always seeds world 1 at 56 x 8 x 56, so a fresh database's first server start would
+    // never get the size it asked for. A pristine world 1 (generated, no seed, no world time, no data in any
+    // per-world table) is resized to that size; a world with anything in it is never touched.
+    private WorldRecord ResizeIfPristineDefault(WorldRecord record, int newWorldSize)
+    {
+        WorldDescriptor d = record.Descriptor;
+        if (d.Id != WorldId.Default || d.MapSource != WorldMapSource.Generated || record.Seed != null ||
+            record.WorldTimeTicks != 0 || (d.Width == newWorldSize && d.Depth == newWorldSize))
+        {
+            return record;
+        }
+
+        WorldDescriptor.ForFloorSize(newWorldSize, name: d.Name).Validate();
+        using SqliteSession session = _store.BeginOwnedTransaction();
+        foreach (string table in WorldDataTables)
+        {
+            using SqliteCommand count = session.CreateCommand($"SELECT EXISTS (SELECT 1 FROM {table} WHERE world_id = $id);");
+            count.Parameters.AddWithValue("$id", WorldId.Default.Value);
+            if (Convert.ToInt64(count.ExecuteScalar(), CultureInfo.InvariantCulture) != 0)
+            {
+                return record;
+            }
+        }
+
+        using (SqliteCommand update = session.CreateCommand(
+            "UPDATE worlds SET width = $size, depth = $size, updated_utc = $now " +
+            "WHERE world_id = $id AND map_source = 'generated' AND seed IS NULL AND world_time_ticks = 0;"))
+        {
+            update.Parameters.AddWithValue("$size", newWorldSize);
+            update.Parameters.AddWithValue("$id", WorldId.Default.Value);
+            update.Parameters.AddWithValue("$now", SqliteSchemaBootstrapper.FormatUtc(DateTime.UtcNow));
+            update.ExecuteNonQuery();
+        }
+
+        WorldRecord resized = TryGet(session, WorldId.Default) ?? record;
+        session.Commit();
+        return resized;
     }
 
     private static void RequireValidName(string trimmed)

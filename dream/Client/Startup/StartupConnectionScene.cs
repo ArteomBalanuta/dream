@@ -38,9 +38,10 @@ public sealed class StartupConnectionScene : IDisposable
         _coordinator = coordinator;
         _persistConnectionOptions = persistConnectionOptions;
         _autoConnectUsesInitialOptions = autoConnectUsesInitialOptions;
-        // A scene Game returns to after a session ended shows why and waits for the player;
-        // auto-connect (DREAM_AUTO_CONNECT) applies to the first scene only, so a server that
-        // keeps dropping the client cannot cause a reconnect loop.
+        // A scene Game returns to after a session ended shows why. DREAM_AUTO_CONNECT applies to the first
+        // scene only. A lost connection is retried below, but only when the session had lasted
+        // NetworkSessionCoordinator.AutoReconnectMinimumSession; otherwise the scene waits for the player,
+        // so a server that keeps dropping the client cannot cause a reconnect loop.
         _autoConnectAttempted = sessionEndReason != null;
         if (initialOptions != null)
         {
@@ -57,6 +58,15 @@ public sealed class StartupConnectionScene : IDisposable
         if (sessionEndReason != null)
         {
             _coordinator.ReportSessionEnded(sessionEndReason);
+            // A lost connection (not a kick, a ban or a refused join) of a session that lasted long enough is
+            // retried. When the ended session was on this game's integrated server the coordinator's
+            // connector relaunches it instead, and CanAutoReconnect is false. The session is judged even when
+            // the reason is not retryable, so its stamp is cleared.
+            bool lastedLongEnough = _coordinator.TakeSessionLastedLongEnoughToReconnect();
+            if (lastedLongEnough && RemoteClientSession.IsRetryableEnd(sessionEndReason) && _coordinator.CanAutoReconnect)
+            {
+                _coordinator.BeginReconnect(new ClientConnectionOptions(_host, _portText, _playerName));
+            }
         }
     }
 
@@ -78,6 +88,12 @@ public sealed class StartupConnectionScene : IDisposable
         string previousPort = _portText;
         string previousPlayerName = _playerName;
 
+        // Esc ends the automatic reconnect.
+        if (_coordinator.IsReconnecting && keyboardState.IsKeyPressed(Keys.Escape))
+        {
+            _coordinator.StopReconnect();
+        }
+
         GL.ClearColor(0.08f, 0.09f, 0.12f, 1f);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
@@ -92,7 +108,18 @@ public sealed class StartupConnectionScene : IDisposable
             _coordinator.LocalServerStatus,
             _coordinator.StatusMessage,
             _coordinator.IsBusy,
+            _coordinator.PickerCharacters,
+            out string? pickedCharacter,
+            out bool cancelPickerPressed,
             _allowBack);
+
+        if (cancelPickerPressed
+            || !string.Equals(previousHost, request.Host, StringComparison.Ordinal)
+            || !string.Equals(previousPort, request.PortText, StringComparison.Ordinal))
+        {
+            // The list belongs to the endpoint it was asked from.
+            _coordinator.CancelPicker();
+        }
 
         _backRequested |= request.BackPressed;
         _host = request.Host;
@@ -114,9 +141,16 @@ public sealed class StartupConnectionScene : IDisposable
 
         PersistConnectionOptionsIfChanged(previousHost, previousPort, previousPlayerName);
 
-        if (request.ConnectPressed)
+        if (pickedCharacter != null)
         {
-            _coordinator.BeginConnect(new ClientConnectionOptions(_host, _portText, _playerName));
+            _playerName = pickedCharacter;
+            ClientConnectionOptions picked = new(_host, _portText, _playerName);
+            _coordinator.ChooseCharacter(picked, pickedCharacter);
+            _persistConnectionOptions?.Invoke(picked);
+        }
+        else if (request.ConnectPressed)
+        {
+            _coordinator.BeginConnectWithPicker(new ClientConnectionOptions(_host, _portText, _playerName));
         }
     }
 

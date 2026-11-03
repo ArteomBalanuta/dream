@@ -167,8 +167,8 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         // Reward 100 * 14 = 1400; level 1 needs 1000 + 23 = 1023, so level 2 with 377 left over.
         Assert.Equal(2, combatant.Level);
         Assert.Equal(377, combatant.Experience);
-        // One level gained: five attribute points.
-        Assert.Equal(5, combatant.StatPoints);
+        // One level gained: five stat points (derived from the level, nothing stored).
+        Assert.Equal(5, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
         Assert.Equal(
             // Wave I: the loot is granted after the delete, so a crash between them loses a drop, never duplicates it.
             ["PersistPlayerProgression session-a 2/377", $"DeletePersistedEnemy {EnemyActorId}", $"GrantLoot session-a Wolf {EnemyActorId} 5"],
@@ -235,8 +235,11 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         Assert.Equal(
             CubeFracturePattern.CreateFirstPassRubble(cell).Where(GeometryFracturePiece.IsValid),
             fracture.Pieces);
+        // The record is repaired twice: once for the build-protection gate, once on entering the hit. The
+        // second call finds the identity matching and returns the record unchanged, so it is harmless.
         Assert.Equal(
             [
+                $"RepairCubeRecord {record.Actor.Id}",
                 $"RepairCubeRecord {record.Actor.Id}",
                 $"DeletePersistedPlacedCube {record.Actor.Id}",
                 $"PersistFracturePieces {record.Actor.Id} {cell}"
@@ -437,7 +440,7 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
 
         public void DeletePersistedEnemy(int enemyId) => Calls.Add($"DeletePersistedEnemy {enemyId}");
 
-        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick)
+        public void GrantLoot(PlayerSessionId killer, string enemyKind, int enemyActorId, ulong tick, OpenTK.Mathematics.Vector3 deathPosition)
             => Calls.Add($"GrantLoot {killer.Value} {enemyKind} {enemyActorId} {tick}");
 
         public WorldObjectRecord RepairCubeRecord(WorldObjectRecord record)

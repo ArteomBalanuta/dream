@@ -605,6 +605,13 @@ public sealed class StaleSessionTakeoverTests
             host.HandleClientMessage(NewConnection, new ClientJoinRequestMessage("session-a", PlayerName));
             await AdvanceUntilAsync(service, () => service.ConnectionCount == 1);
 
+            // The old connection leaves the tick's list at once; its transport closes on a background task.
+            DateTime closeDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (!oldTransport.IsDisposed && DateTime.UtcNow < closeDeadline)
+            {
+                await Task.Delay(5);
+            }
+
             Assert.True(oldTransport.IsDisposed);
             Assert.False(newTransport.IsDisposed);
             Assert.True(host.IsConnectionJoined(NewConnection));
@@ -674,7 +681,9 @@ public sealed class StaleSessionTakeoverTests
                     throttled++;
                     if (deferJoins)
                     {
-                        Assert.Empty(TickAndDrain(host));
+                        // The victim's own pushes (vitals, owner progress) may come with the tick; the
+                        // throttled join must produce nothing for its connection.
+                        Assert.DoesNotContain(TickAndDrain(host), reply => reply.ConnectionId == spammer);
                     }
 
                     host.ReleaseConnection(spammer);
@@ -687,8 +696,7 @@ public sealed class StaleSessionTakeoverTests
             else
             {
                 Assert.True(deferJoins);
-                PendingConnectionReply reply = Assert.Single(TickAndDrain(host));
-                Assert.Equal(spammer, reply.ConnectionId);
+                PendingConnectionReply reply = Assert.Single(TickAndDrain(host), r => r.ConnectionId == spammer);
                 JoinRejectedMessage rejected = Assert.IsType<JoinRejectedMessage>(reply.Message);
                 Assert.False(rejected.Reason.StartsWith(DedicatedServerHost.JoinThrottledRejectionReason, StringComparison.Ordinal));
                 processed++;

@@ -12,11 +12,11 @@ using Dream.Simulation.World;
 
 namespace Dream.Tests.Multiplayer.Protocol;
 
-// Protocol v14: the Combat group is [str, aspd, vit, agi, energy, statPoints, mana, maxMana] and a
-// player's VisualKey ("<main>|<off>") travels like an enemy's.
+// Protocol v19: the Combat group is [str, aspd, vit, agi, energy] (points are derived, mana is in
+// ServerPlayerVitals) and a player's VisualKey ("<main>|<off>") travels like an enemy's.
 public sealed class CharacterStatsWireTests
 {
-    private static readonly PlayerCombatStatsSnapshot Stats = new(14, 2.3f, 12, 13, 11, 5, 44, 75);
+    private static readonly PlayerCombatStatsSnapshot Stats = new(14, 2.3f, 12, 13, 11);
 
     [Fact]
     public void Keyframe_CarriesTheWholeCombatGroupAndThePlayerVisualKey()
@@ -28,7 +28,7 @@ public sealed class CharacterStatsWireTests
         string json = Encoding.UTF8.GetString(EncodePayload(codec, sent));
         ServerSnapshotMessage shown = new ActorStateCache().Apply(DecodePayload(codec, EncodePayload(codec, sent)));
 
-        Assert.Contains("[14,2.3,12,13,11,5,44,75]", json, StringComparison.Ordinal);
+        Assert.Contains("[14,2.3,12,13,11]", json, StringComparison.Ordinal);
         Assert.Contains("\"held.weapon.sword|held.shield.buckler\"", json, StringComparison.Ordinal);
         ActorSnapshot actor = Assert.Single(shown.Snapshot.Actors);
         Assert.Equal(Stats, actor.CombatStats);
@@ -36,10 +36,10 @@ public sealed class CharacterStatsWireTests
     }
 
     [Fact]
-    public void Delta_WhenOnlyTheManaChanges_CarriesTheCombatGroupAgain()
+    public void Delta_WhenOnlyTheEnergyChanges_CarriesTheCombatGroupAgain()
     {
         ActorSnapshot[] first = [Player(1, Stats, null)];
-        ActorSnapshot[] second = [Player(1, Stats with { Mana = 45 }, null)];
+        ActorSnapshot[] second = [Player(1, Stats with { Energy = 12 }, null)];
         ActorDeltaChain chain = new();
         TransportJsonCodec codec = new();
         ActorStateCache cache = new();
@@ -99,13 +99,13 @@ public sealed class CharacterStatsWireTests
     public void SpendIntent_RoundTrips()
     {
         TransportJsonCodec codec = new();
-        PlayerActionMessage message = new(new PlayerSessionId("session-a"), 7, new PlayerAttributeSpendIntent(StatId.Energy, 1));
+        PlayerActionMessage message = new(new PlayerSessionId("session-a"), 7, new PlayerStatSpendIntent(StatId.Energy, 1));
 
         byte[] bytes = codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 3), message);
         PlayerActionMessage decoded = Assert.IsType<PlayerActionMessage>(codec.Decode(bytes).Message);
 
-        PlayerAttributeSpendIntent intent = Assert.IsType<PlayerAttributeSpendIntent>(decoded.Payload);
-        Assert.Equal(StatId.Energy, intent.Attribute);
+        PlayerStatSpendIntent intent = Assert.IsType<PlayerStatSpendIntent>(decoded.Payload);
+        Assert.Equal(StatId.Energy, intent.Stat);
         Assert.Equal(1, intent.Points);
     }
 

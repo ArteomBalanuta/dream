@@ -78,13 +78,17 @@ public sealed class InventoryWriteFailureTests
     public void AFailedSwap_ThenAMoveOfTheDivergedSlot_DoesNotDeleteTheOtherItemsRow()
     {
         using MigrationTestDatabase db = Migrated();
+        // The diverged state below leaves item A in memory at slot 1 while its row is still at slot 0, so
+        // the next move writes a second row for A: the unique index (migration 0012) is dropped here.
+        db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;");
         SeedTwoItems(db);
         using Run run = new(db);
         Assert.True(run.Inventory.Ensure(Player));
 
         // The swap's closure aborts: memory says 0=B, 1=A, the rows still say 0=A, 1=B. (Two torches of the
-        // same size swap in place: each takes the other's anchor.)
-        db.ExecuteScript("CREATE TRIGGER fail_swap BEFORE UPDATE ON player_inventory_slots WHEN NEW.slot_index = 0 BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
+        // same size swap in place: each takes the other's anchor.) A swap deletes both rows and inserts
+        // them again, so the abort is on the insert of slot 0.
+        db.ExecuteScript("CREATE TRIGGER fail_swap BEFORE INSERT ON player_inventory_slots WHEN NEW.slot_index = 0 BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
         Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryMove(Player, 0, 1));
         run.Flush();
         Assert.Equal(1, run.FailedWrites);
@@ -294,7 +298,8 @@ public sealed class InventoryWriteFailureTests
         run.Flush();
 
         Assert.Equal(0, run.FailedWrites);
-        Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind <> 'tool.torch';"));
+        // The maul only (no old tool kinds), apart from the torch and the potions of kits v3 and v4 that arrive newer than the unrecorded kit.
+        Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind <> 'tool.torch' AND item_kind NOT LIKE 'consumable.%' AND item_kind NOT LIKE 'potion.%';"));
         Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
         Assert.Equal((long)ToolCatalog.CurrentStarterKitVersion, db.Scalar("SELECT kit_version FROM player_starter_grants;"));
     }
@@ -352,7 +357,8 @@ public sealed class InventoryWriteFailureTests
         Assert.True(run.Inventory.Ensure(Player));
         run.Flush();
 
-        // Version 1 still receives the version-2 torch; version 2 receives nothing.
-        Assert.Equal(grantedVersion == 1 ? 2L : 1L, db.Scalar("SELECT COUNT(*) FROM item_instances;"));
+        // Only entries newer than the recorded version arrive (version 1: the torch and the potions; version 2: the
+        // potions), beside the one item the player already holds.
+        Assert.Equal(1L + ToolCatalog.StarterKit.Count(entry => entry.IntroducedVersion > grantedVersion), db.Scalar("SELECT COUNT(*) FROM item_instances;"));
     }
 }

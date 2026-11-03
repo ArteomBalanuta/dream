@@ -16,6 +16,9 @@ public enum EnemySpawnRole : byte
 // stats are instance stats, like a rolled item's); damage, maximum health and the attack interval
 // come from the enemy.* formulas. AttackIntervalSeconds, when set, replaces the interval formula
 // for new spawns. VisualKey names the client's model and tint; LootTable names a loot.json table.
+// MaxHealth (the optional "maxHealth") replaces the enemy.max_health formula for new spawns: vitality is capped, so it is how
+// a high tier gets more health. A restored row keeps the health it was saved with.
+// GoldMin..GoldMax (the optional "goldMin" and "goldMax") is the gold a kill pays, inclusive; 0 and 0 pays none.
 public sealed record EnemyTemplate(
     string Key,
     string DisplayName,
@@ -29,4 +32,30 @@ public sealed record EnemyTemplate(
     float MoveSpeed,
     string VisualKey,
     string? LootTable,
-    EnemySpawnRole SpawnRole);
+    EnemySpawnRole SpawnRole,
+    int GoldMin = 0,
+    int GoldMax = 0,
+    int? MaxHealth = null);
+
+// A spawn camp as authored in spawns.json (M2-B): Count enemies of Template stand around (X, Z) on the
+// floor; a dead one is replaced RespawnSeconds later (counted in simulation ticks). A Night camp only
+// exists while it is night: its enemies despawn at dawn and respawn only in the dark. Enemy rows keep
+// the camp by Key (camp_key), with no foreign key.
+public sealed record SpawnCamp(
+    string Key,
+    string Template,
+    float X,
+    float Z,
+    int Count,
+    float RespawnSeconds,
+    bool Night,
+    int MinWorldSize = 0,
+    int MaxWorldSize = 0)
+{
+    // A camp with a MinWorldSize is authored in metres: X and Z are never scaled to the map.
+    public bool IsAbsolute => MinWorldSize > 0;
+
+    // Whether the camp exists on a floor of floorSize metres (the optional minWorldSize..maxWorldSize band).
+    public bool ExistsOn(int floorSize) =>
+        floorSize >= MinWorldSize && (MaxWorldSize == 0 || floorSize <= MaxWorldSize);
+}

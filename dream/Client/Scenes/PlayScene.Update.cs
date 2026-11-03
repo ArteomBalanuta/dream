@@ -27,11 +27,11 @@ public partial class PlayScene
 
         // Viewmodel pose refresh is presentation-local and should remain scene/client owned.
         _viewModelController.RefreshPose();
-        HandleGlobalInput(keyboardState);
+        HandleGlobalInputUnlessTyping(keyboardState);
         // A dead local player sends no movement, look or use. Commands keep flowing (and keep their
         // sequence), because the reconciler only compares on a new ack and the respawn snap needs one.
         bool allowGameplayInput = DeadInputPolicy.AllowGameplayInput(
-            _settings.CurrentRuntimeState.AllowGameplayInput,
+            _settings.CurrentRuntimeState.AllowGameplayInput && !_chatInput.IsTyping,
             _runtime.Player.Combatant.Health.IsAlive);
         HandleConsumableHotkeys(keyboardState, allowGameplayInput);
         // Clicks set the goal here; the pointer is last Render's hover state, read once per Update.
@@ -43,6 +43,11 @@ public partial class PlayScene
             0,
             key => keyboardState.IsKeyDown(key) || CaptureKeyHeld(key),
             allowGameplayInput);
+        rawCommandFrame = QuickbarInput.RemapModeKeys(
+            rawCommandFrame,
+            keyboardState.IsKeyDown(Keys.B) || CaptureKeyHeld(Keys.B),
+            keyboardState.IsKeyDown(Keys.G) || CaptureKeyHeld(Keys.G),
+            allowGameplayInput);
         if (allowGameplayInput)
         {
             rawCommandFrame = ApplyCaptureFight(rawCommandFrame);
@@ -50,10 +55,6 @@ public partial class PlayScene
         }
 
         rawCommandFrame = _gameplayInputResumeFilter.Filter(rawCommandFrame, allowGameplayInput);
-        // Only the integrated host (Game.CreateLocalServerHandle) lets noclip and freeze through.
-        _commandInputFilter.AllowDevToggles = _localServer is { IsReady: true } localServer
-            && LoopbackHost.IsLoopback(_remoteClient.Options.Host)
-            && _remoteClient.Options.Port == localServer.BoundPort;
         PlayerCommandFrame commandFrame = _commandInputFilter.Filter(rawCommandFrame);
         _localPlayerWasMoving = IsMoving(commandFrame.MoveIntent);
         PlayJumpSoundIfPressed(commandFrame.MoveIntent.JumpPressed);
@@ -153,12 +154,18 @@ public partial class PlayScene
     // false when there is none (Esc then closes the pause menu as usual).
     internal Func<bool>? TryEscapeBack { get; set; }
 
-    // Esc closes an open inventory first (a second Esc opens Settings); from play it opens Settings, and
-    // in Settings it closes them (a pause-menu sub-screen goes back one screen first). The capture
-    // script calls these same methods.
+    // Esc, in order: an open chat line already took it (HandleChatInput); a pause-menu sub-screen goes
+    // back one screen; an open vendor window, NPC dialogue or trade closes (the trade is cancelled); an
+    // open inventory closes (a second Esc opens the pause menu); from play it opens the pause menu, and in
+    // the menu it closes it. The capture script calls these same methods.
     internal void PressEscape()
     {
         if (TryEscapeBack?.Invoke() == true)
+        {
+            return;
+        }
+
+        if (!_settings.SettingsVisible && TryCloseNpcWindows())
         {
             return;
         }

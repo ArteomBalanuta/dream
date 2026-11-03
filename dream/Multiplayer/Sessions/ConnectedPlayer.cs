@@ -51,6 +51,18 @@ public sealed class ConnectedPlayer
     // the player attacks.
     internal ulong ProtectedThroughTick;
 
+    // M4: the running skill and consumable cooldowns of this session. On the session, not the combatant,
+    // because the primary seat's combatant is reused by successive sessions.
+    internal readonly Dream.Simulation.Players.AbilityCooldowns Cooldowns = new();
+
+    // M4: set whenever mana, max mana or a cooldown changed, so the host sends this session's
+    // ServerPlayerVitals. LastSentMana and LastSentMaxMana are what the owner last received (-1: never).
+    internal bool VitalsDirty = true;
+
+    internal int LastSentMana = -1;
+
+    internal int LastSentMaxMana = -1;
+
     // The registry this player is registered in (null once it forgets the player); told when the
     // spawn state changes so it can keep its active and departed sets (PlayerSessionRegistry).
     internal PlayerSessionRegistry? Registry { get; set; }

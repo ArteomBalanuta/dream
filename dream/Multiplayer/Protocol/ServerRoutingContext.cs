@@ -34,6 +34,12 @@ public sealed class ServerRoutingContext
     // The character and account this connection joined as; null until a checked join is applied.
     public Dream.Simulation.Characters.JoinHolderIdentity? JoinedIdentity { get; set; }
 
+    // M8. The role and sanctions of the account behind this connection, read at join (the access decision
+    // carries them from the prefetch). Admin state comes only from here, never from the client.
+    public Dream.Simulation.Characters.AccountStanding Standing { get; set; }
+
+    public bool IsAdmin => Standing.Role == 1;
+
     public PlayerCommandMessage? LastCommandMessage { get; set; }
 
     public PlayerActionMessage? LastActionMessage { get; set; }
@@ -140,6 +146,61 @@ public sealed class ServerRoutingContext
         }
 
         WorldResyncPending = false;
+        return true;
+    }
+
+    // Chat (M1-A). Clock is the host's clock, set by DedicatedServerHost before it routes a message;
+    // the chat token bucket reads it. PendingChats holds cleaned lines until the host delivers them
+    // (right after routing, under the tick lock).
+    public TimeProvider? Clock { get; set; }
+
+    public List<ClientChatMessage> PendingChats { get; } = [];
+
+    // The host's chat limiter, keyed by account or session so a reconnect keeps its bucket. Without
+    // one (a context outside a host) the connection's own bucket below is used.
+    public ChatRateLimiter? ChatLimiter { get; set; }
+
+    public bool TryConsumeChat(long nowTimestamp, long timestampFrequency)
+    {
+        if (ChatLimiter == null)
+        {
+            return TryConsumeChatToken(nowTimestamp, timestampFrequency);
+        }
+
+        string key = JoinedIdentity is { } identity
+            ? "a:" + identity.Account.HashHex
+            : "s:" + (LastJoinRequest?.RequestedSessionId ?? ConnectionId);
+        return ChatLimiter.TryConsume(key, nowTimestamp, timestampFrequency);
+    }
+
+    public const int ChatBurst = 5;
+    public const double ChatRefillPerSecond = 1.0;
+
+    private bool _chatBucketStarted;
+    private double _chatTokens;
+    private long _chatLastRefillTimestamp;
+
+    // Token bucket: burst ChatBurst, refilling ChatRefillPerSecond. Timestamps are at the given frequency.
+    public bool TryConsumeChatToken(long nowTimestamp, long timestampFrequency)
+    {
+        if (!_chatBucketStarted)
+        {
+            _chatBucketStarted = true;
+            _chatTokens = ChatBurst;
+        }
+        else
+        {
+            double elapsedSeconds = Math.Max(0, nowTimestamp - _chatLastRefillTimestamp) / (double)timestampFrequency;
+            _chatTokens = Math.Min(ChatBurst, _chatTokens + elapsedSeconds * ChatRefillPerSecond);
+        }
+
+        _chatLastRefillTimestamp = nowTimestamp;
+        if (_chatTokens < 1.0)
+        {
+            return false;
+        }
+
+        _chatTokens -= 1.0;
         return true;
     }
 

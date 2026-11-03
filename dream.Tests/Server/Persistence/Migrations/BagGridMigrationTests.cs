@@ -64,7 +64,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         command.CommandText = "PRAGMA foreign_key_check;";
         using SqliteDataReader reader = command.ExecuteReader();
         Assert.False(reader.Read(), "foreign_key_check must be clean");
-        Assert.Equal(11L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(14L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
         string backup = Assert.Single(database.Backups());
-        Assert.Contains("v0009-to-v0011", backup, StringComparison.Ordinal);
+        Assert.Contains("v0009-to-v0014", backup, StringComparison.Ordinal);
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
         BagGridMigrationAsserts.AssertMigrated(before, migrated);
@@ -181,11 +181,13 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
-        BagGridMigrationAsserts.AssertMigrated(before, migrated);
+        // The bootstrap runs every migration, so 0012 (one slot row per item) also runs: p2's row for item 6
+        // is the second reference, and the owner's worn row wins, so p2's row is gone and the item is not.
+        BagGridMigrationAsserts.AssertMigrated(before.Where(row => row.Player != "p2").ToList(), migrated);
         Assert.Equal([100, 101, 102, 103, 104], migrated.Where(row => row.Player == Player && row.Slot >= 100).Select(row => row.Slot).Order());
-        // p1's item 5 (old slot 4) is at the second block row's first column; p2's own row for item 6 stays at anchor 0.
+        // p1's item 5 (old slot 4) is at the second block row's first column.
         Assert.Equal([16], migrated.Where(row => row.Player == Player && row.Slot < 100).Select(row => row.Slot));
-        Assert.Equal([0], migrated.Where(row => row.Player == "p2").Select(row => row.Slot));
+        Assert.Empty(migrated.Where(row => row.Player == "p2"));
     }
 
     // The legacy-e databases are schema v6: all four later migrations (accounts, item rolls, enemy formulas, this
@@ -202,7 +204,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
 
-        Assert.Contains("v0006-to-v0011", Assert.Single(database.Backups()), StringComparison.Ordinal);
+        Assert.Contains("v0006-to-v0014", Assert.Single(database.Backups()), StringComparison.Ordinal);
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
         BagGridMigrationAsserts.AssertMigrated(before, migrated);
@@ -222,17 +224,13 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         }
 
         SqliteConnection.ClearAllPools();
-        SchemaMigrationResult result = database.Schema.EnsureSchema();
+        // Stops at 0010: the schema is compared with the v9 one (0011 adds a column).
+        SchemaMigrationResult result = database.Schema.EnsureSchema(UpTo(10));
 
-        Assert.Equal(new SchemaMigrationResult(9, 11, result.BackupPath), result);
+        Assert.Equal(new SchemaMigrationResult(9, 10, result.BackupPath), result);
         SqliteConnection.ClearAllPools();
         using SqliteConnection after = database.Open();
-        // Migration 0011 then appends player_profiles.stat_points; every other table is the v9 one.
-        static bool NotProfiles(string line) =>
-            !line.StartsWith("master table player_profiles on ", StringComparison.Ordinal)
-            && !line.StartsWith("column player_profiles ", StringComparison.Ordinal);
-        Assert.Equal(v9.Where(NotProfiles), SqliteSchemaSnapshot.Capture(after).Where(NotProfiles));
-        Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM pragma_table_info('player_profiles') WHERE name = 'stat_points';"));
+        Assert.Equal(v9, SqliteSchemaSnapshot.Capture(after));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM item_instances;"));
         Assert.Equal(5L, database.Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%advance_object_id';"));
     }
@@ -265,6 +263,6 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Empty(database.Backups());
-        Assert.Equal(11L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(14L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
     }
 }

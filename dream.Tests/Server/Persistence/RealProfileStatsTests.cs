@@ -92,20 +92,28 @@ public sealed class RealProfileStatsTests
         {
             Join(first, "conn-1", "stat-1");
             Dream.Simulation.Players.PlayerCombatant combatant = first.Runtime!.Player.Combatant;
-            combatant.GrantStatPoints(5);
-            Assert.True(combatant.TrySpendPoint(Dream.Simulation.Stats.StatId.Energy, 2, out _));
+            combatant.ApplyProgression(2, 0);
+            Assert.True(Dream.Simulation.Players.PlayerStatRules.TryValidateSpend(
+                combatant.Level,
+                Dream.Simulation.Players.PlayerCombatStatsSnapshot.From(combatant.BaseStats),
+                Dream.Simulation.Stats.StatId.Energy,
+                2,
+                out Dream.Simulation.Players.PlayerCombatStatsSnapshot spent,
+                out _));
+            combatant.ApplyBaseStats(spent.ToCombatStats());
             Leave(first, "conn-1");
         }
 
         PersistedCreatureStats stored = profiles.TryGet(Player)!.Value.Stats;
-        Assert.Equal((12, 3), (stored.Energy, stored.StatPoints));
+        Assert.Equal((12, 2), (stored.Energy, stored.Level));
 
         using DedicatedServerHost second = CreateHost(database);
         Join(second, "conn-2", "stat-2");
         Dream.Simulation.Players.PlayerCombatant restored = second.Runtime!.Player.Combatant;
         Assert.Equal(12, restored.BaseStats.Energy);
-        Assert.Equal(3, restored.StatPoints);
-        Assert.Equal(80, restored.MaxMana);
+        // Level 2 earns 5; 2 went into Energy.
+        Assert.Equal(3, Dream.Simulation.Players.PlayerStatRules.PointsAvailable(restored.Level, restored.BaseStats));
+        Assert.Equal(Dream.Simulation.Players.PlayerManaRules.MaxMana(2, 12), restored.MaxMana);
     }
 
     private static void AssertStoredStats(SqlitePlayerProfileRepository profiles)

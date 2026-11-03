@@ -30,6 +30,10 @@ public sealed class GridPathfinder
     public static bool IsWalkable(INavWorld world, int x, int level, int z)
         => IsStandable(world, x, level, z) && !world.IsBlocked(x, level + 1, z);
 
+    // True when the last TryFindPath had to move the start to another column (a body hanging past
+    // the map edge, say). The follower must then walk to the path's first cell before the rest.
+    public bool StartRelocated { get; private set; }
+
     // path is filled start..end inclusive. False only if no standable start exists.
     // When the goal cannot be reached the path ends at the expanded cell nearest to it:
     // smallest horizontal distance first, then smallest level difference.
@@ -37,10 +41,14 @@ public sealed class GridPathfinder
     {
         path.Clear();
         reachedGoal = false;
+        StartRelocated = false;
+        NavCell requested = start;
         if (!TryResolveStart(world, start, out start))
         {
             return false;
         }
+
+        StartRelocated = start.X != requested.X || start.Z != requested.Z;
 
         _open.Clear();
         _cost.Clear();
@@ -178,19 +186,88 @@ public sealed class GridPathfinder
         return (dx * dx + dz * dz, Math.Abs(cell.Level - goal.Level));
     }
 
-    // The body may be a little above its support (mid-fall), so look down for a floor.
+    // The body may be a little above its support (mid-fall), so look down for a floor. A body whose
+    // centre is past the map edge (its half-width still rests on the last cell) has no column of its
+    // own: clamp into the grid (at most a couple of cells out) and take the nearest standable cell within Chebyshev radius 2.
     private static bool TryResolveStart(INavWorld world, NavCell start, out NavCell resolved)
     {
-        for (int level = Math.Min(start.Level, world.Height - 1); level >= 1; level--)
+        if (TryFindFloor(world, start.X, start.Level, start.Z, out resolved))
         {
-            if (IsStandable(world, start.X, level, start.Z))
+            return true;
+        }
+
+        int cx = Math.Clamp(start.X, 0, world.Width - 1);
+        int cz = Math.Clamp(start.Z, 0, world.Depth - 1);
+        if (cx == start.X && cz == start.Z)
+        {
+            // In the grid, just not standable (walled in, no floor): not an edge case.
+            resolved = start;
+            return false;
+        }
+
+        if (Math.Max(Math.Abs(start.X - cx), Math.Abs(start.Z - cz)) > StartSearchRadius)
+        {
+            resolved = start;
+            return false;
+        }
+
+        int bestDistance = int.MaxValue;
+        NavCell best = start;
+        for (int radius = 0; radius <= StartSearchRadius; radius++)
+        {
+            for (int dx = -radius; dx <= radius; dx++)
             {
-                resolved = new NavCell(start.X, level, start.Z);
+                for (int dz = -radius; dz <= radius; dz++)
+                {
+                    if (Math.Max(Math.Abs(dx), Math.Abs(dz)) != radius)
+                    {
+                        continue;
+                    }
+
+                    int x = cx + dx;
+                    int z = cz + dz;
+                    if (x < 0 || z < 0 || x >= world.Width || z >= world.Depth
+                        || !TryFindFloor(world, x, start.Level, z, out NavCell cell))
+                    {
+                        continue;
+                    }
+
+                    int ox = x - start.X;
+                    int oz = z - start.Z;
+                    int distance = (ox * ox) + (oz * oz);
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        best = cell;
+                    }
+                }
+            }
+
+            if (bestDistance != int.MaxValue)
+            {
+                resolved = best;
                 return true;
             }
         }
 
         resolved = start;
+        return false;
+    }
+
+    private const int StartSearchRadius = 2;
+
+    private static bool TryFindFloor(INavWorld world, int x, int startLevel, int z, out NavCell resolved)
+    {
+        for (int level = Math.Min(startLevel, world.Height - 1); level >= 1; level--)
+        {
+            if (IsStandable(world, x, level, z))
+            {
+                resolved = new NavCell(x, level, z);
+                return true;
+            }
+        }
+
+        resolved = default;
         return false;
     }
 }

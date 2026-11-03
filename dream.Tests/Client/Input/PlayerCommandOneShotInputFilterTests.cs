@@ -77,6 +77,32 @@ public class PlayerCommandOneShotInputFilterTests
         Assert.Equal(PlayerInteractionMode.Combat, filtered.RequestedMode.Mode);
     }
 
+    [Fact]
+    public void Filter_DropsFreezeAndNoclipOnlyWhileDevTogglesAreDisallowed()
+    {
+        PlayerCommandOneShotInputFilter filter = new() { AllowDevToggles = false };
+        PlayerCommandFrame frame = new(
+            new PlayerSessionId("session-a"),
+            1,
+            PlayerModeSwitchIntent.None,
+            new PlayerMoveIntent(1f, 0f, 0f, JumpPressed: true, FreezePressed: true, ToggleNoclipPressed: true),
+            PlayerLookIntent.None,
+            PrimaryUsePressed: false);
+
+        PlayerCommandFrame blocked = filter.Filter(frame);
+
+        Assert.False(blocked.MoveIntent.FreezePressed);
+        Assert.False(blocked.MoveIntent.ToggleNoclipPressed);
+        Assert.Equal(1f, blocked.MoveIntent.ForwardAxis);
+
+        filter.AllowDevToggles = true;
+        _ = filter.Filter(CreateFrame(sequence: 2, toggleNoclipPressed: false));
+        PlayerCommandFrame allowed = filter.Filter(frame with { Sequence = 3 });
+
+        Assert.True(allowed.MoveIntent.FreezePressed);
+        Assert.True(allowed.MoveIntent.ToggleNoclipPressed);
+    }
+
     private static PlayerCommandFrame CreateFrame(ulong sequence, bool toggleNoclipPressed)
     {
         return new PlayerCommandFrame(

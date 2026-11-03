@@ -14,9 +14,9 @@ using Dream.Server.Hosting;
 
 namespace Dream.Tests.Integration;
 
-// Potions: the server removes the item and applies the effect, and rejects (consuming nothing) when
-// the pool is already full. Plus the pure pieces: HealthState.Restore, the catalogue entries, the bag
-// menu and the Q/E lookup.
+// Potions: an ItemUseIntent removes the item and applies the effect, and is rejected (consuming
+// nothing) when the pool is already full. Plus the pure pieces: HealthState.Restore, the catalogue
+// entries, the bag menu and the Q/R lookup.
 [Collection(TimingSensitiveCollection.Name)]
 public sealed class ConsumableUseTests
 {
@@ -53,9 +53,9 @@ public sealed class ConsumableUseTests
         }
 
         ContentCatalog.Shipped.TryGetItem("consumable.greater-heal", out ItemDefinition? greater);
-        Assert.Equal(new ItemUse(ItemUseEffect.RestoreHealth, 100), greater!.Use);
+        Assert.Equal(new ItemUseDefinition(100, 0, 320), greater!.Use);
         ContentCatalog.Shipped.TryGetItem("consumable.minor-mana", out ItemDefinition? mana);
-        Assert.Equal(new ItemUse(ItemUseEffect.RestoreMana, 30), mana!.Use);
+        Assert.Equal(new ItemUseDefinition(0, 30, 320), mana!.Use);
     }
 
     [Fact]
@@ -64,11 +64,11 @@ public sealed class ConsumableUseTests
         string items = File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.ItemsFileName));
         string enemies = File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.EnemiesFileName));
         string loot = File.ReadAllText(Path.Combine(ContentCatalog.ShippedDirectory, ContentCatalog.LootFileName));
-        string badEffect = items.Replace("\"effect\": \"RestoreMana\"", "\"effect\": \"Explode\"");
-        Assert.Contains("unknown use effect", Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(badEffect, enemies, loot)).Message);
-        string badAmount = items.Replace("\"amount\": 30", "\"amount\": 0");
+        string restoresNothing = items.Replace("\"restoreMana\": 30,", "\"restoreMana\": 0,");
+        Assert.Contains("must restore health or mana", Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(restoresNothing, enemies, loot)).Message);
+        string badAmount = items.Replace("\"restoreMana\": 30,", "\"restoreMana\": -1,");
         Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(badAmount, enemies, loot));
-        string changed = items.Replace("\"amount\": 30", "\"amount\": 31");
+        string changed = items.Replace("\"restoreMana\": 30,", "\"restoreMana\": 31,");
         Assert.NotEqual(ContentCatalog.Shipped.ContentDigest, ContentCatalog.Load(changed, enemies, loot).ContentDigest);
     }
 
@@ -85,18 +85,20 @@ public sealed class ConsumableUseTests
                 new InventorySlotSnapshot(20, new InventoryItemSnapshot(4, "consumable.minor-mana", "Minor Mana Draught", "consumable.potion.mana", 1, "", [])),
             ]);
 
-        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ItemUseEffect.RestoreHealth, out int anchor, out string kind, out int count));
+        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Health, out int anchor, out string kind, out int count));
         Assert.Equal(3, anchor);
         Assert.Equal("consumable.greater-heal", kind);
         Assert.Equal(2, count);
-        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ItemUseEffect.RestoreMana, out anchor, out _, out count));
+        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Mana, out anchor, out _, out count));
         Assert.Equal((20, 1), (anchor, count));
 
         InventoryItemSnapshot potion = inventory.Slots[0].Item!.Value;
         List<CharacterMenuEntry> menu = CharacterPanelModel.BackpackMenu(inventory, 9, potion);
         Assert.Equal("Use", menu[0].Label);
-        Assert.Equal(InventoryHudActionKind.EquipTo, menu[0].Action.Kind);
-        Assert.Equal(CharacterPanelModel.FirstFitCell, menu[0].Action.Target);
+        Assert.Equal(InventoryHudActionKind.Use, menu[0].Action.Kind);
+        Assert.Equal(9, menu[0].Action.SlotIndex);
+        Assert.Equal(potion.ItemInstanceId, menu[0].Action.ItemInstanceId);
+        Assert.IsType<ItemUseIntent>(PlayScene.ToInventoryIntent(menu[0].Action));
         Assert.DoesNotContain(menu, entry => entry.Label.StartsWith("Equip", StringComparison.Ordinal));
     }
 
@@ -141,35 +143,36 @@ public sealed class ConsumableUseTests
         {
             WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
             PlayerInventorySnapshot inventory = JoinInventory(client);
-            Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ItemUseEffect.RestoreHealth, out int anchor, out string kind, out int count));
-            Assert.Equal(2, count);
+            Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Health, out int anchor, out string kind, out int count));
+            Assert.Equal(3, count);  // weak-heal, minor-heal and the kit v4 potion.health
             ContentCatalog.Shipped.TryGetItem(kind, out ItemDefinition? definition);
-            int amount = definition!.Use!.Amount;
+            int amount = definition!.Use!.RestoreHealth;
+            Assert.True(CharacterPanelModel.TryGetBagItemId(inventory, anchor, out long itemId));
 
             HealthState health = server.Runtime.Player.Combatant.Health;
             Assert.Equal(health.MaxHealth, health.CurrentHealth);
 
             // Full health: refused, nothing consumed.
-            ServerActionMessage refused = await SendAsync(server, client, new InventoryEquipIntent(anchor));
+            ServerActionMessage refused = await SendAsync(server, client, new ItemUseIntent(anchor, itemId));
             Assert.False(refused.Result.Accepted);
 
             health.ApplyDamage(health.MaxHealth - 1);
             int before = health.CurrentHealth;
-            ServerActionMessage accepted = await SendAsync(server, client, new InventoryEquipIntent(anchor, CharacterPanelModel.FirstFitCell));
+            ServerActionMessage accepted = await SendAsync(server, client, new ItemUseIntent(anchor, itemId));
             Assert.True(accepted.Result.Accepted, accepted.Result.Rejection?.ToString());
             PlayerInventorySnapshot after = Assert.IsType<InventoryChangedResult>(accepted.Result.Payload).Inventory;
             Assert.Equal(Math.Min(health.MaxHealth, before + amount), health.CurrentHealth);
             Assert.Null(after.ItemAt(anchor));
-            Assert.True(CharacterPanelModel.TryFindConsumable(after, ItemUseEffect.RestoreHealth, out _, out _, out int left));
-            Assert.Equal(1, left);
+            Assert.True(CharacterPanelModel.TryFindConsumable(after, ConsumablePool.Health, out _, out _, out int left));
+            Assert.Equal(2, left);
             await server.DisconnectAsync(client);
         }
 
         await using (WireLoopbackServer restarted = await StartAsync(db))
         {
             WireLoopbackClient client = await restarted.ConnectAndJoinAsync(Session);
-            Assert.True(CharacterPanelModel.TryFindConsumable(JoinInventory(client), ItemUseEffect.RestoreHealth, out _, out _, out int persisted));
-            Assert.Equal(1, persisted);
+            Assert.True(CharacterPanelModel.TryFindConsumable(JoinInventory(client), ConsumablePool.Health, out _, out _, out int persisted));
+            Assert.Equal(2, persisted);
             await restarted.DisconnectAsync(client);
         }
     }
@@ -185,31 +188,32 @@ public sealed class ConsumableUseTests
             InventoryEquipOutcome.Equipped,
             server.Runtime.InventoryService.TryGrantRolled(key, "consumable.minor-mana", ItemRarity.Common, new ItemRollSeed(1, 2, 3, 4, 5)));
         PlayerInventorySnapshot inventory = server.Runtime.InventoryService.BuildSnapshot(key);
-        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ItemUseEffect.RestoreMana, out int anchor, out string kind, out int count));
-        Assert.Equal(1, count);
+        Assert.True(CharacterPanelModel.TryFindConsumable(inventory, ConsumablePool.Mana, out int anchor, out string kind, out int count));
+        Assert.Equal(2, count);
         ContentCatalog.Shipped.TryGetItem(kind, out ItemDefinition? definition);
-        int amount = definition!.Use!.Amount;
+        int amount = definition!.Use!.RestoreMana;
+        Assert.True(CharacterPanelModel.TryGetBagItemId(inventory, anchor, out long itemId));
 
         PlayerCombatant combatant = server.Runtime.Player.Combatant;
         Assert.True(combatant.MaxMana > 0);
         // A joining player's pool is not necessarily full (it regenerates), so top it up first.
         combatant.RestoreMana(combatant.MaxMana);
-        Assert.Equal(combatant.MaxMana, combatant.Mana);
+        Assert.Equal(combatant.MaxMana, combatant.CurrentMana);
 
         // Full mana: refused, nothing consumed.
-        ServerActionMessage refused = await SendAsync(server, client, new InventoryEquipIntent(anchor));
+        ServerActionMessage refused = await SendAsync(server, client, new ItemUseIntent(anchor, itemId));
         Assert.False(refused.Result.Accepted);
         Assert.NotNull(server.Runtime.InventoryService.BuildSnapshot(key).ItemAt(anchor));
 
-        // Drain the pool (a wire block carries the current mana), then drink.
-        combatant.ApplyBaseStats((combatant.CaptureStatsSnapshot() with { Mana = 0 }).ToCombatStats());
-        Assert.Equal(0, combatant.Mana);
-        ServerActionMessage accepted = await SendAsync(server, client, new InventoryEquipIntent(anchor, CharacterPanelModel.FirstFitCell));
+        // Drain the pool, then drink.
+        combatant.SetMana(0);
+        Assert.Equal(0, combatant.CurrentMana);
+        ServerActionMessage accepted = await SendAsync(server, client, new ItemUseIntent(anchor, itemId));
         Assert.True(accepted.Result.Accepted, accepted.Result.Rejection?.ToString());
         PlayerInventorySnapshot after = Assert.IsType<InventoryChangedResult>(accepted.Result.Payload).Inventory;
         Assert.Null(after.ItemAt(anchor));
         // Regen may add a point or two across the ticks the action took.
-        Assert.InRange(combatant.Mana, Math.Min(combatant.MaxMana, amount), Math.Min(combatant.MaxMana, amount + 5));
+        Assert.InRange(combatant.CurrentMana, Math.Min(combatant.MaxMana, amount), Math.Min(combatant.MaxMana, amount + 5));
         await server.DisconnectAsync(client);
     }
 }

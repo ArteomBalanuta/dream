@@ -6,6 +6,7 @@ using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Stats;
+using Dream.Simulation.World;
 
 namespace Dream.Simulation.Content;
 
@@ -16,19 +17,47 @@ namespace Dream.Simulation.Content;
 //
 // ContentDigest covers the parsed values, not the file bytes, so whitespace and line endings do not
 // change it. It is a lockstep input: two servers with different content diverge.
-public sealed class ContentCatalog
+public sealed partial class ContentCatalog
 {
     public const string WolfKey = "Wolf";
 
     public const string ItemsFileName = "items.json";
     public const string EnemiesFileName = "enemies.json";
     public const string LootFileName = "loot.json";
+    public const string SpawnsFileName = "spawns.json";
+    public const string NpcsFileName = "npcs.json";
+    public const string SkillsFileName = "skills.json";
 
     // The visual an enemy without an explicit key draws (the wolf). The wire leaves it out.
     public const string DefaultEnemyVisualKey = "enemy.wolf";
 
+    public const int MaxCamps = 64;
+    public const int MaxCampCount = 8;
+    public const float MaxCampCoordinate = 100_000f;
+    public const float MaxCampRespawnSeconds = 86_400f;
+
+    // Vendors and gold (M3).
+    public const int MaxNpcs = 64;
+    public const int MaxNpcStock = 32;
+    public const int MaxNpcGreetingLength = 400;
+    public const float MaxNpcOffset = 1000f;
+    public const int MaxGoldAmount = 1_000_000;
+
+    // Skills and consumables (M4).
+    public const int MaxSkills = 64;
+    public const int MaxManaCost = 1000;
+    public const int MaxCooldownTicks = 64_000;
+    public const float MaxSkillRange = 64f;
+    public const int MaxSkillTargets = 16;
+    public const int MaxDamagePercent = 1000;
+    public const int MaxHealAmount = 10_000;
+    public const int MaxItemRestore = 10_000;
+
     public const int MaxLootDrops = 4;
     public const int MaxEnemyLevel = 1000;
+
+    // The largest authored maxHealth of an enemy template.
+    public const int MaxEnemyMaxHealth = 100_000;
     public const int MaxLootWeight = 1_000_000;
     public const int MaxLootEntries = 64;
 
@@ -39,6 +68,7 @@ public sealed class ContentCatalog
     private readonly Dictionary<string, ItemDefinition> _items;
     private readonly Dictionary<string, EnemyTemplate> _enemies;
     private readonly Dictionary<string, LootTable> _lootTables;
+    private readonly Dictionary<string, SkillDefinition> _skills;
 
     private ContentCatalog(
         Dictionary<string, ItemDefinition> items,
@@ -50,6 +80,11 @@ public sealed class ContentCatalog
         IReadOnlyList<EnemyTemplate> enemyList,
         Dictionary<string, LootTable> lootTables,
         IReadOnlyList<LootTable> lootList,
+        IReadOnlyList<SpawnCamp> camps,
+        IReadOnlyList<NpcDefinition> npcs,
+        Dictionary<string, SkillDefinition> skills,
+        IReadOnlyList<SkillDefinition> skillList,
+        IReadOnlyList<QuickbarSlotSnapshot> defaultQuickbar,
         string digest)
     {
         _items = items;
@@ -61,6 +96,11 @@ public sealed class ContentCatalog
         Enemies = enemyList;
         _lootTables = lootTables;
         LootTables = lootList;
+        Camps = camps;
+        Npcs = npcs;
+        _skills = skills;
+        Skills = skillList;
+        DefaultQuickbar = defaultQuickbar;
         ContentDigest = digest;
     }
 
@@ -74,6 +114,32 @@ public sealed class ContentCatalog
     public IReadOnlyList<EnemyTemplate> Enemies { get; }
 
     public IReadOnlyList<LootTable> LootTables { get; }
+
+    // The spawn camps in file order (spawns.json). Empty when the content has none, and the runtime
+    // then falls back to the world-wide wolf population step.
+    public IReadOnlyList<SpawnCamp> Camps { get; }
+
+    // The vendors in file order (npcs.json). Empty when the content has none.
+    public IReadOnlyList<NpcDefinition> Npcs { get; }
+
+    // The skills in file order (skills.json). Empty when the content has none.
+    public IReadOnlyList<SkillDefinition> Skills { get; }
+
+    // What a character that never bound its quickbar shows: always InventoryConstants.QuickbarSlots
+    // entries, slots 0..5 in order, None where the file lists nothing.
+    public IReadOnlyList<QuickbarSlotSnapshot> DefaultQuickbar { get; }
+
+    public bool TryGetSkill(string key, out SkillDefinition skill)
+    {
+        if (key != null && _skills.TryGetValue(key, out SkillDefinition? found))
+        {
+            skill = found;
+            return true;
+        }
+
+        skill = null!;
+        return false;
+    }
 
     // The starter kit in seeding order, with the kit version that introduced each kind.
     public IReadOnlyList<StarterKitEntry> StarterKit { get; }
@@ -133,7 +199,19 @@ public sealed class ContentCatalog
         string itemsJson = ReadFile(itemsPath);
         string enemiesJson = ReadFile(enemiesPath);
         string lootJson = ReadFile(Path.Combine(directory, LootFileName));
-        return Load(itemsJson, enemiesJson, lootJson);
+        // spawns.json is optional: a content directory without it has no camps.
+        string spawnsPath = Path.Combine(directory, SpawnsFileName);
+        string spawnsJson = File.Exists(spawnsPath) ? ReadFile(spawnsPath) : EmptySpawnsJson;
+        // npcs.json is optional too: a content directory without it has no vendors.
+        string npcsPath = Path.Combine(directory, NpcsFileName);
+        string npcsJson = File.Exists(npcsPath) ? ReadFile(npcsPath) : EmptyNpcsJson;
+        // skills.json is optional as well: a content directory without it has no skills.
+        string skillsPath = Path.Combine(directory, SkillsFileName);
+        string skillsJson = File.Exists(skillsPath) ? ReadFile(skillsPath) : EmptySkillsJson;
+        // quests.json is optional as well: a content directory without it has no quests.
+        string questsPath = Path.Combine(directory, QuestsFileName);
+        string questsJson = File.Exists(questsPath) ? ReadFile(questsPath) : EmptyQuestsJson;
+        return Load(itemsJson, enemiesJson, lootJson, spawnsJson, npcsJson, skillsJson, questsJson);
     }
 
     // A catalog with no loot tables (fixtures that predate loot.json).
@@ -142,8 +220,30 @@ public sealed class ContentCatalog
 
     private const string EmptyLootJson = "{\"version\":1,\"tables\":[]}";
 
-    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson)
+    private const string EmptySpawnsJson = "{\"version\":1,\"camps\":[]}";
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson) =>
+        Load(itemsJson, enemiesJson, lootJson, EmptySpawnsJson);
+
+    private const string EmptyNpcsJson = "{\"version\":1,\"npcs\":[]}";
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson) =>
+        Load(itemsJson, enemiesJson, lootJson, spawnsJson, EmptyNpcsJson);
+
+    private const string EmptySkillsJson = "{\"version\":1,\"skills\":[],\"defaultQuickbar\":[]}";
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson, string npcsJson) =>
+        Load(itemsJson, enemiesJson, lootJson, spawnsJson, npcsJson, EmptySkillsJson);
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson, string npcsJson, string skillsJson) =>
+        Load(itemsJson, enemiesJson, lootJson, spawnsJson, npcsJson, skillsJson, EmptyQuestsJson);
+
+    public static ContentCatalog Load(string itemsJson, string enemiesJson, string lootJson, string spawnsJson, string npcsJson, string skillsJson, string questsJson)
     {
+        ArgumentNullException.ThrowIfNull(questsJson);
+        ArgumentNullException.ThrowIfNull(skillsJson);
+        ArgumentNullException.ThrowIfNull(npcsJson);
+        ArgumentNullException.ThrowIfNull(spawnsJson);
         ArgumentNullException.ThrowIfNull(itemsJson);
         ArgumentNullException.ThrowIfNull(enemiesJson);
         ArgumentNullException.ThrowIfNull(lootJson);
@@ -151,8 +251,12 @@ public sealed class ContentCatalog
         ParsedItems items = ParseItems(itemsJson);
         ParsedLoot loot = ParseLoot(lootJson, items);
         ParsedEnemies enemies = ParseEnemies(enemiesJson, loot);
-        string digest = ComputeDigest(items, enemies, loot);
-        return new ContentCatalog(
+        List<SpawnCamp> camps = ParseSpawns(spawnsJson, enemies);
+        List<NpcDefinition> npcs = ParseNpcs(npcsJson, items);
+        ParsedSkills skills = ParseSkills(skillsJson, items);
+        List<QuestDefinition> quests = ParseQuests(questsJson, items, enemies, npcs);
+        string digest = ComputeDigest(items, enemies, loot, camps, npcs, skills, quests);
+        ContentCatalog catalog = new(
             items.ByKey,
             items.List,
             items.StarterKit,
@@ -162,7 +266,14 @@ public sealed class ContentCatalog
             enemies.List,
             loot.ByKey,
             loot.List,
+            camps,
+            npcs,
+            skills.ByKey,
+            skills.List,
+            skills.DefaultQuickbar,
             digest);
+        catalog.SetQuests(quests);
+        return catalog;
     }
 
     private static ContentCatalog LoadShipped() => LoadFromDirectory(ShippedDirectory);
@@ -272,7 +383,7 @@ public sealed class ContentCatalog
             path,
             element,
             ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers", "equipSlots"],
-            optional: ["rolls", "footprint", "use"]);
+            optional: ["rolls", "footprint", "sellPrice", "use"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
         string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxDescriptionLength);
@@ -302,20 +413,20 @@ public sealed class ContentCatalog
         }
 
         List<StatModifier> modifiers = ParseModifiers(path, key, properties["modifiers"]);
-        (int equipSlotMask, List<EquipmentSlot> equipSlots) = ParseEquipSlots($"{path}.equipSlots", properties["equipSlots"]);
+        ItemUseDefinition? use = properties.TryGetValue("use", out JsonElement useElement)
+            ? ParseItemUse($"{path}.use", useElement)
+            : null;
+        (int equipSlotMask, List<EquipmentSlot> equipSlots) = ParseEquipSlots($"{path}.equipSlots", properties["equipSlots"], allowEmpty: use != null);
         ItemRollTable? rolls = properties.TryGetValue("rolls", out JsonElement rollsElement)
             ? ParseRolls($"{path}.rolls", rollsElement)
             : null;
         ItemFootprint footprint = properties.TryGetValue("footprint", out JsonElement footprintElement)
             ? ParseFootprint($"{path}.footprint", footprintElement)
             : ItemFootprint.One;
-        ItemUse? use = properties.TryGetValue("use", out JsonElement useElement)
-            ? ParseUse($"{path}.use", useElement)
-            : null;
-        if (equipSlots.Count == 0 && use == null)
-        {
-            throw Fail(ItemsFileName, $"{path}.equipSlots", "must list at least one equipment slot");
-        }
+
+        int sellPrice = properties.TryGetValue("sellPrice", out JsonElement sellElement)
+            ? ReadInt(ItemsFileName, $"{path}.sellPrice", sellElement, 0, MaxGoldAmount)
+            : 0;
 
         return new ItemDefinition(
             key,
@@ -329,23 +440,27 @@ public sealed class ContentCatalog
             equipSlots,
             rolls,
             footprint,
+            sellPrice,
             use);
     }
 
-    // {"effect": "RestoreHealth" | "RestoreMana", "amount": 1..10000}. A consumable cannot be equipped.
-    private static ItemUse ParseUse(string path, JsonElement element)
+    // { "restoreHealth": n, "restoreMana": n, "cooldownTicks": n }; at least one restore above 0.
+    private static ItemUseDefinition ParseItemUse(string path, JsonElement element)
     {
         ExpectObject(ItemsFileName, path, element);
-        Dictionary<string, JsonElement> use = ReadProperties(ItemsFileName, path, element, ["effect", "amount"]);
-        string effectName = ReadString(ItemsFileName, $"{path}.effect", use["effect"]);
-        ItemUseEffect effect = effectName switch
+        Dictionary<string, JsonElement> use = ReadProperties(ItemsFileName, path, element, ["restoreHealth", "restoreMana", "cooldownTicks"], ["cooldownGroup"]);
+        int health = ReadInt(ItemsFileName, $"{path}.restoreHealth", use["restoreHealth"], 0, MaxItemRestore);
+        int mana = ReadInt(ItemsFileName, $"{path}.restoreMana", use["restoreMana"], 0, MaxItemRestore);
+        int cooldown = ReadInt(ItemsFileName, $"{path}.cooldownTicks", use["cooldownTicks"], 0, MaxCooldownTicks);
+        if (health == 0 && mana == 0)
         {
-            "RestoreHealth" => ItemUseEffect.RestoreHealth,
-            "RestoreMana" => ItemUseEffect.RestoreMana,
-            _ => throw Fail(ItemsFileName, $"{path}.effect", $"unknown use effect '{Truncate(effectName)}'"),
-        };
-        int amount = ReadInt(ItemsFileName, $"{path}.amount", use["amount"], 1, 10000);
-        return new ItemUse(effect, amount);
+            throw Fail(ItemsFileName, path, "must restore health or mana");
+        }
+
+        string? group = use.TryGetValue("cooldownGroup", out JsonElement groupElement)
+            ? ReadNonEmptyString(ItemsFileName, $"{path}.cooldownGroup", groupElement)
+            : null;
+        return new ItemUseDefinition(health, mana, cooldown, group);
     }
 
     // [columns, rows], each a whole number 1..BagGrid.MaxFootprint. The item is placed by its top-left cell.
@@ -433,7 +548,7 @@ public sealed class ContentCatalog
             : ReadInt(ItemsFileName, path, element, (int)min, (int)max);
     }
 
-    private static (int Mask, List<EquipmentSlot> Slots) ParseEquipSlots(string path, JsonElement element)
+    private static (int Mask, List<EquipmentSlot> Slots) ParseEquipSlots(string path, JsonElement element, bool allowEmpty = false)
     {
         ExpectArray(ItemsFileName, path, element);
         List<EquipmentSlot> slots = [];
@@ -469,7 +584,11 @@ public sealed class ContentCatalog
             index++;
         }
 
-        // The empty list is checked by the caller: only a consumable (one with a "use") may list none.
+        if (slots.Count == 0 && !allowEmpty)
+        {
+            throw Fail(ItemsFileName, path, "must list at least one equipment slot");
+        }
+
         return (mask, slots);
     }
 
@@ -546,7 +665,7 @@ public sealed class ContentCatalog
                 path,
                 enemyElement,
                 ["key", "displayName", "level", "strength", "vitality", "attackSpeed", "aggroRange", "attackRange", "moveSpeed", "visualKey", "spawnRole"],
-                optional: ["attackIntervalSeconds", "lootTable"]);
+                optional: ["attackIntervalSeconds", "lootTable", "goldMin", "goldMax", "maxHealth"]);
             float? interval = enemy.TryGetValue("attackIntervalSeconds", out JsonElement intervalElement)
                 ? ReadFloat(EnemiesFileName, $"{path}.attackIntervalSeconds", intervalElement, 0.05f, 3600f)
                 : null;
@@ -559,6 +678,21 @@ public sealed class ContentCatalog
                     throw Fail(EnemiesFileName, $"{path}.lootTable", $"references missing loot table '{Truncate(lootTable)}'");
                 }
             }
+
+            int goldMin = enemy.TryGetValue("goldMin", out JsonElement goldMinElement)
+                ? ReadInt(EnemiesFileName, $"{path}.goldMin", goldMinElement, 0, MaxGoldAmount)
+                : 0;
+            int goldMax = enemy.TryGetValue("goldMax", out JsonElement goldMaxElement)
+                ? ReadInt(EnemiesFileName, $"{path}.goldMax", goldMaxElement, 0, MaxGoldAmount)
+                : goldMin;
+            if (goldMax < goldMin)
+            {
+                throw Fail(EnemiesFileName, $"{path}.goldMax", $"{goldMax} is below goldMin {goldMin}");
+            }
+
+            int? maxHealth = enemy.TryGetValue("maxHealth", out JsonElement maxHealthElement)
+                ? ReadInt(EnemiesFileName, $"{path}.maxHealth", maxHealthElement, 1, MaxEnemyMaxHealth)
+                : null;
 
             // The wolf stops at 90% of its attack range at most. A range at or below the separation distance
             // (0.95 m) over that fraction would stop it inside the separation, where it shoves the player and
@@ -586,7 +720,10 @@ public sealed class ContentCatalog
                 ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], MinMoveSpeed, 100f),
                 ReadVisualId(EnemiesFileName, $"{path}.visualKey", enemy["visualKey"]),
                 lootTable,
-                ReadSpawnRole($"{path}.spawnRole", enemy["spawnRole"]));
+                ReadSpawnRole($"{path}.spawnRole", enemy["spawnRole"]),
+                goldMin,
+                goldMax,
+                maxHealth);
             if (!byKey.TryAdd(template.Key, template))
             {
                 throw Fail(EnemiesFileName, $"{path}.key", $"duplicate enemy key '{template.Key}'");
@@ -620,6 +757,347 @@ public sealed class ContentCatalog
             "NightExtra" => EnemySpawnRole.NightExtra,
             _ => throw Fail(EnemiesFileName, path, $"unknown spawn role '{Truncate(name)}' (Primary or NightExtra)"),
         };
+    }
+
+    // ---- spawn camps ----
+
+    private static List<SpawnCamp> ParseSpawns(string json, ParsedEnemies enemies)
+    {
+        using JsonDocument document = ParseDocument(SpawnsFileName, json);
+        JsonElement root = document.RootElement;
+        ExpectObject(SpawnsFileName, "$", root);
+        Dictionary<string, JsonElement> properties = ReadProperties(SpawnsFileName, "$", root, ["version", "camps"]);
+        _ = ReadInt(SpawnsFileName, "$.version", properties["version"], 1, 1);
+
+        List<SpawnCamp> list = [];
+        HashSet<string> keys = new(StringComparer.Ordinal);
+        JsonElement campsElement = properties["camps"];
+        ExpectArray(SpawnsFileName, "$.camps", campsElement);
+        int index = 0;
+        foreach (JsonElement campElement in campsElement.EnumerateArray())
+        {
+            string path = $"$.camps[{index}]";
+            if (index >= MaxCamps)
+            {
+                throw Fail(SpawnsFileName, "$.camps", $"more than {MaxCamps} camps");
+            }
+
+            ExpectObject(SpawnsFileName, path, campElement);
+            Dictionary<string, JsonElement> camp = ReadProperties(
+                SpawnsFileName,
+                path,
+                campElement,
+                ["key", "template", "x", "z", "count", "respawnSeconds"],
+                optional: ["night", "minWorldSize", "maxWorldSize"]);
+            string key = ReadKey(SpawnsFileName, $"{path}.key", camp["key"]);
+            string template = ReadKey(SpawnsFileName, $"{path}.template", camp["template"]);
+            if (!enemies.ByKey.TryGetValue(template, out EnemyTemplate? known))
+            {
+                throw Fail(SpawnsFileName, $"{path}.template", $"references missing enemy '{Truncate(template)}'");
+            }
+
+            bool night = false;
+            if (camp.TryGetValue("night", out JsonElement nightElement))
+            {
+                if (nightElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                {
+                    throw Fail(SpawnsFileName, $"{path}.night", "expected true or false");
+                }
+
+                night = nightElement.GetBoolean();
+            }
+
+            int minWorldSize = 0;
+            int maxWorldSize = 0;
+            if (camp.TryGetValue("minWorldSize", out JsonElement minElement))
+            {
+                minWorldSize = ReadInt(SpawnsFileName, $"{path}.minWorldSize", minElement, WorldDescriptor.MinHorizontalSize, WorldDescriptor.MaxHorizontalSize);
+            }
+
+            if (camp.TryGetValue("maxWorldSize", out JsonElement maxElement))
+            {
+                maxWorldSize = ReadInt(SpawnsFileName, $"{path}.maxWorldSize", maxElement, WorldDescriptor.MinHorizontalSize, WorldDescriptor.MaxHorizontalSize);
+                if (maxWorldSize < minWorldSize)
+                {
+                    throw Fail(SpawnsFileName, $"{path}.maxWorldSize", "is below minWorldSize");
+                }
+            }
+
+            SpawnCamp parsed = new(
+                key,
+                known.Key,
+                ReadFloat(SpawnsFileName, $"{path}.x", camp["x"], 0f, MaxCampCoordinate),
+                ReadFloat(SpawnsFileName, $"{path}.z", camp["z"], 0f, MaxCampCoordinate),
+                ReadInt(SpawnsFileName, $"{path}.count", camp["count"], 1, MaxCampCount),
+                ReadFloat(SpawnsFileName, $"{path}.respawnSeconds", camp["respawnSeconds"], 0.1f, MaxCampRespawnSeconds),
+                night,
+                minWorldSize,
+                maxWorldSize);
+            if (minWorldSize > 0 && (parsed.X >= minWorldSize || parsed.Z >= minWorldSize))
+            {
+                throw Fail(SpawnsFileName, path, $"an absolute camp (minWorldSize {minWorldSize}) needs x and z inside 0..{minWorldSize}");
+            }
+
+            if (!keys.Add(parsed.Key))
+            {
+                throw Fail(SpawnsFileName, $"{path}.key", $"duplicate camp key '{parsed.Key}'");
+            }
+
+            list.Add(parsed);
+            index++;
+        }
+
+        return list;
+    }
+
+    // ---- npcs ----
+
+    private static List<NpcDefinition> ParseNpcs(string json, ParsedItems items)
+    {
+        using JsonDocument document = ParseDocument(NpcsFileName, json);
+        JsonElement root = document.RootElement;
+        ExpectObject(NpcsFileName, "$", root);
+        Dictionary<string, JsonElement> properties = ReadProperties(NpcsFileName, "$", root, ["version", "npcs"]);
+        _ = ReadInt(NpcsFileName, "$.version", properties["version"], 1, 1);
+
+        List<NpcDefinition> list = [];
+        HashSet<string> keys = new(StringComparer.Ordinal);
+        JsonElement npcsElement = properties["npcs"];
+        ExpectArray(NpcsFileName, "$.npcs", npcsElement);
+        int index = 0;
+        foreach (JsonElement npcElement in npcsElement.EnumerateArray())
+        {
+            string path = $"$.npcs[{index}]";
+            if (index >= MaxNpcs)
+            {
+                throw Fail(NpcsFileName, "$.npcs", $"more than {MaxNpcs} npcs");
+            }
+
+            ExpectObject(NpcsFileName, path, npcElement);
+            Dictionary<string, JsonElement> npc = ReadProperties(
+                NpcsFileName,
+                path,
+                npcElement,
+                ["key", "displayName", "visualKey", "offsetX", "offsetZ", "stock"],
+                ["greeting"]);
+            string key = ReadKey(NpcsFileName, $"{path}.key", npc["key"]);
+            if (!keys.Add(key))
+            {
+                throw Fail(NpcsFileName, $"{path}.key", $"duplicate npc key '{key}'");
+            }
+
+            JsonElement stockElement = npc["stock"];
+            ExpectArray(NpcsFileName, $"{path}.stock", stockElement);
+            if (stockElement.GetArrayLength() > MaxNpcStock)
+            {
+                throw Fail(NpcsFileName, $"{path}.stock", $"has more than {MaxNpcStock} entries");
+            }
+
+            List<NpcStockEntry> stock = [];
+            HashSet<string> stocked = new(StringComparer.OrdinalIgnoreCase);
+            int stockIndex = 0;
+            foreach (JsonElement entryElement in stockElement.EnumerateArray())
+            {
+                string entryPath = $"{path}.stock[{stockIndex}]";
+                ExpectObject(NpcsFileName, entryPath, entryElement);
+                Dictionary<string, JsonElement> entry = ReadProperties(NpcsFileName, entryPath, entryElement, ["item", "price"]);
+                string itemKey = ReadKey(NpcsFileName, $"{entryPath}.item", entry["item"]);
+                if (!items.ByKey.TryGetValue(itemKey, out ItemDefinition? item))
+                {
+                    throw Fail(NpcsFileName, $"{entryPath}.item", $"references missing item '{Truncate(itemKey)}'");
+                }
+
+                // A vendor sells fixed-stat items only: a rolled item would need a seed per sale.
+                if (item.Rolls != null)
+                {
+                    throw Fail(NpcsFileName, $"{entryPath}.item", $"'{item.Key}' is a rolled item; a vendor sells fixed-stat items only");
+                }
+
+                if (!stocked.Add(item.Key))
+                {
+                    throw Fail(NpcsFileName, $"{entryPath}.item", $"duplicate stock item '{item.Key}'");
+                }
+
+                int price = ReadInt(NpcsFileName, $"{entryPath}.price", entry["price"], 1, MaxGoldAmount);
+                // The buy price must beat the sell price, or a buy-and-sell loop would mint gold.
+                if (price <= item.SellPrice)
+                {
+                    throw Fail(NpcsFileName, $"{entryPath}.price", $"{price} must exceed the sell price {item.SellPrice} of '{item.Key}'");
+                }
+
+                stock.Add(new NpcStockEntry(item.Key, price));
+                stockIndex++;
+            }
+
+            list.Add(new NpcDefinition(
+                key,
+                ReadName(NpcsFileName, $"{path}.displayName", npc["displayName"]),
+                ReadVisualId(NpcsFileName, $"{path}.visualKey", npc["visualKey"]),
+                ReadFloat(NpcsFileName, $"{path}.offsetX", npc["offsetX"], -MaxNpcOffset, MaxNpcOffset),
+                ReadFloat(NpcsFileName, $"{path}.offsetZ", npc["offsetZ"], -MaxNpcOffset, MaxNpcOffset),
+                stock,
+                npc.TryGetValue("greeting", out JsonElement greeting)
+                    ? ReadText(NpcsFileName, $"{path}.greeting", greeting, MaxNpcGreetingLength)
+                    : string.Empty));
+            index++;
+        }
+
+        return list;
+    }
+
+    // ---- skills ----
+
+    private sealed record ParsedSkills(
+        Dictionary<string, SkillDefinition> ByKey,
+        List<SkillDefinition> List,
+        QuickbarSlotSnapshot[] DefaultQuickbar);
+
+    private static ParsedSkills ParseSkills(string json, ParsedItems items)
+    {
+        using JsonDocument document = ParseDocument(SkillsFileName, json);
+        JsonElement root = document.RootElement;
+        ExpectObject(SkillsFileName, "$", root);
+        Dictionary<string, JsonElement> properties = ReadProperties(SkillsFileName, "$", root, ["version", "skills", "defaultQuickbar"]);
+        _ = ReadInt(SkillsFileName, "$.version", properties["version"], 1, 1);
+
+        Dictionary<string, SkillDefinition> byKey = new(StringComparer.OrdinalIgnoreCase);
+        List<SkillDefinition> list = [];
+        JsonElement skillsElement = properties["skills"];
+        ExpectArray(SkillsFileName, "$.skills", skillsElement);
+        int index = 0;
+        foreach (JsonElement skillElement in skillsElement.EnumerateArray())
+        {
+            string path = $"$.skills[{index}]";
+            if (index >= MaxSkills)
+            {
+                throw Fail(SkillsFileName, "$.skills", $"more than {MaxSkills} skills");
+            }
+
+            SkillDefinition skill = ParseSkill(path, skillElement);
+            if (!byKey.TryAdd(skill.Key, skill))
+            {
+                throw Fail(SkillsFileName, $"{path}.key", $"duplicate skill key '{skill.Key}'");
+            }
+
+            list.Add(skill);
+            index++;
+        }
+
+        QuickbarSlotSnapshot[] defaults = new QuickbarSlotSnapshot[InventoryConstants.QuickbarSlots];
+        for (int slot = 0; slot < defaults.Length; slot++)
+        {
+            defaults[slot] = new QuickbarSlotSnapshot(slot, QuickbarEntryKind.None, string.Empty);
+        }
+
+        JsonElement barElement = properties["defaultQuickbar"];
+        ExpectArray(SkillsFileName, "$.defaultQuickbar", barElement);
+        if (barElement.GetArrayLength() > InventoryConstants.QuickbarSlots)
+        {
+            throw Fail(SkillsFileName, "$.defaultQuickbar", $"has more than {InventoryConstants.QuickbarSlots} entries");
+        }
+
+        int barIndex = 0;
+        foreach (JsonElement entryElement in barElement.EnumerateArray())
+        {
+            string entryPath = $"$.defaultQuickbar[{barIndex}]";
+            ExpectObject(SkillsFileName, entryPath, entryElement);
+            Dictionary<string, JsonElement> entry = ReadProperties(SkillsFileName, entryPath, entryElement, ["kind"], optional: ["key"]);
+            string kindName = ReadString(SkillsFileName, $"{entryPath}.kind", entry["kind"]);
+            string key = entry.TryGetValue("key", out JsonElement keyElement)
+                ? ReadKey(SkillsFileName, $"{entryPath}.key", keyElement)
+                : string.Empty;
+            switch (kindName)
+            {
+                case "None":
+                    if (key.Length != 0)
+                    {
+                        throw Fail(SkillsFileName, $"{entryPath}.key", "a None entry has no key");
+                    }
+
+                    break;
+                case "Skill":
+                    if (!byKey.TryGetValue(key, out SkillDefinition? skill))
+                    {
+                        throw Fail(SkillsFileName, $"{entryPath}.key", $"references missing skill '{Truncate(key)}'");
+                    }
+
+                    defaults[barIndex] = new QuickbarSlotSnapshot(barIndex, QuickbarEntryKind.Skill, skill.Key);
+                    break;
+                case "Item":
+                    if (!items.ByKey.TryGetValue(key, out ItemDefinition? item) || item.Use == null)
+                    {
+                        throw Fail(SkillsFileName, $"{entryPath}.key", $"'{Truncate(key)}' is not a usable item");
+                    }
+
+                    defaults[barIndex] = new QuickbarSlotSnapshot(barIndex, QuickbarEntryKind.Item, item.Key);
+                    break;
+                default:
+                    throw Fail(SkillsFileName, $"{entryPath}.kind", $"unknown quickbar entry kind '{Truncate(kindName)}' (None, Skill or Item)");
+            }
+
+            barIndex++;
+        }
+
+        return new ParsedSkills(byKey, list, defaults);
+    }
+
+    private static SkillDefinition ParseSkill(string path, JsonElement element)
+    {
+        ExpectObject(SkillsFileName, path, element);
+        Dictionary<string, JsonElement> skill = ReadProperties(
+            SkillsFileName,
+            path,
+            element,
+            ["key", "displayName", "description", "iconKey", "kind", "manaCost", "cooldownTicks"],
+            optional: ["range", "arcDegrees", "maxTargets", "damagePercent", "healAmount"]);
+        string kindName = ReadString(SkillsFileName, $"{path}.kind", skill["kind"]);
+        if (!Enum.TryParse(kindName, ignoreCase: false, out SkillKind kind)
+            || !Enum.IsDefined(kind)
+            || !string.Equals(kind.ToString(), kindName, StringComparison.Ordinal))
+        {
+            throw Fail(SkillsFileName, $"{path}.kind", $"unknown skill kind '{Truncate(kindName)}' (MeleeArc, RangedBolt or SelfHeal)");
+        }
+
+        float range = skill.TryGetValue("range", out JsonElement rangeElement)
+            ? ReadFloat(SkillsFileName, $"{path}.range", rangeElement, 0f, MaxSkillRange)
+            : 0f;
+        float arc = skill.TryGetValue("arcDegrees", out JsonElement arcElement)
+            ? ReadFloat(SkillsFileName, $"{path}.arcDegrees", arcElement, 0f, 360f)
+            : 0f;
+        int maxTargets = skill.TryGetValue("maxTargets", out JsonElement targetsElement)
+            ? ReadInt(SkillsFileName, $"{path}.maxTargets", targetsElement, 1, MaxSkillTargets)
+            : 1;
+        int damagePercent = skill.TryGetValue("damagePercent", out JsonElement percentElement)
+            ? ReadInt(SkillsFileName, $"{path}.damagePercent", percentElement, 0, MaxDamagePercent)
+            : 0;
+        int heal = skill.TryGetValue("healAmount", out JsonElement healElement)
+            ? ReadInt(SkillsFileName, $"{path}.healAmount", healElement, 0, MaxHealAmount)
+            : 0;
+
+        // A skill must do something its kind promises.
+        switch (kind)
+        {
+            case SkillKind.MeleeArc when range <= 0f || arc <= 0f || damagePercent <= 0:
+                throw Fail(SkillsFileName, path, "a MeleeArc skill needs range, arcDegrees and damagePercent above 0");
+            case SkillKind.RangedBolt when range <= 0f || damagePercent <= 0:
+                throw Fail(SkillsFileName, path, "a RangedBolt skill needs range and damagePercent above 0");
+            case SkillKind.SelfHeal when heal <= 0:
+                throw Fail(SkillsFileName, path, "a SelfHeal skill needs healAmount above 0");
+        }
+
+        return new SkillDefinition(
+            ReadKey(SkillsFileName, $"{path}.key", skill["key"]),
+            ReadName(SkillsFileName, $"{path}.displayName", skill["displayName"]),
+            ReadText(SkillsFileName, $"{path}.description", skill["description"], MaxDescriptionLength),
+            ReadVisualId(SkillsFileName, $"{path}.iconKey", skill["iconKey"]),
+            kind,
+            ReadInt(SkillsFileName, $"{path}.manaCost", skill["manaCost"], 0, MaxManaCost),
+            ReadInt(SkillsFileName, $"{path}.cooldownTicks", skill["cooldownTicks"], 0, MaxCooldownTicks),
+            range,
+            arc,
+            maxTargets,
+            damagePercent,
+            heal);
     }
 
     // ---- loot ----
@@ -728,7 +1206,7 @@ public sealed class ContentCatalog
 
     // ---- digest ----
 
-    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot)
+    private static string ComputeDigest(ParsedItems items, ParsedEnemies enemies, ParsedLoot loot, List<SpawnCamp> camps, List<NpcDefinition> npcs, ParsedSkills skills, List<QuestDefinition> quests)
     {
         CultureInfo c = CultureInfo.InvariantCulture;
         StringBuilder text = new();
@@ -769,12 +1247,18 @@ public sealed class ContentCatalog
             }
 
             text.Append('\n');
-            if (item.Use != null)
+            text.Append("foot|").Append(item.Footprint.Cols.ToString(c)).Append('x').Append(item.Footprint.Rows.ToString(c)).Append('\n');
+            if (item.SellPrice > 0)
             {
-                text.Append("use|").Append(item.Use.Effect.ToString()).Append('|').Append(item.Use.Amount.ToString(c)).Append('\n');
+                text.Append("sell|").Append(item.SellPrice.ToString(c)).Append('\n');
             }
 
-            text.Append("foot|").Append(item.Footprint.Cols.ToString(c)).Append('x').Append(item.Footprint.Rows.ToString(c)).Append('\n');
+            if (item.Use != null)
+            {
+                text.Append("use|").Append(item.Use.RestoreHealth.ToString(c)).Append('|')
+                    .Append(item.Use.RestoreMana.ToString(c)).Append('|').Append(item.Use.CooldownTicks.ToString(c)).Append('\n');
+            }
+
             if (item.Rolls != null)
             {
                 AppendRolls(text, "common", item.Rolls.Common);
@@ -796,6 +1280,16 @@ public sealed class ContentCatalog
                 .Append(enemy.MoveSpeed.ToString("R", c)).Append('|');
             AppendField(text, enemy.VisualKey).Append('|');
             AppendField(text, enemy.LootTable ?? "-").Append('|').Append(enemy.SpawnRole.ToString()).Append('\n');
+            if (enemy.GoldMax > 0)
+            {
+                text.Append("gold|").Append(enemy.GoldMin.ToString(c)).Append('|').Append(enemy.GoldMax.ToString(c)).Append('\n');
+            }
+
+            // Only when authored, so content without it keeps its digest.
+            if (enemy.MaxHealth.HasValue)
+            {
+                text.Append("maxhealth|").Append(enemy.MaxHealth.Value.ToString(c)).Append('\n');
+            }
         }
 
         text.Append("loot.v1\n");
@@ -811,6 +1305,78 @@ public sealed class ContentCatalog
                 AppendField(text, entry.ItemKind).Append('|').Append(entry.Weight.ToString(c)).Append('\n');
             }
         }
+
+        // Only a catalog with camps adds a section, so content without camps keeps its digest.
+        if (camps.Count > 0)
+        {
+            text.Append("spawns.v1\n");
+            foreach (SpawnCamp camp in camps)
+            {
+                text.Append("camp|");
+                AppendField(text, camp.Key).Append('|');
+                AppendField(text, camp.Template).Append('|')
+                    .Append(camp.X.ToString("R", c)).Append('|').Append(camp.Z.ToString("R", c)).Append('|')
+                    .Append(camp.Count.ToString(c)).Append('|').Append(camp.RespawnSeconds.ToString("R", c)).Append('|')
+                    .Append(camp.Night ? "night" : "any");
+                if (camp.MinWorldSize > 0 || camp.MaxWorldSize > 0)
+                {
+                    text.Append("|band|").Append(camp.MinWorldSize.ToString(c)).Append('|').Append(camp.MaxWorldSize.ToString(c));
+                }
+
+                text.Append('\n');
+            }
+        }
+
+        // Likewise for vendors.
+        if (npcs.Count > 0)
+        {
+            text.Append("npcs.v1\n");
+            foreach (NpcDefinition npc in npcs)
+            {
+                text.Append("npc|");
+                AppendField(text, npc.Key).Append('|');
+                AppendField(text, npc.DisplayName).Append('|');
+                AppendField(text, npc.VisualKey).Append('|')
+                    .Append(npc.OffsetX.ToString("R", c)).Append('|').Append(npc.OffsetZ.ToString("R", c)).Append('\n');
+                if (npc.Greeting.Length > 0)
+                {
+                    text.Append("greeting|");
+                    AppendField(text, npc.Greeting).Append('\n');
+                }
+
+                foreach (NpcStockEntry entry in npc.Stock)
+                {
+                    text.Append("stock|");
+                    AppendField(text, entry.ItemKind).Append('|').Append(entry.Price.ToString(c)).Append('\n');
+                }
+            }
+        }
+
+        // Likewise for skills and the default quickbar.
+        if (skills.List.Count > 0 || skills.DefaultQuickbar.Any(entry => entry.Kind != QuickbarEntryKind.None))
+        {
+            text.Append("skills.v1\n");
+            foreach (SkillDefinition skill in skills.List)
+            {
+                text.Append("skill|");
+                AppendField(text, skill.Key).Append('|');
+                AppendField(text, skill.DisplayName).Append('|');
+                AppendField(text, skill.Description).Append('|');
+                AppendField(text, skill.IconKey).Append('|')
+                    .Append(skill.Kind.ToString()).Append('|').Append(skill.ManaCost.ToString(c)).Append('|')
+                    .Append(skill.CooldownTicks.ToString(c)).Append('|').Append(skill.Range.ToString("R", c)).Append('|')
+                    .Append(skill.ArcDegrees.ToString("R", c)).Append('|').Append(skill.MaxTargets.ToString(c)).Append('|')
+                    .Append(skill.DamagePercent.ToString(c)).Append('|').Append(skill.HealAmount.ToString(c)).Append('\n');
+            }
+
+            foreach (QuickbarSlotSnapshot entry in skills.DefaultQuickbar)
+            {
+                text.Append("bar|").Append(entry.Slot.ToString(c)).Append('|').Append(((int)entry.Kind).ToString(c)).Append('|');
+                AppendField(text, entry.Key).Append('\n');
+            }
+        }
+
+        AppendQuestDigest(text, quests);
 
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()));
         return Convert.ToHexStringLower(hash);

@@ -31,6 +31,9 @@ public readonly record struct WorldPointerState(Vector2 Position, bool LeftDown,
 
 public partial class Render
 {
+    // The quickbar's state, shared by the scene every frame before the HUD pass (M4); null draws none.
+    public QuickbarHudState? Quickbar { get; set; }
+
     [MemberNotNull(nameof(_hudShader), nameof(_shaderObj))]
     private void InitializeHUD()
     {
@@ -297,7 +300,9 @@ public partial class Render
             WorldTransfer = WorldTransferHud,
             Loot = LootFeed,
             CombatText = _classicCombatText,
-            Labels = _classicLabels
+            Labels = _classicLabels,
+            Vendor = Vendor,
+            Quickbar = Quickbar
         };
         HudSurfaceSelector selector = HudSelector(settings);
         bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out action, out closeInventory, out Exception? fault);
@@ -352,6 +357,8 @@ public partial class Render
                 _classicLabels.Add(new HudWorldLabel(new Vector2(screen.X, screen.Y), label.DisplayName, label.HealthLabel));
             }
         }
+
+        AppendEconomyLabels(camera);
     }
 
     public HudFrameResult DrawHUD(
@@ -381,7 +388,6 @@ public partial class Render
 
         InventoryHudAction? classicAction = null;
         bool classicClose = false;
-        Dream.Simulation.Stats.StatId? classicSpend = null;
         if (selector.Current == HudSurface.Classic)
         {
             // CPU build, then one submit. A failure latches ImGui and this same frame falls through
@@ -393,7 +399,6 @@ public partial class Render
                     combatFeedback, rejectionMessage, status, inventory, enemyPoseSource, enemyRenderTick,
                     out classicAction, out classicClose);
                 _classicCursorActive = drew && !settings.SettingsVisible;
-                classicSpend = drew ? _classicSurface?.TakeAttributeSpend() : null;
             }
             catch (Exception ex)
             {
@@ -433,9 +438,13 @@ public partial class Render
             };
         }
 
-        if (classicSpend is not null)
+        if (_classicSurfaceActive)
         {
-            request = request with { SpendAttribute = classicSpend };
+            request = MergeEconomyRequest(request);
+            if (_classicSurface?.TakeQuickbarCycle() is int quickbarSlot and >= 0)
+            {
+                request = request with { QuickbarCycleSlot = quickbarSlot };
+            }
         }
 
         ImGui.Render();

@@ -55,6 +55,12 @@ public readonly struct ClassicHudFrame
     public IReadOnlyList<FloatingCombatTextRenderState>? CombatText { get; init; }
 
     public IReadOnlyList<HudWorldLabel>? Labels { get; init; }
+
+    // The vendor window's state (M3); null draws no vendor window.
+    public VendorHudState? Vendor { get; init; }
+
+    // The quickbar's state (M4); null draws no quickbar and keeps the MP gem at ManaGemFill.
+    public QuickbarHudState? Quickbar { get; init; }
 }
 
 // The timing of the liquid gems, pure and allocation free. The surface advances the eased levels and the
@@ -138,7 +144,11 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
     private HudViewBuilder? _builder;
     private InventoryHudAction? _action;
     private bool _closeInventory;
-    private Dream.Simulation.Stats.StatId? _spendAttribute;
+    private long? _pickUpGround;
+    private int? _interactNpc;
+    private VendorHudAction? _vendorAction;
+    private bool _closeVendor;
+    private int _quickbarCycle = -1;
     private bool _gemsStarted;
     private double _lastSeconds;
     private double _animationSeconds;
@@ -172,8 +182,14 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
             return false;
         }
 
+        // Picks left by a frame nobody read (a faulted one) are stale.
+        _pickUpGround = null;
+        _interactNpc = null;
+        _vendorAction = null;
+        _closeVendor = false;
+        _quickbarCycle = -1;
         _builder ??= new HudViewBuilder(sprites, _view);
-        _builder.Refresh(frame.Status, frame.Inventory);
+        _builder.Refresh(WithMana(frame.Status, frame.Quickbar), frame.Inventory);
         if (_builder.InventoryChanged)
         {
             // The snapshot changed under a drag: the dragged slot may be a different item now.
@@ -189,6 +205,8 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         v.InventoryOpen = frame.InventoryOpen;
         v.CombatText = frame.CombatText ?? Array.Empty<FloatingCombatTextRenderState>();
         v.Labels = frame.Labels ?? Array.Empty<HudWorldLabel>();
+        v.Vendor = frame.Vendor;
+        v.Quickbar = frame.Quickbar;
 
         UiLayout layout = UiLayout.Create(frame.Width, frame.Height, frame.ConfiguredScale);
         Input.BeginFrame(frame.Pointer);
@@ -209,8 +227,8 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         _lastSeconds = now;
         HudStatusSnapshot st = v.Status;
         float health = st.MaxHealth <= 0 ? 0f : Math.Clamp(st.CurrentHealth / (float)st.MaxHealth, 0f, 1f);
-        // A status that carries no mana pool (an older snapshot) keeps the gem full, as before.
-        float mana = st.MaxMana <= 0 ? StatusBarPanel.ManaGemFill : Math.Clamp(st.Mana / (float)st.MaxMana, 0f, 1f);
+        // Real mana once the server has sent it; until then (menus, the first 250 ms) the constant.
+        float mana = st.MaxMana <= 0 ? StatusBarPanel.ManaGemFill : Math.Clamp(st.CurrentMana / (float)st.MaxMana, 0f, 1f);
         if (_gemsStarted)
         {
             v.HealthLevel = GemAnimation.Ease(v.HealthLevel, health, delta);
@@ -220,13 +238,19 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         {
             _gemsStarted = true;
             v.HealthLevel = health;
-            v.ManaLevel = mana;
+            v.ManaLevel = Math.Clamp(mana, 0f, 1f);
         }
 
         _animationSeconds = (_animationSeconds + delta) % GemAnimation.LoopSeconds;
         v.AnimationSeconds = (float)_animationSeconds;
         v.GemPulse = GemAnimation.Pulse(v.HealthLevel, v.AnimationSeconds);
     }
+
+    // The status with the quickbar's mana filled in, unless the caller's snapshot already carries one.
+    private static HudStatusSnapshot WithMana(in HudStatusSnapshot status, QuickbarHudState? quickbar) =>
+        quickbar is { MaxMana: > 0 } && status.MaxMana <= 0
+            ? status with { CurrentMana = quickbar.CurrentMana, MaxMana = quickbar.MaxMana }
+            : status;
 
     // What the panels picked this frame, cleared by the read.
     public void TakeRequests(out InventoryHudAction? action, out bool closeInventory)
@@ -237,15 +261,34 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         _closeInventory = false;
     }
 
-    // The attribute "+" pressed this frame, cleared by the read.
-    public Dream.Simulation.Stats.StatId? TakeAttributeSpend()
+    // The economy picks of the last drawn frame (a clicked label, the vendor window), cleared by the read.
+    public HudEconomyRequest TakeEconomyRequests()
     {
-        Dream.Simulation.Stats.StatId? spend = _spendAttribute;
-        _spendAttribute = null;
-        return spend;
+        HudEconomyRequest request = new(_pickUpGround, _interactNpc, _vendorAction, _closeVendor);
+        _pickUpGround = null;
+        _interactNpc = null;
+        _vendorAction = null;
+        _closeVendor = false;
+        return request;
     }
 
-    void IHudActions.SpendAttribute(Dream.Simulation.Stats.StatId attribute) => _spendAttribute = attribute;
+    // The quickbar tile clicked in the last drawn frame (0..5), or -1; cleared by the read.
+    public int TakeQuickbarCycle()
+    {
+        int slot = _quickbarCycle;
+        _quickbarCycle = -1;
+        return slot;
+    }
+
+    void IHudActions.Quickbar(int slot) => _quickbarCycle = slot;
+
+    void IHudActions.PickUpGround(long itemInstanceId) => _pickUpGround = itemInstanceId;
+
+    void IHudActions.InteractNpc(int npcActorId) => _interactNpc = npcActorId;
+
+    void IHudActions.Vendor(VendorHudAction action) => _vendorAction = action;
+
+    void IHudActions.CloseVendor() => _closeVendor = true;
 
     void IHudActions.Inventory(InventoryHudAction action) => _action = action;
 

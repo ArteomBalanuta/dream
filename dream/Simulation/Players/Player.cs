@@ -81,6 +81,7 @@ public class Player : IReplicatedPlayerTarget, IDisposable
             input.Movement,
             tuning,
             deltaTime);
+        ConfineToMapBounds(deltaTime);
         _cameraRig.UpdateLook(deltaTime, input.LookDelta, input.AllowLook && !_motor.IsFrozen);
 
         _collisionReportTimer += deltaTime;
@@ -91,6 +92,45 @@ public class Player : IReplicatedPlayerTarget, IDisposable
         }
 
         LastReportedPosition = currentPosition;
+    }
+
+    // Half a cell, like the NPC and respawn clamps: the body's half-width never leaves the grid.
+    public const float EdgeMargin = 0.5f;
+
+    // Keeps the body centre in [0.5, Width-0.5] x [0.5, Depth-0.5]. Shared by the server and the
+    // client prediction (both run Update), so the two agree at the edge. Velocity is limited so the
+    // coming physics step cannot cross, and a body already outside (noclip, old save) is moved in.
+    private void ConfineToMapBounds(float deltaTime)
+    {
+        float minX = EdgeMargin;
+        float maxX = MathF.Max(minX, _map.Width - EdgeMargin);
+        float minZ = EdgeMargin;
+        float maxZ = MathF.Max(minZ, _map.Depth - EdgeMargin);
+
+        PhysicsBody.MotionState.GetWorldTransform(out BulletSharp.Math.Matrix transform);
+        BulletSharp.Math.Vector3 origin = transform.Origin;
+        float x = Math.Clamp(origin.X, minX, maxX);
+        float z = Math.Clamp(origin.Z, minZ, maxZ);
+        if (x != origin.X || z != origin.Z)
+        {
+            transform.Origin = new BulletSharp.Math.Vector3(x, origin.Y, z);
+            PhysicsBody.WorldTransform = transform;
+            PhysicsBody.InterpolationWorldTransform = transform;
+            PhysicsBody.MotionState.SetWorldTransform(ref transform);
+        }
+
+        if (deltaTime <= 0f || _motor.IsNoclipEnabled || _motor.IsFrozen)
+        {
+            return;
+        }
+
+        BulletSharp.Math.Vector3 velocity = PhysicsBody.LinearVelocity;
+        float vx = Math.Clamp(velocity.X, (minX - x) / deltaTime, (maxX - x) / deltaTime);
+        float vz = Math.Clamp(velocity.Z, (minZ - z) / deltaTime, (maxZ - z) / deltaTime);
+        if (vx != velocity.X || vz != velocity.Z)
+        {
+            PhysicsBody.LinearVelocity = new BulletSharp.Math.Vector3(vx, velocity.Y, vz);
+        }
     }
 
     public void SyncCameraFromBody(PlayerSimulationTuning tuning)
@@ -226,6 +266,8 @@ public class Player : IReplicatedPlayerTarget, IDisposable
     }
 
     public bool IsNoclipEnabled => _motor.IsNoclipEnabled;
+
+    public void ResetSeatState() => _motor.ResetSeatState(PhysicsBody);
 
     public void NudgeWorldPosition(Vector3 delta)
     {

@@ -8,8 +8,8 @@ public sealed class PlayerCommandOneShotInputFilter
     private bool _wasFreezePressed;
     private bool _wasToggleNoclipPressed;
 
-    // False against a server that drops the noclip and freeze toggles (anything but the integrated
-    // host): predicting them there would move the player until each snapshot rubber-bands it back.
+    // False for a normal client: noclip and freeze are development commands the server ignores
+    // unless it allows them, so the client must not predict them either.
     public bool AllowDevToggles { get; set; } = true;
 
     public PlayerCommandFrame Filter(PlayerCommandFrame frame)

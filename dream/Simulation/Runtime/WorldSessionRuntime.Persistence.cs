@@ -67,6 +67,14 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         EnsurePlayerInventory(profile.PlayerName);
         RefreshAuthoritativePlayerCombatStats(sessionId);
         ReapplyPersistedHealth(sessionId, worldState);
+        // Experience saved under an older, steeper curve may now be a full level or more: the join
+        // levelled it (ApplyPersistedPlayerState), so the profile is saved with the result.
+        if (TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? restored)
+            && restored != null
+            && (restored.Combatant.Level != profile.Stats.Level || restored.Combatant.Experience != profile.Stats.Experience))
+        {
+            PersistPlayerProfile(sessionId, restored.Combatant);
+        }
     }
 
     public PersistenceWriteQueue? PersistenceWrites => _writes;
@@ -96,13 +104,34 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
             AttackSpeed = profile.Stats.AttackSpeed,
             Vitality = profile.Stats.Vitality,
             Agility = profile.Stats.Agility,
-            Energy = profile.Stats.Energy,
-            StatPoints = profile.Stats.StatPoints
+            Energy = profile.Stats.Energy
         });
-        playerTarget.Combatant.ApplyProgression(profile.Stats.Level, profile.Stats.Experience);
-        playerTarget.Combatant.RefillMana();
+        // Run the level-up loop once over the stored values (the same loop a kill uses): experience that
+        // outgrew the formula it was saved under becomes levels instead of an over-100 percent bar. The
+        // bonus levels are accepted.
+        int level = Math.Max(1, profile.Stats.Level);
+        int experience = Math.Max(0, profile.Stats.Experience);
+        int required = _combatFormulaService.EvaluateExperienceToNextLevel(level, experience);
+        while (experience >= required)
+        {
+            experience -= required;
+            level++;
+            required = _combatFormulaService.EvaluateExperienceToNextLevel(level, experience);
+        }
 
-        Vector3 persistedPosition = worldState?.Position ?? playerTarget.Position;
+        playerTarget.Combatant.ApplyProgression(level, experience);
+
+        // A primary seat with no row starts at the world spawn, not where the last occupant stood.
+        Vector3 fallbackPosition = worldState == null && sessionId == ResolvePrimaryControlledSessionId()
+            ? ResolveRespawnPosition(Map, _worldSpawn, _respawnRubbleScratch)
+            : playerTarget.Position;
+        Vector3 persistedPosition = worldState?.Position ?? fallbackPosition;
+        // A save from before the edge clamp can hold a body centre past the last cell (x=56.04 in a
+        // 56-wide world); bring it back inside so the player is not stranded.
+        persistedPosition = new Vector3(
+            Math.Clamp(persistedPosition.X, Player.EdgeMargin, MathF.Max(Player.EdgeMargin, Map.Width - Player.EdgeMargin)),
+            persistedPosition.Y,
+            Math.Clamp(persistedPosition.Z, Player.EdgeMargin, MathF.Max(Player.EdgeMargin, Map.Depth - Player.EdgeMargin)));
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
         playerTarget.SetWorldPosition(persistedPosition);
         if (sessionId == ResolvePrimaryControlledSessionId())
@@ -147,6 +176,10 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         {
             remote.SetHealth(currentHealth, maxHealth);
         }
+
+        // Mana is per world like health (player_world_state.current_energy). SetMana clamps, which is
+        // what lets migration 0013's backfill value leave a returning character at full mana.
+        playerTarget.Combatant.SetMana(worldState?.CurrentEnergy ?? playerTarget.Combatant.MaxMana);
     }
 
     private void RestorePersistedWorldState() => _persistence.RestoreWorld();
@@ -232,9 +265,24 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
         return true;
     }
 
+    int IRuntimePersistenceHost.GetSessionMana(PlayerSessionId sessionId) =>
+        TryResolveAuthoritativePlayerTarget(sessionId, out _, out IAuthoritativePlayerTarget? target) && target != null
+            ? target.Combatant.CurrentMana
+            : 0;
+
+    Vector3 IRuntimePersistenceHost.WorldSpawn => _worldSpawn;
+
     bool IRuntimePersistenceHost.TryAllocateEnemyActorId(out int actorId) => TryAllocateEnemyActorId(out actorId);
 
-    void IRuntimePersistenceHost.SpawnInitialWolf() => SpawnInitialWolf();
+    // A restore with no enemy rows: the first wolf, unless the content has spawn camps (the camp step
+    // fills them on the first tick).
+    void IRuntimePersistenceHost.SpawnInitialWolf()
+    {
+        if (EnemyContent.Camps.Count == 0)
+        {
+            SpawnInitialWolf();
+        }
+    }
 
     bool IRuntimePersistenceHost.IsPlayerInventoryLoaded(string playerName) =>
         _inventory.IsLoaded(playerName);

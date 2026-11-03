@@ -157,7 +157,11 @@ public sealed class CharacterJoinSqliteTests
             harness.Tick();
         }
 
-        IServerToClientMessage[] replies = [Assert.Single(harness.RepliesOf("n1")), Assert.Single(harness.RepliesOf("n2"))];
+        // An accepted join also gets the owner's pushes (vitals, progress); the join reply is what counts.
+        static IServerToClientMessage JoinReplyOf(AccountHostHarness harness, string connection) =>
+            Assert.Single(harness.RepliesOf(connection), reply => reply is JoinAcceptedMessage or JoinRejectedMessage);
+
+        IServerToClientMessage[] replies = [JoinReplyOf(harness, "n1"), JoinReplyOf(harness, "n2")];
         Assert.Equal(1, replies.Count(reply => reply is JoinAcceptedMessage));
         Assert.Equal(
             JoinRejectionReasons.CharacterLimit,
