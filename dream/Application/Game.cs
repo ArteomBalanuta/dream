@@ -77,8 +77,24 @@ public class Game : GameWindow
     private int _frameCount;
     public int FPS { get; private set; }
 
+    // The sample count is a window-creation hint, so the config must be read before the base constructor
+    // runs. LoadOrCreate writes the file when missing, so the result is cached and the constructor body
+    // reuses it instead of reading a second time.
+    private static DesktopClientConfig? _startupConfig;
+    private static string? _startupConfigPath;
+
+    private static DesktopClientConfig LoadStartupConfig()
+    {
+        _startupConfigPath ??= AssetPaths.Config("desktop-client.txt");
+        return _startupConfig ??= DesktopClientTextConfig.LoadOrCreate(_startupConfigPath);
+    }
+
+    private static int ResolveStartupSamples() =>
+        MsaaSettings.ResolveFromEnvironment(LoadStartupConfig().MsaaSamples);
+
     public Game() : base(GameWindowSettings.Default, new NativeWindowSettings
     {
+        NumberOfSamples = ResolveStartupSamples(),
         ClientSize = new Vector2i(1440, 1024),
         Title = GameWindowTitleBuilder.BaseTitle,
         // A capture run drives itself and must not pull focus from whatever the user is doing.
@@ -94,14 +110,17 @@ public class Game : GameWindow
         _windowTitle = new ChangedTextSink(text => Title = text);
         ViewModelRigSettings viewModelRig = ViewModelRigTextConfig.LoadOrCreate(
             AssetPaths.Config("viewmodel-rig.txt"));
-        _desktopClientConfigPath = AssetPaths.Config("desktop-client.txt");
-        _desktopClientConfig = DesktopClientTextConfig.LoadOrCreate(_desktopClientConfigPath);
+        _desktopClientConfig = LoadStartupConfig();
+        _desktopClientConfigPath = _startupConfigPath!;
         _settings = new GameSettings(new Vector2i(1440, 1024), viewModelRig, _desktopClientConfig);
         // The single-threaded GameWindow runs update and render together off UpdateFrequency (0 = uncapped).
         // VSync stays off; the cap keeps a focused client from spinning at four-digit FPS.
         int frameCap = FrameRateCap.ResolveFromEnvironment(_desktopClientConfig.MaxFramesPerSecond);
         UpdateFrequency = frameCap;
         Console.WriteLine($"[startup] frame cap: {FrameRateCap.Describe(frameCap)}");
+        Console.WriteLine(
+            $"[startup] msaa: requested {MsaaSettings.Describe(MsaaSettings.ResolveFromEnvironment(_desktopClientConfig.MsaaSamples))}, "
+            + $"granted {GL.GetInteger(GetPName.Samples)} samples");
         // Silent (never throws) with no device, DREAM_AUDIO=0, the capture harness or Sound off. It also
         // routes the classic UI router's click/hover feedback, so the menus sound too.
         GameAudio.EnsureStarted(AudioVolumes.FromConfig(_desktopClientConfig));

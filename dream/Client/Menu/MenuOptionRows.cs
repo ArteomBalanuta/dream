@@ -11,6 +11,7 @@ namespace Dream.Client.Menu;
 public static class MenuOptionRows
 {
     // The frame caps the slider steps through; 0 is uncapped.
+    public static readonly int[] MsaaSteps = [0, 2, 4];
     public static readonly int[] FrameCaps = [30, 60, 90, 120, 144, 240, FrameRateCap.Uncapped];
 
     public const float UiScaleMin = 0.75f;
@@ -57,6 +58,17 @@ public static class MenuOptionRows
                 },
                 value => FrameRateCap.Describe(FrameCaps[Math.Clamp((int)MathF.Round(value), 0, FrameCaps.Length - 1)]),
                 persist),
+            // The sample count is a window-creation hint, so it cannot change under a running window.
+            // The value is saved and takes effect the next time the game is launched; no apply callback.
+            MenuOptionRow.Slider(
+                "Anti-Aliasing (restart)",
+                0f,
+                MsaaSteps.Length - 1,
+                1f,
+                () => MsaaIndex(config.MsaaSamples),
+                value => config.MsaaSamples = MsaaSteps[Math.Clamp((int)MathF.Round(value), 0, MsaaSteps.Length - 1)],
+                value => MsaaSettings.Describe(MsaaSteps[Math.Clamp((int)MathF.Round(value), 0, MsaaSteps.Length - 1)]),
+                persist),
             MenuOptionRow.Slider(
                 "Damage Text Size",
                 FloatingCombatTextTuning.MinSizeMultiplier,
@@ -83,6 +95,8 @@ public static class MenuOptionRows
                 persist)
         ];
     }
+
+    public static float MsaaIndex(int samples) => Array.IndexOf(MsaaSteps, MsaaSettings.Sanitize(samples));
 
     public static string FormatUiScale(float value) =>
         value < 1f ? "Auto" : $"{UiScale.Resolve(0, 0, value):0.##}x";
