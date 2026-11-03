@@ -112,6 +112,7 @@ public partial class Render
     {
         _worldRenderer = new WorldRenderer(this);
         _enemyRenderer = new EnemyRenderer(this);
+        _propRenderer = new Dream.Rendering.Props.PropRenderer(this);
         _localPlayerRenderer = new LocalPlayerRenderer(this);
         _remotePlayerRenderer = new RemotePlayerRenderer(this);
         _debugRenderer = new DebugRenderer(this);

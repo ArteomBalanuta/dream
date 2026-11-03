@@ -360,6 +360,8 @@ def _split_cylinder(mesh: Mesh, xy: np.ndarray, w: float, rv: np.ndarray):
     v = mesh.v.astype(np.float64)
     nrm = None if mesh.n is None else mesh.n.astype(np.float64)
     V, X, N = list(v), [tuple(r) for r in xy], (list(nrm) if nrm is not None else None)
+    tin = None if mesh.tint is None else mesh.tint.astype(np.float64)
+    T = None if tin is None else list(tin)
     cache: dict = {}
     out: list = []
     xc: dict = {}
@@ -369,6 +371,8 @@ def _split_cylinder(mesh: Mesh, xy: np.ndarray, w: float, rv: np.ndarray):
         X.append((x, xy[i][1]))
         if N is not None:
             N.append(nrm[i].copy())
+        if T is not None:
+            T.append(tin[i].copy())
         return len(V) - 1
 
     def cut(a, b, side):
@@ -382,6 +386,8 @@ def _split_cylinder(mesh: Mesh, xy: np.ndarray, w: float, rv: np.ndarray):
         if N is not None:
             q = N[lo] + (N[hi] - N[lo]) * t
             N.append(q / max(float(np.linalg.norm(q)), 1e-12))
+        if T is not None:
+            T.append(T[lo] + (T[hi] - T[lo]) * t)
         cache[key] = len(V) - 1
         return cache[key]
 
@@ -419,7 +425,8 @@ def _split_cylinder(mesh: Mesh, xy: np.ndarray, w: float, rv: np.ndarray):
             poly = clip(ids, keep_left)
             for a in range(1, len(poly) - 1):
                 out.append([poly[0], poly[a], poly[a + 1]])
-    m = Mesh(np.array(V), np.array(out, dtype=np.int32).reshape(-1, 3), None if N is None else np.array(N), None, None)
+    m = Mesh(np.array(V), np.array(out, dtype=np.int32).reshape(-1, 3), None if N is None else np.array(N), None,
+             None if T is None else np.array(T))
     return m, np.array(X, dtype=np.float64)
 
 
@@ -507,6 +514,9 @@ GRIM_MATS: dict[str, IsoMat] = {
 }
 
 
+MAX_OCCLUDERS = 12000   # triangles that occlude in the AO pass; above this a fixed stride thins them
+
+
 def _vertex_fields(meshes: list[Mesh]):
     """Per-vertex view-independent fields for every part, in bind pose.
     ao: isotropic occlusion by every triangle of the whole figure within 4 u (solid angle of each triangle seen
@@ -525,6 +535,11 @@ def _vertex_fields(meshes: list[Mesh]):
         cn.append(fn[keep] / ln[keep, None])
         area.append(0.5 * ln[keep])
     cent, cn, area = np.concatenate(cent), np.concatenate(cn), np.concatenate(area)
+    if len(cent) > MAX_OCCLUDERS:
+        # A huge prop (a tree of 50k triangles) would cost vertices x triangles. Every k-th triangle stands in for
+        # k of them, with k times the area: a fixed stride, so it is deterministic and the player (about 2k) never gets here.
+        stride = -(-len(cent) // MAX_OCCLUDERS)
+        cent, cn, area = cent[::stride], cn[::stride], area[::stride] * stride
     r2, chunk = 4.0 * 4.0, max(8, 1_500_000 // max(len(cent), 1))
     out = []
     for m, v, nv in zip(meshes, verts, norms):
@@ -569,13 +584,15 @@ def _sat_cap(rgb: np.ndarray, cap: np.ndarray) -> np.ndarray:
     return mx[:, None] - (mx[:, None] - rgb) * f[:, None]
 
 
-def _shade(P, N, ao, kappa, mat: IsoMat, seed: str, wear, grime, rust, dust):
+def _shade(P, N, ao, kappa, mat: IsoMat, seed: str, wear, grime, rust, dust, tint=None):
     """sRGB colour for texels of one part. P and N are bind-pose object space, so the noise sticks to the
     model. Wavelengths keep to the form bands: secondary 2..6 u, tertiary < 1 u, plus a long 5..14 u field."""
     wv = lambda name, n, lo, hi: waves3(P, f"charforge.{seed}.{name}", n, lo, hi)[0]
     cav = np.maximum(np.clip(-kappa / 0.8, 0, 1), smooth(0.15, 0.55, 1 - ao))
     edge = smooth(0.30, 0.60, kappa)
     col = np.asarray(mat.albedo, dtype=np.float64)[None, :] * (1 + 0.12 * np.tanh(wv("grain", 8, 0.4, 0.9)) + 0.08 * np.tanh(wv("tone", 6, 5.0, 14.0)))[:, None]
+    if tint is not None:
+        col = col * tint   # the mesh's per-vertex tint (isoforge: albedo x tint), e.g. rust patches or plate-to-plate darkness
     # edge wear: convex x a large-scale use field x a broken-up threshold (forge.age's recipe)
     use = 0.5 + 0.5 * np.tanh(wv("use", 10, 5.0, 14.0) * 1.1)
     thr = 0.98 - wear * 0.8
@@ -704,7 +721,8 @@ def bake_albedo(parts, skins, skeleton: Skeleton, uvs, rects, tex_size: int, mat
             P = lerp(m.v.astype(np.float64))
             N = lerp(nv)
             N /= np.maximum(np.linalg.norm(N, axis=1, keepdims=True), 1e-9)
-            out[ty, tx] = _shade(P, N, lerp(ao[:, None])[:, 0], lerp(kappa[:, None])[:, 0], mat, f"{seed}.{i}", wear, grime, rust, dust)
+            tint = None if m.tint is None else np.clip(lerp(m.tint.astype(np.float64)), 0.0, None)
+            out[ty, tx] = _shade(P, N, lerp(ao[:, None])[:, 0], lerp(kappa[:, None])[:, 0], mat, f"{seed}.{i}", wear, grime, rust, dust, tint)
             cov[ty, tx] = True
         _fill(out, cov, rect.x - GUTTER, rect.y - GUTTER, rect.x + rect.w + GUTTER, rect.y + rect.h + GUTTER,
               U.linear_to_srgb(np.array(mat.albedo)).astype(np.float64))
