@@ -126,6 +126,12 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
             ? ResolveRespawnPosition(Map, _worldSpawn, _respawnRubbleScratch)
             : playerTarget.Position;
         Vector3 persistedPosition = worldState?.Position ?? fallbackPosition;
+        // A save from before the edge clamp can hold a body centre past the last cell (x=56.04 in a
+        // 56-wide world); bring it back inside so the player is not stranded.
+        persistedPosition = new Vector3(
+            Math.Clamp(persistedPosition.X, Player.EdgeMargin, MathF.Max(Player.EdgeMargin, Map.Width - Player.EdgeMargin)),
+            persistedPosition.Y,
+            Math.Clamp(persistedPosition.Z, Player.EdgeMargin, MathF.Max(Player.EdgeMargin, Map.Depth - Player.EdgeMargin)));
         Vector3 persistedFacing = worldState?.Facing ?? playerTarget.Facing;
         playerTarget.SetWorldPosition(persistedPosition);
         if (sessionId == ResolvePrimaryControlledSessionId())

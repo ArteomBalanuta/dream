@@ -64,11 +64,12 @@ public sealed class PathFollower
 
     // viaStartCentre marks a stuck replan: the start cell centre is a waypoint and the failure
     // count carries on. A normal path skips the start centre and resets the count.
-    public void SetPath(IReadOnlyList<NavCell> path, bool viaStartCentre)
+    public void SetPath(IReadOnlyList<NavCell> path, bool viaStartCentre, bool startRelocated = false)
     {
         _path.Clear();
         _path.AddRange(path);
-        _index = viaStartCentre ? 0 : Math.Min(1, _path.Count);
+        // A relocated start (body hanging past the map edge) is not under the body, so walk to it first.
+        _index = viaStartCentre || startRelocated ? 0 : Math.Min(1, _path.Count);
         _windowTicks = 0;
         _jumpTried = false;
         _hopTicks = 0;

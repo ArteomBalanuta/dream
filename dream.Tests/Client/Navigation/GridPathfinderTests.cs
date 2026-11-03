@@ -183,4 +183,32 @@ public class GridPathfinderTests
         Assert.False(found);
         Assert.Empty(path);
     }
+
+    [Theory]
+    [InlineData(12, 5)]
+    [InlineData(-1, 5)]
+    [InlineData(5, 12)]
+    [InlineData(12, 12)]
+    public void OutOfBoundsStartBesideTheEdgeResolvesToTheNearestStandableCell(int startX, int startZ)
+    {
+        FakeWorld world = new();
+        GridPathfinder finder = new();
+        List<NavCell> path = [];
+
+        bool found = finder.TryFindPath(world, new NavCell(startX, 1, startZ), new NavCell(6, 1, 6), path, out bool reached);
+
+        Assert.True(found);
+        Assert.True(reached);
+        Assert.True(finder.StartRelocated);
+        Assert.InRange(path[0].X, 0, 11);
+        Assert.InRange(path[0].Z, 0, 11);
+        Assert.True(Math.Max(Math.Abs(path[0].X - Math.Clamp(startX, 0, 11)), Math.Abs(path[0].Z - Math.Clamp(startZ, 0, 11))) == 0);
+        Assert.Equal(new NavCell(6, 1, 6), path[^1]);
+    }
+
+    [Fact]
+    public void StartTooFarOutsideTheGridStillFails()
+    {
+        Assert.False(Find(new FakeWorld(), new NavCell(30, 1, 5), new NavCell(6, 1, 6)).Found);
+    }
 }
