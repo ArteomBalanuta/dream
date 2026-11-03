@@ -42,6 +42,20 @@ PALETTE = {
 }
 
 
+# The palette above is authored for a renderer that bakes light. The engine does not: enemyFragment
+# lights an actor as (ambient * scale + direct * 0.75) * baseColor, then multiplies by exposure, with
+# no GGX, no shadowing and no tonemap - strictly linear in albedo. Dark albedo in, dark pixels out.
+#
+# MEASURED in-game on the isometric view: iron.black at linear 0.0085 rendered to a mean sRGB luma of
+# 0.175, so the engine's whole gain is about 3.0x. The grass beside it measured 0.218, which the actor
+# has to beat or it reads as a hole rather than a figure. Lifting the linear albedo 3.0x puts the mean
+# near 0.31, above the ground and still far below a lit highlight.
+#
+# This is a render-target correction, not an art change: the authored hexes stay the art direction and
+# the preview sheet keeps using them unlifted, since isoforge does bake its own light.
+ALBEDO_LIFT = 3.0
+
+
 def srgb_to_linear(hex_colour: str) -> tuple:
     h = hex_colour.lstrip("#")
     out = []
@@ -49,6 +63,12 @@ def srgb_to_linear(hex_colour: str) -> tuple:
         c = int(h[i:i + 2], 16) / 255.0
         out.append(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
     return (out[0], out[1], out[2], 1.0)
+
+
+def base_color_factor(key: str) -> tuple:
+    """The authored colour as the engine's shader needs it: linear, lifted by ALBEDO_LIFT."""
+    r, g, b, a = srgb_to_linear(PALETTE[key])
+    return (min(1.0, r * ALBEDO_LIFT), min(1.0, g * ALBEDO_LIFT), min(1.0, b * ALBEDO_LIFT), a)
 
 
 # ---------------------------------------------------------------------------- mesh plumbing
@@ -220,7 +240,7 @@ def main(out_dir: str | None = None) -> Path:
         if mat_key not in used:
             used.append(mat_key)
     materials = [{"name": f"grim.{k}",
-                  "base_color_factor": srgb_to_linear(PALETTE[k]),
+                  "base_color_factor": base_color_factor(k),
                   "metallic": 0.0,
                   "roughness": 0.9} for k in used]
 
