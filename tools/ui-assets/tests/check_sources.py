@@ -15,7 +15,12 @@ ALLOWED_MODULES = {"__future__", "json", "math", "sys", "pathlib", "numpy", "PIL
                    # forge.py (shared renderer), gemtrace.py (gem ray tracer) and its process pool over tiles
                    "forge", "gemtrace", "concurrent", "os",
                    # isoforge.py (isometric renderer) and the gen_iso*.py generators that build on it
-                   "isoforge"}
+                   "isoforge",
+                   # gen_menu.py reuses gen_window.py's frame builders
+                   "gen_window",
+                   # charforge.py / gltfwrite.py (actor rig, skinning and the GLB writer) and the
+                   # gen_char_*.py generators over them; struct and io pack the binary glTF chunks
+                   "charforge", "gltfwrite", "gen_char_player", "struct", "io"}
 BAD_STR = re.compile(r"reference|\.webp|fonts|\.ttf|\.otf|https?:|screenshot", re.I)
 BAD_NAME = re.compile(r"(^|[._\-])(mu|muonline|zen|chaos|larkan|loch|arcana|soul|bless|webzen|kundun|lorencia)([._\-]|$)", re.I)
 errs: list[str] = []

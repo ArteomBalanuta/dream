@@ -1,0 +1,83 @@
+Here is an agent-ready **Dark Gothic Isometric Rendering & Art Architecture Specification**. You can pass this document directly to AI generation pipelines, shader engineers, or art direction agents as a deterministic guide for reproducing this specific aesthetic.
+
+---
+
+# Design Specification: Dark Gothic Isometric Visual Architecture
+
+## 1. Core Technical Objective
+
+Replicate the visual weight, organic grime, and high-contrast atmospheric depth of early-2000s dark-fantasy isometric rendering (e.g., *MU Online*, *Diablo II*), avoiding the clean, vector-like, or overly smooth presentation of modern casual titles.
+
+---
+
+## 2. Rendering Pipelines & Lighting Constraints
+
+### 2.1 Color Grading & Dynamic Range
+
+* **Tone Mapping:** Standard LDR (Low Dynamic Range) with intentional shadow crushing. Avoid wide HDR tone-mapping that lifts black levels.
+* **Palette Baseline:** Earthy, desaturated tones—decayed moss green, damp stone gray, weathered oak brown, oxidized iron.
+* **Saturation Rules:** Base environment saturation capped at **25–35%**. High-value magical effects, glowing armor, or drops are permitted high saturation (**80–100%**) to create contrast against the dark background.
+
+### 2.2 Lighting & Shadow Mechanics
+
+* **Light Attenuation:** Steep fall-off curves for point lights. No global ambient lighting above **15% luminosity**.
+* **Baked Ambient Occlusion (AO):** High-density AO baked directly into diffuse textures at object intersections (wall bases, barrel undersides, ground contacts).
+* **Hard Shadow Casts:** Directional sun/moon shadow angles fixed at **45°–60°** with minimal soft-shadow filtering (crisp, defined shadow edges).
+
+---
+
+## 3. Texture & Surface Pipeline
+
+### 3.1 Micro-Detail & Noise Rules
+
+* **Photo-Sampled Texturing:** Textures must incorporate real-world surface imperfections (grime, water stains, surface pitting, fractured stone, lichen growth).
+* **Procedural Avoidance:** Strictly prohibit flat color fills or smooth vector gradients on terrain and structural assets.
+* **Texture Contrast:** High localized micro-contrast on diffuse maps to ensure texture details remain legible under zoomed-out isometric cameras.
+
+### 3.2 Material Properties (Non-PBR / Stylized-PBR Hybrid)
+
+* **Roughness Floor:** Minimum roughness parameter of **0.65** across environment assets (prevents uniform modern plastic sheen).
+* **Specular Maps:** Metallic highlights restricted to hand-painted specular maps (concentrated on armor plates, weapon edges, wet cobblestone tops).
+
+---
+
+## 4. Geometry & Silhouette Guidelines
+
+### 4.1 Structural Mesh Constraints
+
+* **Low-to-Mid Poly Silhouette:** Maintain sharp angular edges on architectural assets (roof tiles, fence posts, stone arches). Avoid excessive subdividing or edge-smoothing.
+* **Density Clusters:** Break clean geometric lines with scattered secondary props (broken barrels, detached wagon wheels, fallen armor fragments, stray stone debris).
+
+### 4.2 Foliage & Transparency
+
+* **Alpha-Tested Cards:** Trees, bushes, and palm leaves must use hard alpha cutout cards (clip threshold: `0.5`) rather than soft alpha blending or modern sub-surface scattering.
+* **Internal Leaf Contrast:** Leaf textures require heavy internal dark shading between fronds to create visual depth and physical weight.
+
+---
+
+## 5. Camera & Spatial Framing
+
+* **Projection:** Orthographic or low-FOV Perspective (FOV **15°–25°** max).
+* **Pitch Angle:** Fixed isometric inclination (**45°–55°** relative to ground plane).
+* **Scale Compression:** High asset spatial density—compress ground distance between interactive points of interest to maximize visual information within the viewport.
+
+---
+
+## 6. UI & HUD Aesthetics (Skeuomorphic Paradigm)
+
+* **Physical Frame Integration:** The HUD must sit inside carved, heavy-metal or stone frames featuring dark fantasy motifs (gargoyles, dragon scale relief, rusted rivets).
+* **Tactile Gauge Displays:** Fluid/resource indicators must use classic glass orb or heavy-gauge structures with liquid refraction overlays.
+* **No Translucent Vector UI:** Ban flat, borderless, or minimalist neon UI components. UI elements must feel like physical artifacts within the universe.
+
+---
+
+## Agent Prompt / Context Template
+
+> **Agent Directive:** When generating visual shaders, texturing assets, UI designs, or camera layouts for this module, enforce:
+> 1. *Desaturated dirty textures with baked-in contact shadows.*
+> 2. *Crushed black values with high-contrast localized lighting.*
+> 3. *Hard-edged angular geometry with high spatial prop density.*
+> 4. *Skeuomorphic metal/stone UI frames.*
+> Reject modern soft-light, vibrant flat-shading, or vector-minimalist paradigms.
+> 
+>

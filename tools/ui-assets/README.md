@@ -106,3 +106,44 @@ Chain: `Mesh` -> z-buffered triangle G-buffer (world P, view normals, material, 
 - `check_iso.py` gates are constants measured on the generated sprites: crispness, saturation (with the rust and crimson-leaf allowances), crushed shadows, upper value, 5x5 contrast, form, warm lights over a cold shadow band, chrome share, foot point, the sheet, the potion frames and the potion being the brightest thing in the set. Form is the 4 u over .5 u band energy of alpha-normalised luma blurs over the interior (opaque mask eroded 2 px), so silhouettes do not count and a flat interior with grain fails. The cold gate is the mean R - B of opaque pixels in luma 12 to 60, which must hold at least 10 percent of the object. Per-object numbers go in `OVERRIDES`, with a comment giving the reason and the measured value. Committed sprites, shadows and manifest are compared with the generators (size, pivot, frame count, durations), and files no generator makes are flagged as stale. Every gate has a self-test on a synthetic image that must fail it. `.gitattributes` keeps the manifest LF so the byte comparison holds on Windows. It sets `tempfile.tempdir` to `.iso_tmp` in the repository root so the determinism runs stay off the system drive; do not commit that folder.
 
 `gen_menu.py` writes the front-end atlas `dream/ui/menu/menu.png` and `menu.json`: backdrop, the DREAM title, button states, panel, slider and divider. Forged like the window chrome; the backdrop is painted with numpy. About 90 s. `tests/check_menu.py` gates sizes, slices, mood (dark backdrop and panel, ember hover, dull title) and the generator source; `--determinism` also rebuilds it twice. `DREAM_MENU_CAPTURE=<dir>` on the game walks the title screen and writes a PNG per screen.
+
+## charforge.py: grim actors as glTF (not part of build_all)
+
+Animated characters for the engine's own renderer, not sprites. The engine lights models itself
+(`shaders/enemyFragment.glsl` samples baseColor and emissive only; `lighting.glsl` is hemispheric
+ambient plus one directional), so these cannot ship baked light the way the iso props do. They ship
+geometry, a baked albedo atlas and clips, and the engine does the rest.
+
+```bash
+.venv/Scripts/python tools/ui-assets/gltfwrite.py          # GLB writer self-tests, skinned and rigid
+.venv/Scripts/python tools/ui-assets/charforge.py          # rig, clip, unwrap and bake self-tests
+.venv/Scripts/python tools/ui-assets/gen_char_player.py    # writes char/player_grim.glb
+.venv/Scripts/python tools/ui-assets/gen_char_preview.py   # writes previews/char_player.png
+```
+
+- `charforge.py` holds the actor side: `Joint`/`Skeleton`/`Pose`/`Key`/`Clip` with `sample`,
+  `rigid_local` for part hierarchies, `bind`/`skin` for two-bone linear blend skinning (normals are
+  recomputed, never blended), `unwrap` (PCA cylinder or planar projection into a shelf packer) and
+  `bake_albedo`. The bake is albedo only: point-cloud AO, Laplacian curvature, and wear, soot,
+  cavity rust and dust driven by `waves3` in bind-pose object space. No directional light is baked.
+- `gltfwrite.py` writes binary glTF with no dependency beyond numpy: `struct` and `io` pack the
+  chunks. It takes both paths - a skin with `JOINTS_0`/`WEIGHTS_0` and `inverseBindMatrices`, or
+  rigid node-hierarchy animation with one mesh per node and no skin. Rotation samplers are
+  quaternions, bufferViews are 4-byte aligned and `POSITION` carries min/max.
+- `gen_char_player.py` is the first actor: a 1.78 m hooded figure in seven parts over eight nodes,
+  with `idle` and `walk` as node rotations. It is rigid, not skinned, which matters - the engine's
+  `PlayerModelAssetDefinition` measures a model's own authored height and normalises to it, so a
+  rigid part hierarchy drops in with no C# change. The wolf cannot: its normalisation is a
+  hard-coded 3.191 -> 0.60.
+- `gen_char_preview.py` renders the same geometry through `isoforge` with a darker `GRIM_RIG` as a
+  four-view turntable sheet. That sheet is a review aid for judging form and material by eye; the
+  shipped asset is the `.glb`, which looks different because the engine lights it.
+- Both generators are byte-deterministic (`player_grim.glb` is 44488 bytes; `charforge.py` prints
+  the bake sha1 and reruns the bake to prove it). The spec and its gate tables are in
+  `docs/superpowers/specs/2026-11-02-grim-actor-forge/`.
+- Known gaps, measured in-game: the baked atlas is **not** wired into the GLB yet, which ships flat
+  per-part `baseColorFactor`, so no material reads at gameplay distance. The grim albedo is also too
+  dark for a shader with no GGX or shadowing - the figure measured mean luma 0.175 against grass at
+  0.218, so it reads as a silhouette. Cylinder UV seams are not split, so a texture applied now
+  smears one column of triangles. `unwrap` requires UVs on every part, so the wolf's no-UV case is
+  unsupported, and the bake's crevice grime has never run on concave geometry.

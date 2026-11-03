@@ -409,3 +409,15 @@ dream-run*.log
 .superpowers/
 .bug-hunter/
 .iso_tmp/
+
+# Claude Code agent worktrees and scratch files
+.claude/worktrees/
+scratchpad_dummy
+
+# Third-party art used only for look-dev discussion; never read by the generators
+# (tests/check_sources.py bans referencing it, so it must not ship in the repo)
+roadmap_ideas/*.png
+roadmap_ideas/*.gif
+roadmap_ideas/*.webp
+roadmap_ideas/*.jpg
+docs/superpowers/specs/**/reference/
