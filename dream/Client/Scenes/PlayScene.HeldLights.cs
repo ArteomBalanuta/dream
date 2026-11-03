@@ -81,7 +81,8 @@ public partial class PlayScene
             MathF.Sqrt((velocity.X * velocity.X) + (velocity.Z * velocity.Z)),
             MathF.Abs(velocity.Y) > AirborneVerticalSpeed,
             _localAttackSerial,
-            _localHitSerial));
+            _localHitSerial,
+            _runtime.LocalRenderPose.TravelDirection));
     }
 
     // The local player's held light inputs for one frame.

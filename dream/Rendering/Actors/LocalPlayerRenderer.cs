@@ -16,7 +16,9 @@ public readonly record struct LocalPlayerFrameInputs(
     float HorizontalSpeed,
     bool Airborne,
     int AttackSerial,
-    int HitSerial);
+    int HitSerial,
+    // The scene's smoothed travel direction (LocalPlayerRenderPose.TravelDirection); zero when not moving.
+    Vector3 TravelDirection = default);
 
 public sealed class LocalPlayerRenderer : IDisposable
 {
@@ -79,7 +81,9 @@ public sealed class LocalPlayerRenderer : IDisposable
             _inputs.HitSerial,
             equipment.MainHand is not null,
             equipment.OffHand is not null,
-            WeaponMeshCatalog.IsRanged(equipment.MainHand));
+            WeaponMeshCatalog.IsRanged(equipment.MainHand),
+            PlayerAnimationStateMachine.LegTwist(
+                localPlayer.Facing.X, localPlayer.Facing.Z, _inputs.TravelDirection.X, _inputs.TravelDirection.Z));
         PlayerAnimationFrame frame = _machine.Update(in animationInputs, deltaTime);
         _clipTracker.ApplyFrame(LocalActorId, in frame, instance);
         instance.Update(deltaTime);

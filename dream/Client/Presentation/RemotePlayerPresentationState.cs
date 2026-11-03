@@ -1,3 +1,4 @@
+using OpenTK.Mathematics;
 using Dream.Simulation.Inventory;
 
 namespace Dream.Client.Presentation;
@@ -5,7 +6,8 @@ namespace Dream.Client.Presentation;
 // What a remote player shows besides its pose. The held visuals come from the replicated VisualKey
 // ("<mainHandVisualId>|<offHandVisualId>"); the attack and hit serials count events the client
 // inferred from snapshots (a swing at an enemy in front, health lost); Airborne and HorizontalSpeed
-// come from the movement between snapshots; DeathAgeSeconds is how long the player has been dead
+// come from the movement between snapshots, as does TravelDirection (a smoothed unit ground-plane
+// direction for the leg twist, zero when not moving); DeathAgeSeconds is how long the player has been dead
 // (infinity when it has not been seen alive), so the death animation can play before the avatar hides.
 public readonly record struct RemotePlayerPresentationState(
     int ActorId,
@@ -24,4 +26,5 @@ public readonly record struct RemotePlayerPresentationState(
     int HitSerial = 0,
     bool Airborne = false,
     float HorizontalSpeed = 0f,
-    float DeathAgeSeconds = float.PositiveInfinity);
+    float DeathAgeSeconds = float.PositiveInfinity,
+    Vector3 TravelDirection = default);

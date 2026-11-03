@@ -96,7 +96,9 @@ public sealed class RemotePlayerRenderer : IDisposable
                 remotePlayer.HitSerial,
                 equipment.MainHand is not null,
                 equipment.OffHand is not null,
-                WeaponMeshCatalog.IsRanged(equipment.MainHand));
+                WeaponMeshCatalog.IsRanged(equipment.MainHand),
+                PlayerAnimationStateMachine.LegTwist(
+                    remotePlayer.Pose.Facing.X, remotePlayer.Pose.Facing.Z, remotePlayer.TravelDirection.X, remotePlayer.TravelDirection.Z));
             PlayerAnimationFrame frame = animation.Machine.Update(in inputs, deltaTime);
             _clipTracker.ApplyFrame(remotePlayer.ActorId, in frame, instance);
             instance.Update(deltaTime);

@@ -72,7 +72,8 @@ public class ClientScenePresenterLongSessionIntegrationTests
                         HitSerial = 0,
                         Airborne = false,
                         HorizontalSpeed = 0f,
-                        DeathAgeSeconds = float.PositiveInfinity
+                        DeathAgeSeconds = float.PositiveInfinity,
+                        TravelDirection = default
                     }).ToArray());
                 // The reused list is refilled, never appended to.
                 Assert.Same(states, presenter.BuildRemotePlayerStates(renderTick));
