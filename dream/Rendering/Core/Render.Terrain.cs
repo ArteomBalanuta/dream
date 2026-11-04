@@ -10,6 +10,23 @@ namespace Dream.Rendering.Core;
 
 public partial class Render : IWorldInstanceDrawTarget
 {
+    // The terrain-only program: the cube sources compiled with Shader.TerrainDefine.
+    public const string TerrainShaderName = "terrain";
+
+    // Texture units of the terrain program: 0 per-material base colour, 1 war mist (avoid), 2 the
+    // tile array, 3 the world material map (bound by the static chunk renderer).
+    public const int TerrainTilesUnit = 2;
+    public const int TerrainMaterialMapUnit = 3;
+    public const string TerrainTilesUniform = "uTerrainTiles";
+    public const string TerrainMaterialMapUniform = "uTerrainMaterialMap";
+
+    // Blend band (metres from a cell edge), height-blend depth and relief strength of the terrain shader.
+    private const float TerrainBlendBand = 0.35f;
+    private const float TerrainBlendDepth = 0.2f;
+    private const float TerrainRelief = 0.025f;
+
+    private readonly TerrainSurfaceSettings _terrainSurface = TerrainSurfaceSettings.FromEnvironment();
+
     public void DrawCube(Camera camera, Cube cube)
     {
         AnimatedModel? model = CubeMaterialModelCatalog.Resolve(cube.MaterialId);
@@ -56,7 +73,7 @@ public partial class Render : IWorldInstanceDrawTarget
     // material. Each mesh sees the same uniform values as when it was drawn on its own.
     public void BeginStaticTerrainPass(Camera camera)
     {
-        Shader shader = GetShader("cube");
+        Shader shader = GetShader(TerrainShaderName);
         shader.Use();
         shader.SetModelMatrix(Matrix4.Identity);
         shader.SetMatrix4("view", camera.GetViewMatrix());
@@ -68,6 +85,20 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
         shader.SetInt("material.baseColorTexture", 0);
+        shader.SetFloat("uTerrainVariation", _terrainSurface.Variation);
+        // The height blend needs the tile array (decoded in the background, -1 until ready); the
+        // shader additionally needs the material map the chunk renderer binds on unit 3.
+        int tiles = _terrainSurface.Blend ? _terrainTiles.GetOrLoad() : -1;
+        shader.SetFloat("uTerrainBlend", tiles != -1 ? 1f : 0f);
+        shader.SetFloat("uTerrainBlendBand", TerrainBlendBand);
+        shader.SetFloat("uTerrainBlendDepth", TerrainBlendDepth);
+        shader.SetFloat("uTerrainRelief", _terrainSurface.Relief ? TerrainRelief : 0f);
+        if (tiles != -1)
+        {
+            GL.ActiveTexture(TextureUnit.Texture0 + TerrainTilesUnit);
+            GL.BindTexture(TextureTarget.Texture2DArray, tiles);
+        }
+
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.Enable(EnableCap.DepthTest);
         // Static terrain meshes are already hidden-face culled. Draw remaining
@@ -80,17 +111,32 @@ public partial class Render : IWorldInstanceDrawTarget
     public void BindStaticTerrainMaterial(int materialSlot)
     {
         StaticTerrainMaterial material = StaticTerrainMaterialCatalog.GetBySlot(materialSlot);
-        Shader shader = GetShader("cube");
+        Shader shader = GetShader(TerrainShaderName);
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
         shader.SetEmissiveFactor(material.Emissive);
-        // Terrain is opaque: it always draws with the base "cube" program, which has no discard
-        // (only its alpha-mask variant has one).
+        // Terrain is opaque: it always draws with the terrain program, which has no discard
+        // (and no alpha-mask variant).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
+        shader.SetInt("uTerrainLayer", ResolveTerrainLayer(material));
         if (texture != -1)
         {
             GL.BindTexture(TextureTarget.Texture2D, texture);
         }
+    }
+
+    // The tile array layer of a material: its GeometryMaterialId for the eight blendable tiles
+    // (grass only for its top role), otherwise -1 (lamp, unknown, grass side and bottom).
+    internal static int ResolveTerrainLayer(StaticTerrainMaterial material)
+    {
+        int id = (int)material.MaterialId;
+        if ((uint)id >= StaticTerrainTileArray.LayerCount)
+        {
+            return -1;
+        }
+
+        bool grass = material.MaterialId == GeometryMaterialId.Grass;
+        return grass && material.Role != StaticTerrainMaterialRole.Top ? -1 : id;
     }
 
     public static void EndStaticTerrainPass()
@@ -146,7 +192,7 @@ public partial class Render : IWorldInstanceDrawTarget
         _fallbackInstances.Upload(modelMatrices, count);
         _fallbackCubeBuffer.DrawInstanced(_fallbackInstances, count);
         // Leave the program the way every non-instanced user of it expects.
-        GetShader("cube").SetBool("useInstancing", false);
+        GetShader(TerrainShaderName).SetBool("useInstancing", false);
     }
 
     // The asset scale for a batch's model, for callers outside Render that build its matrices.
@@ -172,7 +218,7 @@ public partial class Render : IWorldInstanceDrawTarget
         StaticTerrainMaterial material,
         bool instanced)
     {
-        Shader shader = GetShader("cube");
+        Shader shader = GetShader(TerrainShaderName);
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.Use();
         if (!instanced)
@@ -189,8 +235,14 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetFloat("material.roughnessFactor", 1f);
         shader.SetEmissiveFactor(material.Emissive);
         shader.SetHasEmissiveTexture(false);
-        // Terrain is opaque: it always draws with the base "cube" program, which has no discard
-        // (only its alpha-mask variant has one).
+        // Fallback and dynamic cubes move, and the variation noise is keyed on world position, so
+        // with it on they would "swim". They draw the plain tile (variation, blend and layer off),
+        // the same look as the Grass/Dirt/Stone gltf cubes of the plain cube program.
+        shader.SetFloat("uTerrainVariation", 0f);
+        shader.SetFloat("uTerrainBlend", 0f);
+        shader.SetInt("uTerrainLayer", -1);
+        // Terrain is opaque: it always draws with the terrain program, which has no discard
+        // (and no alpha-mask variant).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
         if (texture != -1)
         {

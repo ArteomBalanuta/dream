@@ -247,7 +247,7 @@ public class WorldInstanceBatchDrawerTests
         Assert.Contains("GL.CullFace(TriangleFace.Back);", fallback);
         Assert.Contains("_fallbackInstances.Upload(modelMatrices, count);", fallback);
         Assert.Contains("_fallbackCubeBuffer.DrawInstanced(_fallbackInstances, count);", fallback);
-        Assert.Contains("GetShader(\"cube\").SetBool(\"useInstancing\", false);", fallback);
+        Assert.Contains("GetShader(TerrainShaderName).SetBool(\"useInstancing\", false);", fallback);
         Assert.Contains("shader.SetBool(\"useInstancing\", instanced);", bind);
         Assert.Matches(new Regex(@"if \(!instanced\)\s*\{\s*shader\.SetModelMatrix\(modelMatrix\);"), bind);
 

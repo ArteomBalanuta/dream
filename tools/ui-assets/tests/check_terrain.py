@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +27,7 @@ import uiart  # noqa: E402
 TERRAIN = TOOLS / "terrain"
 NAMES = tuple(gen_terrain.TILES)
 PPU = float(uiart.SCALE)  # final px per u
+FORGE_ROOT = TOOLS.parents[1] / "dream" / "animations" / "library" / "forge"
 
 GATES = {
     "seam_ratio_max": 1.20,      # wrap-edge mean abs difference over that of the interior neighbour pairs beside it, per axis
@@ -36,20 +38,38 @@ GATES = {
     "sat_p95_max": 0.35,         # HSV S on pixels with V >= .10
     "chrome_max": 0.002,         # share of pixels over V .85
     "p5_v_max": 0.17,            # the shadows are crushed
-    "p99_v_min": 0.25,           # something catches the light
-    "mean_v_max": 0.34,          # the photographic tiles these replace measure .37 to .65
+    "p99_v_min": 0.30,           # something catches the light (measured 0.37 to 0.56 on the dark set)
+    "mean_v_max": 0.27,          # the photographic tiles these replace measure .37 to .65; the dark set measures .16 to .24
+    "mean_luma_max": 0.23,       # mean luma of the bytes: the tiles carry the darkening (the shader macro term is ~0.95)
+    "mean_luma_min": 0.13,       # daytime must stay readable
+    "alpha_std_min": 35.0,       # alpha is relief height, stretched p1 -> 0 and p99 -> 255: it must actually vary
+    "alpha_p1_max": 30.0,
+    "alpha_p99_min": 225.0,
+    "alpha_seam_max": 1.20,      # the height wraps like the colour
+    "alpha_corr_min": 0.15,      # height and luma agree in sign: crests catch light, crevices are dark (measured .22 to .69)
+    "autocorr_max": 0.45,        # no 4x4-style repetition inside the tile (see repetition())
 }
+# TILE_LUMA of gen_ground_decals before the dark rework. Ratchet: every tile must now be at or below RATCHET x this.
+OLD_TILE_LUMA = {"dirt": 0.2736, "grass_bottom": 0.2620, "grass_path": 0.3115, "grass_side": 0.2679, "grass_top": 0.2832,
+                 "mud": 0.2487, "rock": 0.2767, "sand": 0.2959, "snow": 0.2780, "stone": 0.2912}
+RATCHET = 0.85
 # Add an entry to hold one tile to its own numbers. An override is a claim that the art needs it: say why, with the
 # measured value, and keep it as tight as the measurement allows.
 OVERRIDES: dict[str, dict] = {
     # Soil, mud and fractured rock are grain-first by design (fine clods, pebbles, chips), so their 4 u over 0.5 u band
-    # ratio sits below the default. Measured 2026-11: grass_side .215, grass_bottom .234, dirt .235, mud .336, rock .280.
+    # ratio sits below the default. Measured 2026-11: grass_side .215, grass_bottom .234, dirt .178, mud .336, rock .280.
     # Their big shapes come from albedo mottling and the 8 u fragments, not from grain-free relief.
     "grass_side": {"form_ratio_min": 0.18},
     "grass_bottom": {"form_ratio_min": 0.18},
-    "dirt": {"form_ratio_min": 0.18},
+    "dirt": {"form_ratio_min": 0.17},
     "mud": {"form_ratio_min": 0.25},
     "rock": {"form_ratio_min": 0.23},
+    # Measured 2026-11 on the dark set: cobble .299 (setts are 5 u, joints are fine detail), sod .387 and path .3999 (blade ridges),
+    # gravel .112 (pebbles of 0.6 to 3 u over grit are grain by construction). Each floor is the measurement minus about 0.01.
+    "stone": {"form_ratio_min": 0.29},
+    "grass_top": {"form_ratio_min": 0.38},
+    "grass_path": {"form_ratio_min": 0.39},
+    "sand": {"form_ratio_min": 0.10},
 }
 
 
@@ -119,6 +139,29 @@ def form_ratio(y: np.ndarray) -> float:
     return e[4] / max(e[0.5], 1e-9)
 
 
+MIN_SHIFT = 16   # px: shifts shorter than 4 u are the feature size itself, not repetition
+
+
+def repetition(y: np.ndarray) -> float:
+    """Max normalised wrapped autocorrelation of the luma over every shift of at least MIN_SHIFT px (torus distance).
+    A tile built from one motif repeated inside itself scores near 1 at the repeat; real ground scores well below."""
+    z = y - wrap_blur(y, 6.0)          # drop the smooth part, whose autocorrelation is high at any short shift
+    z = z - z.mean()
+    ac = np.fft.ifft2(np.abs(np.fft.fft2(z)) ** 2).real
+    ac = ac / max(float(ac[0, 0]), 1e-12)
+    dy = np.minimum(np.arange(y.shape[0]), y.shape[0] - np.arange(y.shape[0]))[:, None]
+    dx = np.minimum(np.arange(y.shape[1]), y.shape[1] - np.arange(y.shape[1]))[None, :]
+    return float(ac[np.hypot(dx, dy) >= MIN_SHIFT].max())
+
+
+def alpha_stats(rgba: np.ndarray) -> dict:
+    a = rgba[..., 3].astype(np.float32)
+    y = luma(rgba)
+    c = float(np.corrcoef(a.ravel(), y.ravel())[0, 1]) if a.std() > 0 and y.std() > 0 else 0.0
+    return {"a_std": float(a.std()), "a_p1": float(np.percentile(a, 1)), "a_p99": float(np.percentile(a, 99)),
+            "a_seam": seam_ratio(a / 255.0), "a_corr": c}
+
+
 def measure(rgba: np.ndarray) -> dict:
     y = luma(rgba)
     h = hsv(rgba)
@@ -129,7 +172,7 @@ def measure(rgba: np.ndarray) -> dict:
         "contrast": local_contrast(y), "form_ratio": form_ratio(y),
         "sat_p95": float(np.percentile(s, 95)) if s.size else 0.0, "mean_s": float(h[..., 1].mean()),
         "chrome": float((v > 0.85).mean()), "p5_v": float(np.percentile(v, 5)), "p99_v": float(np.percentile(v, 99)),
-        "mean_v": float(v.mean()),
+        "mean_v": float(v.mean()), "mean_luma": float(y.mean()), "autocorr": repetition(y), **alpha_stats(rgba),
     }
 
 
@@ -159,6 +202,25 @@ def gate_errors(name: str, m: dict) -> list[str]:
         errs.append(f"{name}: p99 V {m['p99_v']:.3f} < {c['p99_v_min']} (nothing catches light)")
     if m["mean_v"] > c["mean_v_max"]:
         errs.append(f"{name}: mean V {m['mean_v']:.3f} > {c['mean_v_max']} (too bright)")
+    if m["mean_luma"] > c["mean_luma_max"]:
+        errs.append(f"{name}: mean luma {m['mean_luma']:.3f} > {c['mean_luma_max']} (not dark enough)")
+    if m["mean_luma"] < c["mean_luma_min"]:
+        errs.append(f"{name}: mean luma {m['mean_luma']:.3f} < {c['mean_luma_min']} (unreadable by day)")
+    old = OLD_TILE_LUMA.get(name)
+    if old is not None and m["mean_luma"] > RATCHET * old:
+        errs.append(f"{name}: mean luma {m['mean_luma']:.3f} > {RATCHET} x the old {old} (ratchet: tiles only get darker)")
+    if m["a_std"] < c["alpha_std_min"]:
+        errs.append(f"{name}: alpha std {m['a_std']:.1f} < {c['alpha_std_min']} (height is flat)")
+    if m["a_p1"] > c["alpha_p1_max"]:
+        errs.append(f"{name}: alpha p1 {m['a_p1']:.0f} > {c['alpha_p1_max']} (height does not reach the floor)")
+    if m["a_p99"] < c["alpha_p99_min"]:
+        errs.append(f"{name}: alpha p99 {m['a_p99']:.0f} < {c['alpha_p99_min']} (height does not reach the crest)")
+    if m["a_seam"] > c["alpha_seam_max"]:
+        errs.append(f"{name}: alpha wrap seam {m['a_seam']:.2f}x an interior pair > {c['alpha_seam_max']} (height does not tile)")
+    if m["a_corr"] < c["alpha_corr_min"]:
+        errs.append(f"{name}: alpha/luma correlation {m['a_corr']:.3f} < {c['alpha_corr_min']} (height disagrees with the colour)")
+    if m["autocorr"] > c["autocorr_max"]:
+        errs.append(f"{name}: in-tile repetition {m['autocorr']:.2f} > {c['autocorr_max']} (a motif repeats inside the tile)")
     return errs
 
 
@@ -169,9 +231,18 @@ def format_errors(name: str, im: np.ndarray, size: list) -> list[str]:
         errs.append(f"{name}: {w}x{h} is not a power of two")
     if [w, h] != list(size):
         errs.append(f"{name}: {w}x{h} but the manifest says {size}")
-    if not (im[..., 3] == 255).all():
-        errs.append(f"{name}: alpha is not fully opaque")
     return errs
+
+
+def shipped_copy_errors(name: str, forge_root: Path, terrain_root: Path = TERRAIN) -> list[str]:
+    """The engine's copy dream/animations/library/forge/<n>/<n>.albedo.png must be byte-identical to terrain/<n>.png."""
+    p = forge_root / name / f"{name}.albedo.png"
+    src = terrain_root / f"{name}.png"
+    if not p.exists():
+        return [f"{name}: shipped copy {p} missing"]
+    if p.read_bytes() != src.read_bytes():
+        return [f"{name}: shipped copy differs from terrain/{name}.png (run tools/ui-assets/regen_terrain.py)"]
+    return []
 
 
 def png(path: Path) -> np.ndarray | None:
@@ -200,9 +271,27 @@ def self_test() -> list[str]:
     errs = []
     n = 256
     good = _as_rgba(_wrapped_noise(1) + 0.6 * _wrapped_noise(2, sigma=10.0))
+    # alpha-bearing good tile: height correlated with luma, stretched like gen_terrain does
+    hgt = _wrapped_noise(1) + 0.6 * _wrapped_noise(2, sigma=10.0)
+    hgt = (hgt - np.percentile(hgt, 1)) / (np.percentile(hgt, 99) - np.percentile(hgt, 1))
+    good[..., 3] = np.clip(hgt * 255 + 0.5, 0, 255).astype(np.uint8)
     ramp = np.tile(np.linspace(0, 1, n, dtype=np.float32), (n, 1))
     xs = np.arange(n, dtype=np.float32)[None, :] / n
+    def with_alpha(im, a):
+        im = im.copy()
+        im[..., 3] = np.clip(a * 255 + 0.5, 0, 255).astype(np.uint8)
+        return im
+
+    rng = np.random.default_rng(12)
+    motif = rng.random((64, 64)).astype(np.float32)
     cases = {
+        "alpha_flat": ("a_std", with_alpha(good, np.full((n, n), 1.0, np.float32))),
+        "alpha_seam": ("a_seam", with_alpha(good, _wrapped_noise(13) * 0.2 / 0.5 + ramp)),
+        "alpha_corr": ("a_corr", with_alpha(good, 1.0 - (hgt.clip(0, 1)))),
+        "repeat": ("autocorr", _as_rgba(np.tile(motif, (4, 4)), lo=0.05, hi=0.25)),
+        # mean luma .2253: inside the absolute window (<= .23) but over .85 x mud's old .2487 = .2114, so only the ratchet fires
+        "bright": ("mean_luma", np.dstack((np.clip(58 + 8 * (_wrapped_noise(14) - 0.5) / 0.1, 0, 255).astype(np.uint8)[..., None].repeat(3, 2),
+                                           np.full((n, n), 255, np.uint8)))),
         "seam": ("seam", _as_rgba(_wrapped_noise(3) * 0.2 + ramp)),
         "quad": ("quad", _as_rgba(_wrapped_noise(4) * 0.3 + 0.8 * np.sin(2 * np.pi * xs))),
         "lowfreq": ("lowfreq", _as_rgba(_wrapped_noise(5) * 0.15 + 1.0 * np.cos(2 * np.pi * xs) * np.cos(2 * np.pi * xs.T))),
@@ -217,26 +306,41 @@ def self_test() -> list[str]:
     gm = measure(good)
     bad = gate_errors("selftest.good", gm)
     # the good tile is only required to pass the tiling and direction gates; the palette ones are tested by their negatives
-    bad = [e for e in bad if "wrap seam" in e or "quadrant" in e or "low-frequency" in e]
+    bad = [e for e in bad if "wrap seam" in e or "quadrant" in e or "low-frequency" in e or "alpha" in e or "repetition" in e]
     errs += [f"self-test: the good tile fails its own gates: {e}" for e in bad]
     for label, (key, im) in cases.items():
         m = measure(im)
         keyed = {"seam": "wrap seam", "quad": "quadrant", "lowfreq": "low-frequency", "contrast": "local contrast",
-                 "form": "form ratio", "sat": "saturation", "chrome": "chrome", "p5": "p5 V", "p99": "p99 V", "mean": "mean V"}[label]
-        if not any(keyed in e for e in gate_errors("selftest." + label, m)):
+                 "form": "form ratio", "sat": "saturation", "chrome": "chrome", "p5": "p5 V", "p99": "p99 V", "mean": "mean V",
+                 "alpha_flat": "alpha std", "alpha_seam": "alpha wrap seam", "alpha_corr": "alpha/luma", "repeat": "in-tile repetition",
+                 "bright": "ratchet"}[label]
+        if not any(keyed in e for e in gate_errors("mud" if label == "bright" else "selftest." + label, m)):
             errs.append(f"self-test: gate {label} did not fail its negative (metric {key} = {m.get(key, m.get('form_ratio'))})")
     # Format negatives, one per branch of format_errors, and each input may trip only the error it is built for:
     # the non power-of-two case was np.zeros, whose alpha 0 ALSO tripped "alpha is not fully opaque", so deleting
     # the power-of-two branch outright would have left this control green. Opaque white isolates the size error.
     for label, im, size, want in (
             ("npot", np.full((100, 100, 4), 255, np.uint8), [100, 100], "is not a power of two"),
-            ("alpha", np.zeros((64, 64, 4), np.uint8), [64, 64], "alpha is not fully opaque"),
             ("size", np.full((64, 64, 4), 255, np.uint8), [128, 128], "but the manifest says")):
         got = format_errors("selftest." + label, im, size)
         if len(got) != 1 or want not in got[0]:
             errs.append(f"self-test: the format {label} negative reported {got}, expected exactly one {want!r}")
     if format_errors("selftest.clean", np.full((64, 64, 4), 255, np.uint8), [64, 64]):
         errs.append("self-test: a clean 64x64 opaque tile fails the format gate, so no negative above is specific")
+    # Shipped copy negatives: a missing and a differing engine copy must each fail, an identical one must pass.
+    with tempfile.TemporaryDirectory() as tmp:
+        terr, forge = Path(tmp) / "terrain", Path(tmp) / "forge"
+        (forge / "t").mkdir(parents=True)
+        terr.mkdir()
+        (terr / "t.png").write_bytes(b"tile-a")
+        if not any("missing" in e for e in shipped_copy_errors("t", forge, terr)):
+            errs.append("self-test: a missing shipped copy did not fail")
+        (forge / "t" / "t.albedo.png").write_bytes(b"tile-b")
+        if not any("differs" in e for e in shipped_copy_errors("t", forge, terr)):
+            errs.append("self-test: a differing shipped copy did not fail")
+        (forge / "t" / "t.albedo.png").write_bytes(b"tile-a")
+        if shipped_copy_errors("t", forge, terr):
+            errs.append("self-test: an identical shipped copy fails, so the negatives above are not specific")
     return errs
 
 
@@ -263,6 +367,7 @@ def main() -> int:
             continue
         tiles[n] = im
         errs += format_errors(n, im, sizes.get(n, [gen_terrain.TILE_PX] * 2))
+        errs += shipped_copy_errors(n, FORGE_ROOT)
     if TERRAIN.exists():
         wanted = {f"{n}.png" for n in NAMES} | {"terrain_manifest.json", "terrain_sheet.png"}
         errs += [f"stale committed file {p.name}: no generator tile produces it" for p in sorted(TERRAIN.iterdir()) if p.name not in wanted]

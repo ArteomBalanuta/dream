@@ -32,6 +32,10 @@ public sealed class Shader : IDisposable
     // must not contain one.
     public const string AlphaMaskDefine = "WORLD_ALPHA_MASK";
 
+    // Compiles cubeFragment.glsl as the terrain-only program (stochastic tile sampling and macro
+    // variation behind uTerrainVariation). It has no MASK variant: terrain is opaque.
+    public const string TerrainDefine = "DREAM_TERRAIN";
+
     private int _modelLocation = -1;
     private int _normalMatrixLocation = -1;
     private int _alphaCutoffLocation = -1;

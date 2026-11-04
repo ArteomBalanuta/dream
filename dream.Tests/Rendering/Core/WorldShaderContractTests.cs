@@ -146,10 +146,22 @@ public class WorldShaderContractTests
         Assert.Matches(@"LoadWorldShader\(""cube"",\s*AssetPaths\.Shader\(""cubeVertex\.glsl""\),\s*AssetPaths\.Shader\(""cubeFragment\.glsl""\)\);", render);
         Assert.Matches(@"LoadWorldShader\(""enemy"",\s*AssetPaths\.Shader\(""cubeVertex\.glsl""\),\s*AssetPaths\.Shader\(""enemyFragment\.glsl""\)\);", render);
         Assert.Contains("shader.AttachAlphaMaskVariant(new Shader(vertexPath, fragmentPath, Shader.AlphaMaskDefine));", render);
-        // Terrain binds the base "cube" program and never the variant.
+        // Terrain binds its own terrain-define program (the cube sources, no MASK variant) and never a variant.
+        Assert.Matches(@"LoadTerrainShader\(TerrainShaderName,\s*AssetPaths\.Shader\(""cubeVertex\.glsl""\),\s*AssetPaths\.Shader\(""cubeFragment\.glsl""\)\);", render);
+        Assert.Equal("terrain", Render.TerrainShaderName);
+        Assert.Equal("DREAM_TERRAIN", Shader.TerrainDefine);
+        string loadTerrain = MethodBody(render, "public void LoadTerrainShader(");
+        Assert.Contains("new(vertexPath, fragmentPath, Shader.TerrainDefine)", loadTerrain);
+        Assert.DoesNotContain("AttachAlphaMaskVariant", loadTerrain);
         string bindTerrain = MethodBody(render, "private void BindTerrainMaterial(");
-        Assert.Contains("Shader shader = GetShader(\"cube\");", bindTerrain);
+        Assert.Contains("Shader shader = GetShader(TerrainShaderName);", bindTerrain);
         Assert.DoesNotContain("AlphaMaskVariant", bindTerrain);
+        // Moving fallback cubes draw the plain tile: the world-keyed variation, blend and layer are off.
+        Assert.Contains("shader.SetFloat(\"uTerrainVariation\", 0f);", bindTerrain);
+        Assert.Contains("shader.SetFloat(\"uTerrainBlend\", 0f);", bindTerrain);
+        Assert.Contains("shader.SetInt(\"uTerrainLayer\", -1);", bindTerrain);
+        Assert.Contains("SetInt(TerrainTilesUniform, TerrainTilesUnit)", loadTerrain);
+        Assert.Contains("SetInt(TerrainMaterialMapUniform, TerrainMaterialMapUnit)", loadTerrain);
     }
 
     [Fact]

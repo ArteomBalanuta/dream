@@ -98,6 +98,14 @@ Guardrail: keep per-mesh state out of the pass. Anything that varies per mesh mu
 
 Guardrail: do not put a `discard` in an OPAQUE program. A fragment shader that can discard loses early depth testing even when it never discards, which measured about double the GPU actors time.
 
+### Terrain Surface Variation
+
+The terrain program (`DREAM_TERRAIN` build of `cubeFragment.glsl`, see Terrain surface in [Rendering And Assets](rendering-and-assets.md)) costs two `textureGrad` fetches instead of one and about 18 integer hashes per fragment with `DREAM_TERRAIN_VARIATION=1`: 4 for the variant noise, 2 for the variant offsets and 12 for the three macro octaves. There is no `discard` (so early depth stays on), no extra draw call and no per-mesh uniform upload: `uTerrainVariation` is set once per terrain pass or fallback bind. `DREAM_TERRAIN_VARIATION=0` takes the single plain sample path, whose cost is the old one. The terrain program is a separate compile so the stochastic path adds nothing to the actors, ground scatter or view-model draws that share the `cube` program.
+
+### Terrain Height Blend And Relief
+
+Away from cell edges (more than the 0.35 m band) a blend-eligible top fragment costs one `texelFetch` of the world material map plus two `textureGrad` fetches from the tile array, the same as the unblended sample. In the band it adds one neighbour map fetch per edge axis and, at a corner of four different materials, the worst case of 8 array fetches (4 layers x 2 variants) and 3 extra `texelFetch` (X, Z, diagonal); equal neighbour layers are merged and fetched once, and a fully interior fragment skips the neighbour map fetches (its weights collapse to the own material, though the small merge loops still run). Relief adds four `dFdx`/`dFdy` and a 2x2 solve per fragment and no texture fetch. The tile array is one 256x256x8 RGBA8 allocation with its mip chain (256x256x4 bytes x 8 layers = 2 MiB, about 2.7 MiB with mips) made once at load, and uploaded one layer per frame. `DREAM_TERRAIN_BLEND=0` and `DREAM_TERRAIN_RELIEF=0` skip the blend and the bump respectively; dynamic and fallback cubes skip both (and the variation).
+
 ### Worker Mesh Build With Render-Thread Upload
 
 Static chunk CPU mesh generation now runs on a background worker, while OpenGL buffer creation and replacement stay on the render thread. The renderer stages finished worker results and uploads only a bounded number of chunk meshes per frame, keeping stale buffers alive until the replacement batch completes.
