@@ -29,6 +29,7 @@ public sealed class LocalPlayerRenderer : IDisposable
     private readonly PlayerAnimationStateMachine _machine = new();
     private readonly PlayerPoseLayers _layers = new();
     private readonly HeldWeaponRenderer _heldWeapons = new();
+    private readonly WornArmourRenderer _wornArmour = new();
     private LocalPlayerFrameInputs _inputs = new(default, true, 0f, false, 0, 0);
     private AnimatedModelInstanceHandle? _model;
     private bool _disposed;
@@ -114,6 +115,7 @@ public sealed class LocalPlayerRenderer : IDisposable
             model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
             model.EndRender();
             _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
+            _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
             shader.Use();
             shader.SetVector3("uActorTintOffset", Vector3.Zero);
             GL.DepthMask(true);
@@ -131,6 +133,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
         model.EndRender();
         _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
+        _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
         if (flashing)
         {
             shader.Use();
@@ -147,6 +150,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         AnimatedModelInstanceHandle? model = _model;
         _model = null;
         _heldWeapons.Dispose();
+        _wornArmour.Dispose();
         model?.Dispose();
     }
 }
