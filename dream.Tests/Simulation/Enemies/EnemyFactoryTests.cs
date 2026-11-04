@@ -215,6 +215,62 @@ public sealed class EnemyFactoryTests
         }
     }
 
+    // Contract C-G: MoveSpeed is the CHASE speed and PatrolSpeed the walk home, and the two are
+    // measured off the actor by what it really covers in a tick. A shipped wolf chases at 5.0 and
+    // walks home at 1.4; before this wave it did both at 2.8 and could never close on a 6.0 player.
+    [Fact]
+    public void AShippedWolf_ChasesAtItsMoveSpeed_AndReturnsHomeAtItsPatrolSpeed()
+    {
+        const float dt = 1f / 60f;
+        EnemyTemplate template = ContentCatalog.Shipped.Wolf;
+        Assert.Equal(5.0f, template.MoveSpeed);
+        Assert.Equal(1.4f, template.PatrolSpeed);
+
+        EnemyActor wolf = EnemyFactory.Spawn(template, Vector3.Zero, 2400, Events, CombatFormulaService.Default);
+        Assert.Equal(5.0f, wolf.MoveSpeed);
+        Assert.Equal(1.4f, wolf.PatrolSpeed);
+
+        // A player well inside the aggro range but far outside the attack range: a full-speed chase.
+        Vector3 player = new(0f, 0f, 8f);
+        for (int i = 0; i < 6; i++)
+        {
+            wolf.Update(dt, player, map: null);
+        }
+
+        Assert.Equal(EnemyBehaviorState.Chasing, wolf.BehaviorState);
+        Assert.InRange(wolf.CurrentSpeed, 5.0f * 0.95f, 5.0f * 1.05f);
+
+        // The player leaves. The wolf walks back to its home point at the patrol speed.
+        for (int i = 0; i < 6; i++)
+        {
+            wolf.Update(dt, playerPosition: null, map: null);
+        }
+
+        Assert.InRange(wolf.CurrentSpeed, 1.4f * 0.95f, 1.4f * 1.05f);
+        Assert.True(wolf.CurrentSpeed < wolf.MoveSpeed);
+
+        // Standing on its home point it reports no speed at all.
+        for (int i = 0; i < 600; i++)
+        {
+            wolf.Update(dt, playerPosition: null, map: null);
+        }
+
+        Assert.Equal(EnemyBehaviorState.Idle, wolf.BehaviorState);
+        Assert.Equal(0f, wolf.CurrentSpeed, 4);
+    }
+
+    // An unauthored patrol speed is half the chase speed, on the template and on the actor.
+    [Fact]
+    public void AnEnemyWithNoAuthoredPatrolSpeed_WalksHomeAtHalfItsChaseSpeed()
+    {
+        EnemyActor dire = EnemyFactory.Spawn(Dire(), Vector3.Zero, 2401, Events, CombatFormulaService.Default);
+
+        Assert.Null(Dire().AuthoredPatrolSpeed);
+        Assert.Equal(1.6f, Dire().PatrolSpeed);
+        Assert.Equal(1.6f, dire.PatrolSpeed);
+        Assert.Equal(3.2f, dire.MoveSpeed);
+    }
+
     [Fact]
     public void TheDefaultVisual_IsNullOnTheActor_AndAScriptedEnemyKeepsTodaysRowStats()
     {

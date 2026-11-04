@@ -89,6 +89,85 @@ public class ForgedActorAssetTests
         Assert.True(data.Skeleton.TryGetClip(BeastAssetDefinition.MoveClip, out _));
         Assert.True(data.Skeleton.TryGetClip(BeastAssetDefinition.AttackClip, out _));
         Assert.True(data.Skeleton.TryGetClip(BeastAssetDefinition.DieClip, out _));
+        // The chase gait, forged beside the walk.
+        Assert.True(data.Skeleton.TryGetClip(BeastAssetDefinition.GallopClip, out _));
+        Assert.NotEqual(BeastAssetDefinition.MoveClip, BeastAssetDefinition.GallopClip);
+    }
+
+    // Every clip name the wolf's EnemyClipSet can return, against the SHIPPED third-party pack. This is
+    // the one that matters most here: the strings are not ours, nothing in the engine throws on a clip it
+    // cannot find (AnimatedModelInstance just holds the pose), and `Die` really was aliased to the idle
+    // for a wave because nobody had read the pack's animation list - it has carried `AnimalArmature|Death`
+    // all along. A pack swap that renamed any of the five would silently freeze a wolf mid-stride.
+    private static readonly string[] WolfClipSetNames =
+    [
+        WolfAssetDefinition.IdleClip,
+        WolfAssetDefinition.WalkClip,
+        WolfAssetDefinition.GallopClip,
+        WolfAssetDefinition.AttackClip,
+        WolfAssetDefinition.DieClip
+    ];
+
+    public static TheoryData<string> WolfClipNames
+    {
+        get
+        {
+            TheoryData<string> data = new();
+            foreach (string name in WolfClipSetNames)
+            {
+                data.Add(name);
+            }
+
+            return data;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(WolfClipNames))]
+    public void TheShippedWolf_CarriesEveryClipItsClipSetNames(string clipName)
+    {
+        AnimatedModelData data = AnimatedModelData.Load(WolfAssetDefinition.ModelPath);
+
+        Assert.True(
+            data.Skeleton.TryGetClip(clipName, out _),
+            $"The shipped wolf GLB has no '{clipName}' clip; the enemy would hold its pose instead of animating.");
+    }
+
+    // And the five are five different animations, not one name repeated: the measured durations off the
+    // pack are Idle 3.333 s, Walk 1.0417 s, Gallop 0.5417 s and Death 1.0417 s, so the gallop really is
+    // the short cycle a chase plays.
+    [Fact]
+    public void TheShippedWolfsGaits_AreDistinctClips_AndTheGallopIsTheShortCycle()
+    {
+        AnimatedModelData data = AnimatedModelData.Load(WolfAssetDefinition.ModelPath);
+
+        Assert.Equal(5, WolfClipSetNames.Distinct().Count());
+        Assert.True(data.Skeleton.TryGetClip(WolfAssetDefinition.WalkClip, out Animation? walk));
+        Assert.True(data.Skeleton.TryGetClip(WolfAssetDefinition.GallopClip, out Animation? gallop));
+        Assert.True(data.Skeleton.TryGetClip(WolfAssetDefinition.DieClip, out Animation? death));
+        Assert.True(data.Skeleton.TryGetClip(WolfAssetDefinition.IdleClip, out Animation? idle));
+
+        Assert.Equal(1.0417f, walk!.Duration, 3);
+        Assert.Equal(0.5417f, gallop!.Duration, 3);
+        Assert.Equal(1.0417f, death!.Duration, 3);
+        Assert.Equal(3.3333f, idle!.Duration, 3);
+        Assert.True(gallop.Duration < walk.Duration, "A gallop cycle must be shorter than a walk cycle.");
+        // The death clip is its own animation, which is what the aliased Die hid.
+        Assert.NotEqual(idle.Name, death.Name);
+    }
+
+    // The pack is third-party and this wave does not touch it: 1 skin, 68 nodes, 24 animations, including
+    // bare-name duplicates of the prefixed clips. The catalog keeps the prefixed names on purpose.
+    [Fact]
+    public void TheShippedWolf_IsTheThirdPartyPack_WithItsPrefixedNamesKept()
+    {
+        AnimatedModelData data = AnimatedModelData.Load(WolfAssetDefinition.ModelPath);
+        ModelRoot model = data.Model;
+
+        Assert.Single(model.LogicalSkins);
+        Assert.Equal(68, model.LogicalNodes.Count);
+        Assert.Equal(24, model.LogicalAnimations.Count);
+        Assert.All(WolfClipSetNames, name => Assert.StartsWith("AnimalArmature|", name, StringComparison.Ordinal));
     }
 
     // M4: the deformation is real, not a bind-pose draw. A joint matrix away from the bind pose is

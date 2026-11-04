@@ -13,6 +13,9 @@ public static class BeastAssetDefinition
 {
     public const string IdleClip = "idle";
     public const string MoveClip = "walk";
+    // The bounding gait, forged beside the walk: fore and hind pairs leave the ground together on a
+    // shorter cycle than the walk's trot. A chasing hound plays this, a patrolling one the walk.
+    public const string GallopClip = "gallop";
     public const string AttackClip = "attack";
     public const string DieClip = "die";
 

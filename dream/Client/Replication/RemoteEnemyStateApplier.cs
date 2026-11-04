@@ -74,11 +74,15 @@ public static class RemoteEnemyStateApplier
     private const int ClientAttackDamagePlaceholder = 10;
     private const float ClientAttackIntervalPlaceholderSeconds = 1f;
 
-    // The client never reads the content catalog. These ranges and this speed only feed an actor the
-    // client never simulates, and stay the wolf's shipped values so nothing about it changes.
+    // The client never reads the content catalog. These ranges and these speeds only feed an actor the
+    // client never simulates (nothing here ever calls EnemyActor.Update), and stay the wolf's shipped
+    // values so nothing about it changes. They are kept in step with enemies.json anyway: a stale 2.8
+    // here read like the client knowing the enemy's real speed, which it does not - the renderer
+    // measures the gait from the drawn pose instead.
     private const float ClientAggroRangePlaceholder = 10f;
     private const float ClientAttackRangePlaceholder = 1.35f;
-    private const float ClientMoveSpeedPlaceholder = 2.8f;
+    private const float ClientMoveSpeedPlaceholder = 5.0f;
+    private const float ClientPatrolSpeedPlaceholder = 1.4f;
     private const string ClientDisplayNameFallback = "Wolf";
 
     // Wire levels are hostile; 0 (absent) is level 1.
@@ -106,6 +110,7 @@ public static class RemoteEnemyStateApplier
             aggroRange: ClientAggroRangePlaceholder,
             attackRange: ClientAttackRangePlaceholder,
             moveSpeed: ClientMoveSpeedPlaceholder,
+            patrolSpeed: ClientPatrolSpeedPlaceholder,
             preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
             collisionRadius: WolfDefinition.CollisionRadius,
             collisionHeight: WolfDefinition.CollisionHeight,

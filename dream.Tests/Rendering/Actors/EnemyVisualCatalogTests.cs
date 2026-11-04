@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Models;
+using Dream.Simulation.Enemies;
 
 namespace Dream.Tests.Rendering.Actors;
 
@@ -61,17 +62,108 @@ public sealed class EnemyVisualCatalogTests
     }
 
     [Fact]
-    public void TheWolfsClips_KeepTheirPackPrefix_AndItsDeathHoldsTheIdle()
+    public void TheWolfsClips_KeepTheirPackPrefix_AndItsDeathIsItsOwnClip()
     {
         EnemyVisual wolf = EnemyVisualCatalog.Resolve(null);
 
         Assert.Equal("AnimalArmature|Idle", wolf.Clips.Idle);
         Assert.Equal("AnimalArmature|Walk", wolf.Clips.Move);
-        Assert.Equal(wolf.Clips.Idle, wolf.Clips.Die);
+        Assert.Equal("AnimalArmature|Gallop", wolf.Clips.Sprint);
+        // INVERTED on purpose. This line used to be Assert.Equal(Idle, Die), pinning the alias that
+        // stood in for a death clip nobody had checked for; the pack has carried
+        // `AnimalArmature|Death` all along and ForgedActorAssetTests asserts it against the GLB.
+        Assert.Equal("AnimalArmature|Death", wolf.Clips.Die);
+        Assert.NotEqual(wolf.Clips.Idle, wolf.Clips.Die);
         Assert.Equal(wolf.Clips.Move, wolf.Clips.Resolve(Dream.Simulation.Enemies.EnemyBehaviorState.Chasing));
         Assert.Equal(wolf.Clips.Attack, wolf.Clips.Resolve(Dream.Simulation.Enemies.EnemyBehaviorState.Attacking));
         Assert.Equal(wolf.Clips.Die, wolf.Clips.Resolve(Dream.Simulation.Enemies.EnemyBehaviorState.Dead));
         Assert.Equal(wolf.Clips.Idle, wolf.Clips.Resolve(Dream.Simulation.Enemies.EnemyBehaviorState.Idle));
+    }
+
+    // ---- gaits (contract C-F) ----
+
+    [Fact]
+    public void AMovingEnemy_WalksBelowTheGaitThreshold_AndGallopsAboveIt()
+    {
+        EnemyClipSet clips = EnemyVisualCatalog.WolfClips;
+
+        Assert.Equal(clips.Move, clips.Resolve(EnemyBehaviorState.Chasing, 1.5f));
+        Assert.Equal(clips.Sprint, clips.Resolve(EnemyBehaviorState.Chasing, 5.0f));
+        Assert.Equal(3.0f, clips.SprintSpeedThreshold);
+        Assert.Equal(0.4f, clips.GaitHysteresisSpeed);
+    }
+
+    // The behaviour-only overload is the one WolfAnimationResolver and every pre-gait caller use; it
+    // must stay exactly the zero-speed case, or an enemy with no measured pose would gallop on the spot.
+    [Theory]
+    [InlineData(EnemyBehaviorState.Idle)]
+    [InlineData(EnemyBehaviorState.Chasing)]
+    [InlineData(EnemyBehaviorState.Attacking)]
+    [InlineData(EnemyBehaviorState.Dead)]
+    public void TheBehaviourOnlyResolve_IsTheZeroSpeedCase(EnemyBehaviorState state)
+    {
+        foreach (EnemyClipSet clips in new[] { EnemyVisualCatalog.WolfClips, EnemyVisualCatalog.HoundClips })
+        {
+            Assert.Equal(clips.Resolve(state, 0f), clips.Resolve(state));
+        }
+
+        Assert.Equal(EnemyVisualCatalog.WolfClips.Move, EnemyVisualCatalog.WolfClips.Resolve(EnemyBehaviorState.Chasing));
+    }
+
+    [Fact]
+    public void ThePlaybackRate_IsOneAtEachGaitsReferenceSpeed_AndClamped()
+    {
+        EnemyClipSet clips = EnemyVisualCatalog.WolfClips;
+
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 1.4f), 4);
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 5.0f), 4);
+        // Dragged along at a crawl or snapped across the floor, the stride stays inside 0.6..1.6.
+        Assert.Equal(EnemyClipSet.MinPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 0.1f), 4);
+        Assert.Equal(EnemyClipSet.MaxPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 2.9f), 4);
+        Assert.Equal(EnemyClipSet.MaxPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 40f), 4);
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, float.NaN), 4);
+        // Only a moving enemy scales its stride.
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Idle, 5.0f), 4);
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Attacking, 5.0f), 4);
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Dead, 5.0f), 4);
+    }
+
+    // The hysteresis band, swept the way PlayerAnimationStateMachineTests sweeps cursor jitter: a speed
+    // that dithers by the whole band around the threshold must not keep renaming the clip, because a
+    // rename resets clip time and the stride visibly stutters.
+    [Fact]
+    public void AGaitDoesNotFlip_WhileTheSpeedDithersInsideTheHysteresisBand()
+    {
+        EnemyClipSet clips = EnemyVisualCatalog.WolfClips;
+        float band = clips.GaitHysteresisSpeed;
+
+        // Below the threshold by less than the band, from a walk: never starts the gallop.
+        bool sprinting = false;
+        for (int i = 0; i < 400; i++)
+        {
+            float speed = clips.SprintSpeedThreshold - 0.001f - band * 0.5f * (1f + MathF.Sin(i));
+            sprinting = clips.ResolveSprinting(speed, sprinting);
+            Assert.False(sprinting);
+        }
+
+        // Rising past the threshold starts it exactly once, and the same dither then never ends it.
+        int flips = 0;
+        bool previous = false;
+        for (int i = 0; i < 400; i++)
+        {
+            float speed = clips.SprintSpeedThreshold + band * MathF.Sin(i);
+            sprinting = clips.ResolveSprinting(speed, sprinting);
+            if (sprinting != previous)
+            {
+                flips++;
+                previous = sprinting;
+            }
+        }
+
+        Assert.Equal(1, flips);
+        Assert.True(sprinting);
+        // And it does come back once the speed really has dropped out of the band.
+        Assert.False(clips.ResolveSprinting(clips.SprintSpeedThreshold - band - 0.01f, sprinting: true));
     }
 
     // Only GraveHowler moves to the hound this wave; the other three templates keep the wolf.

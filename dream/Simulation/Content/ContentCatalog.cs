@@ -693,7 +693,7 @@ public sealed partial class ContentCatalog
                 path,
                 enemyElement,
                 ["key", "displayName", "level", "strength", "vitality", "attackSpeed", "aggroRange", "attackRange", "moveSpeed", "visualKey", "spawnRole"],
-                optional: ["attackIntervalSeconds", "lootTable", "goldMin", "goldMax", "maxHealth"]);
+                optional: ["attackIntervalSeconds", "lootTable", "goldMin", "goldMax", "maxHealth", "patrolSpeed"]);
             float? interval = enemy.TryGetValue("attackIntervalSeconds", out JsonElement intervalElement)
                 ? ReadFloat(EnemiesFileName, $"{path}.attackIntervalSeconds", intervalElement, 0.05f, 3600f)
                 : null;
@@ -735,6 +735,21 @@ public sealed partial class ContentCatalog
                     $"{attackRange.ToString(CultureInfo.InvariantCulture)} must exceed {minimumAttackRange.ToString("0.###", CultureInfo.InvariantCulture)} (the player separation distance {WolfDefinition.PlayerSeparationDistance.ToString(CultureInfo.InvariantCulture)} divided by the stand-off fraction {EnemyActor.StandOffRangeFraction.ToString(CultureInfo.InvariantCulture)})");
             }
 
+            // moveSpeed is the CHASE speed; the optional patrolSpeed is the slower walk home and can
+            // never exceed it, or an enemy would patrol faster than it hunts. Absent, the template
+            // reports half the chase speed and the digest does not change.
+            float moveSpeed = ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], MinMoveSpeed, 100f);
+            float? patrolSpeed = enemy.TryGetValue("patrolSpeed", out JsonElement patrolElement)
+                ? ReadFloat(EnemiesFileName, $"{path}.patrolSpeed", patrolElement, MinMoveSpeed, 100f)
+                : null;
+            if (patrolSpeed > moveSpeed)
+            {
+                throw Fail(
+                    EnemiesFileName,
+                    $"{path}.patrolSpeed",
+                    $"{patrolSpeed.Value.ToString(CultureInfo.InvariantCulture)} is above moveSpeed {moveSpeed.ToString(CultureInfo.InvariantCulture)} (the patrol walk cannot outrun the chase)");
+            }
+
             EnemyTemplate template = new(
                 ReadKey(EnemiesFileName, $"{path}.key", enemy["key"]),
                 ReadName(EnemiesFileName, $"{path}.displayName", enemy["displayName"]),
@@ -745,13 +760,14 @@ public sealed partial class ContentCatalog
                 interval,
                 ReadFloat(EnemiesFileName, $"{path}.aggroRange", enemy["aggroRange"], 0.1f, 1000f),
                 attackRange,
-                ReadFloat(EnemiesFileName, $"{path}.moveSpeed", enemy["moveSpeed"], MinMoveSpeed, 100f),
+                moveSpeed,
                 ReadVisualId(EnemiesFileName, $"{path}.visualKey", enemy["visualKey"]),
                 lootTable,
                 ReadSpawnRole($"{path}.spawnRole", enemy["spawnRole"]),
                 goldMin,
                 goldMax,
-                maxHealth);
+                maxHealth,
+                patrolSpeed);
             if (!byKey.TryAdd(template.Key, template))
             {
                 throw Fail(EnemiesFileName, $"{path}.key", $"duplicate enemy key '{template.Key}'");
@@ -1320,6 +1336,12 @@ public sealed partial class ContentCatalog
             if (enemy.MaxHealth.HasValue)
             {
                 text.Append("maxhealth|").Append(enemy.MaxHealth.Value.ToString(c)).Append('\n');
+            }
+
+            // Same rule for the patrol walk: in the digest only when authored.
+            if (enemy.AuthoredPatrolSpeed.HasValue)
+            {
+                text.Append("patrolspeed|").Append(enemy.AuthoredPatrolSpeed.Value.ToString("R", c)).Append('\n');
             }
         }
 
