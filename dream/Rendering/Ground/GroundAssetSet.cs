@@ -85,6 +85,14 @@ public sealed class GroundAssetSet
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                    (!doc.RootElement.TryGetProperty("schema", out JsonElement schema) ||
+                        schema.ValueKind != JsonValueKind.String || schema.GetString() != Schema))
+                {
+                    Skip(sink, name, $"schema is not '{Schema}'");
+                    continue;
+                }
+
                 if (doc.RootElement.ValueKind != JsonValueKind.Object ||
                     !doc.RootElement.TryGetProperty("assets", out JsonElement list) ||
                     list.ValueKind != JsonValueKind.Array)
@@ -129,18 +137,27 @@ public sealed class GroundAssetSet
         }
 
         List<(string Name, string Json)> docs = [];
+        string[] files = [];
         try
         {
-            string[] files = Directory.GetFiles(dir, "*.json");
+            files = Directory.GetFiles(dir, "*.json");
             Array.Sort(files, StringComparer.Ordinal);
-            foreach (string file in files)
-            {
-                docs.Add((Path.GetFileName(file), File.ReadAllText(file)));
-            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             RenderFaultLog.Shared.Report(FaultSource, exception);
+        }
+
+        foreach (string file in files)
+        {
+            try
+            {
+                docs.Add((Path.GetFileName(file), File.ReadAllText(file)));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                RenderFaultLog.Shared.Report(FaultSource, exception);
+            }
         }
 
         return Parse(docs, dir);

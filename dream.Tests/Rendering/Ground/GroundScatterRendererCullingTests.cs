@@ -77,17 +77,17 @@ public class GroundScatterRendererCullingTests
     }
 
     [Fact]
-    public void ABlock_IsCulledByDistance_AndByTheFrustum()
+    public void ACell_IsCulledByDistance_AndByTheFrustum()
     {
         Vector3 focus = new(50f, 1.5f, 50f);
         ViewFrustum frustum = IsoFrustum(focus);
-        GroundScatterIndex.Block near = new(0, 0, 1, new Vector3(48f, 1f, 48f), new Vector3(52f, 2f, 52f));
-        GroundScatterIndex.Block far = new(0, 0, 1, new Vector3(148f, 1f, 148f), new Vector3(152f, 2f, 152f));
-        GroundScatterIndex.Block side = new(0, 0, 1, new Vector3(70f, 1f, 28f), new Vector3(74f, 2f, 32f));
+        GroundScatterIndex.Cell near = new(new Vector3(48f, 1f, 48f), new Vector3(52f, 2f, 52f));
+        GroundScatterIndex.Cell far = new(new Vector3(148f, 1f, 148f), new Vector3(152f, 2f, 152f));
+        GroundScatterIndex.Cell side = new(new Vector3(70f, 1f, 28f), new Vector3(74f, 2f, 32f));
 
-        Assert.True(GroundScatterRenderer.BlockVisible(near, 24f, focus, frustum));
-        Assert.False(GroundScatterRenderer.BlockVisible(far, 24f, focus, frustum));
-        Assert.False(GroundScatterRenderer.BlockVisible(side, 42f, focus, frustum));
+        Assert.True(GroundScatterRenderer.CellVisible(near, 24f, focus, frustum));
+        Assert.False(GroundScatterRenderer.CellVisible(far, 24f, focus, frustum));
+        Assert.False(GroundScatterRenderer.CellVisible(side, 42f, focus, frustum));
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public class GroundScatterRendererCullingTests
     }
 
     [Fact]
-    public void TheIndex_GroupsEveryPlacementIntoExactlyOneBlock_ThatHoldsIt()
+    public void TheIndex_GroupsEveryPlacementIntoExactlyOneBlock_InACellThatHoldsIt()
     {
         (PropIndex props, _) = GroundTestSets.World(WorldDefaults.ServerNewWorldSize);
         GroundAssetSet set = GroundTestSets.Synthetic();
@@ -127,19 +127,21 @@ public class GroundScatterRendererCullingTests
             previousAsset = block.Asset;
             Assert.Equal(covered, block.Start);
             covered += block.Count;
+            GroundScatterIndex.Cell cell = index.Cells[block.Cell];
             for (int i = block.Start; i < block.Start + block.Count; i++)
             {
                 GroundPlacement p = index.Placements[i];
                 Assert.Equal(block.Asset, p.Asset);
                 GroundAsset asset = set.Assets[p.Asset];
                 float r = asset.Radius * p.Scale;
-                Assert.True(p.Position.X - r >= block.Min.X - 1e-3f && p.Position.X + r <= block.Max.X + 1e-3f);
-                Assert.True(p.Position.Z - r >= block.Min.Z - 1e-3f && p.Position.Z + r <= block.Max.Z + 1e-3f);
-                Assert.True(p.Position.Y >= block.Min.Y && p.Position.Y + (asset.Height * p.Scale) <= block.Max.Y);
+                Assert.True(p.Position.X - r >= cell.Min.X - 1e-3f && p.Position.X + r <= cell.Max.X + 1e-3f);
+                Assert.True(p.Position.Z - r >= cell.Min.Z - 1e-3f && p.Position.Z + r <= cell.Max.Z + 1e-3f);
+                Assert.True(p.Position.Y >= cell.Min.Y && p.Position.Y + (asset.Height * p.Scale) <= cell.Max.Y);
             }
         }
 
         Assert.Equal(index.Placements.Count, covered);
+        Assert.True(index.Cells.Count < index.Blocks.Count, "assets share cells: fewer cells than (asset, cell) runs");
     }
 
     [Fact]
@@ -152,6 +154,7 @@ public class GroundScatterRendererCullingTests
 
         Assert.Empty(index.Placements);
         Assert.Empty(index.Blocks);
+        Assert.Empty(index.Cells);
     }
 
     [Fact]

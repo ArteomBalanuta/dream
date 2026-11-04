@@ -16,7 +16,7 @@ public readonly record struct GroundPlacement(int Asset, Vector3 Position, float
 //   cover    - up to two per cell (30% on grass, 12% elsewhere), knee-high clutter, mushrooms thick near trees.
 //   decal    - one candidate per cell (7%), flat stains on level ground that do not overlap each other.
 // A low-frequency noise field (12-cell lattice) scales the cover and decal densities so they clump. Every layer
-// stays 2 cells off the map edge and out of the cells a prop footprint covers; accents and landmarks also keep off
+// stays 2 cells off the map edge and out of the cells a prop footprint or an accent/landmark radius covers; those also keep off
 // the roads and keep their radii apart from each other and from the props. Output is sorted by asset, x, z.
 public static class GroundScatterLayout
 {
@@ -34,7 +34,7 @@ public static class GroundScatterLayout
     private const int ClumpCells = 12;
     private const float MushroomBoost = 3f;
     private const float MushroomReach = 3f;
-    private const int MaterialCount = 9;
+    private static readonly int MaterialCount = (int)Enum.GetValues<GeometryMaterialId>().Max() + 1;
 
     private const uint ClumpSalt = 0xC1A4F;
     private const uint DecalSalt = 0xD3CA1;
@@ -109,6 +109,7 @@ public static class GroundScatterLayout
             MarkProps();
             PlaceBig(GroundLayer.Landmark, LandmarkBucket, 35u, 0.5f, LandmarkSalt);
             PlaceBig(GroundLayer.Accent, AccentBucket, 28u, 0.25f, AccentSalt);
+            MarkBigFootprints();
             MarkHosts();
             PlaceCover();
             PlaceDecals();
@@ -141,7 +142,8 @@ public static class GroundScatterLayout
         private int Index(int x, int z) => (z * _width) + x;
 
         private bool Usable(int x, int z, out StaticGround.Column column) =>
-            _ground.TryGet(x, z, out column) && !column.Blocked && column.Material != GeometryMaterialId.Lamp;
+            _ground.TryGet(x, z, out column) && !column.Blocked && column.Material != GeometryMaterialId.Lamp &&
+            (uint)column.Material < (uint)MaterialCount;
 
         private bool NearEdge(int x, int z) => x < EdgeCells || z < EdgeCells || x > _ground.MaxX - EdgeCells || z > _ground.MaxZ - EdgeCells;
 
@@ -260,6 +262,37 @@ public static class GroundScatterLayout
             }
 
             return true;
+        }
+
+        // The cells under an accent or a landmark (cell centres within its radius, and the cell it stands in): cover and
+        // decals keep out, so grass does not poke through a log or a boulder.
+        private void MarkBigFootprints()
+        {
+            for (int i = 0; i < _output.Count; i++)
+            {
+                GroundPlacement placed = _output[i];
+                GroundAsset asset = _assets[placed.Asset];
+                if (asset.Layer < GroundLayer.Accent)
+                {
+                    continue;
+                }
+
+                Vector3 p = placed.Position;
+                float radius = asset.Radius * placed.Scale;
+                int reach = (int)MathF.Ceiling(radius);
+                int hx = (int)MathF.Floor(p.X);
+                int hz = (int)MathF.Floor(p.Z);
+                for (int z = Math.Max(0, hz - reach); z <= Math.Min(_depth - 1, hz + reach); z++)
+                {
+                    for (int x = Math.Max(0, hx - reach); x <= Math.Min(_width - 1, hx + reach); x++)
+                    {
+                        if ((x == hx && z == hz) || DistanceSquared(x + 0.5f, z + 0.5f, p.X, p.Z) <= radius * radius)
+                        {
+                            _occupied[Index(x, z)] = true;
+                        }
+                    }
+                }
+            }
         }
 
         // Cells within reach of a tree or a stump: the mushrooms gather there.
@@ -386,7 +419,9 @@ public static class GroundScatterLayout
                     float scale = Lerp(asset.ScaleMin, asset.ScaleMax, (hPick >> 16) / 65536f);
                     float yaw = Hash(x, z, DecalSalt + 3u) % 360u;
                     float radius = asset.Radius * scale;
-                    if (!PropLayout.TryResolveBase(_ground, px, pz, yaw, new PropFootprint(radius, radius, 0), out float baseY) ||
+                    // Half-extents reach past the disc by a cell's half diagonal, so every cell it touches is level.
+                    float level = radius + 0.71f;
+                    if (!PropLayout.TryResolveBase(_ground, px, pz, yaw, new PropFootprint(level, level, 0), out float baseY) ||
                         Overlaps(spotAt, spots, search, px, pz, radius))
                     {
                         continue;
