@@ -1,3 +1,4 @@
+using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
 
@@ -70,14 +71,167 @@ public class PlayerAnimationStateMachineTests
         Assert.Equal(-MathF.PI / 4f, PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, 1f), 5);
     }
 
+    // C2: LegTwist is the RAW delta now, unclamped, because Update needs the whole angle to pick
+    // the walk clip's sector. The clamp moved to the residual the state machine reports.
     [Fact]
-    public void LegTwist_ClampsAtNinetyDegrees_IncludingStraightBackwards()
+    public void LegTwist_IsTheRawDelta_IncludingStraightBackwards()
     {
-        float max = PlayerAnimationStateMachine.MaxLegTwistRadians;
+        Assert.Equal(MathF.Atan2(1f, -0.5f), PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, -0.5f), 5);
+        Assert.Equal(-MathF.Atan2(1f, -0.5f), PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, -0.5f), 5);
+        Assert.Equal(MathF.PI, MathF.Abs(PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, -1f)), 4);
+        Assert.True(MathF.Abs(PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, -1f)) >
+            PlayerAnimationStateMachine.MaxLegTwistRadians);
+    }
 
-        Assert.Equal(max, PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, -0.5f), 5);
-        Assert.Equal(-max, PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, -0.5f), 5);
-        Assert.InRange(MathF.Abs(PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, -1f)), max - 1e-4f, max + 1e-4f);
+    // C2's table, exactly: the clip per sector and the residual the pose layers get. The residual
+    // never exceeds 45 degrees, which is why MaxLegTwistRadians could drop to pi/4.
+    [Theory]
+    [InlineData(0f, "walk", 0f)]
+    [InlineData(30f, "walk", 30f)]
+    [InlineData(-44f, "walk", -44f)]
+    [InlineData(45f, "walk", 45f)]
+    [InlineData(60f, "walk-strafe-right", -30f)]
+    [InlineData(90f, "walk-strafe-right", 0f)]
+    [InlineData(135f, "walk-strafe-right", 45f)]
+    [InlineData(-60f, "walk-strafe-left", 30f)]
+    [InlineData(-90f, "walk-strafe-left", 0f)]
+    [InlineData(-135f, "walk-strafe-left", -45f)]
+    [InlineData(160f, "walk-back", -20f)]
+    [InlineData(180f, "walk-back", 0f)]
+    [InlineData(-160f, "walk-back", 20f)]
+    public void ResolveWalkClip_FollowsTheDirectionalTable(float degrees, string expectedClip, float expectedResidualDegrees)
+    {
+        string clip = PlayerAnimationStateMachine.ResolveWalkClip(
+            MathHelper.DegreesToRadians(degrees), out float residual);
+
+        Assert.Equal(expectedClip, clip);
+        Assert.Equal(expectedResidualDegrees, MathHelper.RadiansToDegrees(residual), 3);
+        Assert.True(MathF.Abs(residual) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f);
+    }
+
+    [Fact]
+    public void TheLegTwistClamp_IsTheWithinSectorResidual()
+    {
+        Assert.Equal(MathF.PI / 4f, PlayerAnimationStateMachine.MaxLegTwistRadians, 5);
+        Assert.True(MathHelper.RadiansToDegrees(PlayerAnimationStateMachine.MaxLegTwistRadians) <= 45f + 1e-3f);
+    }
+
+    [Theory]
+    [InlineData(170f, "walk-back")]
+    [InlineData(-100f, "walk-strafe-left")]
+    [InlineData(10f, "walk")]
+    public void Moving_PicksTheDirectionalClip_AndReportsOnlyTheResidual(float degrees, string expectedClip)
+    {
+        float delta = MathHelper.DegreesToRadians(degrees);
+
+        PlayerAnimationFrame frame = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: 6f, twist: delta), Dt);
+
+        PlayerAnimationStateMachine.ResolveWalkClip(delta, out float residual);
+
+        Assert.Equal(expectedClip, frame.Clip);
+        Assert.Equal(residual, frame.LegTwistRadians, 5);
+        Assert.True(MathF.Abs(frame.LegTwistRadians) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f);
+    }
+
+    // The sprint deliberately keeps ONE clip (C2), so nothing covers its direction but the twist -
+    // and the twist it gets is the RAW delta, not a sector residual. It therefore keeps the wider
+    // pre-C2 clamp: at pi/4 a backwards sprint would leave the stride 135 degrees off its travel,
+    // worse than the 90 degrees it was before this wave and closer to the moonwalk C2 set out to
+    // kill. The same holds for an attack while moving, which also plays one clip.
+    [Fact]
+    public void Sprinting_KeepsOneClip_AndTheRawDeltaUnderTheWiderSprintClamp()
+    {
+        PlayerAnimationFrame backwards = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: 10f, twist: MathF.PI), Dt);
+        PlayerAnimationFrame diagonal = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: 10f, twist: -MathF.PI / 3f), Dt);
+
+        Assert.Equal("sprint", backwards.Clip);
+        Assert.Equal(MathF.PI / 2f, PlayerAnimationStateMachine.MaxSprintLegTwistRadians, 5);
+        // Straight backwards: the stride ends 90 degrees off travel, as it did before C2 - not the
+        // 135 degrees a pi/4 clamp would leave.
+        Assert.Equal(PlayerAnimationStateMachine.MaxSprintLegTwistRadians, backwards.LegTwistRadians, 5);
+        Assert.True(backwards.LegTwistRadians > PlayerAnimationStateMachine.MaxLegTwistRadians);
+        Assert.Equal(MathF.PI - backwards.LegTwistRadians, MathF.PI / 2f, 5);
+        // Inside the sprint clamp the raw delta passes through untouched.
+        Assert.Equal("sprint", diagonal.Clip);
+        Assert.Equal(-MathF.PI / 3f, diagonal.LegTwistRadians, 5);
+    }
+
+    // An attack while moving also plays one clip (the swing), so it takes the same wide clamp.
+    [Fact]
+    public void AttackingWhileMoving_TakesTheRawDelta_UnderTheSprintClamp()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(speed: 6f, attack: 0), Dt);
+
+        PlayerAnimationFrame frame = machine.Update(Inputs(speed: 6f, attack: 1, twist: MathF.PI), Dt);
+
+        Assert.Equal("attack-melee-right", frame.Clip);
+        Assert.Equal(PlayerAnimationStateMachine.MaxSprintLegTwistRadians, frame.LegTwistRadians, 5);
+    }
+
+    // The sector boundary needs the same hysteresis every other branch of this state machine has:
+    // AnimationPlaybackState.Play restarts the clip at t = 0 on a name change, so a cursor hovering
+    // near 45 degrees off the key direction would stutter the stride at frame 0 on mouse jitter.
+    [Fact]
+    public void TheSectorBoundary_IsSticky_SoJitterAtTheBoundaryDoesNotRestartTheStride()
+    {
+        Assert.True(PlayerAnimationStateMachine.SectorHysteresisRadians > 0f);
+        float just = PlayerAnimationStateMachine.StrafeSectorStartRadians +
+            (PlayerAnimationStateMachine.SectorHysteresisRadians * 0.5f);
+
+        // Past the boundary, but inside the deadband: whatever is playing keeps playing.
+        Assert.Equal("walk", PlayerAnimationStateMachine.ResolveWalkClip(just, "walk", out _));
+        Assert.Equal("walk-strafe-right", PlayerAnimationStateMachine.ResolveWalkClip(just, "walk-strafe-right", out _));
+        // With no clip playing it is the plain table, and the boundary still moves eventually.
+        Assert.Equal("walk-strafe-right", PlayerAnimationStateMachine.ResolveWalkClip(just, null, out _));
+        Assert.Equal(
+            "walk-strafe-right",
+            PlayerAnimationStateMachine.ResolveWalkClip(
+                PlayerAnimationStateMachine.StrafeSectorStartRadians +
+                (PlayerAnimationStateMachine.SectorHysteresisRadians * 2f), "walk", out _));
+
+        // The whole point, through Update: jitter either side of the boundary keeps one clip name.
+        PlayerAnimationStateMachine machine = new();
+        float below = PlayerAnimationStateMachine.StrafeSectorStartRadians - 0.01f;
+        string first = machine.Update(Inputs(speed: 6f, twist: below), Dt).Clip;
+        List<string> names = new() { first };
+        for (int frame = 0; frame < 8; frame++)
+        {
+            float jitter = (frame & 1) == 0 ? just : below;
+            names.Add(machine.Update(Inputs(speed: 6f, twist: jitter), Dt).Clip);
+        }
+
+        Assert.Equal("walk", first);
+        Assert.Single(names.Distinct());
+    }
+
+    // And the other side of the deadband: the clip does change once the cursor really moves over,
+    // so the stickiness cannot silently become "never switch".
+    [Fact]
+    public void TheStickySector_StillGivesWay_WhenTheTravelReallyChangesSector()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(speed: 6f, twist: 0.1f), Dt);
+
+        PlayerAnimationFrame strafe = machine.Update(Inputs(speed: 6f, twist: MathF.PI / 2f), Dt);
+        PlayerAnimationFrame back = machine.Update(Inputs(speed: 6f, twist: MathF.PI), Dt);
+
+        Assert.Equal("walk-strafe-right", strafe.Clip);
+        Assert.Equal(0f, strafe.LegTwistRadians, 5);
+        Assert.Equal("walk-back", back.Clip);
+    }
+
+    [Fact]
+    public void FallbackClip_LetsAModelWithoutTheDirectionalClipsKeepWalking()
+    {
+        Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-back"));
+        Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-strafe-left"));
+        Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-strafe-right"));
+        Assert.Equal("idle", PlayerAnimationStateMachine.FallbackClip("idle"));
+        Assert.Equal("die", PlayerAnimationStateMachine.FallbackClip("die"));
     }
 
     [Fact]
@@ -97,17 +251,23 @@ public class PlayerAnimationStateMachineTests
     }
 
     [Fact]
-    public void Frame_CarriesTheTwistWhileMoving_AndClampsIt()
+    public void Frame_CarriesTheResidualWhileMoving_WithinTheClamp()
     {
         PlayerAnimationStateMachine machine = new();
 
+        // 1.0 rad is a strafe sector: the clip takes 90 degrees, the residual is what is left.
         PlayerAnimationFrame moving = Run(machine, Inputs(speed: 6f, twist: 1.0f), 0.2f);
         PlayerAnimationFrame over = new PlayerAnimationStateMachine().Update(Inputs(speed: 6f, twist: 3.0f), Dt);
         PlayerAnimationFrame under = new PlayerAnimationStateMachine().Update(Inputs(speed: 6f, twist: -3.0f), Dt);
 
-        Assert.Equal(1.0f, moving.LegTwistRadians, 5);
-        Assert.Equal(PlayerAnimationStateMachine.MaxLegTwistRadians, over.LegTwistRadians, 5);
-        Assert.Equal(-PlayerAnimationStateMachine.MaxLegTwistRadians, under.LegTwistRadians, 5);
+        Assert.Equal("walk-strafe-right", moving.Clip);
+        Assert.Equal(1.0f - (MathF.PI / 2f), moving.LegTwistRadians, 5);
+        Assert.Equal("walk-back", over.Clip);
+        Assert.Equal(3.0f - MathF.PI, over.LegTwistRadians, 5);
+        Assert.Equal(MathF.PI - 3.0f, under.LegTwistRadians, 5);
+        Assert.All(
+            new[] { moving.LegTwistRadians, over.LegTwistRadians, under.LegTwistRadians },
+            twist => Assert.True(MathF.Abs(twist) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f));
     }
 
     [Fact]

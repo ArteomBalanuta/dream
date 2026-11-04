@@ -34,6 +34,14 @@ public sealed class FxSimulation
     public const float HaloFadeDistance = 5f;
     public const float HaloNightStrength = 1f;
     public const float HaloDayStrength = 0.12f;
+
+    // The three incommensurate sines of the held torch halo's own flicker, and its peak. The peak
+    // multiplies the light colour the FX collector was handed - which already carries the LIGHT's
+    // own flicker - so HeldLightCatalog needs it to know where the halo's red channel clips.
+    internal const float TorchHaloFlickerFast = 0.07f;
+    internal const float TorchHaloFlickerMid = 0.05f;
+    internal const float TorchHaloFlickerSlow = 0.03f;
+    internal const float TorchHaloFlickerPeak = 1f + TorchHaloFlickerFast + TorchHaloFlickerMid + TorchHaloFlickerSlow;
     public const float DepthBiasLamp = 0.9f;
     // Enough that the carrier's body does not cut the glow with a hard edge.
     public const float DepthBiasHeld = 0.4f;
@@ -78,7 +86,9 @@ public sealed class FxSimulation
     private static readonly Vector3 HeatBirth = new(1f, 0.62f, 0.2f);
     private static readonly Vector3 HeatMid = new(0.95f, 0.33f, 0.07f);
     private static readonly Vector3 HeatEnd = new(0.42f, 0.07f, 0.015f);
-    private static readonly Vector3 HeldHaloTint = new(0.375f, 0.27f, 0.157f);
+    // Internal, not private: HeldLightCatalog derives the largest torch intensity whose halo does
+    // not clip from this tint and the two flicker peaks, so the arithmetic lives in one place.
+    internal static readonly Vector3 HeldHaloTint = new(0.375f, 0.27f, 0.157f);
     private static readonly Vector3 LampHaloTint = new(0.3f, 0.22f, 0.13f);
 
     private readonly FxParticlePool _pool = new(FxLimits.ParticleCapacity);
@@ -362,7 +372,7 @@ public sealed class FxSimulation
             else
             {
                 flicker = torch
-                    ? 1f + 0.07f * MathF.Sin(7.3f * _clock + phi) + 0.05f * MathF.Sin(13.1f * _clock + 1.7f * phi) + 0.03f * MathF.Sin(23.9f * _clock + 0.6f * phi)
+                    ? 1f + TorchHaloFlickerFast * MathF.Sin(7.3f * _clock + phi) + TorchHaloFlickerMid * MathF.Sin(13.1f * _clock + 1.7f * phi) + TorchHaloFlickerSlow * MathF.Sin(23.9f * _clock + 0.6f * phi)
                     : 1f;
                 halfSize = (torch ? TorchHaloHalfSize : LanternHaloHalfSize) * (1f + 0.5f * (flicker - 1f));
                 tint = HeldHaloTint;

@@ -43,6 +43,16 @@ public sealed class LocalPlayerRenderer : IDisposable
         _inputs = inputs;
     }
 
+    // The animation frame the last Draw selected, and the raw travel-minus-facing delta it was
+    // selected from. The capture's status line logs them (acceptance M6): without this the chosen
+    // clip is nowhere in the output, so "the state machine selects by C2" could only be DERIVED
+    // from the logged axes plus a reading of ResolveWalkClip - which would not catch a machine that
+    // computed the right sector and then played the wrong clip. Null until the player has been
+    // drawn (Draw runs in third person only, and not before the model is uploaded).
+    public PlayerAnimationFrame? LastAnimationFrame { get; private set; }
+
+    public float LastRawLegTwistRadians { get; private set; }
+
     public void Draw(LocalPlayerPresentationState localPlayer, Camera camera, float deltaTime, bool silhouette = false)
     {
         if (_disposed)
@@ -85,6 +95,8 @@ public sealed class LocalPlayerRenderer : IDisposable
             PlayerAnimationStateMachine.LegTwist(
                 localPlayer.Facing.X, localPlayer.Facing.Z, _inputs.TravelDirection.X, _inputs.TravelDirection.Z));
         PlayerAnimationFrame frame = _machine.Update(in animationInputs, deltaTime);
+        LastAnimationFrame = frame;
+        LastRawLegTwistRadians = animationInputs.LegTwistRadians;
         _clipTracker.ApplyFrame(LocalActorId, in frame, instance);
         instance.Update(deltaTime);
         _layers.Update(instance, in frame);

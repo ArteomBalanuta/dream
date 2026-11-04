@@ -19,7 +19,7 @@
     {
       "key": "gate-warden",
       "displayName": "Gate Warden",
-      "visualKey": "npc.vendor",
+      "visualKey": "npc.warden",
       "offsetX": -4,
       "offsetZ": -5,
       "greeting": "Keep your voice low, stranger. The wolves have grown bold since the last snow, and the lamps burn thin. If you mean to stay past dusk, you can make yourself useful.",

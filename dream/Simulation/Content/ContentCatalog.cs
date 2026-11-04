@@ -336,13 +336,14 @@ public sealed partial class ContentCatalog
         JsonElement kitElement = properties["starterKit"];
         ExpectArray(ItemsFileName, "$.starterKit", kitElement);
         HashSet<string> kitKeys = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<EquipmentSlot> kitWells = [];
         int highest = 0;
         index = 0;
         foreach (JsonElement entryElement in kitElement.EnumerateArray())
         {
             string path = $"$.starterKit[{index}]";
             ExpectObject(ItemsFileName, path, entryElement);
-            Dictionary<string, JsonElement> entry = ReadProperties(ItemsFileName, path, entryElement, ["item", "version"]);
+            Dictionary<string, JsonElement> entry = ReadProperties(ItemsFileName, path, entryElement, ["item", "version"], optional: ["equip"]);
             string itemKey = ReadString(ItemsFileName, $"{path}.item", entry["item"]);
             int entryVersion = ReadInt(ItemsFileName, $"{path}.version", entry["version"], 1, starterKitVersion);
             if (!byKey.TryGetValue(itemKey, out ItemDefinition? referenced))
@@ -355,6 +356,26 @@ public sealed partial class ContentCatalog
                 throw Fail(ItemsFileName, $"{path}.item", $"duplicate starter kit item '{itemKey}'");
             }
 
+            // Optional: the equipment well a brand-new character wears this kind in (see
+            // PlayerInventoryService.EquipStarterKitWells). The item must list that slot itself, and
+            // two kinds must not claim the same well.
+            EquipmentSlot? equipWell = null;
+            if (entry.TryGetValue("equip", out JsonElement equipElement))
+            {
+                EquipmentSlot well = ParseEquipSlotName($"{path}.equip", equipElement);
+                if ((referenced.EquipSlotMask & EquipmentSlots.MaskOf(well)) == 0)
+                {
+                    throw Fail(ItemsFileName, $"{path}.equip", $"item '{itemKey}' cannot be equipped in {well}");
+                }
+
+                if (!kitWells.Add(well))
+                {
+                    throw Fail(ItemsFileName, $"{path}.equip", $"two starter kit items claim the {well} slot");
+                }
+
+                equipWell = well;
+            }
+
             // Versions never go down along the kit: an existing entry's version must not change when
             // a newer kind is appended.
             if (entryVersion < highest)
@@ -363,7 +384,7 @@ public sealed partial class ContentCatalog
             }
 
             highest = entryVersion;
-            kit.Add(new StarterKitEntry(referenced.Key, entryVersion));
+            kit.Add(new StarterKitEntry(referenced.Key, entryVersion, equipWell));
             index++;
         }
 
@@ -557,26 +578,10 @@ public sealed partial class ContentCatalog
         foreach (JsonElement slotElement in element.EnumerateArray())
         {
             string slotPath = $"{path}[{index}]";
-            string name = ReadString(ItemsFileName, slotPath, slotElement);
-            EquipmentSlot slot = name switch
-            {
-                "MainHand" => EquipmentSlot.MainHand,
-                "OffHand" => EquipmentSlot.OffHand,
-                "Head" => EquipmentSlot.Head,
-                "Body" => EquipmentSlot.Body,
-                "Hands" => EquipmentSlot.Hands,
-                "Feet" => EquipmentSlot.Feet,
-                "Legs" => EquipmentSlot.Legs,
-                "Neck" => EquipmentSlot.Neck,
-                "RingLeft" => EquipmentSlot.RingLeft,
-                "RingRight" => EquipmentSlot.RingRight,
-                "Back" => EquipmentSlot.Back,
-                "Companion" => EquipmentSlot.Companion,
-                _ => throw Fail(ItemsFileName, slotPath, $"unknown equipment slot '{Truncate(name)}'"),
-            };
+            EquipmentSlot slot = ParseEquipSlotName(slotPath, slotElement);
             if ((mask & EquipmentSlots.MaskOf(slot)) != 0)
             {
-                throw Fail(ItemsFileName, slotPath, $"duplicate equipment slot '{name}'");
+                throw Fail(ItemsFileName, slotPath, $"duplicate equipment slot '{slot}'");
             }
 
             mask |= EquipmentSlots.MaskOf(slot);
@@ -590,6 +595,29 @@ public sealed partial class ContentCatalog
         }
 
         return (mask, slots);
+    }
+
+    // One equipment slot name, exactly as the enum spells it. Shared by an item's equipSlots and a
+    // starter-kit entry's equip well.
+    private static EquipmentSlot ParseEquipSlotName(string path, JsonElement element)
+    {
+        string name = ReadString(ItemsFileName, path, element);
+        return name switch
+        {
+            "MainHand" => EquipmentSlot.MainHand,
+            "OffHand" => EquipmentSlot.OffHand,
+            "Head" => EquipmentSlot.Head,
+            "Body" => EquipmentSlot.Body,
+            "Hands" => EquipmentSlot.Hands,
+            "Feet" => EquipmentSlot.Feet,
+            "Legs" => EquipmentSlot.Legs,
+            "Neck" => EquipmentSlot.Neck,
+            "RingLeft" => EquipmentSlot.RingLeft,
+            "RingRight" => EquipmentSlot.RingRight,
+            "Back" => EquipmentSlot.Back,
+            "Companion" => EquipmentSlot.Companion,
+            _ => throw Fail(ItemsFileName, path, $"unknown equipment slot '{Truncate(name)}'"),
+        };
     }
 
     private static ItemRollTable ParseRolls(string path, JsonElement element)
@@ -1212,12 +1240,15 @@ public sealed partial class ContentCatalog
         StringBuilder text = new();
         // Every free-text field is length-prefixed ("5:Stone"), so a '|' or a newline inside a value
         // cannot shift into the next field and make two different catalogs hash alike.
-        text.Append("items.v4;kit=").Append(items.StarterKitVersion.ToString(c))
+        text.Append("items.v5;kit=").Append(items.StarterKitVersion.ToString(c))
             .Append(";unrecorded=").Append(items.UnrecordedStarterKitVersion.ToString(c)).Append('\n');
         foreach (StarterKitEntry entry in items.StarterKit)
         {
             text.Append("kit|");
-            AppendField(text, entry.ItemKind).Append('|').Append(entry.IntroducedVersion.ToString(c)).Append('\n');
+            // The equip well is simulation-visible - it decides what a brand-new character wears -
+            // so two catalogs whose items.json differ only in "equip" must not hash alike.
+            AppendField(text, entry.ItemKind).Append('|').Append(entry.IntroducedVersion.ToString(c))
+                .Append('|').Append(entry.EquipWell?.ToString() ?? "-").Append('\n');
         }
 
         foreach (ItemDefinition item in items.List.OrderBy(i => i.Key, StringComparer.Ordinal))

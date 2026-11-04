@@ -145,7 +145,7 @@ public sealed class ContentCatalogTests
             new("tool.field-blade", 1),
             new("tool.stone-maul", 1),
             new("tool.survey-lantern", 1),
-            new("tool.torch", 2),
+            new("tool.torch", 2, EquipmentSlot.OffHand),
             new("consumable.weak-heal", 3),
             new("consumable.minor-heal", 3),
             new("potion.health", 4),
@@ -208,6 +208,31 @@ public sealed class ContentCatalogTests
         Assert.NotEqual(first.ContentDigest, changedItem.ContentDigest);
     }
 
+    // The starter kit's equip well is simulation-visible: it decides what a brand-new character
+    // wears. The digest is a lockstep input, so two catalogs differing only in "equip" - including
+    // one that drops it altogether - must not hash alike, or two servers seed characters
+    // differently while agreeing they run the same content.
+    [Fact]
+    public void ContentDigest_ChangesWithAStarterKitEquipWell()
+    {
+        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+
+        // The torch lists both hands, so moving the well is the ONLY change: same kinds, same
+        // versions, same items.
+        string mainHandJson = ShippedItemsJson.Replace("\"equip\": \"OffHand\"", "\"equip\": \"MainHand\"");
+        Assert.NotEqual(ShippedItemsJson, mainHandJson);
+        ContentCatalog mainHand = ContentCatalog.Load(mainHandJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+        Assert.Equal(EquipmentSlot.MainHand, mainHand.StarterKit.Single(e => e.ItemKind == "tool.torch").EquipWell);
+        Assert.NotEqual(first.ContentDigest, mainHand.ContentDigest);
+
+        string noWellJson = ShippedItemsJson.Replace(", \"equip\": \"OffHand\"", string.Empty);
+        Assert.NotEqual(ShippedItemsJson, noWellJson);
+        ContentCatalog noWell = ContentCatalog.Load(noWellJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+        Assert.Null(noWell.StarterKit.Single(e => e.ItemKind == "tool.torch").EquipWell);
+        Assert.NotEqual(first.ContentDigest, noWell.ContentDigest);
+        Assert.NotEqual(mainHand.ContentDigest, noWell.ContentDigest);
+    }
+
     [Theory]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Luck\", \"op\": \"Flat\", \"value\": 8", "unknown stat 'Luck'")]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Strength\", \"op\": \"Percent\", \"value\": 8", "unsupported modifier op")]
@@ -216,8 +241,14 @@ public sealed class ContentCatalogTests
     [InlineData("\"value\": -0.75", "\"value\": -9", "outside the range")]
     [InlineData("\"key\": \"tool.torch\"", "\"key\": \"tool.field-blade\"", "duplicate item key")]
     [InlineData("\"key\": \"tool.torch\"", "\"key\": \"TOOL.FIELD-BLADE\"", "duplicate item key")]
-    [InlineData("{ \"item\": \"tool.torch\", \"version\": 2 }", "{ \"item\": \"tool.missing\", \"version\": 2 }", "references missing item 'tool.missing'")]
-    [InlineData("{ \"item\": \"tool.torch\", \"version\": 2 }", "{ \"item\": \"tool.field-blade\", \"version\": 2 }", "duplicate starter kit item")]
+    [InlineData("{ \"item\": \"tool.torch\", \"version\": 2, \"equip\": \"OffHand\" }", "{ \"item\": \"tool.missing\", \"version\": 2 }", "references missing item 'tool.missing'")]
+    [InlineData("{ \"item\": \"tool.torch\", \"version\": 2, \"equip\": \"OffHand\" }", "{ \"item\": \"tool.field-blade\", \"version\": 2 }", "duplicate starter kit item")]
+    // A kit entry's equip well must be one the item itself lists, must be spelled as the enum spells
+    // it, must not be claimed by two kinds, and no other property may appear in an entry.
+    [InlineData("\"equip\": \"OffHand\"", "\"equip\": \"Head\"", "item 'tool.torch' cannot be equipped in Head")]
+    [InlineData("\"equip\": \"OffHand\"", "\"equip\": \"offhand\"", "unknown equipment slot 'offhand'")]
+    [InlineData("\"equip\": \"OffHand\"", "\"equip\": \"OffHand\", \"well\": \"OffHand\"", "unknown property")]
+    [InlineData("{ \"item\": \"tool.survey-lantern\", \"version\": 1 }", "{ \"item\": \"tool.survey-lantern\", \"version\": 1, \"equip\": \"OffHand\" }", "two starter kit items claim the OffHand slot")]
     [InlineData("\"starterKitVersion\": 4", "\"starterKitVersion\": 5", "must equal the highest starter kit entry version")]
     [InlineData("\"heldLight\": \"Torch\"", "\"heldLight\": \"Sun\"", "unknown held light")]
     [InlineData("\"visualId\": \"held.tool.torch\"", "\"visualId\": \"held.tool.torch\", \"extra\": 1", "unknown property")]

@@ -10,15 +10,15 @@ namespace Dream.Tests.Simulation.Inventory;
 
 // Wave H1: the equipment slots on PlayerInventoryService (slot rules from content, targets, the
 // one-slot-only rule, stats and light per slot). A new player's starter kit is: the hammer (id 1) in the
-// main hand, and in the bag (anchors of the first fits) the blade (id 2) at 2, the maul (3) at 4, the
-// lantern (4) at 6 and the torch (5) at 7.
+// main hand, the torch (5) in the off hand, and in the bag (anchors of the first fits) the blade (id 2)
+// at 2, the maul (3) at 4 and the lantern (4) at 6. A test that wants the torch on the board unequips
+// it first (UnequipStarterTorch) and reads its anchor back, so no cell is pinned here.
 public sealed class EquipmentSlotTests
 {
     private const string Player = "Alice";
     private const int Blade = 2;
     private const int Maul = 4;
     private const int Lantern = 6;
-    private const int Torch = 7;
 
     internal static PlayerInventoryService Create(EquipmentTestWorld world, out PersistenceWriteQueue writes)
     {
@@ -43,9 +43,10 @@ public sealed class EquipmentSlotTests
         using (writes)
         {
             Assert.True(inventory.Ensure(Player));
+            int torch = inventory.UnequipStarterTorch(Player);
 
             Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Blade));
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Torch, EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, torch, EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)));
 
             EquipmentLoadout loadout = Loadout(inventory);
             Assert.Equal(ToolCatalog.Resolve("tool.field-blade").Modifiers.ToArray(), Mods(loadout, EquipmentSlot.MainHand));
@@ -59,7 +60,7 @@ public sealed class EquipmentSlotTests
             Assert.Equal("tool.torch", off.Item!.Value.ItemKind);
             // The blade and the torch left the bag; the hammer the blade displaced took the blade's place.
             Assert.Equal("tool.builder-hammer", snapshot.ItemAt(Blade)!.Value.ItemKind);
-            Assert.Null(snapshot.ItemAt(Torch));
+            Assert.Null(snapshot.ItemAt(torch));
             Assert.All(snapshot.Slots, slot => Assert.False(slot.IsEquipped));
             Assert.True(snapshot.BoardIsConsistent());
         }
@@ -72,7 +73,9 @@ public sealed class EquipmentSlotTests
         PlayerInventoryService inventory = Create(world, out PersistenceWriteQueue writes);
         using (writes)
         {
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Torch));
+            Assert.True(inventory.Ensure(Player));
+            int torch = inventory.UnequipStarterTorch(Player);
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, torch));
             Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight(Player));
             Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Lantern, 101));
 
@@ -90,15 +93,19 @@ public sealed class EquipmentSlotTests
         using (writes)
         {
             Assert.True(inventory.Ensure(Player));
-            long torchId = inventory.BuildSnapshot(Player).IdAt(Torch);
+            int torch = inventory.UnequipStarterTorch(Player);
+            long torchId = inventory.BuildSnapshot(Player).IdAt(torch);
             Assert.NotEqual(0, torchId);
 
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Torch));
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, torch));
 
             Dictionary<int, long> rows = world.SlotsOf(Player);
             Assert.Equal(torchId, rows[100]);
             Assert.False(rows.ContainsKey(101));
-            Assert.False(rows.ContainsKey(Torch));
+            // The torch left the board; the hammer it displaced may well have taken its anchor.
+            Assert.DoesNotContain(
+                torchId,
+                rows.Where(row => row.Key < EquipmentSlots.FirstSlotIndex).Select(row => row.Value));
         }
     }
 
@@ -109,7 +116,9 @@ public sealed class EquipmentSlotTests
         PlayerInventoryService inventory = Create(world, out PersistenceWriteQueue writes);
         using (writes)
         {
-            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, Torch));
+            Assert.True(inventory.Ensure(Player));
+            int torch = inventory.UnequipStarterTorch(Player);
+            Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, torch));
             // The torch is worn now; moving it between the hands names the worn slot as the source.
             Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip(Player, 100, 101));
 

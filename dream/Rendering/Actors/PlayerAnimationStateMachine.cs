@@ -25,8 +25,9 @@ public readonly record struct PlayerAnimationInputs(
     bool HoldsMainHand,
     bool HoldsOffHand,
     bool RangedMainHand,
-    // Signed yaw, radians, from where the body faces to where it travels; the pose layers twist the
-    // legs by it (see LegTwist). Clamped to +-MaxLegTwistRadians here and zeroed when not moving.
+    // Signed yaw, radians, from where the body faces to where it travels: the RAW delta of
+    // contract C2, wrapped to (-pi, pi], as LegTwist computes it. Update picks the walk clip from
+    // its sector and passes only the within-sector RESIDUAL to the pose layers.
     float LegTwistRadians = 0f);
 
 public readonly record struct PlayerAnimationFrame(
@@ -42,7 +43,9 @@ public readonly record struct PlayerAnimationFrame(
     float MainArmHold,
     float OffArmHold,
     bool IsDead,
-    // The clamped leg twist for the pose layers: 0 when stationary or dead.
+    // The leg twist for the pose layers: the RESIDUAL left over after the directional clip (C2),
+    // clamped to +-MaxLegTwistRadians; 0 when stationary or dead. Never the raw delta - the clips
+    // are authored on this split, and carrying the raw delta here would double-count the legs.
     float LegTwistRadians = 0f);
 
 // The animation priority for one player: die (held) > attack (one-shot; the shooting pose for a
@@ -58,6 +61,12 @@ public sealed class PlayerAnimationStateMachine
     public const string MeleeClip = "attack-melee-right";
     public const string ShootClip = "holding-right-shoot";
 
+    // Directional walk cycles (C2): the body keeps facing the cursor while the stride runs
+    // backwards or sideways, so the legs no longer sit at a 90-degree clamp to hide a moonwalk.
+    public const string WalkBackClip = "walk-back";
+    public const string StrafeLeftClip = "walk-strafe-left";
+    public const string StrafeRightClip = "walk-strafe-right";
+
     // Clip lengths, from the model.
     public const float MeleeSeconds = 0.42f;
     public const float ShootSeconds = 0.20f;
@@ -70,11 +79,32 @@ public sealed class PlayerAnimationStateMachine
     public const float MinPlaybackSpeed = 0.6f;
     public const float MaxPlaybackSpeed = 1.6f;
 
-    // The legs twist at most a quarter turn off the facing. Straight backwards is 180 degrees off, so
-    // there the hips sit at the clamp and the stride is still 90 degrees off the travel: a strafe-like
-    // slide instead of a moonwalk, accepted rather than hidden. Going further would turn the
-    // knees backwards.
-    public const float MaxLegTwistRadians = MathF.PI / 2f;
+    // The legs twist at most an eighth of a turn off the facing. With the directional clips (C2)
+    // the clip covers the 90 and 180 degree cases, so all that is left for the pose layers is the
+    // within-sector residual: at most 45 degrees by construction, and the clamp is the guard.
+    public const float MaxLegTwistRadians = MathF.PI / 4f;
+
+    // The paths that deliberately play ONE non-directional clip - the sprint, an attack while
+    // moving, and the airborne idle - still feed the pose layers the RAW delta, so they keep the
+    // wider clamp the whole state machine used before the directional clips existed. Clamping their
+    // raw delta to pi/4 would leave a backwards sprint 135 degrees off its travel, which is further
+    // from the truth than the 90 degrees it had before this wave.
+    public const float MaxSprintLegTwistRadians = MathF.PI / 2f;
+
+    // The sector boundaries of C2's table: |delta| <= 45 degrees walks forward, 45..135 strafes,
+    // beyond 135 walks backwards.
+    public const float StrafeSectorStartRadians = MathF.PI / 4f;
+    public const float BackSectorStartRadians = 3f * MathF.PI / 4f;
+
+    // Deadband on those boundaries, in the shape of the _moving hysteresis below: the sector that is
+    // already playing holds on for this much past its boundary. AnimationPlaybackState.Play resets
+    // the clip time to 0 whenever the clip NAME changes, and travel is quantised to eight WASD
+    // octants while facing is continuous from the cursor, so a cursor sitting near 45 degrees off
+    // the key direction - an ordinary configuration - would otherwise flip walk <-> walk-strafe-
+    // right frame to frame on mouse jitter and restart the stride at frame 0 each time: the legs
+    // stutter instead of walking. A residual may exceed 45 degrees by this much inside the sticky
+    // band, which the MaxLegTwistRadians clamp absorbs.
+    public const float SectorHysteresisRadians = 5f * MathF.PI / 180f;
 
     private const float LayerBlendPerSecond = 12f;
 
@@ -90,12 +120,16 @@ public sealed class PlayerAnimationStateMachine
     private float _mainArm;
     private float _offArm;
     private bool _moving;
+    // The directional walk clip picked last, so its sector can hold on past its boundary. Kept
+    // across a pause, which only widens the sector a resumed walk starts in by the deadband.
+    private string? _walkClip;
 
     public bool IsDead => _dead;
 
-    // The signed yaw from facing to travel on the ground plane, clamped to +-MaxLegTwistRadians; 0
+    // The signed yaw from facing to travel on the ground plane, wrapped to (-pi, pi] and NOT
+    // clamped: this is C2's raw delta, which Update needs whole to pick the walk clip's sector. 0
     // when either direction is (nearly) zero. Yaw is atan2(x, z), the same convention as the
-    // model's facing, so a positive twist turns the stride toward +X when facing +Z.
+    // model's facing, so a positive delta turns the stride toward +X when facing +Z.
     public static float LegTwist(float facingX, float facingZ, float travelX, float travelZ)
     {
         if (((facingX * facingX) + (facingZ * facingZ)) < 1e-8f || ((travelX * travelX) + (travelZ * travelZ)) < 1e-8f)
@@ -104,9 +138,65 @@ public sealed class PlayerAnimationStateMachine
         }
 
         float delta = MathF.Atan2(travelX, travelZ) - MathF.Atan2(facingX, facingZ);
-        delta = MathF.IEEERemainder(delta, MathF.Tau);
-        return Math.Clamp(delta, -MaxLegTwistRadians, MaxLegTwistRadians);
+        return MathF.IEEERemainder(delta, MathF.Tau);
     }
+
+    // C2's table: the walk clip for a raw travel-minus-facing delta, and the residual twist the
+    // pose layers still have to apply. |residual| is at most 45 degrees in every sector, so the
+    // clip carries the direction and the twist only trims what is left inside it.
+    public static string ResolveWalkClip(float deltaRadians, out float residualRadians) =>
+        ResolveWalkClip(deltaRadians, null, out residualRadians);
+
+    // The same table, with SectorHysteresisRadians of deadband in favour of the clip already
+    // playing. currentClip null is the plain table above. Allocates nothing.
+    public static string ResolveWalkClip(float deltaRadians, string? currentClip, out float residualRadians)
+    {
+        float delta = MathF.IEEERemainder(deltaRadians, MathF.Tau);
+        float magnitude = MathF.Abs(delta);
+        float strafeStart = StrafeSectorStartRadians;
+        float backStart = BackSectorStartRadians;
+        if (string.Equals(currentClip, WalkClip, StringComparison.Ordinal))
+        {
+            // Walking forward holds on a few degrees into the strafe sector.
+            strafeStart += SectorHysteresisRadians;
+        }
+        else if (string.Equals(currentClip, WalkBackClip, StringComparison.Ordinal))
+        {
+            backStart -= SectorHysteresisRadians;
+        }
+        else if (string.Equals(currentClip, delta > 0f ? StrafeRightClip : StrafeLeftClip, StringComparison.Ordinal))
+        {
+            // A strafe on this side holds both of its own boundaries. The two strafes cannot fight
+            // over the sign: swapping sides means passing through the forward sector.
+            strafeStart -= SectorHysteresisRadians;
+            backStart += SectorHysteresisRadians;
+        }
+
+        if (magnitude <= strafeStart)
+        {
+            residualRadians = delta;
+            return WalkClip;
+        }
+
+        if (magnitude <= backStart)
+        {
+            residualRadians = delta - MathF.CopySign(MathF.PI / 2f, delta);
+            return delta > 0f ? StrafeRightClip : StrafeLeftClip;
+        }
+
+        residualRadians = delta - MathF.CopySign(MathF.PI, delta);
+        return WalkBackClip;
+    }
+
+    // The plain walk cycle stands in for a directional clip a model does not carry: a clip name the
+    // skeleton lacks stops playback and freezes the pose, so the fallback keeps the legs moving on a
+    // model forged before C2's clips existed. Every other clip is its own fallback.
+    public static string FallbackClip(string clipName) =>
+        string.Equals(clipName, WalkBackClip, StringComparison.Ordinal) ||
+        string.Equals(clipName, StrafeLeftClip, StringComparison.Ordinal) ||
+        string.Equals(clipName, StrafeRightClip, StringComparison.Ordinal)
+            ? WalkClip
+            : clipName;
 
     public PlayerAnimationFrame Update(in PlayerAnimationInputs inputs, float deltaSeconds)
     {
@@ -181,8 +271,12 @@ public sealed class PlayerAnimationStateMachine
         _mainArm += ((mainArmHeld ? 1f : 0f) - _mainArm) * blend;
         _offArm += ((inputs.HoldsOffHand ? 1f : 0f) - _offArm) * blend;
 
-        // Only a moving body twists its hips; a stationary one (or an attacking one standing still) keeps them square.
-        float legTwist = _moving ? Math.Clamp(inputs.LegTwistRadians, -MaxLegTwistRadians, MaxLegTwistRadians) : 0f;
+        // Only a moving body twists its hips; a stationary one (or an attacking one standing still)
+        // keeps them square. Outside the directional walk this is the raw delta under the WIDER
+        // sprint clamp, as the whole state machine did before C2; the walk branch below replaces it
+        // with its sector's residual under the narrow one.
+        float rawTwist = _moving ? inputs.LegTwistRadians : 0f;
+        float legTwist = Math.Clamp(rawTwist, -MaxSprintLegTwistRadians, MaxSprintLegTwistRadians);
 
         float flinch = _hitLeft > 0f ? MathF.Sin(MathF.PI * (1f - (_hitLeft / HitSeconds))) : 0f;
 
@@ -197,7 +291,18 @@ public sealed class PlayerAnimationStateMachine
         if (_moving && !inputs.Airborne)
         {
             bool sprint = inputs.HorizontalSpeed >= SprintSpeedThreshold;
-            clip = sprint ? SprintClip : WalkClip;
+            if (sprint)
+            {
+                // One sprint clip, so the twist stays the raw delta under the wider sprint clamp.
+                clip = SprintClip;
+            }
+            else
+            {
+                clip = ResolveWalkClip(rawTwist, _walkClip, out float residual);
+                _walkClip = clip;
+                legTwist = Math.Clamp(residual, -MaxLegTwistRadians, MaxLegTwistRadians);
+            }
+
             float reference = sprint ? SprintSpeedThreshold : ReferenceWalkSpeed;
             speed = Math.Clamp(inputs.HorizontalSpeed / reference, MinPlaybackSpeed, MaxPlaybackSpeed);
         }

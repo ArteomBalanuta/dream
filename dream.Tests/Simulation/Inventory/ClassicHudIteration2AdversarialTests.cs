@@ -31,9 +31,12 @@ public sealed class ClassicHudIteration2AdversarialTests
     private static List<long> AllIds(PlayerInventorySnapshot s)
         => [.. s.AllItems().Select(i => i.ItemInstanceId).Order()];
 
-    // Destroys the spare kit items (tools and potions) so there is room, keeping the worn hammer.
+    // Destroys the spare kit items (tools and potions) so there is room, keeping the worn hammer. The
+    // kit wears the torch in the off hand, so it comes back to the board first and leaves both the
+    // board and every equipment slot but the main hand empty.
     private static void ClearKit(PlayerInventoryService inventory)
     {
+        inventory.UnequipStarterTorch(Player);
         foreach (string kind in new[] { "tool.field-blade", "tool.stone-maul", "tool.survey-lantern", "tool.torch", "consumable.weak-heal", "consumable.minor-heal", "potion.health", "potion.mana" })
         {
             PlayerInventorySnapshot s = inventory.BuildSnapshot(Player);
@@ -108,10 +111,11 @@ public sealed class ClassicHudIteration2AdversarialTests
         using (writes)
         {
             Assert.True(inventory.Ensure(Player));
-            // Bag full to the last cell; the kit torch (1x2) is in it, the hammer (2x3) is worn.
+            // Bag full to the last cell; the kit torch (1x2) is put back in it, the hammer (2x3) is worn.
+            int torchAnchor = inventory.UnequipStarterTorch(Player);
             inventory.FillBagLeaving(Player, freeCells: 0);
             string before = inventory.BuildSnapshot(Player).Layout();
-            InventoryEquipOutcome torch = inventory.TryEquip(Player, inventory.AnchorOf(Player, "tool.torch"), EquipmentSlots.FirstSlotIndex);
+            InventoryEquipOutcome torch = inventory.TryEquip(Player, torchAnchor, EquipmentSlots.FirstSlotIndex);
             Assert.NotEqual(InventoryEquipOutcome.Equipped, torch);
             Assert.Equal(before, inventory.BuildSnapshot(Player).Layout());
         }

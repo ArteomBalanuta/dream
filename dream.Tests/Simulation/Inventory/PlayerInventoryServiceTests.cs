@@ -36,24 +36,36 @@ public sealed class PlayerInventoryServiceTests
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Alice");
         Assert.Equal("Alice", snapshot.PlayerName);
         // The kit in order, at the first fit of each: the hammer first (then moved into the main
-        // hand), the blade, the maul, the lantern and the torch beside them.
+        // hand), the blade, the maul, the lantern, and the torch (then moved into the off hand).
+        int offHandIndex = EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand);
         for (int i = 0; i < StarterCount; i++)
         {
             string kind = ToolCatalog.StarterItemKinds[i];
-            InventoryItemSnapshot item = i == 0 ? snapshot.EquippedSlot!.Value.Item!.Value : snapshot.ItemAt(snapshot.AnchorOf(kind))!.Value;
+            InventoryItemSnapshot item = kind switch
+            {
+                "tool.builder-hammer" => snapshot.EquippedSlot!.Value.Item!.Value,
+                "tool.torch" => snapshot.Equipment!.Single(slot => slot.SlotIndex == offHandIndex).Item!.Value,
+                _ => snapshot.ItemAt(snapshot.AnchorOf(kind))!.Value,
+            };
             Assert.Equal(kind, item.ItemKind);
             Assert.Equal(i + 1, item.ItemInstanceId);
         }
 
         Assert.Equal(1, snapshot.EquippedSlot!.Value.Item!.Value.ItemInstanceId);
-        Assert.Equal(new[] { 2, 4, 6, 7, 22, 23, 24, 25 }, snapshot.BagItems().Select(slot => slot.SlotIndex).ToArray());
+        // The torch is granted into the bag at 7 and then worn, so the consumables keep their fits.
+        Assert.Equal(new[] { 2, 4, 6, 22, 23, 24, 25 }, snapshot.BagItems().Select(slot => slot.SlotIndex).ToArray());
+        Assert.Equal(5, snapshot.WornId(offHandIndex));
+        Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Alice"));
         Assert.All(snapshot.Slots, slot => Assert.False(slot.IsEquipped));
         Assert.True(snapshot.BoardIsConsistent());
         Assert.Equal(StarterCount, world.ItemSaves);
-        // A slot row per starter item plus the main hand's; the hammer's bag row is deleted again.
-        Assert.Equal(StarterCount + 1, world.SlotSaves);
+        // A slot row per starter item plus the main hand's and the off hand's; the hammer's and the
+        // torch's bag rows are deleted again.
+        Assert.Equal(StarterCount + 2, world.SlotSaves);
         Assert.False(world.Rows.ContainsKey(("Alice", 0)));
+        Assert.False(world.Rows.ContainsKey(("Alice", 7)));
         Assert.Equal(1, world.Rows[("Alice", InventoryConstants.EquippedSlotIndex)].ItemInstanceId);
+        Assert.Equal(5, world.Rows[("Alice", offHandIndex)].ItemInstanceId);
         Assert.Equal(1, inventory.LoadedInventoryCount);
         Assert.Equal(StarterCount, inventory.LoadedItemInstanceCount);
         Assert.Equal(ToolCatalog.Resolve(ToolCatalog.StarterItemKinds[0]).Modifiers, MainHandModifiers(inventory, "Alice"));
@@ -61,7 +73,7 @@ public sealed class PlayerInventoryServiceTests
         // A second Ensure neither re-seeds nor writes.
         Assert.True(inventory.Ensure("alice"));
         Assert.Equal(StarterCount, world.ItemSaves);
-        Assert.Equal(StarterCount + 1, world.SlotSaves);
+        Assert.Equal(StarterCount + 2, world.SlotSaves);
     }
 
     [Fact]
@@ -100,7 +112,7 @@ public sealed class PlayerInventoryServiceTests
         PlayerInventorySnapshot fresh = inventory.BuildSnapshot("Fresh");
         Assert.Equal(
             Enumerable.Range(71, StarterCount).Select(id => (long)id),
-            fresh.Slots.Select(slot => slot.Item!.Value.ItemInstanceId).Append(fresh.EquippedSlot!.Value.Item!.Value.ItemInstanceId).Order());
+            fresh.AllItems().Select(item => item.ItemInstanceId).Order());
     }
 
     [Fact]
@@ -383,8 +395,12 @@ public sealed class PlayerInventoryServiceTests
         Assert.True(inventory.Ensure("Ivan"));
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Ivan");
         Assert.Equal("tool.builder-hammer", snapshot.EquippedSlot!.Value.Item!.Value.ItemKind);
-        Assert.Equal(7, snapshot.AnchorOf("tool.torch"));
-        Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Ivan"));
+        // The torch is worn in the off hand, not carried: a new character is lit after dark.
+        Assert.Equal(-1, snapshot.TryAnchorOf("tool.torch"));
+        Assert.Equal(
+            "tool.torch",
+            snapshot.Equipment!.Single(slot => slot.SlotIndex == EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)).Item!.Value.ItemKind);
+        Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Ivan"));
     }
 
     [Fact]
@@ -394,7 +410,13 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Nobody"));
         Assert.True(inventory.Ensure("Judy"));
 
-        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", inventory.AnchorOf("Judy", "tool.torch")));
+        // The kit's torch starts in the off hand, where its light already wins; put it back in the
+        // bag so the main hand alone drives the light from here.
+        Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Judy"));
+        int torch = inventory.UnequipStarterTorch("Judy");
+        Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Judy"));
+
+        Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", torch));
         Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Judy"));
         Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryEquip("Judy", inventory.AnchorOf("Judy", "tool.survey-lantern")));
         Assert.Equal(HeldLightKind.Lantern, inventory.ResolveEquippedHeldLight("Judy"));
@@ -563,7 +585,7 @@ public sealed class PlayerInventoryServiceTests
                 new StarterKitEntry("tool.field-blade", 1),
                 new StarterKitEntry("tool.stone-maul", 1),
                 new StarterKitEntry("tool.survey-lantern", 1),
-                new StarterKitEntry("tool.torch", 2),
+                new StarterKitEntry("tool.torch", 2, EquipmentSlot.OffHand),
                 new StarterKitEntry("consumable.weak-heal", 3),
                 new StarterKitEntry("consumable.minor-heal", 3),
                 new StarterKitEntry("potion.health", 4),
@@ -592,6 +614,82 @@ public sealed class PlayerInventoryServiceTests
         Assert.Equal(1, world.GrantSaves);
     }
 
+    // Q3 of the models wave: a figure reads only when lit, so a new character starts with a light.
+    // The kit entry names the well (items.json, "equip": "OffHand"); the hammer keeps the main hand.
+    [Fact]
+    public void Ensure_ANewCharacter_WearsTheKitTorchInTheOffHand_AndKeepsTheHammerInTheMainHand()
+    {
+        FakeWorld world = new();
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
+
+        Assert.True(inventory.Ensure("Tess"));
+
+        int offHand = EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand);
+        PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Tess");
+        Assert.Equal("tool.builder-hammer", snapshot.EquippedSlot!.Value.Item!.Value.ItemKind);
+        Assert.Equal("tool.torch", snapshot.Equipment!.Single(slot => slot.SlotIndex == offHand).Item!.Value.ItemKind);
+        // One row each: the torch is worn, not carried as well.
+        Assert.Equal(-1, snapshot.TryAnchorOf("tool.torch"));
+        Assert.Single(snapshot.AllItems(), item => item.ItemKind == "tool.torch");
+        Assert.True(snapshot.BoardIsConsistent());
+        // The light the server replicates, which is what lights the figure.
+        Assert.Equal(HeldLightKind.Torch, inventory.ResolveEquippedHeldLight("Tess"));
+        // The equip landed in the same closure as the kit, so the rows agree with the snapshot.
+        Assert.Equal(snapshot.WornId(offHand), world.Rows[("Tess", offHand)].ItemInstanceId);
+        Assert.Equal(ToolCatalog.CurrentStarterKitVersion, world.Grants["Tess"]);
+    }
+
+    // The hard constraint on the off-hand torch: the kit is versioned per player, so a player who has
+    // already received it may have equipped, sold, dropped or destroyed it. Nothing may be re-equipped
+    // on a later login, whatever they are holding now.
+    [Fact]
+    public void Ensure_AReturningPlayer_IsNeverReEquipped_AndTheirWornItemsAreUntouched()
+    {
+        FakeWorld world = new();
+        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
+        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
+        int offHand = EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand);
+
+        // Wears the blade and the lantern, and has put the torch back in the bag.
+        inventory.ApplyLoaded("Rhea", new PersistedPlayerInventory(
+            [
+                new PersistedInventorySlot("Rhea", 0, 1, DateTime.UtcNow),
+                new PersistedInventorySlot("Rhea", InventoryConstants.EquippedSlotIndex, 2, DateTime.UtcNow),
+                new PersistedInventorySlot("Rhea", offHand, 3, DateTime.UtcNow)
+            ],
+            [Item(1, "Rhea", "tool.torch"), Item(2, "Rhea", "tool.field-blade"), Item(3, "Rhea", "tool.survey-lantern")],
+            ToolCatalog.CurrentStarterKitVersion));
+        string before = inventory.BuildSnapshot("Rhea").Layout();
+
+        Assert.True(inventory.Ensure("Rhea"));
+
+        Assert.Equal(before, inventory.BuildSnapshot("Rhea").Layout());
+        Assert.Equal(3L, inventory.BuildSnapshot("Rhea").WornId(offHand));
+        Assert.Equal(0, inventory.BuildSnapshot("Rhea").AnchorOf("tool.torch"));
+        Assert.Equal(HeldLightKind.Lantern, inventory.ResolveEquippedHeldLight("Rhea"));
+        Assert.Equal(0, world.SlotSaves);
+        Assert.Equal(0, world.ItemSaves);
+        Assert.Equal(0, world.GrantSaves);
+
+        // And a returning player with an empty off hand keeps it empty: the torch stays in the bag.
+        inventory.ApplyLoaded("Silas", new PersistedPlayerInventory(
+            [
+                new PersistedInventorySlot("Silas", 0, 11, DateTime.UtcNow),
+                new PersistedInventorySlot("Silas", InventoryConstants.EquippedSlotIndex, 12, DateTime.UtcNow)
+            ],
+            [Item(11, "Silas", "tool.torch"), Item(12, "Silas", "tool.builder-hammer")],
+            ToolCatalog.CurrentStarterKitVersion));
+
+        Assert.True(inventory.Ensure("Silas"));
+
+        PlayerInventorySnapshot silas = inventory.BuildSnapshot("Silas");
+        Assert.Equal(0, silas.WornId(offHand));
+        Assert.Equal(0, silas.AnchorOf("tool.torch"));
+        Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Silas"));
+        Assert.Equal(0, world.SlotSaves);
+    }
+
     [Fact]
     public void Ensure_PreT2Player_GetsExactlyOneTorch_AndRecordsKitV2()
     {
@@ -605,6 +703,11 @@ public sealed class PlayerInventoryServiceTests
 
         PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("Pia");
         Assert.Single(snapshot.Slots, slot => slot.Item?.ItemKind == "tool.torch");
+        // A top-up only fills the bag: the equip well of a kit entry is for a brand-new character,
+        // so this player's hands are left exactly as they were.
+        Assert.Equal("tool.builder-hammer", snapshot.EquippedSlot!.Value.Item!.Value.ItemKind);
+        Assert.Equal(0, snapshot.WornId(EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)));
+        Assert.Equal(HeldLightKind.None, inventory.ResolveEquippedHeldLight("Pia"));
         // The torch (kit v2) and the four potions (kits v3 and v4) are the whole top-up.
         Assert.Equal(5, world.ItemSaves);
         Assert.Equal(4, world.Grants["Pia"]);
@@ -743,12 +846,13 @@ public sealed class PlayerInventoryServiceTests
         inventory.ApplyLoaded("Uma", world.LoadPlayerInventory("Uma"));
         Assert.Equal(0, inventory.UnconfirmedEvictionCount);
 
-        // The torch leaves the restored backpack; Ensure does not grant it again.
-        Assert.True(inventory.LoadedSlotsByPlayer["Uma"].Remove(inventory.AnchorOf("Uma", "tool.torch")));
+        // The torch leaves the restored inventory (the kit wears it in the off hand); Ensure does not
+        // grant it again, and does not equip a replacement.
+        Assert.True(inventory.LoadedSlotsByPlayer["Uma"].Remove(EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)));
         Assert.True(inventory.Ensure("Uma"));
         Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
 
-        Assert.DoesNotContain(inventory.BuildSnapshot("Uma").Slots, slot => slot.Item?.ItemKind == "tool.torch");
+        Assert.DoesNotContain(inventory.BuildSnapshot("Uma").AllItems(), item => item.ItemKind == "tool.torch");
         Assert.Equal(StarterCount, world.ItemSaves);
     }
 
@@ -886,8 +990,9 @@ public sealed class PlayerInventoryServiceTests
             set => Volatile.Write(ref _failSlotWrites, value);
         }
 
-        // A seeded starter inventory as the service lays it out: the hammer worn, the blade, maul,
-        // lantern and torch at their first fits (anchors 2, 4, 6 and 7).
+        // A stored starter inventory with no grant record: the hammer worn, the blade, maul, lantern
+        // and torch at their first fits (anchors 2, 4, 6 and 7). This is the layout seeding wrote
+        // before the kit wore the torch, so it is an existing inventory and is not re-equipped.
         public void Seed(string playerName, long firstItemId)
         {
             int[] anchors = [InventoryConstants.EquippedSlotIndex, 2, 4, 6, 7, 22, 23, 24, 25];

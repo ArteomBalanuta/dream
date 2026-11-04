@@ -34,6 +34,14 @@ public static class ModelAssets
     public static readonly string WolfPath = WolfAssetDefinition.ModelPath;
     public static readonly string PlayerPath = PlayerModelAssetDefinition.ModelPath;
 
+    // The forged actors of the models-and-rigs wave. These are paths only: nothing here reads the
+    // GLB, so a path whose asset is not shipped yet costs one failed background decode (logged by
+    // RenderFaultLog) and draws nothing.
+    public static readonly string HoundPath = BeastAssetDefinition.HoundModelPath;
+    public static readonly string NpcVendorPath = NpcAssetDefinition.VendorModelPath;
+    public static readonly string NpcSmithPath = NpcAssetDefinition.SmithModelPath;
+    public static readonly string NpcWardenPath = NpcAssetDefinition.WardenModelPath;
+
     private static AsyncResourceLoader<AnimatedModelData, AnimatedModel> _loader = CreateLoader();
 
     private static AsyncResourceLoader<AnimatedModelData, AnimatedModel> Loader => Volatile.Read(ref _loader);

@@ -38,6 +38,7 @@ internal enum HudCaptureVerb : byte
     GroundClick,
     HoldMove,
     Keys,
+    KeySnap,
     Status,
     WaitIdle,
     Aim,
@@ -206,6 +207,12 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
             case "keys" when parts.Length == 3 && TryParseKeys(parts[1], out HudCaptureKeys held) && int.TryParse(parts[2], out int keyFrames)
                 && keyFrames is > 0 and <= 2000:
                 spec = new(HudCaptureVerb.Keys, (int)held, keyFrames);
+                return true;
+            case "keysnap" when parts.Length == 3 && TryParseKeys(parts[1], out HudCaptureKeys snapHeld) && int.TryParse(parts[2], out int snapFrames)
+                && snapFrames is > 0 and <= 2000:
+                // Same keys as keys:, but the PNG is written on the last held frame instead of after the
+                // release, so a capture can show a held pose (the moonwalk and strafe clips).
+                spec = new(HudCaptureVerb.KeySnap, (int)snapHeld, snapFrames);
                 return true;
             case "aim" when parts.Length == 3 && int.TryParse(parts[1], out int aimX) && int.TryParse(parts[2], out int aimY)
                 && aimX is >= 0 and <= 8192 && aimY is >= 0 and <= 8192:

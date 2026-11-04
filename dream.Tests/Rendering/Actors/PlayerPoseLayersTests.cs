@@ -179,7 +179,8 @@ public class PlayerPoseLayersTests
         layers.Update(instance, Frame());
         Vector3 rest = Foot(instance, layers, leg);
 
-        const float twist = MathF.PI / 2f;
+        // The residual clamp: 45 degrees since the directional clips carry the rest (C2).
+        float twist = PlayerAnimationStateMachine.MaxLegTwistRadians;
         layers.Update(instance, Frame(twist: twist));
         Vector3 twisted = Foot(instance, layers, leg);
 
@@ -191,17 +192,41 @@ public class PlayerPoseLayersTests
     [Fact]
     public void LegTwist_PositiveTurnsTheStrideFromForwardTowardPlusX()
     {
-        // Facing +Z and travelling +X (yaw +90 degrees): the stride that swings along Z must swing along X.
-        float twist = PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, 0f);
-        Assert.Equal(MathF.PI / 2f, twist, 4);
+        // Facing +Z and travelling +X is a raw +90 degrees, which C2 now spends on the strafe clip:
+        // the residual the pose layers see is 0, so the clip alone turns the stride.
+        float raw = PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, 0f);
+        Assert.Equal(MathF.PI / 2f, raw, 4);
+        Assert.Equal("walk-strafe-right", PlayerAnimationStateMachine.ResolveWalkClip(raw, out float residual));
+        Assert.Equal(0f, residual, 5);
 
+        // Within a sector the residual still turns the stride the same way, by its own angle.
+        float twist = PlayerAnimationStateMachine.MaxLegTwistRadians;
         Vector3 plain = StrideTravel(0f);
         Vector3 twisted = StrideTravel(twist);
+        Vector3 expected = Vector4.TransformRow(new Vector4(plain, 0f), Matrix4.CreateRotationY(twist)).Xyz;
 
-        // Authored stride is along Z (X is only the hip offset's drift); the twist turns it onto X.
+        // Authored stride is along Z (X is only the hip offset's drift); the twist turns it toward X.
         Assert.True(MathF.Abs(plain.Z) > 0.05f && MathF.Abs(plain.X) < 0.005f, $"untwisted stride {plain}");
-        Assert.True((twisted - new Vector3(plain.Z, plain.Y, -plain.X)).Length < 1e-3f, $"twisted stride {twisted}, untwisted {plain}");
-        Assert.True(twisted.X * plain.Z > 0f, "a +Z stride turns to +X for a positive twist");
+        Assert.True((twisted - expected).Length < 1e-3f, $"twisted stride {twisted}, expected {expected}");
+        Assert.True(twisted.X * plain.Z > 0f, "a +Z stride turns toward +X for a positive twist");
+    }
+
+    // The guard in LegOverride is the OUTER one, MaxSprintLegTwistRadians, not the walk residual's
+    // pi/4: the sprint and the attack-while-moving paths deliberately play one clip and still send
+    // the raw delta, so clamping them here would leave a backwards sprint 135 degrees off travel.
+    [Fact]
+    public void LegTwist_HonoursASprintWidthTwist_WithoutClampingItToTheWalkResidual()
+    {
+        float sprint = PlayerAnimationStateMachine.MaxSprintLegTwistRadians;
+        Assert.True(sprint > PlayerAnimationStateMachine.MaxLegTwistRadians);
+
+        Vector3 plain = StrideTravel(0f);
+        Vector3 wide = StrideTravel(sprint);
+        Vector3 narrow = StrideTravel(PlayerAnimationStateMachine.MaxLegTwistRadians);
+        Vector3 expected = Vector4.TransformRow(new Vector4(plain, 0f), Matrix4.CreateRotationY(sprint)).Xyz;
+
+        Assert.True((wide - expected).Length < 1e-3f, $"sprint-width stride {wide}, expected {expected}");
+        Assert.True((wide - narrow).Length > 1e-3f, "a pi/2 twist was clamped back to the pi/4 residual");
     }
 
     // The left foot's model-space displacement between two walk poses.
@@ -223,11 +248,12 @@ public class PlayerPoseLayersTests
         AnimatedModelInstance instance = CreateInstance("idle");
         PlayerPoseLayers layers = new();
 
+        float twist = PlayerAnimationStateMachine.MaxLegTwistRadians;
         layers.Update(instance, Frame(tuck: 1f));
         Vector3 tucked = Foot(instance, layers, PlayerPoseLayers.LeftLegNode);
-        layers.Update(instance, Frame(tuck: 1f, twist: MathF.PI / 2f));
+        layers.Update(instance, Frame(tuck: 1f, twist: twist));
         Vector3 both = Foot(instance, layers, PlayerPoseLayers.LeftLegNode);
-        Vector3 expected = Vector4.TransformRow(new Vector4(tucked, 1f), Matrix4.CreateRotationY(MathF.PI / 2f)).Xyz;
+        Vector3 expected = Vector4.TransformRow(new Vector4(tucked, 1f), Matrix4.CreateRotationY(twist)).Xyz;
 
         Assert.True((both - expected).Length < 1e-3f, $"tucked {tucked} both {both} expected {expected}");
         Assert.NotEqual(Matrix4.Identity, layers.Overrides[PlayerPoseLayers.LeftLegNode]);
@@ -251,17 +277,24 @@ public class PlayerPoseLayersTests
         Assert.Equal(Matrix4.Identity, layers.Overrides[PlayerPoseLayers.TorsoNode]);
     }
 
+    // The guard here is the OUTER one: a directional walk's residual is already under pi/4 when it
+    // arrives, but the sprint and attack paths send the raw delta, so the pose layers clamp at
+    // MaxSprintLegTwistRadians. Anything past that is clamped to it.
     [Fact]
     public void LegTwist_BeyondTheClamp_IsClamped()
     {
         AnimatedModelInstance instance = CreateInstance("walk");
         PlayerPoseLayers layers = new();
 
-        layers.Update(instance, Frame(twist: MathF.PI / 2f));
+        layers.Update(instance, Frame(twist: PlayerAnimationStateMachine.MaxSprintLegTwistRadians));
         Matrix4 atClamp = layers.Overrides[PlayerPoseLayers.LeftLegNode];
         layers.Update(instance, Frame(twist: MathF.PI));
 
         Assert.Equal(atClamp, layers.Overrides[PlayerPoseLayers.LeftLegNode]);
+
+        // And the narrower walk residual is NOT the clamp: it passes through as itself.
+        layers.Update(instance, Frame(twist: PlayerAnimationStateMachine.MaxLegTwistRadians));
+        Assert.NotEqual(atClamp, layers.Overrides[PlayerPoseLayers.LeftLegNode]);
     }
 
     [Fact]

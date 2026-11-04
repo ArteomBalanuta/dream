@@ -59,6 +59,11 @@ public sealed class PlayerAnimationClipTracker
     {
         ArgumentNullException.ThrowIfNull(instance);
 
+        // A clip the model does not carry would stop playback and freeze the pose, so a directional
+        // walk falls back to the plain walk cycle on a model forged before C2's clips existed.
+        string clip = instance.Skeleton.TryGetClip(frame.Clip, out _)
+            ? frame.Clip
+            : PlayerAnimationStateMachine.FallbackClip(frame.Clip);
         instance.AnimationSpeed = frame.PlaybackSpeed;
         bool tracked = _framesByActorId.TryGetValue(actorId, out (string Clip, PlayerClipMode Mode, int Serial) last);
         if (tracked && last.Mode == PlayerClipMode.Hold && frame.Mode != PlayerClipMode.Hold)
@@ -71,9 +76,9 @@ public sealed class PlayerAnimationClipTracker
         switch (frame.Mode)
         {
             case PlayerClipMode.Loop:
-                if (!instance.IsPlayingLoop(frame.Clip))
+                if (!instance.IsPlayingLoop(clip))
                 {
-                    instance.PlayLoop(frame.Clip);
+                    instance.PlayLoop(clip);
                 }
 
                 break;
@@ -85,23 +90,23 @@ public sealed class PlayerAnimationClipTracker
                         instance.PlayLoop(PlayerAnimationStateMachine.IdleClip);
                     }
 
-                    instance.PlayOneShot(frame.Clip);
+                    instance.PlayOneShot(clip);
                 }
 
                 break;
             default:
                 if (!(tracked && last.Mode == PlayerClipMode.Hold && last.Serial == frame.OneShotSerial &&
-                    string.Equals(instance.CurrentClipName, frame.Clip, StringComparison.Ordinal)))
+                    string.Equals(instance.CurrentClipName, clip, StringComparison.Ordinal)))
                 {
                     instance.StopAnimation();
-                    instance.PlayOneShot(frame.Clip);
+                    instance.PlayOneShot(clip);
                 }
 
                 break;
         }
 
-        _framesByActorId[actorId] = (frame.Clip, frame.Mode, frame.OneShotSerial);
-        _activeClipNamesByActorId[actorId] = frame.Clip;
+        _framesByActorId[actorId] = (clip, frame.Mode, frame.OneShotSerial);
+        _activeClipNamesByActorId[actorId] = clip;
     }
 
     public void RemoveExcept(IReadOnlySet<int> activeActorIds)

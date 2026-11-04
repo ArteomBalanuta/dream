@@ -103,6 +103,11 @@ public static class ViewModelAssets
             TorchToolDefinition
         });
 
+    // The MAIN-HAND view model shown before the first snapshot arrives, and nothing else: a loadout
+    // has no off-hand field, and the one consumer (PlayScene.Replication) hard-codes
+    // HeldLightKind.None for it, so a torch here would cast no light and would only make the
+    // opening frames show a torch that pops to the hammer. The authoritative kit - hammer in main,
+    // torch in off - is server-side, in PlayerInventoryService.EquipStarterKitWells.
     public static readonly ViewModelLoadout DefaultLoadout = new(
         DebugHandsDefinition.Id,
         BuilderToolDefinition.Id);

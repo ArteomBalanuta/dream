@@ -27,8 +27,12 @@ public sealed class RenamedCharacterHeldLightTests
 
         PlayerInventorySnapshot inventory = runtime.TryCaptureInventorySnapshot(session)!.Value;
         Assert.Equal(key, inventory.PlayerName);
-        int torchSlot = inventory.Slots.First(slot => slot.Item?.ItemKind == "tool.torch").SlotIndex;
-        Assert.True(runtime.ProcessAuthoritativeAction(new PlayerActionMessage(session, 1, new InventoryEquipIntent(torchSlot))).Accepted);
+        // The kit wears the torch in the off hand; put it back in the bag and then into the main hand,
+        // so the light this test reads is one the renamed character equipped itself.
+        Assert.Equal(HeldLightKind.Torch, ToolCatalog.Resolve("tool.torch").HeldLight);
+        Assert.True(runtime.ProcessAuthoritativeAction(new PlayerActionMessage(session, 1, new InventoryUnequipIntent(EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)))).Accepted);
+        int torchSlot = runtime.TryCaptureInventorySnapshot(session)!.Value.Slots.First(slot => slot.Item?.ItemKind == "tool.torch").SlotIndex;
+        Assert.True(runtime.ProcessAuthoritativeAction(new PlayerActionMessage(session, 2, new InventoryEquipIntent(torchSlot))).Accepted);
 
         ActorSnapshot actor = runtime.CaptureActorSnapshots().Single(candidate => candidate.SessionId == session.Value);
         Assert.Equal(displayName, actor.DisplayName);

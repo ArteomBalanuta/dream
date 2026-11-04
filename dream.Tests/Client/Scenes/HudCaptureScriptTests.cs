@@ -48,4 +48,14 @@ public class HudCaptureScriptTests
         Assert.Equal(Path.Combine("shots", "01-play.png"), script.FilePath(0));
         Assert.Equal(Path.Combine("shots", "02-inventory.png"), script.FilePath(1));
     }
+
+    [Fact]
+    public void KeySnapStep_SurvivesAScript_AndNamesItsPng()
+    {
+        HudCaptureScript script = HudCaptureScript.Parse("shots", "play,keysnap:a:90,status")!;
+
+        Assert.Equal(["play", "keysnap:a:90", "status"], script.Steps);
+        // Colons are illegal in Windows filenames, so the step name is rewritten for the png.
+        Assert.Equal(Path.Combine("shots", "02-keysnap-a-90.png"), script.FilePath(1));
+    }
 }
