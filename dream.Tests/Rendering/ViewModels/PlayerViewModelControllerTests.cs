@@ -19,7 +19,7 @@ public class PlayerViewModelControllerTests
         ViewModelFrameState state = controller.CurrentFrameState;
 
         Assert.Equal("hands.debug", state.Hands.Definition.Id);
-        Assert.Equal("held.tool.builder", state.HeldItem.Definition.Id);
+        Assert.Equal("held.tool.torch", state.HeldItem.Definition.Id);
     }
 
     [Fact]

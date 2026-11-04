@@ -109,8 +109,9 @@ public sealed class GroundLabelTests : IDisposable
         Assert.Empty(Labels(new ClientGroundItemCache(), NpcAt(id, 60f, 0f)));
     }
 
+    // M5: villagers are forged models now (NpcModelRenderer), so only the ground items box.
     [Fact]
-    public void TheBoxesAreOneForAnItemAndTwoForAnNpc_AndFarOnesAreSkipped()
+    public void TheBoxesAreOneForAnItem_NoneForAnNpc_AndFarOnesAreSkipped()
     {
         List<WorldBox> boxes = new();
         ClientGroundItemCache ground = CacheWith(At(1, 3f, 3f), At(2, 500f, 0f));
@@ -118,7 +119,7 @@ public sealed class GroundLabelTests : IDisposable
 
         WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, boxes);
 
-        Assert.Equal(3, boxes.Count);
+        Assert.Equal(1, boxes.Count);
         Assert.All(boxes, b => Assert.True(float.IsFinite(b.Center.Y) && b.Size.X > 0f));
     }
 

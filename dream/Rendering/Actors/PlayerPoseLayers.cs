@@ -64,8 +64,8 @@ public sealed class PlayerPoseLayers
         // vertical axis (the hip line), in model space after the clip's own leg pose, so it turns the
         // whole stride toward the travel direction. As O * W (W the leg's animated world), that is
         // O = Tuck * W * RotY(twist) * W^-1; with no twist this is exactly the plain tuck.
-        // Straight backwards the twist sits at its +-90 degree clamp, so the stride stays 90 degrees
-        // off the travel there (not 180): a known, accepted residual, not hidden.
+        // With the directional clips (C2) the clip already carries the 90 and 180 degree cases, so
+        // frame.LegTwistRadians is the within-sector residual and the clamp below is only a guard.
         Matrix4 tuckLeft = frame.AirTuck > 0.001f ? Matrix4.CreateRotationX(TuckForwardRadians * frame.AirTuck) : Matrix4.Identity;
         Matrix4 tuckRight = frame.AirTuck > 0.001f ? Matrix4.CreateRotationX(TuckBackRadians * frame.AirTuck) : Matrix4.Identity;
         _overrides[LeftLegNode] = LegOverride(pose, _leftLeg, tuckLeft, frame.LegTwistRadians);

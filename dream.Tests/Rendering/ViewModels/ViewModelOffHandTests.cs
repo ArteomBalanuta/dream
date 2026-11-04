@@ -93,7 +93,7 @@ public class PlayerViewModelControllerEquipmentTests
         PlayerViewModelController controller = Create();
 
         Assert.Null(controller.CurrentFrameState.OffHandItem);
-        Assert.Equal("held.tool.builder", controller.CurrentFrameState.HeldItem.Definition.Id);
+        Assert.Equal("held.tool.torch", controller.CurrentFrameState.HeldItem.Definition.Id);
     }
 
     [Fact]

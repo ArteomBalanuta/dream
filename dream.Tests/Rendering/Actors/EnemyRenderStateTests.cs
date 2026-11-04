@@ -66,6 +66,52 @@ public class EnemyRenderStateTests
         Assert.Equal(wolfState.ModelMatrix.M11 * 1.35f, direState.ModelMatrix.M11, 3);
     }
 
+    // The opened indirection: the model, the clip set and the scale all come from the visual, so
+    // the hound draws its own model and its own clips without a branch in the renderer.
+    [Fact]
+    public void TheHoundVisual_DrawsItsOwnModel_AndItsOwnClips()
+    {
+        EnemyVisual hound = EnemyVisualCatalog.Resolve(EnemyVisualCatalog.HoundKey);
+
+        EnemyRenderState chasing = EnemyRenderState.Create(
+            in hound, new Vector3(2f, 0f, 3f), Vector3.UnitX, EnemyBehaviorState.Chasing);
+        EnemyRenderState dying = EnemyRenderState.Create(
+            in hound, Vector3.Zero, Vector3.UnitX, EnemyBehaviorState.Dead);
+
+        Assert.Equal(BeastAssetDefinition.HoundModelPath, chasing.ModelPath);
+        Assert.Equal(BeastAssetDefinition.MoveClip, chasing.ClipName);
+        Assert.Equal(BeastAssetDefinition.DieClip, dying.ClipName);
+        Assert.Equal("enemy", chasing.ShaderName);
+        Assert.Equal(2f, chasing.ModelMatrix.M41, 3);
+        Assert.Equal(hound.ResolveScale(), new Vector3(chasing.ModelMatrix.M11, chasing.ModelMatrix.M12, chasing.ModelMatrix.M13).Length, 3);
+    }
+
+    [Fact]
+    public void Create_WithTheDefaultVisual_IsCreateWolf()
+    {
+        EnemyVisual wolf = EnemyVisualCatalog.Resolve(null);
+        Vector3 position = new(1f, 2f, 3f);
+
+        Assert.Equal(
+            EnemyRenderState.CreateWolf(position, Vector3.UnitX, EnemyBehaviorState.Attacking),
+            EnemyRenderState.Create(in wolf, position, Vector3.UnitX, EnemyBehaviorState.Attacking));
+    }
+
+    [Fact]
+    public void DireWolfVisual_ScalesFromItsOwnVisual_WithoutTheRendererDoingTheMultiply()
+    {
+        EnemyVisual dire = EnemyVisualCatalog.Resolve("enemy.dire-wolf");
+
+        EnemyRenderState direState = EnemyRenderState.Create(
+            in dire, Vector3.Zero, -Vector3.UnitZ, EnemyBehaviorState.Idle);
+
+        Assert.Equal(WolfAssetDefinition.VisualScale * 1.35f, dire.ResolveScale(), 4);
+        Assert.Equal(
+            dire.ResolveScale(),
+            new Vector3(direState.ModelMatrix.M11, direState.ModelMatrix.M12, direState.ModelMatrix.M13).Length,
+            4);
+    }
+
     [Theory]
     [InlineData(0f, 0f, -1f)]
     [InlineData(1f, 0f, 0f)]

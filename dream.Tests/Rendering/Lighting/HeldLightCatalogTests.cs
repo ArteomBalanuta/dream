@@ -11,9 +11,14 @@ public sealed class HeldLightCatalogTests
     [Fact]
     public void Torch_AndLantern_MatchThePlan()
     {
+        // The torch was raised toward the brazier's 3.0 for A3 (the actor path is linear, so the
+        // figure's internal spread scales with the gain). The radius stays 8 on purpose: the
+        // brazier's and the lamp's 10 is what FxSimulation.TryClassify matches for the fire halo.
         Assert.True(HeldLightCatalog.TryResolve(HeldLightKind.Torch, out Vector3 torchColor, out float torchRadius));
-        AssertClose(new Vector3(1.6f, 0.992f, 0.512f), torchColor);
+        AssertClose(new Vector3(1.0f, 0.62f, 0.32f) * 2.3f, torchColor);
+        Assert.Equal(2.3f, HeldLightCatalog.TorchIntensity);
         Assert.Equal(8f, torchRadius);
+        Assert.True(HeldLightCatalog.TorchIntensity > 1.6f, "A3 needs the brighter torch.");
 
         Assert.True(HeldLightCatalog.TryResolve(HeldLightKind.Lantern, out Vector3 lanternColor, out float lanternRadius));
         AssertClose(new Vector3(1.1f, 0.88f, 0.605f), lanternColor);
