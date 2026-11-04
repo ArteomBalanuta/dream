@@ -87,6 +87,27 @@ public class StatSheetTests
         Assert.True(compared > 0);
     }
 
+    // The attribute grid these two tests walk is a REPRESENTATIVE set, not every value, and it is
+    // deliberately independent of PlayerCombatStats.AttributeCeiling. Both tests used to iterate from
+    // Min to Max (one by 1, one by 7). When commit 1f422512 raised the ceiling to 10000 that became
+    // 10^8 and 2x10^6 combinations per tool, so the suite hung on them and could never finish -- which
+    // also hid every test ordered after them. Stepping by a constant also missed Max entirely
+    // (1 + 7k never lands on 10000), so the ceiling boundary was never actually covered. This set keeps
+    // both ends, the low edge cases and a spread through the middle, and stays O(1) in the ceiling.
+    private static readonly int[] GridAttributes =
+    [
+        PlayerCombatStats.MinStrength,
+        PlayerCombatStats.MinStrength + 1,
+        7,
+        10,
+        50,
+        97,
+        1_000,
+        5_000,
+        PlayerCombatStats.MaxStrength - 1,
+        PlayerCombatStats.MaxStrength,
+    ];
+
     [Fact]
     public void Resolution_EqualsLegacyCombine_ForEveryStrengthAndVitalityWithEveryTool()
     {
@@ -94,9 +115,9 @@ public class StatSheetTests
         foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
             StatModifier[] modifiers = ModifiersOf(tool);
-            for (int strength = PlayerCombatStats.MinStrength; strength <= PlayerCombatStats.MaxStrength; strength++)
+            foreach (int strength in GridAttributes)
             {
-                for (int vitality = PlayerCombatStats.MinVitality; vitality <= PlayerCombatStats.MaxVitality; vitality++)
+                foreach (int vitality in GridAttributes)
                 {
                     foreach (float attackSpeed in new[] { 0.5f, 1.0f, 2.0f, 4.99f, 5.0f })
                     {
@@ -140,9 +161,9 @@ public class StatSheetTests
         float[] attackSpeeds = [0.5f, 0.75f, 1.0f, 2.5f, 4.99f, 5.0f];
         foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
-            for (int strength = PlayerCombatStats.MinStrength; strength <= PlayerCombatStats.MaxStrength; strength += 7)
+            foreach (int strength in GridAttributes)
             {
-                for (int vitality = PlayerCombatStats.MinVitality; vitality <= PlayerCombatStats.MaxVitality; vitality += 7)
+                foreach (int vitality in GridAttributes)
                 {
                     foreach (float attackSpeed in attackSpeeds)
                     {
@@ -209,7 +230,10 @@ public class StatSheetTests
     public void Resolution_ClampsEffectiveAndBase()
     {
         StatSheet sheet = new();
-        sheet.SetBase(BlockOf(5000f, -3f, 0f));
+        // Over the ceiling, expressed relative to it: a literal 5000 was above the old ceiling and is
+        // below today's, so after commit 1f422512 it clamped nothing and this test only still passed
+        // because the hanging grid tests above it meant it never ran.
+        sheet.SetBase(BlockOf(PlayerCombatStats.MaxStrength + 1f, -3f, 0f));
         Assert.Equal(PlayerCombatStats.MaxStrength, sheet.Base[StatId.Strength]);
         Assert.Equal(0.5f, sheet.Base[StatId.AttackSpeed]);
         Assert.Equal(1f, sheet.Base[StatId.Vitality]);
