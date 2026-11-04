@@ -63,7 +63,7 @@ commit why the world changed. Prefer a new generator key, which needs no re-reco
 | File | Role |
 | --- | --- |
 | `dream/Rendering/Core/StaticTerrainTileArray.cs` | 8 tiles (layer = `(int)GeometryMaterialId`, grass top) as one `Texture2DArray`; background decode, one layer upload per call, box mips; `-1` until ready, `-1` for good on any failure |
-| `dream/Rendering/Core/Render.Terrain.cs` | Binds the array on unit 2 per pass; sets `uTerrainBlend/Band/Depth/Relief` per pass and `uTerrainLayer` per material; `BindTerrainMaterial` forces variation, blend and layer off for moving fallback cubes. All terrain uniform name strings live here |
+| `dream/Rendering/Core/Render.Terrain.cs` | Binds the array on unit 2 per pass; sets `uTerrainBlend/Band/Depth/Relief` per pass and `uTerrainLayer` per material; `BindTerrainMaterial` forces variation, blend and layer off for moving fallback cubes. The terrain uniform names are set here, except `uTerrainMapOrigin` / `uTerrainMapSize` (in `TerrainMaterialMapTexture.cs`) |
 | `dream/Rendering/Core/Render.Shaders.cs` | `LoadTerrainShader` sets the sampler units once (`uTerrainTiles` 2, `uTerrainMaterialMap` 3) |
 | `dream/Rendering/World/TerrainSurfaceSettings.cs` | `DREAM_TERRAIN_VARIATION`, `DREAM_TERRAIN_BLEND`, `DREAM_TERRAIN_RELIEF` |
 | `dream/shaders/cubeFragment.glsl` | Terrain block: per-variant transform shared by all layers, neighbour weights from the map texels (own, X, Z, diagonal), height blend, bump from `dFdx/dFdy` of the height |

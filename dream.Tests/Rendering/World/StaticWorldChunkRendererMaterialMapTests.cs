@@ -68,6 +68,87 @@ public class StaticWorldChunkRendererMaterialMapTests
     }
 
     [Fact]
+    public void TheActiveMapChangesOnlyWhenTheBuildsBatchApplies_AndANewerRequestKeepsTheLatestMap()
+    {
+        MapStore store = new();
+        List<TaskCompletionSource<StaticWorldChunkBuildBatch>> sources = [];
+        List<StaticWorldChunkBuildRequest> requests = [];
+        using StaticWorldChunkRenderer renderer = new(
+            request =>
+            {
+                requests.Add(request);
+                TaskCompletionSource<StaticWorldChunkBuildBatch> source = new();
+                sources.Add(source);
+                return source.Task;
+            },
+            new RenderFaultLog(_ => { }),
+            store);
+        Camera camera = new(new Vector3(3f, 2f, 3f));
+        camera.SetFacing(new Vector3(-1f, -0.5f, -1f));
+        ViewFrustum frustum = ViewFrustum.FromViewAndProjection(camera.GetViewMatrix(), ViewFrustumTests.GameProjection());
+
+        Dictionary<(int, int, int), GeometryMaterialId> slots = new() { [(0, 0, 0)] = GeometryMaterialId.Grass };
+        for (int i = 0; i < 3; i++)
+        {
+            renderer.Draw(UnusedRender, camera, in frustum, CreateExport(slots, 1, []));
+        }
+
+        // The build is in flight: the map for it exists but is not active, and nothing was synced.
+        Assert.True(renderer.HasPendingTerrainMaterialMap);
+        Assert.True(renderer.TerrainMaterialMap.IsEmpty);
+        int generation = renderer.TerrainMaterialMapGeneration;
+        Assert.Equal(0, store.SyncCount);
+
+        // A newer export supersedes while the first build still runs: the pending map keeps the latest.
+        slots[(1, 0, 0)] = GeometryMaterialId.Stone;
+        slots[(2, 0, 0)] = GeometryMaterialId.Sand;
+        for (int i = 0; i < 3; i++)
+        {
+            renderer.Draw(UnusedRender, camera, in frustum, CreateExport(slots, 2, [new GeometryCellKey(1, 0, 0), new GeometryCellKey(2, 0, 0)]));
+        }
+
+        Assert.Equal(generation, renderer.TerrainMaterialMapGeneration);
+        Assert.True(renderer.TerrainMaterialMap.IsEmpty);
+        Assert.Single(sources);
+
+        // The first batch applies: the (latest) pending map becomes active, once.
+        sources[0].SetResult(StaticWorldChunkRenderer.BuildBatch(requests[0]));
+        renderer.Draw(UnusedRender, camera, in frustum, CreateExport(slots, 2, []));
+        Assert.False(renderer.HasPendingTerrainMaterialMap);
+        Assert.Equal(generation + 1, renderer.TerrainMaterialMapGeneration);
+        Assert.Equal(new Vector3i(3, 1, 1), renderer.TerrainMaterialMap.Size);
+        generation = renderer.TerrainMaterialMapGeneration;
+
+        // A further edit again leaves the active map alone until its batch applies.
+        slots[(0, 1, 0)] = GeometryMaterialId.Dirt;
+        for (int i = 0; i < 3; i++)
+        {
+            renderer.Draw(UnusedRender, camera, in frustum, CreateExport(slots, 3, [new GeometryCellKey(0, 1, 0)]));
+        }
+
+        Assert.True(renderer.HasPendingTerrainMaterialMap);
+        Assert.Equal(generation, renderer.TerrainMaterialMapGeneration);
+        Assert.Equal(new Vector3i(3, 1, 1), renderer.TerrainMaterialMap.Size);
+
+        // Drive every started build to completion.
+        for (int round = 0; round < 8; round++)
+        {
+            for (int s = 0; s < sources.Count; s++)
+            {
+                if (!sources[s].Task.IsCompleted)
+                {
+                    sources[s].SetResult(StaticWorldChunkRenderer.BuildBatch(requests[s]));
+                }
+            }
+
+            renderer.Draw(UnusedRender, camera, in frustum, CreateExport(slots, 3, []));
+        }
+
+        Assert.False(renderer.HasPendingTerrainMaterialMap);
+        Assert.Equal(new Vector3i(3, 2, 1), renderer.TerrainMaterialMap.Size);
+    }
+
+    [Fact]
     public void FramesThatDrawNothing_DoNotSync_AndTheNextDrawingFrameSyncsOnce()
     {
         MapStore store = new();

@@ -167,6 +167,59 @@ int dreamTerrainTexel(ivec3 cell)
     return int(texelFetch(uTerrainMaterialMap, i, 0).r);
 }
 
+// Where the mass m of a missing corner slot goes: to its two edge neighbours in the 2x2 block, in
+// proportion to their raw weights (wp/wq, counted only when okp/okq, i.e. present), or, if neither
+// is present, to the diagonal slot. Returns (to p, to q, to diagonal).
+vec3 dreamTerrainSplitMissing(float m, float wp, bool okp, float wq, bool okq)
+{
+    float sp = okp ? wp : 0.0;
+    float sq = okq ? wq : 0.0;
+    float t = sp + sq;
+    if (t > 1e-6) {
+        return m * vec3(sp, sq, 0.0) / t;
+    }
+    return vec3(0.0, 0.0, m);
+}
+
+// The four corner weights (own, X neighbour, Z neighbour, diagonal) of a top fragment. a is the
+// per-axis weight of the neighbour (0 at the band boundary, 0.5 on the cell edge); px/pz/pd say
+// whether the X, Z and diagonal cells are present (own always is). The weights depend only on the
+// four cells of the block and the position, not on which of them the fragment is in: a missing
+// cell's weight goes to its present edge neighbours in proportion to their weights, so both cells
+// sharing an edge compute the same weight per material, and with a = 0 the result is own only.
+vec4 dreamTerrainCornerWeights(vec2 a, bool px, bool pz, bool pd)
+{
+    float r0 = (1.0 - a.x) * (1.0 - a.y);
+    float r1 = a.x * (1.0 - a.y);
+    float r2 = (1.0 - a.x) * a.y;
+    float r3 = a.x * a.y;
+    float w0 = r0;
+    float w1 = px ? r1 : 0.0;
+    float w2 = pz ? r2 : 0.0;
+    float w3 = pd ? r3 : 0.0;
+    if (!px) {
+        // X slot: edge neighbours own and diagonal, diagonal-of-it is the Z slot.
+        vec3 g = dreamTerrainSplitMissing(r1, r0, true, r3, pd);
+        w0 += g.x;
+        w3 += g.y;
+        w2 += g.z;
+    }
+    if (!pz) {
+        vec3 g = dreamTerrainSplitMissing(r2, r0, true, r3, pd);
+        w0 += g.x;
+        w3 += g.y;
+        w1 += g.z;
+    }
+    if (!pd) {
+        // Diagonal slot: edge neighbours Z and X, diagonal-of-it is own.
+        vec3 g = dreamTerrainSplitMissing(r3, r2, pz, r1, px);
+        w2 += g.x;
+        w1 += g.y;
+        w0 += g.z;
+    }
+    return vec4(w0, w1, w2, w3);
+}
+
 // uv is texCoord0 and dx/dy its screen derivatives, taken by main() before any branch. height is the
 // relief height (tile alpha, blended with the neighbouring materials where they blend).
 vec3 dreamTerrainAlbedo(vec2 uv, vec2 dx, vec2 dy, vec3 n, vec3 worldPos, out float height)
@@ -185,14 +238,16 @@ vec3 dreamTerrainAlbedo(vec2 uv, vec2 dx, vec2 dy, vec3 n, vec3 worldPos, out fl
 
     // Cross-material height blend: top faces of a full exposed cell whose map texel is this
     // material (so fallback and dynamic cubes, and a stale or missing map, never blend). The quad
-    // origin is an integer cell corner (uv = position - corner); merged quads run uv past 1, so the
-    // cell is the corner plus floor(uv) and l the position inside it.
+    // origin is an integer cell corner (uv = position - corner). Every static top quad is exactly one
+    // unit cell (the mesh builder does not merge faces, and the map holds only unit cells), so the
+    // cell is the corner's cell and l is uv clamped into it. The clamp matters: helper invocations
+    // of a 2x2 quad extrapolate uv past the face edge, and must evaluate the same cell's edge value
+    // (not the neighbour's) or their screen derivatives would spike into a line along the seam.
     if (uTerrainBlend > 0.5 && uTerrainLayer >= 0 && n.y > 0.5 && uTerrainMapSize.x > 0.5) {
         vec2 corner = worldPos.xz - uv;
         vec2 cornerCell = floor(corner + 0.5);
-        vec2 off = floor(uv);
-        vec2 l = uv - off;
-        ivec3 cell = ivec3(int(cornerCell.x + off.x), int(floor(worldPos.y + 0.5)) - 1, int(cornerCell.y + off.y));
+        vec2 l = clamp(uv, 0.0, 1.0);
+        ivec3 cell = ivec3(int(cornerCell.x), int(floor(worldPos.y + 0.5)) - 1, int(cornerCell.y));
         if (all(lessThan(abs(corner - cornerCell), vec2(0.01))) && dreamTerrainTexel(cell) == uTerrainLayer + 1) {
             float depth = max(uTerrainBlendDepth, 0.01);
             vec2 e = min(l, 1.0 - l);
@@ -200,20 +255,25 @@ vec3 dreamTerrainAlbedo(vec2 uv, vec2 dx, vec2 dy, vec3 n, vec3 worldPos, out fl
             ivec2 dir = ivec2(l.x >= 0.5 ? 1 : -1, l.y >= 0.5 ? 1 : -1);
 
             // Slots: own, X neighbour, Z neighbour, diagonal. A neighbour that is not an exposed
-            // full top cell (texel outside 1..8) hands its weight to the own material.
+            // full top cell (texel outside 1..8) is missing; its weight is handed on by
+            // dreamTerrainCornerWeights, identically from every cell around the same corner.
             int tx = a.x > 0.0 ? dreamTerrainTexel(cell + ivec3(dir.x, 0, 0)) : 0;
             int tz = a.y > 0.0 ? dreamTerrainTexel(cell + ivec3(0, 0, dir.y)) : 0;
             int td = (a.x > 0.0 && a.y > 0.0) ? dreamTerrainTexel(cell + ivec3(dir.x, 0, dir.y)) : 0;
+            bool px = tx >= 1 && tx <= 8;
+            bool pz = tz >= 1 && tz <= 8;
+            bool pd = td >= 1 && td <= 8;
             int lay[4];
             float wt[4];
             lay[0] = uTerrainLayer;
-            lay[1] = (tx >= 1 && tx <= 8) ? tx - 1 : uTerrainLayer;
-            lay[2] = (tz >= 1 && tz <= 8) ? tz - 1 : uTerrainLayer;
-            lay[3] = (td >= 1 && td <= 8) ? td - 1 : uTerrainLayer;
-            wt[0] = (1.0 - a.x) * (1.0 - a.y);
-            wt[1] = a.x * (1.0 - a.y);
-            wt[2] = (1.0 - a.x) * a.y;
-            wt[3] = a.x * a.y;
+            lay[1] = px ? tx - 1 : uTerrainLayer;
+            lay[2] = pz ? tz - 1 : uTerrainLayer;
+            lay[3] = pd ? td - 1 : uTerrainLayer;
+            vec4 cw = dreamTerrainCornerWeights(a, px, pz, pd);
+            wt[0] = cw.x;
+            wt[1] = cw.y;
+            wt[2] = cw.z;
+            wt[3] = cw.w;
             // Equal layers merge into the first slot that has them, so no layer is fetched twice.
             for (int s = 1; s < 4; s++) {
                 for (int j = 0; j < s; j++) {
@@ -325,6 +385,9 @@ void main()
 #ifdef DREAM_TERRAIN
         if (uTerrainVariation > 0.5) {
             terrainHeight = 0.5;
+            // Blended neighbour tiles are tinted by this material's baseColorFactor too. That is
+            // white for every blendable material (layers 0..7); only Lamp is tinted and it never
+            // blends (TerrainBlendCornerWeightTests).
             vec3 terrainRgb = dreamTerrainAlbedo(texCoord0, terrainDx, terrainDy, normalize(normal), fragPos, terrainHeight);
             baseColor *= vec4(terrainRgb, terrainHeight);
         } else {
