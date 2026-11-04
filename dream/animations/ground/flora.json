@@ -1,0 +1,749 @@
+{
+  "schema": "dream.ground/1",
+  "family": "flora",
+  "generator": "tools/ui-assets/gen_ground_flora.py",
+  "assets": [
+    {
+      "id": "flora.tree_gallows_oak",
+      "file": "flora/tree_gallows_oak.glb",
+      "class": "tree",
+      "layer": "landmark",
+      "radius": 2.038,
+      "footprint": 0.419,
+      "height": 4.078,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "flora.tree_hollow_elm",
+      "file": "flora/tree_hollow_elm.glb",
+      "class": "tree",
+      "layer": "landmark",
+      "radius": 1.891,
+      "footprint": 0.427,
+      "height": 3.969,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "flora.tree_blasted_pine",
+      "file": "flora/tree_blasted_pine.glb",
+      "class": "tree",
+      "layer": "landmark",
+      "radius": 1.005,
+      "footprint": 0.303,
+      "height": 4.209,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "flora.tree_weeping_ash",
+      "file": "flora/tree_weeping_ash.glb",
+      "class": "tree",
+      "layer": "landmark",
+      "radius": 1.237,
+      "footprint": 0.351,
+      "height": 3.198,
+      "ground": [
+        "grass",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "flora.tree_twisted_yew",
+      "file": "flora/tree_twisted_yew.glb",
+      "class": "tree",
+      "layer": "landmark",
+      "radius": 1.38,
+      "footprint": 0.405,
+      "height": 3.255,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "flora.tree_split_trunk",
+      "file": "flora/tree_split_trunk.glb",
+      "class": "tree",
+      "layer": "landmark",
+      "radius": 1.42,
+      "footprint": 0.407,
+      "height": 4.111,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "flora.tree_leaning_birch",
+      "file": "flora/tree_leaning_birch.glb",
+      "class": "tree",
+      "layer": "landmark",
+      "radius": 1.203,
+      "footprint": 0.204,
+      "height": 3.924,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "flora.tree_dead_spruce",
+      "file": "flora/tree_dead_spruce.glb",
+      "class": "tree",
+      "layer": "landmark",
+      "radius": 1.404,
+      "footprint": 0.265,
+      "height": 4.372,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud",
+        "snow"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "flora.sapling_dead_01",
+      "file": "flora/sapling_dead_01.glb",
+      "class": "sapling",
+      "layer": "accent",
+      "radius": 0.271,
+      "footprint": 0.075,
+      "height": 1.053,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.sapling_dead_02",
+      "file": "flora/sapling_dead_02.glb",
+      "class": "sapling",
+      "layer": "accent",
+      "radius": 0.712,
+      "footprint": 0.098,
+      "height": 1.007,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.sapling_dead_03",
+      "file": "flora/sapling_dead_03.glb",
+      "class": "sapling",
+      "layer": "accent",
+      "radius": 0.445,
+      "footprint": 0.081,
+      "height": 1.053,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.bush_thorn_01",
+      "file": "flora/bush_thorn_01.glb",
+      "class": "bush",
+      "layer": "accent",
+      "radius": 0.677,
+      "footprint": 0.101,
+      "height": 0.775,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.bush_thorn_02",
+      "file": "flora/bush_thorn_02.glb",
+      "class": "bush",
+      "layer": "accent",
+      "radius": 0.909,
+      "footprint": 0.129,
+      "height": 0.975,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.bush_dry_01",
+      "file": "flora/bush_dry_01.glb",
+      "class": "bush",
+      "layer": "accent",
+      "radius": 0.831,
+      "footprint": 0.658,
+      "height": 0.914,
+      "ground": [
+        "grass",
+        "dirt",
+        "sand"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.bush_dry_02",
+      "file": "flora/bush_dry_02.glb",
+      "class": "bush",
+      "layer": "accent",
+      "radius": 0.568,
+      "footprint": 0.156,
+      "height": 0.741,
+      "ground": [
+        "dirt",
+        "sand",
+        "grass"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.bush_heather",
+      "file": "flora/bush_heather.glb",
+      "class": "bush",
+      "layer": "accent",
+      "radius": 0.472,
+      "footprint": 0.355,
+      "height": 0.457,
+      "ground": [
+        "grass",
+        "dirt",
+        "rock"
+      ],
+      "weight": 0.9,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.bush_juniper_dead",
+      "file": "flora/bush_juniper_dead.glb",
+      "class": "bush",
+      "layer": "accent",
+      "radius": 0.461,
+      "footprint": 0.14,
+      "height": 0.975,
+      "ground": [
+        "grass",
+        "dirt",
+        "rock",
+        "snow"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.bush_nettle",
+      "file": "flora/bush_nettle.glb",
+      "class": "bush",
+      "layer": "accent",
+      "radius": 0.48,
+      "footprint": 0.225,
+      "height": 0.876,
+      "ground": [
+        "grass",
+        "mud"
+      ],
+      "weight": 0.9,
+      "scale": [
+        0.85,
+        1.2
+      ]
+    },
+    {
+      "id": "flora.grass_tuft_dry_01",
+      "file": "flora/grass_tuft_dry_01.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.276,
+      "footprint": 0.274,
+      "height": 0.23,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.2,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_tuft_dry_02",
+      "file": "flora/grass_tuft_dry_02.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.388,
+      "footprint": 0.369,
+      "height": 0.166,
+      "ground": [
+        "grass",
+        "dirt",
+        "sand"
+      ],
+      "weight": 1.2,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_tuft_dry_03",
+      "file": "flora/grass_tuft_dry_03.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.214,
+      "footprint": 0.195,
+      "height": 0.266,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_tuft_dry_04",
+      "file": "flora/grass_tuft_dry_04.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.419,
+      "footprint": 0.384,
+      "height": 0.139,
+      "ground": [
+        "grass",
+        "dirt",
+        "sand",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_tuft_tall_01",
+      "file": "flora/grass_tuft_tall_01.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.19,
+      "footprint": 0.18,
+      "height": 0.302,
+      "ground": [
+        "grass",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_tuft_tall_02",
+      "file": "flora/grass_tuft_tall_02.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.258,
+      "footprint": 0.223,
+      "height": 0.313,
+      "ground": [
+        "grass",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_tuft_tall_03",
+      "file": "flora/grass_tuft_tall_03.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.162,
+      "footprint": 0.144,
+      "height": 0.312,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_sedge_01",
+      "file": "flora/grass_sedge_01.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.453,
+      "footprint": 0.396,
+      "height": 0.236,
+      "ground": [
+        "mud",
+        "grass"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_sedge_02",
+      "file": "flora/grass_sedge_02.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.488,
+      "footprint": 0.473,
+      "height": 0.223,
+      "ground": [
+        "mud",
+        "grass"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.grass_wiry_01",
+      "file": "flora/grass_wiry_01.glb",
+      "class": "grass",
+      "layer": "cover",
+      "radius": 0.376,
+      "footprint": 0.231,
+      "height": 0.338,
+      "ground": [
+        "dirt",
+        "grass",
+        "sand",
+        "rock"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.flower_pale_bell",
+      "file": "flora/flower_pale_bell.glb",
+      "class": "flower",
+      "layer": "cover",
+      "radius": 0.225,
+      "footprint": 0.18,
+      "height": 0.377,
+      "ground": [
+        "grass"
+      ],
+      "weight": 0.5,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.flower_ash_lily",
+      "file": "flora/flower_ash_lily.glb",
+      "class": "flower",
+      "layer": "cover",
+      "radius": 0.189,
+      "footprint": 0.159,
+      "height": 0.386,
+      "ground": [
+        "grass",
+        "mud"
+      ],
+      "weight": 0.5,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.flower_crowsfoot",
+      "file": "flora/flower_crowsfoot.glb",
+      "class": "flower",
+      "layer": "cover",
+      "radius": 0.205,
+      "footprint": 0.205,
+      "height": 0.36,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 0.5,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.flower_withered_rose",
+      "file": "flora/flower_withered_rose.glb",
+      "class": "flower",
+      "layer": "cover",
+      "radius": 0.309,
+      "footprint": 0.309,
+      "height": 0.386,
+      "ground": [
+        "grass"
+      ],
+      "weight": 0.4,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.flower_hemlock_umbel",
+      "file": "flora/flower_hemlock_umbel.glb",
+      "class": "flower",
+      "layer": "cover",
+      "radius": 0.174,
+      "footprint": 0.147,
+      "height": 0.385,
+      "ground": [
+        "grass",
+        "mud"
+      ],
+      "weight": 0.5,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.flower_thistle",
+      "file": "flora/flower_thistle.glb",
+      "class": "flower",
+      "layer": "cover",
+      "radius": 0.184,
+      "footprint": 0.179,
+      "height": 0.386,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 0.5,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.shroom_inkcap_cluster",
+      "file": "flora/shroom_inkcap_cluster.glb",
+      "class": "mushroom",
+      "layer": "cover",
+      "radius": 0.144,
+      "footprint": 0.12,
+      "height": 0.386,
+      "ground": [
+        "mud",
+        "grass"
+      ],
+      "weight": 0.7,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.shroom_pale_toad",
+      "file": "flora/shroom_pale_toad.glb",
+      "class": "mushroom",
+      "layer": "cover",
+      "radius": 0.284,
+      "footprint": 0.267,
+      "height": 0.251,
+      "ground": [
+        "grass",
+        "mud"
+      ],
+      "weight": 0.7,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.shroom_grave_cap",
+      "file": "flora/shroom_grave_cap.glb",
+      "class": "mushroom",
+      "layer": "cover",
+      "radius": 0.216,
+      "footprint": 0.199,
+      "height": 0.354,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 0.7,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.shroom_puffball",
+      "file": "flora/shroom_puffball.glb",
+      "class": "mushroom",
+      "layer": "cover",
+      "radius": 0.278,
+      "footprint": 0.275,
+      "height": 0.211,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 0.6,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.shroom_bracket_stub",
+      "file": "flora/shroom_bracket_stub.glb",
+      "class": "mushroom",
+      "layer": "cover",
+      "radius": 0.302,
+      "footprint": 0.299,
+      "height": 0.343,
+      "ground": [
+        "grass",
+        "mud",
+        "dirt"
+      ],
+      "weight": 0.5,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "flora.shroom_ring",
+      "file": "flora/shroom_ring.glb",
+      "class": "mushroom",
+      "layer": "cover",
+      "radius": 0.423,
+      "footprint": 0.423,
+      "height": 0.18,
+      "ground": [
+        "grass"
+      ],
+      "weight": 0.3,
+      "scale": [
+        0.9,
+        1.2
+      ]
+    }
+  ]
+}
