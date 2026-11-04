@@ -100,6 +100,51 @@ class GroundSpec:
     scale: tuple = (0.9, 1.1)
 
 
+# ---------------------------------------------------------------------------------------------- albedo
+# The engine samples texel bytes as linear (no sRGB internal format) and its terrain tiles are authored in that same
+# "sRGB-looking bytes read as linear" convention (check_ground_decals measures them so). A ground asset must sit beside
+# that terrain, so its baked sRGB atlas is used AS IS (times GROUND_ALBEDO_GAIN), not decoded to true linear and lifted
+# like an actor's (gen_char_player.encode_atlas): that path lands at about 0.06, a sixth of the floor, and every bush,
+# twig and slab rendered as a black cutout in the captures.
+GROUND_ALBEDO_GAIN = 1.5
+GROUND_DISC_FACTOR = 0.11   # the contact disc (a dirt shadow, texture bytes span 0..1 of this); props use GP.DISC_LIFT = 0.05 in true linear
+
+
+def encode_ground_atlas(atlas_rgba: np.ndarray, gain: float = GROUND_ALBEDO_GAIN):
+    """Baked sRGB atlas -> (PNG bytes, baseColorFactor scale, encoded RGBA). Same container as P.encode_atlas: the bytes
+    span 0..1 of `scale`, which goes in baseColorFactor, so the shader sees atlas / 255 * gain."""
+    import io
+
+    from PIL import Image
+
+    cov = atlas_rgba[..., 3] > 0
+    eff = atlas_rgba[..., :3].astype(np.float64) / 255.0 * gain
+    top = float(eff[cov].max()) if cov.any() else 1.0
+    scale = min(1.0, max(0.005, np.ceil(top * 200.0) / 200.0))
+    enc = np.zeros(atlas_rgba.shape, dtype=np.uint8)
+    enc[..., :3] = np.round(np.clip(eff / scale, 0.0, 1.0) * 255.0).astype(np.uint8)
+    enc[..., 3] = 255
+    buf = io.BytesIO()
+    Image.fromarray(enc, "RGBA").save(buf, format="PNG", compress_level=9)
+    return buf.getvalue(), float(scale), enc
+
+
+# Thin, double-sided geometry (blades, leaf cards, twig and branch sheets) has no meaningful "outside": about half of its
+# vertex normals point at the ground, where the hemisphere ambient is darkest and the sun contributes nothing, so a heap of
+# leaves or a bush rendered black from above. The world shaders have no gl_FrontFacing handling, so the fix is in the
+# data: a normal that points down is flipped, and every normal leans toward +Y, which is how these read from the camera.
+SHEET_CLASSES = frozenset({"grass", "flower", "bush", "sapling", "leaves", "twigs", "root", "tree"})
+SHEET_UP_LEAN = 0.5
+
+
+def sheet_normals(nrm: np.ndarray, lean: float = SHEET_UP_LEAN) -> np.ndarray:
+    n = np.asarray(nrm, dtype=np.float64).copy()
+    n[n[:, 1] < 0.0] *= -1.0
+    n[:, 1] += lean
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+    return n.astype(np.asarray(nrm).dtype)
+
+
 # ---------------------------------------------------------------------------------------------- build
 def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
     """gen_props.build_asset for a GroundSpec. Pure: no clock, environment or filesystem."""
@@ -110,20 +155,22 @@ def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
     seed = f"ground.{family}.{stem}"
     atlas = C.bake_albedo(split, None, None, uvs, rects, spec.atlas, materials=[p.mat for p in parts], seed=seed,
                           wear=wear, grime=grime, rust=rust, dust=dust)
-    png, scale, enc = P.encode_atlas(atlas, GP.ALBEDO_LIFT)
+    png, scale, enc = encode_ground_atlas(atlas)
     k = GP.WORLD_UNITS_PER_U / GP.UNITS_PER_U
     arrays = []
     for m, uv in zip(split, uvs):
         pos, nrm, uvo, idx = P._render_arrays(m, uv)
         arrays.append((pos * k, nrm, uvo, idx))
     pos, nrm, uvo, idx = GP._merge_arrays(arrays)
+    if spec.cls in SHEET_CLASSES:
+        nrm = sheet_normals(nrm)
     prims = [G.GltfPrimitive(pos, nrm, uvo, idx, None, None, material=0, node=0)]
     mats = [{"name": BAKED_MATERIAL, "base_color_factor": (scale, scale, scale, 1.0), "base_color_png": png, "metallic": 0.0,
              "roughness": 0.9, "double_sided": True}]
     disc = None
     if spec.disc[0] > 0:
         dpng, disc = GP.contact_texture(seed)
-        mats.append({"name": CONTACT_MATERIAL, "base_color_factor": (GP.DISC_LIFT,) * 3 + (1.0,), "base_color_png": dpng,
+        mats.append({"name": CONTACT_MATERIAL, "base_color_factor": (GROUND_DISC_FACTOR,) * 3 + (1.0,), "base_color_png": dpng,
                      "metallic": 0.0, "roughness": 1.0, "alpha_mode": "MASK", "alpha_cutoff": 0.5})
         dp, dn, du, di = GP.disc_arrays(spec.disc[0], spec.disc[1], 1.0)
         prims.append(G.GltfPrimitive(dp, dn, du, di, None, None, material=1, node=0))

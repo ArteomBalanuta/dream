@@ -1112,7 +1112,7 @@ def preview(built: dict | None = None):
             mat = a["materials"][prim.material]
             if mat["name"] == K.CONTACT_MATERIAL:
                 t = a["disc"]
-                _draw(img, zbuf, prim.positions.astype(np.float64), prim.normals, prim.uvs, prim.indices, t, GP.DISC_LIFT, math.radians(35), math.radians(50),
+                _draw(img, zbuf, prim.positions.astype(np.float64), prim.normals, prim.uvs, prim.indices, t, K.GROUND_DISC_FACTOR, math.radians(35), math.radians(50),
                       scale, origin, alpha_cut=128)
                 continue
             t = a["encoded"]
