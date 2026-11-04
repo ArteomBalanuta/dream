@@ -168,8 +168,9 @@ public sealed class RemotePlayerRenderer : IDisposable
         }
     }
 
-    // The speed the walk cycle follows: the measured one, or the authored pace when the player moves
-    // but no speed is known yet.
+    // The speed the gait follows: the measured one - real metres/second, smoothed by the presenter,
+    // so the remote path reaches the run and sprint tiers exactly as the local one does - or the
+    // authored walking pace when the player moves but no speed is known yet.
     public static float ResolveSpeed(in RemotePlayerPresentationState player)
     {
         if (!player.IsMoving)

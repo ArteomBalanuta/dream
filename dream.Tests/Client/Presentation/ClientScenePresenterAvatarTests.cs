@@ -176,21 +176,23 @@ public class ClientScenePresenterAvatarTests
         ClientScenePresenter presenter = new(Local);
         presenter.ApplySnapshot(Snapshot(10, RemoteActor(new Vector3(10f, 1.5f, 10f))));
 
-        // Two ticks (1/32 s) later: 0.1875 m sideways is 6 m/s, flat.
+        // Two ticks (1/32 s) later: 0.134375 m sideways is 4.3 m/s - the run tier, the default
+        // ground cruise - flat.
+        const float Step = 0.134375f;
         for (ulong tick = 12; tick <= 40; tick += 2)
         {
-            presenter.ApplySnapshot(Snapshot(tick, RemoteActor(new Vector3(10f + ((tick - 10) / 2 * 0.1875f), 1.5f, 10f))));
+            presenter.ApplySnapshot(Snapshot(tick, RemoteActor(new Vector3(10f + ((tick - 10) / 2 * Step), 1.5f, 10f))));
         }
 
         RemotePlayerPresentationState walking = Remote0(presenter, 40);
         Assert.True(walking.IsMoving);
-        Assert.InRange(walking.HorizontalSpeed, 5.5f, 6.5f);
+        Assert.InRange(walking.HorizontalSpeed, 4.0f, 4.6f);
         Assert.False(walking.Airborne);
 
-        presenter.ApplySnapshot(Snapshot(42, RemoteActor(new Vector3(10f + (15 * 0.1875f), 1.7f, 10f))));
+        presenter.ApplySnapshot(Snapshot(42, RemoteActor(new Vector3(10f + (15 * Step), 1.7f, 10f))));
         Assert.True(Remote0(presenter, 42).Airborne);
 
-        presenter.ApplySnapshot(Snapshot(44, RemoteActor(new Vector3(10f + (15 * 0.1875f), 1.7f, 10f))));
+        presenter.ApplySnapshot(Snapshot(44, RemoteActor(new Vector3(10f + (15 * Step), 1.7f, 10f))));
         RemotePlayerPresentationState landed = Remote0(presenter, 44);
         Assert.False(landed.Airborne);
     }

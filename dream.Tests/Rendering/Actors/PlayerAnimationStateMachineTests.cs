@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
+using Dream.Simulation.Players;
 
 namespace Dream.Tests.Rendering.Actors;
 
@@ -45,8 +46,8 @@ public class PlayerAnimationStateMachineTests
     {
         PlayerAnimationStateMachine machine = new();
 
-        PlayerAnimationFrame normal = machine.Update(Inputs(speed: 6f), Dt);
-        PlayerAnimationFrame slow = new PlayerAnimationStateMachine().Update(Inputs(speed: 3.6f), Dt);
+        PlayerAnimationFrame normal = machine.Update(Inputs(speed: 1.6f), Dt);
+        PlayerAnimationFrame slow = new PlayerAnimationStateMachine().Update(Inputs(speed: 0.96f), Dt);
 
         Assert.Equal("walk", normal.Clip);
         Assert.Equal(1f, normal.PlaybackSpeed, 3);
@@ -125,7 +126,7 @@ public class PlayerAnimationStateMachineTests
         float delta = MathHelper.DegreesToRadians(degrees);
 
         PlayerAnimationFrame frame = new PlayerAnimationStateMachine()
-            .Update(Inputs(speed: 6f, twist: delta), Dt);
+            .Update(Inputs(speed: 1.6f, twist: delta), Dt);
 
         PlayerAnimationStateMachine.ResolveWalkClip(delta, out float residual);
 
@@ -196,12 +197,12 @@ public class PlayerAnimationStateMachineTests
         // The whole point, through Update: jitter either side of the boundary keeps one clip name.
         PlayerAnimationStateMachine machine = new();
         float below = PlayerAnimationStateMachine.StrafeSectorStartRadians - 0.01f;
-        string first = machine.Update(Inputs(speed: 6f, twist: below), Dt).Clip;
+        string first = machine.Update(Inputs(speed: 1.6f, twist: below), Dt).Clip;
         List<string> names = new() { first };
         for (int frame = 0; frame < 8; frame++)
         {
             float jitter = (frame & 1) == 0 ? just : below;
-            names.Add(machine.Update(Inputs(speed: 6f, twist: jitter), Dt).Clip);
+            names.Add(machine.Update(Inputs(speed: 1.6f, twist: jitter), Dt).Clip);
         }
 
         Assert.Equal("walk", first);
@@ -214,10 +215,10 @@ public class PlayerAnimationStateMachineTests
     public void TheStickySector_StillGivesWay_WhenTheTravelReallyChangesSector()
     {
         PlayerAnimationStateMachine machine = new();
-        machine.Update(Inputs(speed: 6f, twist: 0.1f), Dt);
+        machine.Update(Inputs(speed: 1.6f, twist: 0.1f), Dt);
 
-        PlayerAnimationFrame strafe = machine.Update(Inputs(speed: 6f, twist: MathF.PI / 2f), Dt);
-        PlayerAnimationFrame back = machine.Update(Inputs(speed: 6f, twist: MathF.PI), Dt);
+        PlayerAnimationFrame strafe = machine.Update(Inputs(speed: 1.6f, twist: MathF.PI / 2f), Dt);
+        PlayerAnimationFrame back = machine.Update(Inputs(speed: 1.6f, twist: MathF.PI), Dt);
 
         Assert.Equal("walk-strafe-right", strafe.Clip);
         Assert.Equal(0f, strafe.LegTwistRadians, 5);
@@ -227,6 +228,7 @@ public class PlayerAnimationStateMachineTests
     [Fact]
     public void FallbackClip_LetsAModelWithoutTheDirectionalClipsKeepWalking()
     {
+        Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("run"));
         Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-back"));
         Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-strafe-left"));
         Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-strafe-right"));
@@ -256,9 +258,9 @@ public class PlayerAnimationStateMachineTests
         PlayerAnimationStateMachine machine = new();
 
         // 1.0 rad is a strafe sector: the clip takes 90 degrees, the residual is what is left.
-        PlayerAnimationFrame moving = Run(machine, Inputs(speed: 6f, twist: 1.0f), 0.2f);
-        PlayerAnimationFrame over = new PlayerAnimationStateMachine().Update(Inputs(speed: 6f, twist: 3.0f), Dt);
-        PlayerAnimationFrame under = new PlayerAnimationStateMachine().Update(Inputs(speed: 6f, twist: -3.0f), Dt);
+        PlayerAnimationFrame moving = Run(machine, Inputs(speed: 1.6f, twist: 1.0f), 0.2f);
+        PlayerAnimationFrame over = new PlayerAnimationStateMachine().Update(Inputs(speed: 1.6f, twist: 3.0f), Dt);
+        PlayerAnimationFrame under = new PlayerAnimationStateMachine().Update(Inputs(speed: 1.6f, twist: -3.0f), Dt);
 
         Assert.Equal("walk-strafe-right", moving.Clip);
         Assert.Equal(1.0f - (MathF.PI / 2f), moving.LegTwistRadians, 5);
@@ -355,11 +357,11 @@ public class PlayerAnimationStateMachineTests
     public void Hit_FlinchesAndFadesWithoutChangingTheClip()
     {
         PlayerAnimationStateMachine machine = new();
-        machine.Update(Inputs(speed: 6f), Dt);
+        machine.Update(Inputs(speed: 1.6f), Dt);
 
-        PlayerAnimationFrame start = machine.Update(Inputs(speed: 6f, hit: 1), Dt);
-        PlayerAnimationFrame mid = Run(machine, Inputs(speed: 6f, hit: 1), PlayerAnimationStateMachine.HitSeconds / 2f);
-        PlayerAnimationFrame end = Run(machine, Inputs(speed: 6f, hit: 1), PlayerAnimationStateMachine.HitSeconds);
+        PlayerAnimationFrame start = machine.Update(Inputs(speed: 1.6f, hit: 1), Dt);
+        PlayerAnimationFrame mid = Run(machine, Inputs(speed: 1.6f, hit: 1), PlayerAnimationStateMachine.HitSeconds / 2f);
+        PlayerAnimationFrame end = Run(machine, Inputs(speed: 1.6f, hit: 1), PlayerAnimationStateMachine.HitSeconds);
 
         Assert.Equal("walk", start.Clip);
         Assert.True(mid.HitFlinch > 0.8f);
@@ -432,5 +434,133 @@ public class PlayerAnimationStateMachineTests
 
         Assert.Equal(0f, frame.MainArmHold);
         Assert.Equal(0f, frame.OffArmHold);
+    }
+
+    // The three ground gaits, each at the speed its clip is authored for: the cycle plays at its
+    // authored rate (playback 1.0) there. Before this wave there was one reference speed of 6 m/s
+    // and one threshold of 9, so the only gait a player could ever reach was the walk cycle played
+    // at rate 1.0 while sprinting.
+    [Theory]
+    [InlineData(0.2f, "idle")]
+    [InlineData(PlayerAnimationStateMachine.ReferenceWalkSpeed, "walk")]
+    [InlineData(PlayerAnimationStateMachine.ReferenceRunSpeed, "run")]
+    [InlineData(PlayerAnimationStateMachine.ReferenceSprintSpeed, "sprint")]
+    public void EachGaitTier_PlaysItsOwnClip_AtItsAuthoredRate(float speed, string expectedClip)
+    {
+        PlayerAnimationFrame frame = new PlayerAnimationStateMachine().Update(Inputs(speed: speed), Dt);
+
+        Assert.Equal(expectedClip, frame.Clip);
+        if (expectedClip != "idle")
+        {
+            Assert.Equal(1f, frame.PlaybackSpeed, 2);
+        }
+    }
+
+    // The contract guard between the animation tiers and the authoritative movement tuning: a tier
+    // authored for a speed the simulation cannot produce is a clip that never plays, which is what
+    // SprintSpeedThreshold = 9 against a flat MoveSpeed of 6 did to the sprint clip. Whoever
+    // retunes the movement speeds has to retune the gaits with them, and this test is what says so.
+    [Fact]
+    public void TheAnimationTiersMatchTheAuthoritativeTuning()
+    {
+        Assert.Equal(PlayerSimulationTuning.DefaultWalkSpeed, PlayerAnimationStateMachine.ReferenceWalkSpeed, 4);
+        Assert.Equal(PlayerSimulationTuning.DefaultRunSpeed, PlayerAnimationStateMachine.ReferenceRunSpeed, 4);
+        Assert.Equal(PlayerSimulationTuning.DefaultSprintSpeed, PlayerAnimationStateMachine.ReferenceSprintSpeed, 4);
+
+        // Each threshold lies strictly between the two tiers it separates.
+        Assert.InRange(
+            PlayerAnimationStateMachine.RunSpeedThreshold,
+            PlayerAnimationStateMachine.ReferenceWalkSpeed + 1e-4f,
+            PlayerAnimationStateMachine.ReferenceRunSpeed - 1e-4f);
+        Assert.InRange(
+            PlayerAnimationStateMachine.SprintSpeedThreshold,
+            PlayerAnimationStateMachine.ReferenceRunSpeed + 1e-4f,
+            PlayerAnimationStateMachine.ReferenceSprintSpeed - 1e-4f);
+    }
+
+    // Accelerating from a stop to the sprint and back: the gait climbs through every tier and comes
+    // back down through it, and - the point of GaitHysteresisSpeed - no tier is entered and left
+    // twice on the way, which is what an undamped boundary would do by restarting the stride at
+    // frame 0 (AnimationPlaybackState.Play resets the clip time on a clip NAME change). Same shape
+    // as the sector-jitter test above.
+    [Fact]
+    public void ASweepUpToTheSprintAndBack_ClimbsTheTiersOnce_WithNoFlipping()
+    {
+        PlayerAnimationStateMachine machine = new();
+        List<string> order = new();
+        List<float> upSwitches = new();
+        List<float> downSwitches = new();
+
+        void Step(float speed, List<float> switches)
+        {
+            string clip = machine.Update(Inputs(speed: speed), Dt).Clip;
+            if (clip == "idle")
+            {
+                return;
+            }
+
+            if (order.Count == 0 || order[^1] != clip)
+            {
+                order.Add(clip);
+                if (order.Count > 1)
+                {
+                    switches.Add(speed);
+                }
+            }
+        }
+
+        for (int i = 0; i <= 30; i++)
+        {
+            Step(i * 0.2f, upSwitches);
+        }
+
+        for (int i = 30; i >= 0; i--)
+        {
+            Step(i * 0.2f, downSwitches);
+        }
+
+        Assert.Equal(new[] { "walk", "run", "sprint", "run", "walk" }, order);
+
+        // Every boundary is crossed above it going up and below it going down, by about the
+        // deadband: that is what makes a speed hovering on a boundary unable to flip.
+        Assert.Equal(2, upSwitches.Count);
+        Assert.Equal(2, downSwitches.Count);
+        Assert.True(upSwitches[0] > PlayerAnimationStateMachine.RunSpeedThreshold);
+        Assert.True(upSwitches[1] > PlayerAnimationStateMachine.SprintSpeedThreshold);
+        Assert.True(downSwitches[0] < PlayerAnimationStateMachine.SprintSpeedThreshold);
+        Assert.True(downSwitches[1] < PlayerAnimationStateMachine.RunSpeedThreshold);
+    }
+
+    // D5: the RUN tier is the default cruise, so it runs C2's sector table exactly as the walk tier
+    // does - the forward sector swaps in the run cycle and the other sectors reuse the directional
+    // walk clips played faster. A run tier that played one clip would silently switch the moonwalk
+    // fix off at the speed the player actually moves at, and still look right from the front. The
+    // sprint tier deliberately keeps its single clip.
+    [Theory]
+    [InlineData(MathF.PI / 2f, "walk-strafe-right")]
+    [InlineData(MathF.PI, "walk-back")]
+    [InlineData(0f, "run")]
+    public void TheRunTier_StillPicksTheDirectionalClip(float twist, string expectedClip)
+    {
+        PlayerAnimationFrame running = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: PlayerAnimationStateMachine.ReferenceRunSpeed, twist: twist), Dt);
+        PlayerAnimationFrame sprinting = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: PlayerAnimationStateMachine.ReferenceSprintSpeed, twist: twist), Dt);
+
+        Assert.Equal(expectedClip, running.Clip);
+        Assert.True(MathF.Abs(running.LegTwistRadians) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f);
+        Assert.Equal("sprint", sprinting.Clip);
+    }
+
+    // The run tier plays the directional walk clips FASTER: they are authored for the walk, so the
+    // playback rate is still the run tier's, not the walk's.
+    [Fact]
+    public void TheRunTier_PlaysTheDirectionalWalkClipsAtTheRunRate()
+    {
+        PlayerAnimationFrame frame = new PlayerAnimationStateMachine().Update(
+            Inputs(speed: PlayerAnimationStateMachine.ReferenceRunSpeed, twist: MathF.PI), Dt);
+
+        Assert.Equal("walk-back", frame.Clip);
+        Assert.Equal(1f, frame.PlaybackSpeed, 2);
     }
 }
