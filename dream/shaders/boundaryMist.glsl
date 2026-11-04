@@ -51,7 +51,7 @@ float dreamMistInset(vec3 p)
     return min(min(p.x - uMistBounds.x, uMistBounds.z - p.x), min(p.z - uMistBounds.y, uMistBounds.w - p.z));
 }
 
-// The slow noise that moves the wall's inner border: one octave drifting at about 0.07 m/s.
+// The slow noise that moves the wall's inner border: one octave drifting at under 0.1 m/s.
 float dreamMistEdgeNoise(vec2 xz)
 {
     return dreamMistValueNoise(xz * 0.9 + vec2(0.06, 0.04) * uMistParams.y + 5.0);
@@ -128,7 +128,7 @@ vec3 dreamMistFlame(vec2 xz)
         dreamMistValueNoise(q * 1.3 + vec2(-0.01, -0.03) * t + 31.0)) - 0.5;
     q += 0.9 * curl;
 
-    // Cubed ridges: thin bright crests (the tongues) with dark gaps between them; a coarse mask
+    // Ridges (two cubed, the finest squared): thin bright crests (the tongues) with dark gaps between them; a coarse mask
     // gathers the tongues into licking clusters instead of an even marbling.
     float r1 = dreamMistRidge(q + vec2(0.02, 0.01) * t + 17.0);
     float r2 = dreamMistRidge(q * 2.1 + vec2(-0.03, 0.05) * t + 29.0);
