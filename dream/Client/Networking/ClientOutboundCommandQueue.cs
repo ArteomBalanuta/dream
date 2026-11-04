@@ -161,7 +161,9 @@ public sealed class ClientOutboundCommandQueue
             newerMove.VerticalAxis,
             JumpPressed: olderMove.JumpPressed || newerMove.JumpPressed,
             FreezePressed: olderMove.FreezePressed || newerMove.FreezePressed,
-            ToggleNoclipPressed: olderMove.ToggleNoclipPressed || newerMove.ToggleNoclipPressed);
+            ToggleNoclipPressed: olderMove.ToggleNoclipPressed || newerMove.ToggleNoclipPressed,
+            // Held state, so the newer frame's sprint wins along with its axes.
+            SprintHeld: newerMove.SprintHeld);
         PlayerLookIntent look = new(
             older.LookIntent.YawDelta + newer.LookIntent.YawDelta,
             older.LookIntent.PitchDelta + newer.LookIntent.PitchDelta,

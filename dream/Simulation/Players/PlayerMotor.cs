@@ -77,8 +77,13 @@ public class PlayerMotor
         }
 
         Vector3 groundedDirection = ResolveGroundedDirection(command.WorldDirection);
-        Vector3 targetVelocity = groundedDirection * tuning.MoveSpeed;
-        body.LinearVelocity = new BulletSharp.Math.Vector3(targetVelocity.X, velocity.Y, targetVelocity.Z);
+        Vector3 horizontal = RampGroundVelocity(
+            new Vector3(velocity.X, 0f, velocity.Z),
+            groundedDirection,
+            command,
+            tuning,
+            deltaTime);
+        body.LinearVelocity = new BulletSharp.Math.Vector3(horizontal.X, velocity.Y, horizontal.Z);
 
         if (command.JumpPressed && !_wasJumpPressed && IsGrounded(body, currentPosition))
         {
@@ -227,6 +232,60 @@ public class PlayerMotor
         body.WorldTransform = transform;
         body.InterpolationWorldTransform = transform;
         body.MotionState.SetWorldTransform(ref transform);
+    }
+
+    // Walk / run / sprint tier for this command. No input means no target speed; sprint overrides
+    // the throttle; otherwise a partial throttle scales the run cruise down, with the walk speed
+    // as the floor so a feathered stick never crawls below a walk.
+    internal static float ResolveTargetSpeed(
+        bool hasDirection,
+        MovementCommand command,
+        PlayerSimulationTuning tuning)
+    {
+        if (!hasDirection)
+        {
+            return 0f;
+        }
+
+        if (command.Sprint)
+        {
+            return tuning.SprintSpeed;
+        }
+
+        float throttled = tuning.MoveSpeed * Math.Clamp(command.Throttle, 0f, 1f);
+        return MathF.Max(tuning.WalkSpeed, throttled);
+    }
+
+    // Moves the body's *current* horizontal velocity toward the commanded one at a fixed rate
+    // instead of snapping to it. Ramping from the body rather than a motor-local field is what
+    // makes a wall collision reset the ramp (the solver already zeroed the velocity we read) and
+    // what keeps client prediction and the server bit-identical: same input, same state, same
+    // code.
+    internal static Vector3 RampGroundVelocity(
+        Vector3 currentHorizontal,
+        Vector3 groundedDirection,
+        MovementCommand command,
+        PlayerSimulationTuning tuning,
+        float deltaTime)
+    {
+        float targetSpeed = ResolveTargetSpeed(groundedDirection != Vector3.Zero, command, tuning);
+        Vector3 targetVelocity = groundedDirection * targetSpeed;
+
+        Vector3 delta = targetVelocity - currentHorizontal;
+        float distance = delta.Length;
+        if (distance <= float.Epsilon || deltaTime <= 0f)
+        {
+            return targetVelocity;
+        }
+
+        // Speeding up or turning accelerates; asking for a slower (or zero) speed brakes.
+        float rate = targetSpeed >= currentHorizontal.Length
+            ? tuning.GroundAcceleration
+            : tuning.GroundDeceleration;
+        float step = rate * deltaTime;
+        return step >= distance
+            ? targetVelocity
+            : currentHorizontal + (delta / distance * step);
     }
 
     private static Vector3 ResolveGroundedDirection(Vector3 worldDirection)

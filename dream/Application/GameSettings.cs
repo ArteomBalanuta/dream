@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Dream.Configuration;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
+using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
 namespace Dream.Application;
@@ -22,7 +23,8 @@ public class GameSettings
 
     public float EyeHeightOffset { get; set; } = 0.35f;
 
-    public float MoveSpeed { get; set; } = 6f;
+    // The run cruise: walking and sprinting are derived from it in PlayerSimulationTuning.
+    public float MoveSpeed { get; set; } = PlayerSimulationTuning.DefaultRunSpeed;
 
     public float NoclipSpeed { get; set; } = 18f;
 

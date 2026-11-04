@@ -64,7 +64,8 @@ public class LatestPlayerCommandInboxTests
                 VerticalAxis: 0f,
                 JumpPressed: true,
                 FreezePressed: false,
-                ToggleNoclipPressed: false),
+                ToggleNoclipPressed: false,
+                SprintHeld: true),
             new PlayerLookIntent(YawDelta: 0.25f, PitchDelta: -0.10f),
             PrimaryUsePressed: true));
         inbox.Enqueue(new PlayerCommandFrame(
@@ -90,6 +91,9 @@ public class LatestPlayerCommandInboxTests
         Assert.True(drained.MoveIntent.JumpPressed);
         Assert.True(drained.MoveIntent.FreezePressed);
         Assert.True(drained.MoveIntent.ToggleNoclipPressed);
+        // Sprint merges with || like the presses do: a sprint tick folded into a pending frame
+        // must not be dropped before the server has simulated it.
+        Assert.True(drained.MoveIntent.SprintHeld);
         Assert.Equal(0.60f, drained.LookIntent.YawDelta, 5);
         Assert.Equal(-0.05f, drained.LookIntent.PitchDelta, 5);
         Assert.True(drained.PrimaryUsePressed);

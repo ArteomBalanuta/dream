@@ -21,7 +21,9 @@ public sealed class PlayerCommandOneShotInputFilter
             move.VerticalAxis,
             JumpPressed: move.JumpPressed && !_wasJumpPressed,
             FreezePressed: AllowDevToggles && move.FreezePressed && !_wasFreezePressed,
-            ToggleNoclipPressed: AllowDevToggles && move.ToggleNoclipPressed && !_wasToggleNoclipPressed);
+            ToggleNoclipPressed: AllowDevToggles && move.ToggleNoclipPressed && !_wasToggleNoclipPressed,
+            // Held, so it passes through un-edged: every tick the key is down is a sprint tick.
+            SprintHeld: move.SprintHeld);
 
         _wasJumpPressed = move.JumpPressed;
         _wasFreezePressed = move.FreezePressed;

@@ -13,7 +13,7 @@ namespace Dream.Multiplayer.Protocol;
 // Wire shape (protocol v2, properties in declaration order, nulls left out):
 //   {"commandFrame":{"sessionId":{"value":s},"sequence":n,"requestedMode":{"mode":n},
 //    "moveIntent":{"forwardAxis":f,"strafeAxis":f,"verticalAxis":f,"jumpPressed":b,
-//                  "freezePressed":b,"toggleNoclipPressed":b},
+//                  "freezePressed":b,"toggleNoclipPressed":b,"sprintHeld":b},
 //    "lookIntent":{"yawDelta":f,"pitchDelta":f,"facing":{"x":f,"y":f,"z":f}},
 //    "primaryUsePressed":b}}
 // Each type also has its own converter so PlayerSessionId keeps the same fast path inside
@@ -234,6 +234,7 @@ internal sealed class PlayerMoveIntentJsonConverter : JsonConverter<PlayerMoveIn
     private static readonly JsonEncodedText JumpPressed = JsonEncodedText.Encode("jumpPressed");
     private static readonly JsonEncodedText FreezePressed = JsonEncodedText.Encode("freezePressed");
     private static readonly JsonEncodedText ToggleNoclipPressed = JsonEncodedText.Encode("toggleNoclipPressed");
+    private static readonly JsonEncodedText SprintHeld = JsonEncodedText.Encode("sprintHeld");
 
     public override PlayerMoveIntent Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
@@ -254,6 +255,9 @@ internal sealed class PlayerMoveIntentJsonConverter : JsonConverter<PlayerMoveIn
         bool jumpPressed = false;
         bool freezePressed = false;
         bool toggleNoclipPressed = false;
+        // Every current client writes this key. A payload from before the sprint tier simply
+        // omits it, and JSON lets us read that as "not sprinting" without a protocol bump.
+        bool sprintHeld = false;
 
         while (HotPathJson.NextProperty(ref reader, nameof(PlayerMoveIntent)))
         {
@@ -281,13 +285,24 @@ internal sealed class PlayerMoveIntentJsonConverter : JsonConverter<PlayerMoveIn
             {
                 toggleNoclipPressed = HotPathJson.ReadBoolean(ref reader);
             }
+            else if (reader.ValueTextEquals(SprintHeld.EncodedUtf8Bytes))
+            {
+                sprintHeld = HotPathJson.ReadBoolean(ref reader);
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
             }
         }
 
-        return new PlayerMoveIntent(forwardAxis, strafeAxis, verticalAxis, jumpPressed, freezePressed, toggleNoclipPressed);
+        return new PlayerMoveIntent(
+            forwardAxis,
+            strafeAxis,
+            verticalAxis,
+            jumpPressed,
+            freezePressed,
+            toggleNoclipPressed,
+            sprintHeld);
     }
 
     internal static void WriteIntent(Utf8JsonWriter writer, PlayerMoveIntent value)
@@ -299,6 +314,7 @@ internal sealed class PlayerMoveIntentJsonConverter : JsonConverter<PlayerMoveIn
         writer.WriteBoolean(JumpPressed, value.JumpPressed);
         writer.WriteBoolean(FreezePressed, value.FreezePressed);
         writer.WriteBoolean(ToggleNoclipPressed, value.ToggleNoclipPressed);
+        writer.WriteBoolean(SprintHeld, value.SprintHeld);
         writer.WriteEndObject();
     }
 }
