@@ -71,5 +71,9 @@ public enum UiTextStyle : byte
     Body,
     Large,
     // EB Garamond baked at 24 px: the stats window's text face (see UiFontSetup).
-    Serif
+    Serif,
+    // The same pixel face as Body, baked at 26 px. Text that follows ui_scale needs a bake near the
+    // size it draws at, or a 13 px bitmap is stretched to three times its height; the other two bakes
+    // are different faces, so the pixel face needs its own. See UiText.For.
+    BodyLarge
 }

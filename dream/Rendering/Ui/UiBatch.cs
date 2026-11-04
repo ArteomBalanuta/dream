@@ -121,6 +121,23 @@ public sealed class UiBatch : IUiCanvas
 
     void IUiCanvas.SetTextScale(float scale) => TextScale = scale;
 
+    // The bake actually used for a style, and the multiplier onto it. The pixel face is baked twice
+    // (13 and 26 px); once a panel's text passes UiText.PixelLargeFromPx the 26 px bake is nearer the
+    // drawn size, and a bitmap face stretched to three times its height is the blur this avoids.
+    // Drawing, measuring and the line height all go through here, so they never disagree.
+    private (UiTextStyle Style, float Scale) Bake(UiTextStyle style)
+    {
+        if (style != UiTextStyle.Body)
+        {
+            return (style, TextScale);
+        }
+
+        float px = UiFontSetup.BodyPixels * TextScale;
+        return px < UiText.PixelLargeFromPx
+            ? (UiTextStyle.Body, TextScale)
+            : (UiTextStyle.BodyLarge, px / UiFontSetup.BodyLargePixels);
+    }
+
     public int QuadCount => _quadCount;
 
     public int QuadHeadroom => MaxQuads - _quadCount;
@@ -525,7 +542,7 @@ public sealed class UiBatch : IUiCanvas
     public float Text(ReadOnlySpan<char> text, Vector2 pos, UiTextStyle style, UiColor color)
     {
         uint packed = Pack(color);
-        float ts = TextScale;
+        (style, float ts) = Bake(style);
         float pen = pos.X;
         float top = pos.Y;
         for (int i = 0; i < text.Length; i++)
@@ -567,6 +584,7 @@ public sealed class UiBatch : IUiCanvas
 
     public float MeasureText(ReadOnlySpan<char> text, UiTextStyle style)
     {
+        (style, float ts) = Bake(style);
         float width = 0f;
         for (int i = 0; i < text.Length; i++)
         {
@@ -579,15 +597,19 @@ public sealed class UiBatch : IUiCanvas
 
             if (_glyphs.TryGet(style, c, out UiGlyph g))
             {
-                width += g.Advance * TextScale;
+                width += g.Advance * ts;
             }
         }
 
         return width;
     }
 
-    // Line box height in pixels for a style at the current TextScale.
-    public float LineHeight(UiTextStyle style) => _glyphs.LineHeight(style) * TextScale;
+    // Line box height in pixels for a style at the current TextScale, on the bake actually used.
+    public float LineHeight(UiTextStyle style)
+    {
+        (UiTextStyle baked, float ts) = Bake(style);
+        return _glyphs.LineHeight(baked) * ts;
+    }
 
     // ---- internals ----
 

@@ -4,7 +4,7 @@ namespace Dream.Rendering.Ui;
 // normalized coordinates on the font page (top-left origin); Advance is the pen step in pixels.
 public readonly record struct UiGlyph(float X0, float Y0, float X1, float Y1, float U0, float V0, float U1, float V1, float Advance);
 
-// Glyphs for the three text styles, copied once from the baked font so drawing text never touches
+// Glyphs for the four text styles, copied once from the baked font so drawing text never touches
 // ImGui. GL-free and ImGui-free: UiFontSetup fills it. Covers codepoints 32..255; anything the font
 // does not have (or outside that range) draws the '?' glyph.
 public sealed class UiGlyphTable
@@ -16,11 +16,16 @@ public sealed class UiGlyphTable
     private readonly UiGlyph?[][] _glyphs;
     private readonly float[] _lineHeights;
 
-    public UiGlyphTable(float bodyLineHeight, float largeLineHeight, float serifLineHeight = 24f)
+    public UiGlyphTable(
+        float bodyLineHeight,
+        float largeLineHeight,
+        float serifLineHeight = 24f,
+        float bodyLargeLineHeight = 26f)
     {
-        _lineHeights = [bodyLineHeight, largeLineHeight, serifLineHeight];
+        _lineHeights = [bodyLineHeight, largeLineHeight, serifLineHeight, bodyLargeLineHeight];
         _glyphs =
         [
+            new UiGlyph?[LastCodepoint - FirstCodepoint + 1],
             new UiGlyph?[LastCodepoint - FirstCodepoint + 1],
             new UiGlyph?[LastCodepoint - FirstCodepoint + 1],
             new UiGlyph?[LastCodepoint - FirstCodepoint + 1],

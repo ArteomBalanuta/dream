@@ -31,9 +31,14 @@ public readonly record struct UiLayout(
     // Screen pixels per sprite texel: what 9-slice borders and tile steps scale by.
     public float PixelsPerTexel => Scale / ArtTexelsPerUnit;
 
-    // Multiplier on the baked font sizes. Panels lay text out in baked pixels (13 and 26), so it stays
-    // 1 until a scale where whole-number doubling is both needed and crisp.
-    public float TextScale => MathF.Max(1f, MathF.Floor(Scale / 2f));
+    // Multiplier on the Body bake for a panel that lays its rows out FROM the text height rather than
+    // from the art (chat, the party and quest plates, notices, tooltips): those boxes grow with the
+    // glyphs, so the text can simply follow ui_scale. It used to step 1, 1, 2, 2 and only doubled at
+    // scale 4, which left the text small inside rows that had already grown. The size is the default
+    // body size in whole pixels, never below the 13 px bake, so scale 1 is exactly as it was.
+    // A panel whose boxes come from the art asks UiText for a size instead; this is only the default.
+    public float TextScale =>
+        MathF.Max(1f, MathF.Round(UiText.DefaultTextUnits * Scale) / UiFontSetup.BodyPixels);
 
     // configuredScale 0 is auto (see UiScale.Resolve).
     public static UiLayout Create(int width, int height, float configuredScale)

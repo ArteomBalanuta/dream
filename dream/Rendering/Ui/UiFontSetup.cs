@@ -7,6 +7,9 @@ namespace Dream.Rendering.Ui;
 //                    thin serif is not legible that small, so the small text stays on the pixel face.
 //   Large (atlas 1)  Cinzel (engraved Roman capitals) at 26 px: the status bar numbers and titles.
 //   Serif (atlas 2)  EB Garamond at 24 px: the stats window, which sizes its own text by ui_scale.
+//   BodyLarge (atlas 3)  the same ProggyClean at 26 px. Panel text follows ui_scale, so above about
+//                    20 px the 13 px bake would be a stretched bitmap; the other two bakes are
+//                    different faces, so the pixel face needs a bake of its own to grow into.
 // Cinzel and EB Garamond are third-party SIL OFL fonts in dream/fonts (see the README there). Both are
 // variable fonts; stb_truetype ignores the wght axis and renders the default instance (Regular, 400).
 // A missing file falls back to the built-in face at that size, so the HUD still draws.
@@ -15,12 +18,16 @@ public static unsafe class UiFontSetup
     public const float BodyPixels = 13f;
     public const float LargePixels = 26f;
     public const float SerifPixels = 24f;
+    public const float BodyLargePixels = 26f;
     public const string LargeFontFile = "Cinzel.ttf";
     public const string SerifFontFile = "EBGaramond.ttf";
 
     // The Dear ImGui version whose glyph struct layout Fill reads (ImGui.NET 1.91.6.1 wraps it).
     // A different native version fails BuildGlyphTable, so the HUD falls back instead of reading junk.
     public const string AuditedImGuiVersion = "1.91.6";
+
+    private static readonly UiTextStyle[] AllStyles =
+        [UiTextStyle.Body, UiTextStyle.Large, UiTextStyle.Serif, UiTextStyle.BodyLarge];
 
     // Adds the body font (atlas index 0, which is the one the ImGui windows keep using), the large
     // bake (index 1) and the serif bake (index 2). Call before the font atlas texture is built.
@@ -29,6 +36,23 @@ public static unsafe class UiFontSetup
         io.Fonts.AddFontDefault();
         AddFace(io, LargeFontFile, LargePixels);
         AddFace(io, SerifFontFile, SerifPixels);
+        AddDefaultFace(io, BodyLargePixels);
+    }
+
+    // The built-in face at size. ProggyClean is a bitmap face designed at 13 px, so 26 px is exactly
+    // two texels per pixel and stays crisp.
+    private static void AddDefaultFace(ImGuiIOPtr io, float size)
+    {
+        ImFontConfigPtr config = ImGuiNative.ImFontConfig_ImFontConfig();
+        try
+        {
+            config.SizePixels = size;
+            io.Fonts.AddFontDefault(config);
+        }
+        finally
+        {
+            ImGuiNative.ImFontConfig_destroy(config.NativePtr);
+        }
     }
 
     // The file's font at size, or the built-in face at size when the file is not there (ImGui asserts on
@@ -42,16 +66,7 @@ public static unsafe class UiFontSetup
             return;
         }
 
-        ImFontConfigPtr config = ImGuiNative.ImFontConfig_ImFontConfig();
-        try
-        {
-            config.SizePixels = size;
-            io.Fonts.AddFontDefault(config);
-        }
-        finally
-        {
-            ImGuiNative.ImFontConfig_destroy(config.NativePtr);
-        }
+        AddDefaultFace(io, size);
     }
 
     // Copies glyphs 32..255 of the two baked fonts. Call after the atlas is built (after
@@ -64,19 +79,21 @@ public static unsafe class UiFontSetup
             throw new InvalidOperationException($"Dear ImGui {version} is loaded; the glyph layout was audited for {AuditedImGuiVersion}.");
         }
 
-        if (atlas.Fonts.Size < 3)
+        if (atlas.Fonts.Size < 4)
         {
-            throw new InvalidOperationException("The UI font atlas does not contain the body, large and serif fonts.");
+            throw new InvalidOperationException("The UI font atlas does not contain the body, large, serif and body-large fonts.");
         }
 
         ImFontPtr body = atlas.Fonts[0];
         ImFontPtr large = atlas.Fonts[1];
         ImFontPtr serif = atlas.Fonts[2];
-        UiGlyphTable table = new(body.FontSize, large.FontSize, serif.FontSize);
+        ImFontPtr bodyLarge = atlas.Fonts[3];
+        UiGlyphTable table = new(body.FontSize, large.FontSize, serif.FontSize, bodyLarge.FontSize);
         Fill(table, UiTextStyle.Body, body);
         Fill(table, UiTextStyle.Large, large);
         Fill(table, UiTextStyle.Serif, serif);
-        foreach (UiTextStyle style in new[] { UiTextStyle.Body, UiTextStyle.Large, UiTextStyle.Serif })
+        Fill(table, UiTextStyle.BodyLarge, bodyLarge);
+        foreach (UiTextStyle style in AllStyles)
         {
             if (!table.Has(style, UiGlyphTable.Fallback))
             {
@@ -85,7 +102,7 @@ public static unsafe class UiFontSetup
         }
 
         // Every missing character draws '?', so a misread struct would show up everywhere: check it.
-        foreach (UiTextStyle style in new[] { UiTextStyle.Body, UiTextStyle.Large, UiTextStyle.Serif })
+        foreach (UiTextStyle style in AllStyles)
         {
             table.TryGet(style, UiGlyphTable.Fallback, out UiGlyph question);
             if (GlyphFault(question) is { } fault)

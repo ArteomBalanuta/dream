@@ -369,20 +369,41 @@ public class HudPreviewTests
         Assert.Equal((w, h), (inv.Width, inv.Height));
     }
 
+    // The drawn body line, in pixels, at each review resolution's auto scale.
     [Theory]
-    [InlineData(1920, 1080, 1f)]
-    [InlineData(2560, 1440, 1f)]
-    [InlineData(3840, 2160, 2f)]
-    public void PanelTextHeight_FollowsTheLayoutTextScale(int w, int h, float textScale)
+    [InlineData(1920, 1080, 21f)]
+    [InlineData(2560, 1440, 28f)]
+    [InlineData(3840, 2160, 38f)]
+    public void PanelTextHeight_FollowsTheLayoutTextScale(int w, int h, float bodyPx)
     {
         UiBatch batch = new(BlockGlyphs.Create());
         UiLayout layout = UiLayout.Create(w, h, 0f);
         batch.BeginFrame(in layout);
 
-        Assert.Equal(textScale, layout.TextScale);
-        Assert.Equal(13f * textScale, PanelText.Height(batch, UiTextStyle.Body));
-        Assert.Equal(26f * textScale, PanelText.Height(batch, UiTextStyle.Large));
-        Assert.Equal(13f * textScale, InventoryWindow.BodyHeight(batch));
+        Assert.Equal(bodyPx, PanelText.Height(batch, UiTextStyle.Body), 3);
+        Assert.Equal(bodyPx, InventoryWindow.BodyHeight(batch), 3);
+        Assert.Equal(26f * layout.TextScale, PanelText.Height(batch, UiTextStyle.Large), 3);
+
+        // The height a panel lays out with is the height the batch actually draws, whichever bake
+        // the pixel face ends up on. These disagreeing is how text leaves its row.
+        Assert.Equal(bodyPx, batch.LineHeight(UiTextStyle.Body), 3);
+    }
+
+    // Past 20 px the pixel face moves to its 26 px bake rather than stretching the 13 px one, and
+    // the width must not jump when it does: measuring and drawing go through the same decision.
+    [Fact]
+    public void ThePixelFace_SwitchesBakeWithoutChangingTheMeasuredWidth()
+    {
+        UiBatch batch = new(BlockGlyphs.Create());
+        UiLayout layout = UiLayout.Create(3840, 2160, 0f);
+        batch.BeginFrame(in layout);
+
+        batch.TextScale = 19f / 13f;
+        float below = batch.MeasureText("Inventory", UiTextStyle.Body) / 19f;
+        batch.TextScale = 21f / 13f;
+        float above = batch.MeasureText("Inventory", UiTextStyle.Body) / 21f;
+
+        Assert.Equal(below, above, 2);
     }
 
     [Fact]

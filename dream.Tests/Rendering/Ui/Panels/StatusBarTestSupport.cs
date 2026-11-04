@@ -101,8 +101,19 @@ public sealed class StatusBarRecordingCanvas : IUiCanvas
         return MeasureText(text, style);
     }
 
-    // 7 px per char at Body, 14 at Large.
-    public float MeasureText(ReadOnlySpan<char> text, UiTextStyle style) => text.Length * (style == UiTextStyle.Large ? 14f : 7f);
+    // 7 px per char at Body, 14 at Large and BodyLarge, 13 at Serif -- times the text scale, which
+    // this fake used to ignore, so every width assertion written against it measured scale 1.
+    public float TextScale { get; set; } = 1f;
+
+    public void SetTextScale(float scale) => TextScale = scale;
+
+    public float MeasureText(ReadOnlySpan<char> text, UiTextStyle style) =>
+        text.Length * TextScale * style switch
+        {
+            UiTextStyle.Large or UiTextStyle.BodyLarge => 14f,
+            UiTextStyle.Serif => 13f,
+            _ => 7f
+        };
 
     public void PushClip(UiRect r) => Count++;
 

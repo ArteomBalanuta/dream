@@ -396,11 +396,15 @@ public static class BlockGlyphs
 
     public static UiGlyphTable Create()
     {
-        UiGlyphTable table = new(13f, 26f);
+        UiGlyphTable table = new(13f, 26f, 24f, 26f);
         for (char c = (char)UiGlyphTable.FirstCodepoint; c <= UiGlyphTable.LastCodepoint; c++)
         {
             table.Set(UiTextStyle.Body, c, new UiGlyph(0f, 2f, c == ' ' ? 0f : 6f, 11f, 0f, 0f, 1f, 1f, 7f));
             table.Set(UiTextStyle.Large, c, new UiGlyph(0f, 4f, c == ' ' ? 0f : 12f, 22f, 0f, 0f, 1f, 1f, 14f));
+            // Serif and BodyLarge too: an unfilled face has no '?' either, so text in it draws
+            // nothing at all rather than falling back, and a preview silently loses it.
+            table.Set(UiTextStyle.Serif, c, new UiGlyph(0f, 4f, c == ' ' ? 0f : 11f, 20f, 0f, 0f, 1f, 1f, 13f));
+            table.Set(UiTextStyle.BodyLarge, c, new UiGlyph(0f, 4f, c == ' ' ? 0f : 12f, 22f, 0f, 0f, 1f, 1f, 14f));
         }
 
         return table;

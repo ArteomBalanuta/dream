@@ -287,16 +287,32 @@ public sealed class ClassicHudIntegrationTests : IDisposable
         Assert.Equal(layout.Scale / 4f, batch.UnitScale);
     }
 
+    // The default body size is 9.5 u, rounded to whole pixels, over the 13 px bake -- so the text
+    // grows with every scale step instead of standing still until 4. Scale 1 must still be exactly 1.
     [Theory]
-    [InlineData(1f, 1f)]
-    [InlineData(2.25f, 1f)]
-    [InlineData(3.75f, 1f)]
-    [InlineData(4f, 2f)]
-    public void TextScale_FollowsTheLayoutScaleInWholeSteps(float scale, float expected)
+    [InlineData(1f, 13f)]
+    [InlineData(2.25f, 21f)]
+    [InlineData(3.75f, 36f)]
+    [InlineData(4f, 38f)]
+    public void TextScale_FollowsTheLayoutScale_InWholePixels(float scale, float expectedPx)
     {
         UiLayout layout = UiLayout.Create(2560, 1920, scale);
 
-        Assert.Equal(expected, layout.TextScale);
+        Assert.Equal(expectedPx, layout.TextScale * UiFontSetup.BodyPixels, 3);
+        Assert.True(layout.TextScale >= 1f);
+    }
+
+    // It used to step 1, 1, 1, 2: the text stood still while its row grew. Nothing may put it back.
+    [Fact]
+    public void TextScale_IsStrictlyIncreasing_AcrossTheScaleRange()
+    {
+        float previous = 0f;
+        for (float scale = 1.5f; scale <= 4f; scale += 0.25f)
+        {
+            float now = UiLayout.Create(2560, 1920, scale).TextScale;
+            Assert.True(now > previous, $"scale {scale} did not grow the text ({now} after {previous})");
+            previous = now;
+        }
     }
 
     [Fact]

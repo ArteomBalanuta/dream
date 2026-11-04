@@ -26,7 +26,9 @@ public sealed record CanvasCall(
     UiRect Rect,
     UiColor Color,
     string Text,
-    Vector2 TextPos);
+    Vector2 TextPos,
+    float TextScale = 1f,
+    UiTextStyle TextStyle = UiTextStyle.Body);
 
 // Records every draw call. Sprite names are recovered from the real sprite table.
 public sealed class InventoryFakeCanvas : IUiCanvas
@@ -70,13 +72,20 @@ public sealed class InventoryFakeCanvas : IUiCanvas
 
     public void MaskGlyph(in UiSprite s, UiRect dst, UiColor fill, UiColor rim) => Add(CanvasCallKind.MaskGlyph, s, dst, fill);
 
+    // The real canvas scales glyphs by TextScale; a fake that ignored it made every "the text fits
+    // its box" assertion pass without measuring anything.
+    public float TextScale { get; set; } = 1f;
+
+    public void SetTextScale(float scale) => TextScale = scale;
+
     public float Text(ReadOnlySpan<char> text, Vector2 pos, UiTextStyle style, UiColor color)
     {
-        Calls.Add(new CanvasCall(CanvasCallKind.Text, string.Empty, default, default, color, text.ToString(), pos));
-        return text.Length * CharWidth;
+        Calls.Add(new CanvasCall(CanvasCallKind.Text, string.Empty, default, default, color, text.ToString(), pos, TextScale, style));
+        return MeasureText(text, style);
     }
 
-    public float MeasureText(ReadOnlySpan<char> text, UiTextStyle style) => text.Length * CharWidth;
+    public float MeasureText(ReadOnlySpan<char> text, UiTextStyle style) =>
+        text.Length * CharWidth * TextScale * (style is UiTextStyle.Large or UiTextStyle.BodyLarge ? 2f : style == UiTextStyle.Serif ? 1.85f : 1f);
 
     public void PushClip(UiRect r) => ClipDepth++;
 

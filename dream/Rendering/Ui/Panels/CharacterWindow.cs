@@ -32,47 +32,13 @@ public static class CharacterWindow
     internal const float TitleTextUnits = 7.5f;
 
     // Below this the thin serif and the engraved capitals are not legible, so the pixel face keeps the text.
-    internal const float SerifMinPx = 15f;
-    internal const float SerifBoost = 1.2f;
+    internal const float SerifMinPx = UiText.SerifMinPx;
+    internal const float SerifBoost = UiText.SerifBoost;
 
-    // The font and glyph multiplier for text about units tall. From SerifMinPx up the text is set in
-    // `face` (Serif for rows, Large for the title) baked at 24 or 26 px and scaled to the size, which
-    // is a shrink or a small stretch; below it the 13 px Body bake is used, as before.
-    internal static (UiTextStyle Style, float Scale, float Px) TextFor(in UiLayout l, float units, UiTextStyle face = UiTextStyle.Serif)
-    {
-        float px = MathF.Max(UiFontSetup.BodyPixels, MathF.Round(units * l.Scale));
-        if (px < SerifMinPx)
-        {
-            return (UiTextStyle.Body, px / UiFontSetup.BodyPixels, px);
-        }
-
-        // EB Garamond's em is small for its letters (x-height about 0.4 em against the pixel face's 0.5),
-        // so the serif is set 20 percent larger to read as big as the size the row was given.
-        if (face == UiTextStyle.Serif)
-        {
-            px = MathF.Round(px * SerifBoost);
-        }
-
-        float bake = face == UiTextStyle.Large ? UiFontSetup.LargePixels : UiFontSetup.SerifPixels;
-        return (face, px / bake, px);
-    }
-
-    // Draws text in the sized style with a one-pixel shadow. Sets the canvas text scale first (Build puts it back).
-    private static void Put(IUiCanvas c, ReadOnlySpan<char> text, Vector2 pos, (UiTextStyle Style, float Scale, float Px) t, UiColor color)
-    {
-        c.SetTextScale(t.Scale);
-        c.Text(text, new Vector2(pos.X + 1f, pos.Y + 1f), t.Style, ItemTierStyle.Shadow);
-        c.Text(text, pos, t.Style, color);
-    }
-
-    // Centred in r, cut to fit.
-    private static void PutCentered(IUiCanvas c, UiRect r, ReadOnlySpan<char> text, (UiTextStyle Style, float Scale, float Px) t, UiColor color)
-    {
-        c.SetTextScale(t.Scale);
-        text = text[..PanelText.FitLength(c, text, t.Style, r.W)];
-        float width = c.MeasureText(text, t.Style);
-        Put(c, text, new Vector2(r.X + MathF.Max(0f, (r.W - width) * 0.5f), r.Y + MathF.Floor((r.H - t.Px) * 0.5f)), t, color);
-    }
+    // The sizing this window introduced now lives in UiText, where every panel uses it. Kept as a
+    // forwarder so the window (and the preview test that pins its sizes) reads in its own terms.
+    internal static UiSizedText TextFor(in UiLayout l, float units, UiTextStyle face = UiTextStyle.Serif) =>
+        UiText.For(in l, units, face == UiTextStyle.Large ? UiTextFace.Title : UiTextFace.Serif);
 
     // Widget ids of the "+" plates, in sheet order. Clear of the inventory's ids.
     internal const int IdSpendBase = InventoryWindow.IdBase + 0x310;
@@ -145,19 +111,19 @@ public static class CharacterWindow
 
         InventoryWindow.DrawCloseButton(c, i, l, s, a, win, InventoryWindow.IdCloseCharacter, live);
 
-        float canvasScale = c.TextScale;
         var title = TextFor(in l, TitleTextUnits, UiTextStyle.Large);
         var rowText = TextFor(in l, AttributeTextUnits);
-        PutCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), "Character", title, ItemTierStyle.Title);
+        float shadow = UiText.ShadowPx(in l);
+        UiText.PutCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), "Character", in title, ItemTierStyle.Title, shadow);
         if (v.Inventory is Simulation.Inventory.PlayerInventorySnapshot inventory && inventory.PlayerName is { Length: > 0 } name)
         {
             // Server text: cut to the strip, never a format string.
-            PutCentered(c, l.FromUnits(win, 35f, 20f, 119f, 8f), name.AsSpan(0, Math.Min(name.Length, 40)), title, ItemTierStyle.Body);
+            UiText.PutCentered(c, l.FromUnits(win, 35f, 20f, 119f, 8f), name.AsSpan(0, Math.Min(name.Length, 40)), in title, ItemTierStyle.Body, shadow);
         }
 
         if (rows.Length == 0)
         {
-            PutCentered(c, l.FromUnits(win, RowX, HeaderY, RowW, RowH), "No data", rowText, ItemTierStyle.Dim);
+            UiText.PutCentered(c, l.FromUnits(win, RowX, HeaderY, RowW, RowH), "No data", in rowText, ItemTierStyle.Dim, shadow);
         }
 
         for (int n = 0; n < count; n++)
@@ -165,13 +131,12 @@ public static class CharacterWindow
             CharacterSheetRow row = rows[n];
             if (row.Kind == CharacterSheetRowKind.Attribute)
             {
-                PutCentered(c, plateRects[n], "+", rowText, row.CanSpend ? ItemTierStyle.Title : ItemTierStyle.Dim);
+                UiText.PutCentered(c, plateRects[n], "+", in rowText, row.CanSpend ? ItemTierStyle.Title : ItemTierStyle.Dim, shadow);
             }
 
             DrawRow(c, l, win, row, ys[n]);
         }
 
-        c.SetTextScale(canvasScale);
     }
 
     // The y of each row, in window units: header rows tight, then a gap before each attribute group.
@@ -205,6 +170,8 @@ public static class CharacterWindow
         float width = attribute ? RowW - PlateSize - PlateGap : RowW;
         UiRect box = l.FromUnits(win, RowX + indent, y, width - indent, RowH);
         var t = TextFor(in l, derived ? DerivedTextUnits : AttributeTextUnits);
+        // Measured at the drawn size, then put back: one canvas draws every panel in the frame.
+        float previous = c.TextScale;
         c.SetTextScale(t.Scale);
         float padX = 2f * l.Scale;
         float textY = box.Y + MathF.Floor((box.H - t.Px) * 0.5f);
@@ -230,7 +197,9 @@ public static class CharacterWindow
             valueColor = ItemTierStyle.Rare;
         }
 
-        Put(c, labelText, new Vector2(box.X + padX, textY), t, labelColor);
-        Put(c, valueText, new Vector2(box.Right - padX - valueWidth, textY), t, valueColor);
+        float shadow = UiText.ShadowPx(in l);
+        UiText.Put(c, labelText, new Vector2(box.X + padX, textY), in t, labelColor, shadow);
+        UiText.Put(c, valueText, new Vector2(box.Right - padX - valueWidth, textY), in t, valueColor, shadow);
+        c.SetTextScale(previous);
     }
 }
