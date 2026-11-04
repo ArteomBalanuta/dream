@@ -1,8 +1,11 @@
 using System.Text;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using Dream.Application;
 using Dream.Client.Input;
+using Dream.Client.Presentation;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Models;
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Panels;
 using Dream.Simulation.Enemies;
@@ -43,6 +46,13 @@ namespace Dream.Client.Scenes;
 //   buildat:<x>:<z>          right click the ground at that cell
 //   (walkto, groundclick, holdmove and enemyclick:right use the right button, which is click-to-move;
 //    walk goals need Combat mode, so put g in the script first)
+//   keys:<names>:<frames>    hold keys through the real key mapping for N frames, then release; no PNG
+//   keysnap:<names>:<frames> the same hold, but the PNG is written on the LAST HELD frame, before the
+//                             release, so the capture shows a held pose (walk, strafe, back). The status
+//                             line after it reports the keys the written frame was rendered with
+//   status                   the player, the click goal, the mode, the enemies, and actorbox <x0>,<y0>,<x1>,<y1>:
+//                             the local player's projected screen bbox, clamped to the viewport and the bar,
+//                             or "actorbox none: <reason>" when there is no figure to measure
 //   cell:<x>:<z>             print which levels of that column hold a cell, and the player and goal
 //   wait:<frames>, snap, log  idle, capture, print the inventory (and the player's position)
 //   fight:<frames>            for that many frames, face the nearest enemy, close in and attack in combat
@@ -165,6 +175,7 @@ public partial class PlayScene
     private int _captureFightStuckTicks;
     private bool _captureFightNoclipSent;
     private HudCaptureKeys _captureKeys;
+    private bool _captureKeySnap;
     private bool _captureWaitIdle;
     private System.Diagnostics.Stopwatch? _captureHoldLeftWatch;
     private readonly Dictionary<int, int> _captureHitHealth = new();
@@ -496,6 +507,17 @@ public partial class PlayScene
                 Console.WriteLine($"[hud-capture] keys {_captureKeys} for {spec.B} frames");
                 LogCaptureStatus("keys begin");
                 break;
+            case HudCaptureVerb.KeySnap:
+                // keys:, except that the PNG is written: the idle countdown ends on the last held frame
+                // and the write below happens before the keys are released at the end of the step, so
+                // the frame on disk is a frame rendered with the keys down (acceptance M7).
+                _captureKeys = (HudCaptureKeys)spec.A;
+                _captureKeySnap = true;
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = spec.B;
+                Console.WriteLine($"[hud-capture] keysnap {_captureKeys} for {spec.B} frames, the png on the last held frame");
+                LogCaptureStatus("keysnap begin");
+                break;
             case HudCaptureVerb.Status:
                 LogCaptureStatus("status");
                 _capturePhase = CapturePhase.Idle;
@@ -637,6 +659,9 @@ public partial class PlayScene
         if (_captureWritesPng)
         {
             string path = script.FilePath(_hudCaptureStep);
+            // Logged on the frame being written, immediately above its "wrote" line, so a crop can be
+            // tied to one PNG without guessing which `status` step it belonged to.
+            LogCaptureActorBox();
             try
             {
                 _render.CaptureBackBufferPng(path);
@@ -663,7 +688,10 @@ public partial class PlayScene
 
         if (_captureKeys != HudCaptureKeys.None || _captureWaitIdle)
         {
-            LogCaptureStatus(_captureWaitIdle ? "waitidle end" : "keys end");
+            // For keysnap this line is the proof the verb exists for: it prints after the write above and
+            // before the release below, so the keys and the axes it reports are the ones the written
+            // frame was rendered with.
+            LogCaptureStatus(_captureWaitIdle ? "waitidle end" : _captureKeySnap ? "keysnap wrote the png, keys still held" : "keys end");
         }
 
         _hudCaptureStep++;
@@ -672,6 +700,7 @@ public partial class PlayScene
         _captureFightActive = false;
         SuppressCursorAim = false;
         _captureKeys = HudCaptureKeys.None;
+        _captureKeySnap = false;
         _captureWaitIdle = false;
         _captureTraceFrames = 0;
     }
@@ -740,6 +769,103 @@ public partial class PlayScene
             $"goalCellSolid {_runtime.Map.TryGetGeometryCellAtCell(_clickMove.GoalCell.X, _clickMove.GoalCell.Level, _clickMove.GoalCell.Z) is not null} walking {_clickMove.IsWalking} pathCells {_clickMove.LastPathCells} mode {_runtime.InteractionMode} noclip {_runtime.Player.IsNoclipEnabled} " +
             $"alive {_runtime.Player.Combatant.Health.IsAlive} hp {_runtime.Player.Combatant.Health.CurrentHealth} nearest {near} " +
             $"target {(_clickMove.Target is { } t ? $"alive {t.IsAlive} {(t.Anchor - _runtime.Player.Camera.Position).Length:0.0} m at {t.Anchor.X:0.0},{t.Anchor.Z:0.0}" : "none")}");
+        LogCaptureActorBox();
+    }
+
+    // The local player's projected screen bbox, so an actor crop is the renderer's own number instead of
+    // a hand-typed guess at where the figure is (acceptance M7; check_look.py --actor-from-log reads it).
+    //
+    // The box is the player model's authored bounds under the same model matrix the renderer builds
+    // (PlayerRenderState.Create): the authored extent scaled by VisualScale, the feet at the body centre
+    // plus BodyCenterToFootOffset, rotated by the yaw the facing resolves to. Two known limits, stated
+    // rather than hidden: the authored extent is used centred on the position, so an off-centre arm can
+    // fall up to ~5 cm outside it, and the pose layers (a swung leg, a raised arm) are not in it.
+    //
+    // When the figure is not there to be measured the line says so and gives no numbers. A missing box is
+    // a loud failure; a clamped-to-nothing box would be a silently wrong measurement.
+    private void LogCaptureActorBox()
+    {
+        if (_settings.CameraViewMode == CameraViewMode.FirstPerson)
+        {
+            Console.WriteLine("[hud-capture] actorbox none: first person, the local player is not drawn");
+            return;
+        }
+
+        Camera? camera = _render.LastWorldCamera;
+        if (camera is null)
+        {
+            Console.WriteLine("[hud-capture] actorbox none: no world camera has been drawn yet");
+            return;
+        }
+
+        WorldAssetDimensions size = PlayerModelAssetDefinition.Normalization.ResolveScaledDimensions();
+        if (size.Height <= 0f)
+        {
+            Console.WriteLine("[hud-capture] actorbox none: the player model's authored bounds are not available");
+            return;
+        }
+
+        LocalPlayerRenderPose pose = _runtime.LocalRenderPose;
+        Vector3 facing = pose.Facing.LengthSquared > 0.0001f ? pose.Facing.Normalized() : PlayerModelAssetDefinition.AuthoredForwardAxis;
+        float yaw = MathF.Atan2(facing.X, facing.Z) - MathF.Atan2(PlayerModelAssetDefinition.AuthoredForwardAxis.X, PlayerModelAssetDefinition.AuthoredForwardAxis.Z);
+        float cos = MathF.Cos(yaw);
+        float sin = MathF.Sin(yaw);
+        Vector3 feet = pose.Position + PlayerModelAssetDefinition.BodyCenterToFootOffset;
+        float halfW = size.Width * 0.5f;
+        float halfD = size.Depth * 0.5f;
+
+        Matrix4 viewProjection = camera.GetViewMatrix() * _render.ProjectionMatrix;
+        Vector2i viewport = _render.ViewportSize;
+        float x0 = float.MaxValue;
+        float y0 = float.MaxValue;
+        float x1 = float.MinValue;
+        float y1 = float.MinValue;
+        int behind = 0;
+        for (int corner = 0; corner < 8; corner++)
+        {
+            float lx = (corner & 1) == 0 ? -halfW : halfW;
+            float lz = (corner & 2) == 0 ? -halfD : halfD;
+            float ly = (corner & 4) == 0 ? 0f : size.Height;
+            Vector3 world = feet + new Vector3((lx * cos) + (lz * sin), ly, (lz * cos) - (lx * sin));
+            if (!TryProjectToScreen(viewProjection, world, viewport, out Vector2 screen, out bool inFront) || !inFront)
+            {
+                behind++;
+                continue;
+            }
+
+            x0 = MathF.Min(x0, screen.X);
+            y0 = MathF.Min(y0, screen.Y);
+            x1 = MathF.Max(x1, screen.X);
+            y1 = MathF.Max(y1, screen.Y);
+        }
+
+        if (behind == 8)
+        {
+            Console.WriteLine("[hud-capture] actorbox none: the player is behind the camera");
+            return;
+        }
+
+        // The bar is opaque and drawn over the world, so anything under its top edge is not the figure.
+        UiLayout layout = CaptureLayout();
+        float barTop = layout.Bar.Y;
+        int cx0 = (int)MathF.Floor(Math.Clamp(x0, 0f, viewport.X));
+        int cy0 = (int)MathF.Floor(Math.Clamp(y0, 0f, viewport.Y));
+        int cx1 = (int)MathF.Ceiling(Math.Clamp(x1, 0f, viewport.X));
+        int cy1 = (int)MathF.Ceiling(Math.Clamp(y1, 0f, MathF.Min(viewport.Y, barTop)));
+        if (cx1 - cx0 < 2 || cy1 - cy0 < 2)
+        {
+            Console.WriteLine(
+                $"[hud-capture] actorbox none: nothing of the figure is on screen above the bar " +
+                $"(projected {x0:0},{y0:0},{x1:0},{y1:0} in {viewport.X}x{viewport.Y}, bar top {barTop:0})");
+            return;
+        }
+
+        bool clipped = x0 < 0f || y0 < 0f || x1 > viewport.X || y1 > viewport.Y;
+        bool underBar = y1 > barTop;
+        Console.WriteLine(
+            $"[hud-capture] actorbox {cx0},{cy0},{cx1},{cy1} (viewport {viewport.X}x{viewport.Y}, bar top {barTop:0}, " +
+            $"{cx1 - cx0}x{cy1 - cy0} px, cornersBehindCamera {behind}, clippedByViewport {clipped}, clippedByBar {underBar}, " +
+            $"feet {feet.X:0.00},{feet.Y:0.00},{feet.Z:0.00}, model {size.Width:0.00}x{size.Height:0.00}x{size.Depth:0.00} m, yaw {MathHelper.RadiansToDegrees(yaw):0})");
     }
 
     private const float CaptureWalkReachMetres = 1.5f;

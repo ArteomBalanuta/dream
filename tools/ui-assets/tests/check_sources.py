@@ -20,7 +20,14 @@ ALLOWED_MODULES = {"__future__", "json", "math", "sys", "pathlib", "numpy", "PIL
                    "gen_window",
                    # charforge.py / gltfwrite.py (actor rig, skinning and the GLB writer) and the
                    # gen_char_*.py generators over them; struct and io pack the binary glTF chunks
-                   "charforge", "gltfwrite", "gen_char_player", "struct", "io"}
+                   "charforge", "gltfwrite", "gen_char_player", "struct", "io",
+                   # WIDENING, not a relaxation: these are new sibling generator modules of the same
+                   # kind as gen_char_player (enginelook.py states the engine's actor transfer function,
+                   # gen_char_npc.py and gen_char_beast.py forge the villagers and the hound). The rule
+                   # is unchanged - a tool may import its own siblings and the listed stdlib, nothing
+                   # that reads art the project did not generate. Adding a sibling here needs the
+                   # sibling to be an original generator in this directory; nothing else moves.
+                   "enginelook", "gen_char_npc", "gen_char_beast"}
 BAD_STR = re.compile(r"reference|\.webp|fonts|\.ttf|\.otf|https?:|screenshot", re.I)
 BAD_NAME = re.compile(r"(^|[._\-])(mu|muonline|zen|chaos|larkan|loch|arcana|soul|bless|webzen|kundun|lorencia)([._\-]|$)", re.I)
 errs: list[str] = []

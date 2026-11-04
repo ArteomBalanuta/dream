@@ -506,6 +506,18 @@ public sealed class HudCapturePointerPlanTests : IDisposable
 
         Assert.True(HudCaptureStepSpec.TryParse("status", out HudCaptureStepSpec status));
         Assert.Equal(HudCaptureVerb.Status, status.Verb);
+        Assert.True(HudCaptureStepSpec.TryParse("keysnap:a:90", out HudCaptureStepSpec keysnap));
+        Assert.Equal(HudCaptureVerb.KeySnap, keysnap.Verb);
+        Assert.Equal((int)HudCaptureKeys.A, keysnap.A);
+        Assert.Equal(90, keysnap.B);
+        // keysnap and keys share TryParseKeys and the frame budget, and differ only in the verb: the
+        // step itself is what writes the png on the last held frame.
+        Assert.True(HudCaptureStepSpec.TryParse("keysnap:w+d:2000", out HudCaptureStepSpec keysnapMany));
+        Assert.Equal((int)(HudCaptureKeys.W | HudCaptureKeys.D), keysnapMany.A);
+        Assert.Equal(2000, keysnapMany.B);
+        Assert.True(HudCaptureStepSpec.TryParse("keys:a:90", out HudCaptureStepSpec plainKeys));
+        Assert.Equal((plainKeys.A, plainKeys.B), (keysnap.A, keysnap.B));
+        Assert.NotEqual(plainKeys.Verb, keysnap.Verb);
         Assert.True(HudCaptureStepSpec.TryParse("waitidle:600", out HudCaptureStepSpec idle));
         Assert.Equal((HudCaptureVerb.WaitIdle, 600), (idle.Verb, idle.A));
     }
@@ -520,6 +532,12 @@ public sealed class HudCapturePointerPlanTests : IDisposable
     [InlineData("keys:z:10")]
     [InlineData("keys:w:0")]
     [InlineData("keys::10")]
+    [InlineData("keysnap:z:10")]
+    [InlineData("keysnap:w:0")]
+    [InlineData("keysnap:w:2001")]
+    [InlineData("keysnap::10")]
+    [InlineData("keysnap:w")]
+    [InlineData("keysnap")]
     [InlineData("waitidle:0")]
     [InlineData("status:1")]
     public void ClickProofVerbs_RejectMalformedTokens(string token)
