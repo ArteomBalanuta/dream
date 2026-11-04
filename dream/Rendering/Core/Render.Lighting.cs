@@ -39,7 +39,7 @@ public partial class Render
         _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view);
         SelectPointLights(cameraPosition, in view);
         _lightListBuffer?.Upload(in _selectedLights, in view);
-        _boundaryMistBuffer?.Upload(BoundaryMist, camera.Front);
+        _boundaryMistBuffer?.Upload(BoundaryMist, camera.Position);
     }
 
     public void BindWorldLighting()
@@ -67,7 +67,7 @@ public partial class Render
         _lightListBuffer = new LightListBuffer();
         _lightListBuffer.Upload(in _selectedLights, Matrix4.Identity);
         _boundaryMistBuffer = new BoundaryMistBuffer();
-        _boundaryMistBuffer.Upload(default, -Vector3.UnitZ);
+        _boundaryMistBuffer.Upload(default, Vector3.Zero);
         InitializeDebugPointLights();
     }
 

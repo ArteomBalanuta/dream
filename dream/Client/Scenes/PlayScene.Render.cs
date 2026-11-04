@@ -151,7 +151,7 @@ public partial class PlayScene
         // plane outside the map. After the sky, so the smoke covers it; it restores the world state.
         if (_boundaryMistSettings.Enabled)
         {
-            _boundaryMist?.Draw(presentation.Camera.Position, presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
+            _boundaryMist?.Draw(presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
         }
 
         DrawEffectsPass(in sky, in presentation, gpuTimer, (float)args.Time);

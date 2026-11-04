@@ -9,7 +9,7 @@ namespace Dream.Rendering.Mist;
 // The boundary mist's void pass: one fullscreen triangle at depth 1 (skyVertex.glsl), drawn after
 // the opaque world, the actors and the sky, that paints smoke on every pixel whose view ray
 // reaches the floor plane outside the map. Pixels a surface covered keep their own per-fragment
-// mist (boundaryMist.glsl). One program bind, one draw and two uniform uploads per frame through
+// mist (boundaryMist.glsl). One program bind, one draw and one uniform upload per frame through
 // locations cached at construction; nothing is allocated per frame.
 public sealed class BoundaryMistVoidRenderer : IDisposable
 {
@@ -21,11 +21,9 @@ public sealed class BoundaryMistVoidRenderer : IDisposable
     public static readonly string[] UniformNames =
     [
         "uInverseViewProjection",
-        "uEye",
     ];
 
     private const int LocationInverseViewProjection = 0;
-    private const int LocationEye = 1;
 
     private readonly int[] _locations = new int[UniformNames.Length];
     private Shader? _shader;
@@ -54,9 +52,9 @@ public sealed class BoundaryMistVoidRenderer : IDisposable
 
     // Draws the smoke behind everything already in the depth buffer (depth 1, DepthFunc Lequal, no
     // depth writes, premultiplied blend) and restores the world pass state afterwards: DepthFunc
-    // Less, depth writes on, blending off, and face culling as it was. `eye` is the true camera
-    // position, which the lighting block does not carry in isometric view.
-    public void Draw(Vector3 eye, Matrix4 view, Matrix4 projection)
+    // Less, depth writes on, blending off, and face culling as it was. The true camera position
+    // (which FrameLighting does not carry in isometric view) comes from the BoundaryMist block.
+    public void Draw(Matrix4 view, Matrix4 projection)
     {
         Shader shader = _shader ?? throw new ObjectDisposedException(nameof(BoundaryMistVoidRenderer));
 
@@ -73,13 +71,6 @@ public sealed class BoundaryMistVoidRenderer : IDisposable
 
         shader.Use();
         shader.SetMatrix4(_locations[LocationInverseViewProjection], SkyRenderer.ComputeInverseViewProjection(view, projection));
-        int eyeLocation = _locations[LocationEye];
-        if (eyeLocation >= 0)
-        {
-            GL.Uniform3(eyeLocation, eye);
-            RenderCounters.CountUniformUpload();
-        }
-
         GL.BindVertexArray(_vertexArray);
         GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         RenderCounters.CountDraw();

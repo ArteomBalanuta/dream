@@ -12,9 +12,6 @@ in vec4 vFarPoint;
 
 out vec4 FragColor;
 
-// The true camera position in world space (in isometric view FrameLighting's camera is the focus).
-uniform vec3 uEye;
-
 // Premultiplied output for the (One, OneMinusSrcAlpha) blend: alpha 1 replaces the clear colour.
 void main()
 {
@@ -27,12 +24,13 @@ void main()
         discard;
     }
 
-    float t = (uMistParams.z - uEye.y) / dir.y;
+    // uMistEye is the true camera position (in isometric view FrameLighting's camera is the focus).
+    float t = (uMistParams.z - uMistEye.y) / dir.y;
     if (t <= 0.0) {
         discard;
     }
 
-    vec3 hit = uEye + dir * t;
+    vec3 hit = uMistEye.xyz + dir * t;
     if (dreamMistInset(hit) > 0.0) {
         discard;
     }

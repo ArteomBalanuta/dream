@@ -24,7 +24,8 @@ public class BoundaryMistVoidPassContractTests
             }
         }
 
-        // The mist and lighting includes declare blocks, not loose uniforms, so only these two remain.
+        // The mist and lighting includes declare blocks, not loose uniforms, so only the sky vertex one remains
+        // (the true eye comes from the BoundaryMist block, so the wall fragments and the void share one ray).
         Assert.Equal(declared.OrderBy(name => name), BoundaryMistVoidRenderer.UniformNames.OrderBy(name => name));
 
         string draw = Method(ReadSource("dream/Rendering/Mist/BoundaryMistVoidRenderer.cs"), "public void Draw(");
@@ -33,7 +34,6 @@ public class BoundaryMistVoidPassContractTests
         Assert.DoesNotMatch(@"\bnew\s+(?!ObjectDisposedException)", draw);
         Assert.DoesNotContain("stackalloc", draw);
         Assert.Matches(@"_locations\[LocationInverseViewProjection\]", draw);
-        Assert.Matches(@"_locations\[LocationEye\]", draw);
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public class BoundaryMistVoidPassContractTests
         Assert.Matches(@"#include ""lighting\.glsl""\s*#include ""boundaryMist\.glsl""", fragment);
         Assert.Contains("FragColor = vec4(dreamBoundarySmoke(hit), 1.0);", fragment);
         // The hit is cut with the floor plane from the true camera; a hit inside the map is left alone.
-        Assert.Contains("float t = (uMistParams.z - uEye.y) / dir.y;", fragment);
+        Assert.Contains("float t = (uMistParams.z - uMistEye.y) / dir.y;", fragment);
         Assert.Contains("dreamMistInset(hit) > 0.0", fragment);
         // Not a depth read.
         Assert.DoesNotContain("gl_FragCoord", fragment);
@@ -81,7 +81,7 @@ public class BoundaryMistVoidPassContractTests
         Assert.True(input < world, "the input is set before DrawWorld uploads the frame");
         Assert.True(sky < voidPass && voidPass < effects, "sky, then the void pass, then the effects pass");
         // Every camera mode: the call is not inside the non-isometric sky branch.
-        Assert.Matches(@"if \(_boundaryMistSettings\.Enabled\)\s*\{\s*_boundaryMist\?\.Draw\(presentation\.Camera\.Position, presentation\.Camera\.GetViewMatrix\(\), _render\.ProjectionMatrix\);\s*\}", render);
+        Assert.Matches(@"if \(_boundaryMistSettings\.Enabled\)\s*\{\s*_boundaryMist\?\.Draw\(presentation\.Camera\.GetViewMatrix\(\), _render\.ProjectionMatrix\);\s*\}", render);
         Assert.Matches(@"(?m)^ {8}DrawEffectsPass\(in sky, in presentation, gpuTimer, \(float\)args\.Time\);\r?$", render);
     }
 

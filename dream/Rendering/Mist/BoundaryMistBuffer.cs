@@ -46,10 +46,10 @@ public sealed class BoundaryMistBuffer : IDisposable
     }
 
     // Writes both ranges, then binds the world range.
-    public void Upload(in BoundaryMistInput input, Vector3 cameraFront)
+    public void Upload(in BoundaryMistInput input, Vector3 eye)
     {
-        BoundaryMistFrame world = BoundaryMistFrame.ForWorld(in input, cameraFront);
-        BoundaryMistFrame viewModel = BoundaryMistFrame.ForViewModel(in input, cameraFront);
+        BoundaryMistFrame world = BoundaryMistFrame.ForWorld(in input, eye);
+        BoundaryMistFrame viewModel = BoundaryMistFrame.ForViewModel(in input, eye);
 
         GL.BindBuffer(BufferTarget.UniformBuffer, _handle);
         GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero, BoundaryMistFrame.SizeInBytes, ref world);

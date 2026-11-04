@@ -20,7 +20,7 @@ public class BoundaryMistShaderContractTests
     {
         string shader = StripComments(ReadShader(Include));
 
-        Assert.Matches(@"layout\(std140\) uniform BoundaryMist \{\s*vec4 uMistBounds;\s*vec4 uMistParams;\s*vec4 uMistView;\s*\};", shader);
+        Assert.Matches(@"layout\(std140\) uniform BoundaryMist \{\s*vec4 uMistBounds;\s*vec4 uMistParams;\s*vec4 uMistEye;\s*\};", shader);
         Assert.Equal("BoundaryMist", BoundaryMistFrame.BlockName);
         Assert.Equal(3 * 16, BoundaryMistFrame.SizeInBytes);
         Assert.Equal(2, BoundaryMistFrame.BindingPoint);
@@ -40,7 +40,7 @@ public class BoundaryMistShaderContractTests
         Assert.Equal(BoundaryMistField.Gamma, Constant(shader, "MistGamma"));
         // The ramp start is not a constant: it is uMistParams.w, uploaded from the CPU constant.
         Assert.Contains("uMistParams.w", shader);
-        Assert.Equal(BoundaryMistField.RampStart, BoundaryMistFrame.ForWorld(new BoundaryMistInput(10f, 10f, 0f, true), -OpenTK.Mathematics.Vector3.UnitZ).Params.W);
+        Assert.Equal(BoundaryMistField.RampStart, BoundaryMistFrame.ForWorld(new BoundaryMistInput(10f, 10f, 0f, true), OpenTK.Mathematics.Vector3.Zero).Params.W);
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public class BoundaryMistShaderContractTests
     {
         string source = ReadSource("dream/Rendering/Core/Render.Lighting.cs");
 
-        Assert.Matches(@"_lightListBuffer\?\.Upload\(in _selectedLights, in view\);\s*_boundaryMistBuffer\?\.Upload\(BoundaryMist, camera\.Front\);", source);
+        Assert.Matches(@"_lightListBuffer\?\.Upload\(in _selectedLights, in view\);\s*_boundaryMistBuffer\?\.Upload\(BoundaryMist, camera\.Position\);", source);
         Assert.Matches(@"_lightListBuffer\?\.BindWorld\(\);\s*_boundaryMistBuffer\?\.BindWorld\(\);", source);
         Assert.Matches(@"_lightListBuffer\?\.BindViewModel\(\);\s*_boundaryMistBuffer\?\.BindViewModel\(\);", source);
         Assert.Contains("_boundaryMistBuffer?.Dispose();", source);

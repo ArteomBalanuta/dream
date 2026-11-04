@@ -21,12 +21,12 @@ public struct BoundaryMistFrame
 
     [FieldOffset(0)] public Vector4 Bounds; // minX, minZ, maxX (map width), maxZ (map depth)
     [FieldOffset(16)] public Vector4 Params; // x strength (1 on, 0 off), y time s (wrapped), z floor top y, w ramp start
-    [FieldOffset(32)] public Vector4 View; // xyz unit camera front, w 0
+    [FieldOffset(32)] public Vector4 Eye; // xyz the true camera position in world space (not the fog origin), w 0
 
-    // The world range: the map rectangle, the wrapped clock and the camera's view direction.
-    public static BoundaryMistFrame ForWorld(in BoundaryMistInput input, Vector3 cameraFront)
+    // The world range: the map rectangle, the wrapped clock and the true camera position, which
+    // makes each fragment's view ray the very ray the void pass shades.
+    public static BoundaryMistFrame ForWorld(in BoundaryMistInput input, Vector3 eye)
     {
-        Vector3 front = cameraFront.LengthSquared > 1e-8f ? cameraFront.Normalized() : -Vector3.UnitZ;
         return new BoundaryMistFrame
         {
             Bounds = new Vector4(0f, 0f, input.Width, input.Depth),
@@ -35,15 +35,15 @@ public struct BoundaryMistFrame
                 BoundaryMistField.WrapTime(input.TimeSeconds),
                 FloorTopY,
                 BoundaryMistField.RampStart),
-            View = new Vector4(front, 0f),
+            Eye = new Vector4(eye, 0f),
         };
     }
 
     // The view-model range: strength 0. The view model draws in eye space, where the world-space
     // map rectangle means nothing, and the hands must never be misted.
-    public static BoundaryMistFrame ForViewModel(in BoundaryMistInput input, Vector3 cameraFront)
+    public static BoundaryMistFrame ForViewModel(in BoundaryMistInput input, Vector3 eye)
     {
-        BoundaryMistFrame frame = ForWorld(in input, cameraFront);
+        BoundaryMistFrame frame = ForWorld(in input, eye);
         frame.Params.X = 0f;
         return frame;
     }

@@ -17,24 +17,24 @@ public class BoundaryMistFrameTests
         Assert.Equal(BoundaryMistFrame.SizeInBytes, Marshal.SizeOf<BoundaryMistFrame>());
         Assert.Equal(0, (int)Marshal.OffsetOf<BoundaryMistFrame>(nameof(BoundaryMistFrame.Bounds)));
         Assert.Equal(16, (int)Marshal.OffsetOf<BoundaryMistFrame>(nameof(BoundaryMistFrame.Params)));
-        Assert.Equal(32, (int)Marshal.OffsetOf<BoundaryMistFrame>(nameof(BoundaryMistFrame.View)));
+        Assert.Equal(32, (int)Marshal.OffsetOf<BoundaryMistFrame>(nameof(BoundaryMistFrame.Eye)));
         Assert.Equal(2, BoundaryMistFrame.BindingPoint);
         Assert.Equal("BoundaryMist", BoundaryMistFrame.BlockName);
     }
 
     [Fact]
-    public void The_World_Range_Carries_The_Map_The_Clock_And_The_View()
+    public void The_World_Range_Carries_The_Map_The_Clock_And_The_True_Eye()
     {
         BoundaryMistInput input = new(56f, 40f, 605f, Enabled: true);
 
-        BoundaryMistFrame frame = BoundaryMistFrame.ForWorld(in input, new Vector3(0f, -2f, 0f));
+        BoundaryMistFrame frame = BoundaryMistFrame.ForWorld(in input, new Vector3(13.2f, 14.8f, 13.2f));
 
         Assert.Equal(new Vector4(0f, 0f, 56f, 40f), frame.Bounds);
         Assert.Equal(1f, frame.Params.X);
         Assert.Equal(5f, frame.Params.Y);
         Assert.Equal(BoundaryMistFrame.FloorTopY, frame.Params.Z);
         Assert.Equal(BoundaryMistField.RampStart, frame.Params.W);
-        Assert.Equal(new Vector4(0f, -1f, 0f, 0f), frame.View);
+        Assert.Equal(new Vector4(13.2f, 14.8f, 13.2f, 0f), frame.Eye);
     }
 
     [Fact]
@@ -61,10 +61,14 @@ public class BoundaryMistFrameTests
     }
 
     [Fact]
-    public void A_Zero_Front_Falls_Back_To_A_Unit_Vector()
+    public void The_View_Model_Range_Keeps_The_Eye_So_Both_Ranges_Differ_Only_In_Strength()
     {
         BoundaryMistInput on = new(56f, 40f, 1f, Enabled: true);
-        Vector4 view = BoundaryMistFrame.ForWorld(in on, Vector3.Zero).View;
-        Assert.Equal(1f, view.Xyz.Length, 4);
+        Vector3 eye = new(1f, 2f, 3f);
+
+        BoundaryMistFrame viewModel = BoundaryMistFrame.ForViewModel(in on, eye);
+
+        Assert.Equal(new Vector4(eye, 0f), viewModel.Eye);
+        Assert.Equal(BoundaryMistFrame.ForWorld(in on, eye).Params.Y, viewModel.Params.Y);
     }
 }

@@ -13,9 +13,10 @@
 // uMistBounds: minX, minZ, maxX (map width), maxZ (map depth).
 // uMistParams: x strength (1 on, 0 off or view model), y time in seconds (wrapped at 600),
 //              z floor top y, w ramp start (metres inside the edge where the mist ends).
-// uMistView:   xyz unit camera front, w 0.
+// uMistEye:    xyz the true camera position in world space (uCameraPosition is the focus in
+//              isometric view), w 0.
 layout(std140) uniform BoundaryMist {
-    vec4 uMistBounds; vec4 uMistParams; vec4 uMistView;
+    vec4 uMistBounds; vec4 uMistParams; vec4 uMistEye;
 };
 
 const float MistNoiseAmp = 0.35;   // BoundaryMistField.NoiseAmp
@@ -76,18 +77,17 @@ float dreamBoundaryOpacity(vec3 p)
     return pow(clamp(1.0 - shifted / uMistParams.w, 0.0, 1.0), MistGamma) * uMistParams.x;
 }
 
-// The point where the view ray through p meets the floor plane. Sampling the smoke noise there
-// makes a wall fragment and the void pixel next to it read one noise field. A level or upward
-// view has no floor to follow and keeps p.
+// The point where the ray from the eye through p meets the floor plane. Sampling the smoke noise
+// there makes a wall fragment and the void pixel next to it (whose ray is the same ray) read one
+// noise field. A level or upward ray has no floor to follow and keeps p.
 vec3 dreamMistFloorPoint(vec3 p)
 {
-    float dy = uMistView.y;
-    if (dy > -0.05) {
+    vec3 v = p - uMistEye.xyz;
+    if (v.y > -0.02 * length(v)) {
         return p;
     }
 
-    float t = clamp((uMistParams.z - p.y) / dy, -20.0, 20.0);
-    return p + uMistView.xyz * t;
+    return p + v * clamp((uMistParams.z - p.y) / v.y, -1.0, 1.0);
 }
 
 // Three drifting octaves: two advected along the wind, one rising with time (the boil).
