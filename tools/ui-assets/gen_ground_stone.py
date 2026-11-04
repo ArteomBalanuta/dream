@@ -652,7 +652,7 @@ def main(out_root: Path = K.GROUND_ROOT, only: list[str] | None = None) -> dict:
         entries.append(K.manifest_entry(FAMILY, stem, ASSETS[stem], a["bounds"]))
         tris = sum(len(p.indices) for p in a["primitives"])
         print(f"gen_ground_stone: {stem:18s} {ASSETS[stem].cls:8s} {ASSETS[stem].layer:7s} tris={tris:5d} size={len(data):7d}")
-    K.write_family(Path(out_root), FAMILY, entries, files, "tools/ui-assets/gen_ground_stone.py")
+    K.write_family(Path(out_root), FAMILY, entries, files, "tools/ui-assets/gen_ground_stone.py", partial=bool(only))
     print(f"gen_ground_stone: {len(files)} assets, {sum(map(len, files.values()))} bytes -> {out_root}")
     return built
 

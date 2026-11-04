@@ -49,13 +49,23 @@ GATES.update({
     "tree_fp_max": 0.50,         # half extent of a tree's geometry below 0.15 wu
     "bounds_tol": 0.0006,        # the manifest records 3 decimals
 })
-# An override is a claim that the art needs it: say why, with the measured value.
-# Thin ribbons, petals and caps in a 128 px atlas leave only a few hundred side-facing texels, and the azimuth estimator is then
-# noise: an unlit, symmetric clump reads 0.2-0.4 where a synthetic baked key reads 0.5-0.9. The ceiling for those is the measured
-# worst unkeyed value (grass_wiry_01 0.40, shroom_bracket_stub 0.44) plus margin; the part-rectangle gates (quad, low-frequency)
-# still apply in full. Accent and landmark assets have thousands of texels and keep check_props' ceiling.
-COVER_AZIMUTH_MAX = 0.50
-OVERRIDES: dict[str, dict] = {s: {"azimuth_max": COVER_AZIMUTH_MAX} for s, sp in F.ASSETS.items() if sp.layer == "cover"}
+# An override is a claim that the art needs it: say why, with the measured value. Do not loosen a ceiling to pass.
+# Azimuth leakage is measured over the side-facing texels of each part; thin ribbons, petals and caps in a 128 px atlas leave few
+# of them, so a few cover stems read above check_props' 0.23 unkeyed. Each gets its own ceiling at the measured value rounded up,
+# which a synthetic baked key (the "keyed" value) must still exceed (see blind_errors).
+OVERRIDES: dict[str, dict] = {
+    "grass_tuft_dry_03": {"azimuth_max": 0.25},    # measured .2403 (keyed .676)
+    "grass_tuft_tall_02": {"azimuth_max": 0.26},   # measured .2589 (keyed .782)
+    "grass_tuft_tall_03": {"azimuth_max": 0.29},   # measured .2812 (keyed .735)
+    "grass_wiry_01": {"azimuth_max": 0.41},        # measured .4052 (keyed .448)
+    "flower_pale_bell": {"azimuth_max": 0.25},     # measured .2416 (keyed .702)
+    "flower_withered_rose": {"azimuth_max": 0.26}, # measured .2525 (keyed .802)
+    "flower_thistle": {"azimuth_max": 0.26},       # measured .2532 (keyed .898)
+    "shroom_bracket_stub": {"azimuth_max": 0.45},  # measured .4403 (keyed .826)
+}
+# Assets with no 200 side-facing texels in any part (flat blades, a flat ring): azimuth_leak has nothing to measure and reads 0
+# unkeyed and keyed alike. The set fails if one of them ever starts measuring.
+NO_SIDE_TEXELS = {"grass_tuft_dry_04", "grass_sedge_02", "shroom_ring"}
 # 4 of 203 cylinder triangles (1.97%) of the umbel's single stalk straddle the unwrap seam; the stalk is 0.4 u thick
 CP.OVERRIDES["flower_hemlock_umbel"] = {"seam_share_max": 0.025}   # check_props.atlas_errors reads its own table
 EXPECTED_COUNTS = {"tree": 8, "sapling": 3, "bush": 7, "grass": 10, "flower": 6, "mushroom": 6}
@@ -65,6 +75,17 @@ def cfg(stem: str) -> dict:
     c = dict(GATES)
     c.update(OVERRIDES.get(stem, {}))
     return c
+
+
+def blind_errors(stem: str, m: dict) -> list[str]:
+    """The azimuth gate must be able to see a key on this asset (unless it has no side-facing texels to measure)."""
+    if stem in NO_SIDE_TEXELS:
+        if m["azimuth_keyed"] > 0 or m["azimuth"] > 0:
+            return [f"{stem}: listed in NO_SIDE_TEXELS but the azimuth gate now measures it (keyed {m['azimuth_keyed']:.3f}): drop it from the set"]
+        return []
+    if m["azimuth_keyed"] <= cfg(stem)["azimuth_max"]:
+        return [f"{stem}: the azimuth gate is blind on this asset: a synthetic key reads {m['azimuth_keyed']:.3f}, under the {cfg(stem)['azimuth_max']} ceiling"]
+    return []
 
 
 def measure_bounds(positions: np.ndarray) -> tuple[float, float, float]:
@@ -256,8 +277,7 @@ def main() -> int:
             if max(abs(a - b) for a, b in zip(m["bounds_kit"], (m["radius"], m["footprint"], m["height"]))) > 1e-6 else []
         print(f"  {s:24s} {spec.cls:9s} tris {m['tris']:5d} bytes {m['bytes']:7d} h {m['height']:.2f} fp {m['footprint']:.2f} quad {m['rect_quad']:.2f} "
               f"low {m['rect_lowfreq']:.2f} az {m['azimuth']:.2f} (keyed {m['azimuth_keyed']:.2f}) sat {m['sat_p95']:.2f} vp99 {m['v_p99']:.2f}")
-        if m["azimuth_keyed"] <= cfg(s)["azimuth_max"] and spec.layer in ("accent", "landmark"):
-            errs.append(f"{s}: the azimuth gate is blind on this asset: a synthetic key reads {m['azimuth_keyed']:.3f}")
+        errs += blind_errors(s, m)
     total = sum(m["bytes"] for m in measured.values())
     print(f"  family total {total} bytes of {K.FAMILY_BYTES_MAX['flora']}")
     if not only:
