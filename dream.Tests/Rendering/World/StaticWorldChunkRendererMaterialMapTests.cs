@@ -336,6 +336,93 @@ public class StaticWorldChunkRendererMaterialMapTests
     }
 
     [Fact]
+    public void WhileABatchIsStillUploading_TheMapStaysPending_SwapsOnceAtCompletion_AndALaterBatchWaits()
+    {
+        // Three meshes of 6000 separated cubes (about 5.5 MB each) upload one per frame.
+        StaticWorldChunkBuildBatch large = CreateLargeBatch(meshCount: 3, cellsPerMesh: 6000);
+        MapStore store = new();
+        List<TaskCompletionSource<StaticWorldChunkBuildBatch>> sources = [];
+        List<StaticWorldChunkBuildRequest> requests = [];
+        using StaticWorldChunkRenderer renderer = new(
+            request =>
+            {
+                requests.Add(request);
+                TaskCompletionSource<StaticWorldChunkBuildBatch> source = new();
+                sources.Add(source);
+                return source.Task;
+            },
+            new RenderFaultLog(_ => { }),
+            store);
+        Camera camera = new(new Vector3(3f, 2f, 3f));
+        camera.SetFacing(new Vector3(-1f, -0.5f, -1f));
+        ViewFrustum frustum = ViewFrustum.FromViewAndProjection(camera.GetViewMatrix(), ViewFrustumTests.GameProjection());
+
+        Dictionary<(int, int, int), GeometryMaterialId> slots = new() { [(0, 0, 0)] = GeometryMaterialId.Grass };
+        renderer.Draw(UnusedRender, camera, in frustum, CreateExport(slots, 1, []));
+        slots[(1, 0, 0)] = GeometryMaterialId.Stone;
+        slots[(2, 0, 0)] = GeometryMaterialId.Sand;
+        GeometryRenderExport second = CreateExport(slots, 2, [new GeometryCellKey(1, 0, 0), new GeometryCellKey(2, 0, 0)]);
+        renderer.Draw(UnusedRender, camera, in frustum, second);
+        int generation = renderer.TerrainMaterialMapGeneration;
+
+        // Batch 1 completes: one mesh uploads, the batch is still uploading, so its map is pending.
+        sources[0].SetResult(large with { ExportSignature = requests[0].ExportSignature, DirtyChunks = requests[0].DirtyChunks });
+        renderer.Draw(UnusedRender, camera, in frustum, second);
+        Assert.Equal(2, sources.Count);
+        Assert.True(renderer.HasPendingTerrainMaterialMap);
+        Assert.Equal(generation, renderer.TerrainMaterialMapGeneration);
+        Assert.True(renderer.TerrainMaterialMap.IsEmpty);
+        Assert.True(store.LastSize == Vector3i.Zero, "the store saw a map before the swap");
+
+        // The second build completes while the first batch is still uploading: it is not taken, so
+        // its map neither activates nor replaces the pending one.
+        sources[1].SetResult(StaticWorldChunkRenderer.BuildBatch(requests[1]));
+        renderer.Draw(UnusedRender, camera, in frustum, second);
+        Assert.True(renderer.HasPendingTerrainMaterialMap);
+        Assert.Equal(generation, renderer.TerrainMaterialMapGeneration);
+        Assert.True(renderer.TerrainMaterialMap.IsEmpty);
+
+        // The last mesh of the first batch uploads: exactly one swap, with the first request's map.
+        renderer.Draw(UnusedRender, camera, in frustum, second);
+        Assert.False(renderer.HasPendingTerrainMaterialMap);
+        Assert.Equal(generation + 1, renderer.TerrainMaterialMapGeneration);
+        Assert.Equal(new Vector3i(1, 1, 1), renderer.TerrainMaterialMap.Size);
+
+        // Only now is the second batch taken, applied and swapped in with its own map.
+        renderer.Draw(UnusedRender, camera, in frustum, second);
+        Assert.False(renderer.HasPendingTerrainMaterialMap);
+        Assert.Equal(generation + 2, renderer.TerrainMaterialMapGeneration);
+        Assert.Equal(new Vector3i(3, 1, 1), renderer.TerrainMaterialMap.Size);
+    }
+
+    private static StaticWorldChunkBuildBatch CreateLargeBatch(int meshCount, int cellsPerMesh)
+    {
+        List<StaticWorldChunkBuildOutput> outputs = [];
+        for (int m = 0; m < meshCount; m++)
+        {
+            StaticWorldChunkKey chunk = new(m, 0, 0);
+            List<StaticVoxelRenderCell> cells = [];
+            for (int i = 0; i < cellsPerMesh; i++)
+            {
+                // Two-unit spacing keeps every face of every cube exposed.
+                cells.Add(new StaticVoxelRenderCell(
+                    new Vector3((m * 16) + 0.5f + (2 * (i % 8)), 0.5f + (2 * (i / 64)), 0.5f + (2 * ((i / 8) % 8))),
+                    Vector3.One,
+                    GeometryMaterialId.Stone));
+            }
+
+            StaticWorldChunkMesh mesh = StaticWorldChunkMeshBuilder.Build(chunk, GeometryMaterialId.Stone, cells);
+            Assert.True(mesh.UploadByteCount > StaticWorldChunkRenderer.UploadByteBudgetPerFrame);
+            outputs.Add(new StaticWorldChunkBuildOutput(
+                new StaticWorldChunkMeshKey(chunk, GeometryMaterialId.Stone, StaticTerrainMaterialRole.Single),
+                m,
+                mesh));
+        }
+
+        return new StaticWorldChunkBuildBatch(0, new HashSet<StaticWorldChunkKey>(), outputs);
+    }
+
+    [Fact]
     public void FramesThatDrawNothing_DoNotSync_AndTheNextDrawingFrameSyncsOnce()
     {
         MapStore store = new();

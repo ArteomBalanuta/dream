@@ -181,9 +181,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     public StaticWorldChunkRenderStats Draw(Render render, Camera camera, in ViewFrustum frustum, GeometryRenderExport export)
     {
-        DrainCompletedBuild();
         // Stopwatch timestamps rather than a Stopwatch instance: an unchanged frame allocates nothing.
+        // Taken before the drain so the material map rebuild is counted (in the signature bucket).
         long timestamp = Stopwatch.GetTimestamp();
+        DrainCompletedBuild();
         int exportSignature = CalculateExportSignature(export);
         double signatureMilliseconds = ElapsedMilliseconds(ref timestamp);
 
@@ -476,15 +477,14 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         // The map belongs to the batch being uploaded, so it is built from this request's own cells
         // (an immutable list, fresh per extraction; a merged superseded request carries the newest
         // request's cells). The pending buffer is free: the previous swap left the old map there.
+        // A completed batch always has its request; without one (a bug) no map is swapped in.
+        Debug.Assert(_activeBuildRequest != null, "A completed build must have an active request.");
         if (_activeBuildRequest != null)
         {
             _pendingMaterialMap.Rebuild(_activeBuildRequest.Cells);
-            _hasPendingMaterialMap = true;
         }
-        else
-        {
-            _hasPendingMaterialMap = false;
-        }
+
+        _hasPendingMaterialMap = _activeBuildRequest != null;
 
         _activeBuildRequest = null;
         _consecutiveBuildFaults = 0;
