@@ -48,6 +48,64 @@ public class WorldCursorPickerTests
         Assert.Equal(ClickPickKind.None, pick.Kind);
     }
 
+    // The boundary mist hides everything past the edge, so a click there must still walk the
+    // character to the edge it was aimed at: the picked cell's centre is the movement clamp line
+    // (Player.ConfineToMapBounds keeps the centre in [EdgeMargin, size - EdgeMargin]).
+    [Theory]
+    [InlineData(-5f, 16f)]
+    [InlineData(-40f, 16f)]
+    [InlineData(37f, 16f)]
+    [InlineData(72f, 16f)]
+    [InlineData(16f, -5f)]
+    [InlineData(16f, -40f)]
+    [InlineData(16f, 37f)]
+    [InlineData(16f, 72f)]
+    [InlineData(-5f, -5f)]
+    [InlineData(-40f, -40f)]
+    [InlineData(37f, 37f)]
+    [InlineData(72f, 72f)]
+    [InlineData(-5f, 37f)]
+    [InlineData(72f, -40f)]
+    public void AClickPastAnyEdgeOrCornerPicksTheEdgeCellOnTheClampLine(float targetX, float targetZ)
+    {
+        FloorWorld world = new();
+        Vector3 target = new(targetX, 1f, targetZ);
+        // The isometric camera offset from the focus (IsometricView): 8.2 m, 13.8 m up, 8.2 m.
+        Vector3 origin = target + new Vector3(8.2f, 13.8f, 8.2f);
+        Vector3 direction = Vector3.Normalize(target - origin);
+
+        ClickPick pick = WorldCursorPicker.Pick(world, origin, direction, null);
+
+        Assert.Equal(ClickPickKind.Ground, pick.Kind);
+        float edge = Dream.Simulation.Players.Player.EdgeMargin;
+        Assert.Equal(1, pick.Cell.Level);
+        AssertEdgeAxis(targetX, world.Width, pick.Cell.X, edge);
+        AssertEdgeAxis(targetZ, world.Depth, pick.Cell.Z, edge);
+    }
+
+    private static void AssertEdgeAxis(float target, int size, int cell, float edgeMargin)
+    {
+        if (target < 0f || target > size)
+        {
+            // Past the edge: the cell centre is exactly the clamp line.
+            Assert.Equal(Math.Clamp(target, edgeMargin, size - edgeMargin), cell + 0.5f);
+        }
+        else
+        {
+            Assert.Equal((int)MathF.Floor(target), cell);
+        }
+    }
+
+    [Fact]
+    public void AnUpwardRayAimedPastTheEdgePicksNothing()
+    {
+        Vector3 direction = Vector3.Normalize(new Vector3(-1f, 0.2f, -1f));
+
+        ClickPick pick = WorldCursorPicker.Pick(new FloorWorld(), new Vector3(3f, 4f, 3f), direction, null);
+
+        Assert.Equal(ClickPickKind.None, pick.Kind);
+    }
+
     [Fact]
     public void AnEnemyOnTheRayWinsOverTheFloor()
     {

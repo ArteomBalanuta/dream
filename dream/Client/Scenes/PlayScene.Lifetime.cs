@@ -12,6 +12,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Core;
 using Dream.Rendering.Effects;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Mist;
 using Dream.Rendering.Sky;
 using Dream.Rendering.ViewModels;
 
@@ -78,6 +79,7 @@ public partial class PlayScene
             RenderFaultLog.Shared.Report("effects", exception);
         }
 
+        CreateBoundaryMist();
         PreloadModels();
         if (_fxSimulation != null && _fxFlashes != null)
         {
@@ -134,6 +136,7 @@ public partial class PlayScene
         RunDisposeStep(_render.Dispose, ref failures);
         RunDisposeStep(DisposeGpuTimer, ref failures);
         RunDisposeStep(DisposeSky, ref failures);
+        RunDisposeStep(DisposeBoundaryMist, ref failures);
         RunDisposeStep(DisposeEffects, ref failures);
         RunDisposeStep(ModelAssets.DisposeAll, ref failures);
         RunDisposeStep(DisposeAudio, ref failures);
@@ -166,6 +169,28 @@ public partial class PlayScene
     {
         _sky?.Dispose();
         _sky = null;
+    }
+
+    // A failed void shader costs the smoke over uncovered pixels, not the session: the world shaders
+    // still mist every surface, and the fault is logged once.
+    private void CreateBoundaryMist()
+    {
+        try
+        {
+            _boundaryMist = new BoundaryMistVoidRenderer();
+        }
+        catch (Exception exception)
+        {
+            _boundaryMist = null;
+            RenderFaultLog.Shared.Report("boundary-mist", exception);
+        }
+    }
+
+    // The boundary mist's void pass owns its own program and VAO.
+    private void DisposeBoundaryMist()
+    {
+        _boundaryMist?.Dispose();
+        _boundaryMist = null;
     }
 
     private static void RunDisposeStep(Action step, ref List<Exception>? failures)

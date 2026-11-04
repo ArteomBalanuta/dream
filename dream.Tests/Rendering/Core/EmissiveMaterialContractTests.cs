@@ -21,7 +21,7 @@ public class EmissiveMaterialContractTests
         Assert.Matches(@"struct Material \{[^}]*\bbool hasEmissiveTexture;[^}]*\bsampler2D emissiveTexture;[^}]*\bvec2 emissiveUvScroll;[^}]*\};", shader);
         Assert.Contains("uniform float uTime;", shader);
         Assert.Matches(
-            @"vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{\s*emissive \*= texture\(material\.emissiveTexture, texCoord0 \+ material\.emissiveUvScroll \* uTime\)\.rgb;\s*\}\s*FragColor = vec4\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), baseColor\.a\);",
+            @"vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{\s*emissive \*= texture\(material\.emissiveTexture, texCoord0 \+ material\.emissiveUvScroll \* uTime\)\.rgb;\s*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
             shader);
         Assert.Single(Regex.Matches(shader, @"material\.emissiveTexture"));
         // Early-z: the only discard stays the MASK variant's cutoff one.

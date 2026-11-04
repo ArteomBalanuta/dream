@@ -8,6 +8,7 @@ using Dream.Client.Presentation;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Mist;
 using Dream.Rendering.Sky;
 using Dream.Rendering.World;
 using Dream.Server;
@@ -21,6 +22,11 @@ public partial class PlayScene
     // context current); disposed with the scene, which nulls it.
     private SkyRenderer? _sky;
     private readonly SkyModelSettings _skySettings = SkyModelSettings.FromEnvironment();
+
+    // The boundary mist wall's void pass (smoke where no surface covers a pixel past the map edge).
+    // Null when its shader failed to load; the per-fragment mist in the world shaders still runs.
+    private BoundaryMistVoidRenderer? _boundaryMist;
+    private readonly BoundaryMistSettings _boundaryMistSettings = BoundaryMistSettings.FromEnvironment();
 
     public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
     {
@@ -80,6 +86,12 @@ public partial class PlayScene
         CollectFrameLights(in presentation, remotePlayerStates);
         long worldDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.World);
+        // The boundary mist wall's inputs go up with the frame lighting inside DrawWorld.
+        _render.BoundaryMist = new BoundaryMistInput(
+            _runtime.Map.Width,
+            _runtime.Map.Depth,
+            (float)_clientPresentationTimeSeconds,
+            _boundaryMistSettings.Enabled);
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
         // Scenery after the terrain and before the actors: the braziers' bowls, the village, the graves. The index
         // follows the placed lights collected above, so each light has its bowl.
@@ -133,6 +145,13 @@ public partial class PlayScene
         if (!isometric)
         {
             skyRenderer.Draw(in sky, presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
+        }
+
+        // Boundary void pass, every camera mode: smoke on the pixels whose view ray reaches the floor
+        // plane outside the map. After the sky, so the smoke covers it; it restores the world state.
+        if (_boundaryMistSettings.Enabled)
+        {
+            _boundaryMist?.Draw(presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
         }
 
         DrawEffectsPass(in sky, in presentation, gpuTimer, (float)args.Time);

@@ -1,4 +1,5 @@
 using Dream.Rendering.Lighting;
+using Dream.Rendering.Mist;
 using Dream.Simulation.Players;
 using OpenTK.Mathematics;
 
@@ -13,6 +14,13 @@ public partial class Render
 
     // The LightList uniform buffer (point lights, wave T2a). Same lifetime as _frameLightingBuffer.
     private LightListBuffer? _lightListBuffer;
+
+    // The BoundaryMist uniform buffer (shaders/boundaryMist.glsl). Same lifetime as _frameLightingBuffer.
+    private BoundaryMistBuffer? _boundaryMistBuffer;
+
+    // The map size, clock and switch of the boundary mist wall. The scene sets it each frame before
+    // DrawWorld; the default (no map) uploads strength 0.
+    public BoundaryMistInput BoundaryMist { get; set; }
 
     // Lighting the next world pass uploads. The scene sets it each frame before DrawWorld.
     public void SetFrameLighting(in FrameLighting lighting) => _frameLighting = lighting;
@@ -31,18 +39,21 @@ public partial class Render
         _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view);
         SelectPointLights(cameraPosition, in view);
         _lightListBuffer?.Upload(in _selectedLights, in view);
+        _boundaryMistBuffer?.Upload(BoundaryMist, camera.Position);
     }
 
     public void BindWorldLighting()
     {
         _frameLightingBuffer?.BindWorld();
         _lightListBuffer?.BindWorld();
+        _boundaryMistBuffer?.BindWorld();
     }
 
     public void BindViewModelLighting()
     {
         _frameLightingBuffer?.BindViewModel();
         _lightListBuffer?.BindViewModel();
+        _boundaryMistBuffer?.BindViewModel();
     }
 
     // Creates the buffers and fills both ranges of each with the current lighting (camera at the
@@ -55,6 +66,8 @@ public partial class Render
         _selectedLights = default;
         _lightListBuffer = new LightListBuffer();
         _lightListBuffer.Upload(in _selectedLights, Matrix4.Identity);
+        _boundaryMistBuffer = new BoundaryMistBuffer();
+        _boundaryMistBuffer.Upload(default, Vector3.Zero);
         InitializeDebugPointLights();
     }
 
@@ -62,13 +75,21 @@ public partial class Render
     {
         try
         {
-            _lightListBuffer?.Dispose();
-            _lightListBuffer = null;
+            _boundaryMistBuffer?.Dispose();
+            _boundaryMistBuffer = null;
         }
         finally
         {
-            _frameLightingBuffer?.Dispose();
-            _frameLightingBuffer = null;
+            try
+            {
+                _lightListBuffer?.Dispose();
+                _lightListBuffer = null;
+            }
+            finally
+            {
+                _frameLightingBuffer?.Dispose();
+                _frameLightingBuffer = null;
+            }
         }
     }
 }
