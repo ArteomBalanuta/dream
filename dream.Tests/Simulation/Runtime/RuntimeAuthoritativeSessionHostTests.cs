@@ -22,6 +22,12 @@ namespace Dream.Tests.Simulation.Runtime;
 
 public class RuntimeAuthoritativeSessionHostTests
 {
+    // Effective attack speed is the sheet's attack speed (base plus gear) plus AttackSpeedPerAgility per
+    // point of Agility. Expectations below are written as "sheet total + that term" so the number keeps
+    // its derivation; at the starting Agility of 10 the term is 0.1.
+    private static float WithAgility(float sheetAttackSpeed, int agility = PlayerStatRules.StartAgility)
+        => sheetAttackSpeed + (PlayerStatRules.AttackSpeedPerAgility * agility);
+
     [Fact]
     public void CreateDefault_UsesConfiguredStartupWorldSize()
     {
@@ -481,7 +487,8 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.Equal(1, runtime.Player.Combatant.Level);
         Assert.Equal(27, runtime.Player.Combatant.Experience);
         Assert.Equal(19, runtime.Player.Combatant.Stats.Strength);
-        Assert.Equal(3.75f, runtime.Player.Combatant.Stats.AttackSpeed);
+        // 3.5 persisted plus the kit's 0.25 is 3.75 on the sheet, plus 0.1 from the row's Agility 10: 3.85.
+        Assert.Equal(WithAgility(3.75f), runtime.Player.Combatant.Stats.AttackSpeed);
         Assert.Equal(14, runtime.Player.Combatant.Stats.Vitality);
         Assert.Equal(73, runtime.Player.Combatant.Health.CurrentHealth);
         Assert.Equal(120, runtime.Player.Combatant.Health.MaxHealth);
@@ -931,7 +938,9 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.Equal(2.5f, runtime.Player.Combatant.BaseStats.AttackSpeed, 3);
         Assert.Equal(11, runtime.Player.Combatant.BaseStats.Vitality);
         Assert.Equal(16, runtime.Player.Combatant.Stats.Strength);
-        Assert.Equal(4.0f, runtime.Player.Combatant.Stats.AttackSpeed, 3);
+        // 2.5 from the stats update plus the equipped tool's 1.5 is 4.0 on the sheet, plus 0.1 from
+        // Agility 10: 4.1.
+        Assert.Equal(WithAgility(4.0f), runtime.Player.Combatant.Stats.AttackSpeed, 3);
         Assert.Equal(11, runtime.Player.Combatant.Stats.Vitality);
 
         PersistedPlayerProfile? persisted = playerProfiles.TryGet("Player A");
@@ -972,7 +981,9 @@ public class RuntimeAuthoritativeSessionHostTests
         host.JoinSession("session-a", "Player A");
 
         Assert.Equal(110, runtime.Player.Combatant.Health.MaxHealth);
-        Assert.Equal(2.0f / 2.25f, runtime.Player.Combatant.DerivedStats.AttackIntervalSeconds, 3);
+        // The injected formula is 2.0 / attack_speed, and the attack speed is the sheet's 2.25 (2.0 start
+        // plus the kit's 0.25) plus 0.1 from Agility 10: 2.0 / 2.35, about 0.851 s.
+        Assert.Equal(2.0f / WithAgility(2.25f), runtime.Player.Combatant.DerivedStats.AttackIntervalSeconds, 3);
     }
 
     [Fact]

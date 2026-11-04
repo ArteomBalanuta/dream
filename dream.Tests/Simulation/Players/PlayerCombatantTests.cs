@@ -10,6 +10,12 @@ namespace Dream.Tests.Simulation.Players;
 
 public class PlayerCombatantCombatStatTests
 {
+    // Effective attack speed is the sheet's attack speed plus AttackSpeedPerAgility per point of
+    // Agility, so every expectation below is written as "the gear total plus that term" rather than as
+    // the resulting decimal. A default character has Agility 10, so the term is 0.1.
+    private static float WithDefaultAgility(float sheetAttackSpeed)
+        => sheetAttackSpeed + (PlayerStatRules.AttackSpeedPerAgility * PlayerStatRules.StartAgility);
+
     [Fact]
     public void Constructor_Seeds_Default_Derived_Stats()
     {
@@ -24,11 +30,16 @@ public class PlayerCombatantCombatStatTests
     public void ApplyStats_Preserves_Health_Ratio_When_Max_Health_Changes()
     {
         PlayerCombatant combatant = new(() => Vector3.Zero);
-        combatant.ApplyDamage(60);
+
+        // Defense 2 (the default Agility 10 / 4) is armor, so the 60 arrives as
+        // 60 * 100 / 102 = 58.82 -> 59, leaving 41 of 100.
+        Assert.Equal(59, combatant.ApplyDamage(60).AppliedAmount);
+        Assert.Equal(41, combatant.Health.CurrentHealth);
 
         combatant.ApplyStats(new PlayerCombatStats { Strength = 10, AttackSpeed = 2f, Vitality = 20 });
 
-        Assert.Equal(60, combatant.Health.CurrentHealth);
+        // The ratio is what is preserved: 41 / 100 of the new 150 is 61.5, rounded to 62.
+        Assert.Equal(62, combatant.Health.CurrentHealth);
         Assert.Equal(150, combatant.Health.MaxHealth);
     }
 
@@ -47,12 +58,15 @@ public class PlayerCombatantCombatStatTests
         Assert.Equal(12, combatant.BaseStats.Strength);
         Assert.Equal(2.5f, combatant.BaseStats.AttackSpeed, 3);
         Assert.Equal(11, combatant.BaseStats.Vitality);
+        // Base 2.5 plus the 1.5 on the weapon is 4.0 on the sheet, plus 0.1 from Agility 10: 4.1.
+        float expectedSpeed = WithDefaultAgility(2.5f + 1.5f);
         Assert.Equal(16, combatant.Stats.Strength);
-        Assert.Equal(4.0f, combatant.Stats.AttackSpeed, 3);
+        Assert.Equal(expectedSpeed, combatant.Stats.AttackSpeed, 3);
         Assert.Equal(11, combatant.Stats.Vitality);
         Assert.Equal(37, combatant.DerivedStats.MinDamage);
         Assert.Equal(74, combatant.DerivedStats.MaxDamage);
-        Assert.Equal(0.25f, combatant.DerivedStats.AttackIntervalSeconds, 3);
+        // One attack per 1 / 4.1 s, about 0.244.
+        Assert.Equal(1f / expectedSpeed, combatant.DerivedStats.AttackIntervalSeconds, 3);
     }
 
     [Fact]
@@ -70,7 +84,8 @@ public class PlayerCombatantCombatStatTests
         combatant.ApplyEquipment(equipment);
 
         Assert.Equal(15, combatant.Stats.Strength);
-        Assert.Equal(3f, combatant.Stats.AttackSpeed, 3);
+        // Base 2 plus the 1 on the weapon is 3 on the sheet, plus 0.1 from Agility 10: 3.1.
+        Assert.Equal(WithDefaultAgility(2f + 1f), combatant.Stats.AttackSpeed, 3);
         Assert.Equal(15, combatant.Stats.Vitality);
         Assert.Equal(16, combatant.EffectiveArmor);
         // The base stats and the base of Armor are untouched.

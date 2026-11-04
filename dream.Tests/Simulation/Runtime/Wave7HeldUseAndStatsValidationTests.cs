@@ -191,7 +191,15 @@ public class Wave7HeldUseAndStatsValidationTests
             new PlayerStatsUpdateIntent(requested)));
 
         Assert.True(result.Accepted, result.Rejection?.Reason);
-        Assert.Equal(requested, Assert.IsType<PlayerStatsUpdateResult>(result.Payload).Stats);
+        // The intent carries Strength, Attack Speed and Vitality only; its Agility and Energy fields
+        // default to 0 and are deliberately ignored, so the character keeps the values it joined with -
+        // the starting 10s here. That a stats update cannot edit Agility or Energy is the point.
+        PlayerCombatStatsSnapshot expected = requested with
+        {
+            Agility = PlayerStatRules.StartAgility,
+            Energy = PlayerStatRules.StartEnergy
+        };
+        Assert.Equal(expected, Assert.IsType<PlayerStatsUpdateResult>(result.Payload).Stats);
     }
 
     [Fact]

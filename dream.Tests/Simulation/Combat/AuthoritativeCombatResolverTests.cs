@@ -17,8 +17,9 @@ using Dream.Simulation.World.Geometry;
 namespace Dream.Tests.Simulation.Combat;
 
 // ARCH-3 step B: combat resolution moved out of WorldSessionRuntime into AuthoritativeCombatResolver.
-// These tests drive the resolver with no runtime, pin the runtime path's seeded rolls to values
-// recorded on the pre-extraction code, and check the single-cell fracture capture against the old
+// These tests drive the resolver with no runtime, pin the runtime path's seeded rolls to a recorded
+// array (see SeededRollsGolden: re-recorded once the attack cadence moved, so it is a determinism pin
+// rather than pre-extraction evidence), and check the single-cell fracture capture against the old
 // capture-everything-then-filter path.
 public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
 {
@@ -26,26 +27,38 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
     private const int EnemyActorId = 4100;
     private static readonly PlayerSessionId SessionA = new("session-a");
 
-    // Recorded on 91449a7 (before the extraction) by the same hit sequence as
-    // RuntimePath_SeededRolls_MatchPreExtractionGoldenAndTheResolver: (amount, kind, server tick).
-    private static readonly (int Amount, FloatingCombatTextKind Kind, ulong Tick)[] PreExtractionGolden =
+    // (amount, kind, server tick) for the hit sequence in
+    // RuntimePath_SeededRolls_MatchTheRecordedRollsAndTheResolver.
+    //
+    // Re-recorded on 2026-11-04. The original array was recorded on 91449a7, before combat resolution
+    // moved out of WorldSessionRuntime, and it no longer holds: 3fc2a4f gave Agility +0.01 attack speed
+    // per point, so a default character's effective attack speed went 2.0 -> 2.1, the attack interval
+    // 0.5 s -> 1 / 2.1 s and the cadence 33 ticks -> 32. Every hit therefore lands on a different server
+    // tick, and the tick seeds the roll, so all twelve amounts change with it.
+    //
+    // Note for the next reader: this array no longer proves the extraction was faithful - that evidence
+    // could not be preserved, because the cadence genuinely moved. What still proves it is the per-hit
+    // cross-check against the live AuthoritativeCombatResolver.ResolveSeededAttack inside the loop, which
+    // passed throughout. Treat this array as a determinism pin only: if it moves again without a
+    // deliberate change to the cadence, the damage roll or the seeding, that is a regression.
+    private static readonly (int Amount, FloatingCombatTextKind Kind, ulong Tick)[] SeededRollsGolden =
     [
-        (50, FloatingCombatTextKind.Regular, 33),
-        (46, FloatingCombatTextKind.Regular, 66),
-        (75, FloatingCombatTextKind.Critical, 99),
-        (35, FloatingCombatTextKind.Regular, 132),
-        (33, FloatingCombatTextKind.Regular, 165),
-        (25, FloatingCombatTextKind.Regular, 198),
-        (39, FloatingCombatTextKind.Regular, 231),
-        (46, FloatingCombatTextKind.Regular, 264),
-        (38, FloatingCombatTextKind.Regular, 297),
-        (39, FloatingCombatTextKind.Regular, 330),
-        (75, FloatingCombatTextKind.Critical, 363),
-        (26, FloatingCombatTextKind.Regular, 396),
+        (44, FloatingCombatTextKind.Regular, 32),
+        (29, FloatingCombatTextKind.Regular, 64),
+        (40, FloatingCombatTextKind.Regular, 96),
+        (46, FloatingCombatTextKind.Regular, 128),
+        (40, FloatingCombatTextKind.Regular, 160),
+        (30, FloatingCombatTextKind.Regular, 192),
+        (75, FloatingCombatTextKind.Critical, 224),
+        (43, FloatingCombatTextKind.Regular, 256),
+        (38, FloatingCombatTextKind.Regular, 288),
+        (48, FloatingCombatTextKind.Regular, 320),
+        (75, FloatingCombatTextKind.Critical, 352),
+        (39, FloatingCombatTextKind.Regular, 384),
     ];
 
     [Fact]
-    public void RuntimePath_SeededRolls_MatchPreExtractionGoldenAndTheResolver()
+    public void RuntimePath_SeededRolls_MatchTheRecordedRollsAndTheResolver()
     {
         SceneEventHub events = new();
         List<(int Amount, FloatingCombatTextKind Kind)> applied = [];
@@ -70,7 +83,7 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
             runtime.Player.Combatant.DerivedStats.AttackIntervalSeconds / SimulationClock.FixedDeltaSeconds) + 1;
         ulong tick = 0;
         List<(int Amount, FloatingCombatTextKind Kind, ulong Tick)> runtimeRolls = [];
-        for (int hit = 1; hit <= PreExtractionGolden.Length; hit++)
+        for (int hit = 1; hit <= SeededRollsGolden.Length; hit++)
         {
             for (int step = 0; step < ticksPerAttack; step++)
             {
@@ -101,7 +114,8 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
             Assert.Equal((expected.Damage, expected.FloatingTextKind), applied[^1]);
         }
 
-        Assert.Equal(PreExtractionGolden, runtimeRolls);
+        output.WriteLine(string.Join(" ", runtimeRolls.Select(r => $"({r.Amount}, {r.Kind}, {r.Tick})")));
+        Assert.Equal(SeededRollsGolden, runtimeRolls);
     }
 
     [Fact]

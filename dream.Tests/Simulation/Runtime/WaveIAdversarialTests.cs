@@ -491,16 +491,28 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
             loadout.Set(slot == EquipmentSlot.Body ? EquipmentSlot.Head : EquipmentSlot.Body, [new StatModifier(StatId.Armor, StatOp.Flat, armor)]);
             combatant.ApplyEquipment(loadout);
 
+            // Default Agility on purpose: the adversarial range is the point, and the armor the formula
+            // sees is MitigationArmor = gear Armor + Defense (Agility / 4), not the gear sum alone.
             int effective = combatant.EffectiveArmor;
+            int mitigationArmor = combatant.MitigationArmor;
             Assert.InRange(effective, 0, 1000);
-            Assert.InRange(combatant.DamageTakenFactor, 100d / 1100d - 1e-12, 1d);
+            Assert.Equal(effective + combatant.Defense, mitigationArmor);
+            // 100 / (100 + armor) over the widest armor the sheet can reach: 1000 of gear plus Defense.
+            Assert.InRange(combatant.DamageTakenFactor, 100d / (1100d + combatant.Defense) - 1e-12, 1d);
             foreach (int amount in new[] { 1, 2, 12, 18, 1000, 1_000_000, int.MaxValue })
             {
                 int mitigated = combatant.MitigateDamage(amount);
                 Assert.InRange(mitigated, 1, amount);
-                if (effective == 0)
+                if (mitigationArmor == 0)
                 {
                     Assert.Equal(amount, mitigated);
+                }
+                else if (amount >= 1000)
+                {
+                    // Any armor at all strictly reduces a hit big enough to clear the rounding, so this
+                    // branch stays live even though the default Agility keeps MitigationArmor above 0:
+                    // at the floor of Defense 2, 1000 * 100 / 102 = 980.
+                    Assert.True(mitigated < amount, $"mitigation armor {mitigationArmor} did not reduce {amount}");
                 }
             }
 
@@ -512,7 +524,7 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void AnInfiniteSumTimesAZeroPercent_IsNaN_AndMeansNoArmor_NotAThrow()
+    public void AnInfiniteSumTimesAZeroPercent_IsNaN_AndMeansNoGearArmor_NotAThrow()
     {
         PlayerCombatant combatant = new(() => new Vector3(1f, 1f, 0.5f));
         EquipmentLoadout loadout = new();
@@ -522,9 +534,14 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
 
         combatant.ApplyEquipment(loadout);
 
+        // NaN means no *gear* armor. Defense survives it, so the factor is 100 / (100 + 2), and an 18 hit
+        // still applies as 18 because 18 * 100 / 102 = 17.65 rounds away from zero.
         Assert.Equal(0, combatant.EffectiveArmor);
-        Assert.Equal(1.0, combatant.DamageTakenFactor);
+        Assert.Equal(PlayerStatRules.Defense(PlayerStatRules.StartAgility), combatant.MitigationArmor);
+        Assert.Equal(100.0 / 102.0, combatant.DamageTakenFactor, 12);
         Assert.Equal(18, combatant.MitigateDamage(18));
+        // And the gear-free floor does reduce a hit big enough to clear the rounding: 1000 -> 980.
+        Assert.Equal(980, combatant.MitigateDamage(1000));
     }
 
     [Fact]

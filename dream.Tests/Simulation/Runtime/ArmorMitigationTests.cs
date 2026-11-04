@@ -12,13 +12,24 @@ using Dream.Tests.Utilities;
 namespace Dream.Tests.Simulation.Runtime;
 
 // Wave I1, I-D1 to I-D3: Armor reduces damage taken (player.damage_taken_factor = 100 / (100 + armor),
-// rounded away from zero, at least 1), and Armor 0 stays identical to the raw hit. This replaces the
-// wave H test that pinned Armor as having no effect.
+// rounded away from zero, at least 1). This replaces the wave H test that pinned Armor as having no
+// effect.
+//
+// The armor the formula is evaluated for is PlayerCombatant.MitigationArmor = gear Armor + Defense, and
+// Defense = Agility / 4, so a default character (Agility 10, Defense 2) mitigates ~2% with no gear at
+// all. The pure-Armor design table below therefore builds its player with Agility 0; every such test is
+// paired with a default-Agility case asserting a *different* number, so zeroing Agility can never turn
+// the Defense term into dead code without a test going red.
 public sealed class ArmorMitigationTests
 {
-    private static PlayerCombatant WithArmor(float armor)
+    private const int NoAgility = PlayerCombatStats.MinAgility;
+
+    // Defense at the default Agility 10: 10 / 4 = 2.
+    private const int DefaultDefense = PlayerStatRules.StartAgility / 4;
+
+    private static PlayerCombatant WithArmor(float armor, int agility = PlayerStatRules.StartAgility)
     {
-        PlayerCombatant combatant = new(() => new Vector3(1.0f, 1f, 0.5f));
+        PlayerCombatant combatant = new(() => new Vector3(1.0f, 1f, 0.5f), stats: new PlayerCombatStats { Agility = agility });
         EquipmentLoadout loadout = new();
         if (armor > 0f)
         {
@@ -55,12 +66,14 @@ public sealed class ArmorMitigationTests
         return player.Health.CurrentHealth;
     }
 
+    // Pure armor: Agility 0 so MitigationArmor is 0 too, which is the only state that takes a hit
+    // unchanged. Paired with Armor0_AtTheDefaultAgility_StillMitigates below.
     [Fact]
-    public void Armor0_ApplyDamage_EqualsTheRawHit_ForEveryAmount1To1000()
+    public void Armor0_AndAgility0_ApplyDamage_EqualsTheRawHit_ForEveryAmount1To1000()
     {
         for (int amount = 1; amount <= 1000; amount++)
         {
-            PlayerCombatant mitigated = WithArmor(0f);
+            PlayerCombatant mitigated = WithArmor(0f, NoAgility);
             HealthState raw = new(mitigated.Health.MaxHealth);
             // A player with 1000 health would end the loop early; give both the same large pool.
             mitigated.Health.SetAuthoritativeState(100000, 100000);
@@ -73,10 +86,28 @@ public sealed class ArmorMitigationTests
             Assert.Equal(amount, mitigated.MitigateDamage(amount));
         }
 
-        Assert.Equal(1.0, WithArmor(0f).DamageTakenFactor);
-        Assert.Equal(0, WithArmor(0f).MitigateDamage(0));
-        Assert.Equal(-5, WithArmor(40f).MitigateDamage(-5));
-        Assert.Equal(0, WithArmor(40f).MitigateDamage(0));
+        Assert.Equal(0, WithArmor(0f, NoAgility).MitigationArmor);
+        Assert.Equal(1.0, WithArmor(0f, NoAgility).DamageTakenFactor);
+        Assert.Equal(0, WithArmor(0f, NoAgility).MitigateDamage(0));
+        Assert.Equal(-5, WithArmor(40f, NoAgility).MitigateDamage(-5));
+        Assert.Equal(0, WithArmor(40f, NoAgility).MitigateDamage(0));
+    }
+
+    // The pairing for the test above: the same gear (none) at the default Agility is *not* the raw hit,
+    // because Defense 2 is still armor. factor = 100 / (100 + 2); 26 * 100 / 102 = 25.49 -> 25,
+    // 100 * 100 / 102 = 98.04 -> 98, and 1 * 100 / 102 = 0.98 -> the floor of 1.
+    [Fact]
+    public void Armor0_AtTheDefaultAgility_StillMitigates_BecauseDefenseIsArmor()
+    {
+        PlayerCombatant player = WithArmor(0f);
+
+        Assert.Equal(0, player.EffectiveArmor);
+        Assert.Equal(DefaultDefense, player.Defense);
+        Assert.Equal(DefaultDefense, player.MitigationArmor);
+        Assert.Equal(100.0 / 102.0, player.DamageTakenFactor, 12);
+        Assert.Equal(25, player.MitigateDamage(26));
+        Assert.Equal(98, player.MitigateDamage(100));
+        Assert.Equal(1, player.MitigateDamage(1));
     }
 
     [Theory]
@@ -90,12 +121,31 @@ public sealed class ArmorMitigationTests
     [InlineData(100, 18, 9)]
     public void Armor_MitigatesWolfAndDireBites_AsTheDesignTable(int armor, int bite, int expected)
     {
-        PlayerCombatant player = WithArmor(armor);
+        // Agility 0, so the table is pure Armor. The paired default-Agility rows are the theory below.
+        PlayerCombatant player = WithArmor(armor, NoAgility);
         int before = player.Health.CurrentHealth;
 
         DamageReceipt receipt = player.ApplyDamage(bite);
 
         Assert.Equal(expected, receipt.AppliedAmount);
+        Assert.Equal(before - expected, player.Health.CurrentHealth);
+        Assert.Equal(expected, player.MitigateDamage(bite));
+    }
+
+    // The pairing for the design table: the same gear at the default Agility mitigates one point more,
+    // because MitigationArmor is Armor + 2. 12 * 100 / 127 = 9.45 -> 9 (the table's 10 at armor 25) and
+    // 12 * 100 / 142 = 8.45 -> 8 (the table's 9 at armor 40). If the Defense term were dropped these
+    // would read 10 and 9 and this test would fail.
+    [Theory]
+    [InlineData(25, 12, 9)]
+    [InlineData(40, 12, 8)]
+    public void Armor_AtTheDefaultAgility_MitigatesOneMoreThanTheDesignTable(int armor, int bite, int expected)
+    {
+        PlayerCombatant player = WithArmor(armor);
+        int before = player.Health.CurrentHealth;
+
+        Assert.Equal(armor + DefaultDefense, player.MitigationArmor);
+        Assert.Equal(expected, player.ApplyDamage(bite).AppliedAmount);
         Assert.Equal(before - expected, player.Health.CurrentHealth);
         Assert.Equal(expected, player.MitigateDamage(bite));
     }
@@ -145,12 +195,14 @@ public sealed class ArmorMitigationTests
 
         Assert.Equal(bareBytes, armoredBytes);
 
-        // An actual change does evaluate: the armor 60 factor replaces the armor 40 one.
-        Assert.Equal(100.0 / 140.0, armored.DamageTakenFactor, 12);
+        // An actual change does evaluate: the armor 60 factor replaces the armor 40 one. Default Agility
+        // here, so the mitigation armor is gear + Defense 2: 42, then 62, then 2 with the gear off.
+        Assert.Equal(100.0 / 142.0, armored.DamageTakenFactor, 12);
         armored.ApplyEquipment(LoadoutWithArmor(60f));
-        Assert.Equal(100.0 / 160.0, armored.DamageTakenFactor, 12);
+        Assert.Equal(100.0 / 162.0, armored.DamageTakenFactor, 12);
         armored.ApplyEquipment(new EquipmentLoadout());
-        Assert.Equal(1.0, armored.DamageTakenFactor);
+        Assert.Equal(100.0 / 102.0, armored.DamageTakenFactor, 12);
+        // 12 * 100 / 102 = 11.76, rounded away from zero, so a 12 bite is still a 12 at Defense 2.
         Assert.Equal(12, armored.MitigateDamage(12));
     }
 
@@ -172,7 +224,8 @@ public sealed class ArmorMitigationTests
             registry.UpdateAll(0.25f, new Vector3(1.0f, 1f, 0.5f), player, new SceneEventHub(), map: null);
         }
 
-        Assert.Equal(before - 10, player.Health.CurrentHealth);
+        // Armor 25 + Defense 2 = 27; 12 * 100 / 127 = 9.45, rounded away from zero -> 9.
+        Assert.Equal(before - 9, player.Health.CurrentHealth);
     }
 
     private static EquipmentLoadout LoadoutWithArmor(float armor)
@@ -197,6 +250,9 @@ public sealed class ArmorMitigationTests
 
         combatant.ApplyEquipment(loadout);
 
+        // EffectiveArmor is gear only; MitigationArmor is what the formula divides by.
         Assert.Equal(18, combatant.EffectiveArmor);
+        Assert.Equal(DefaultDefense, combatant.Defense);
+        Assert.Equal(18 + DefaultDefense, combatant.MitigationArmor);
     }
 }

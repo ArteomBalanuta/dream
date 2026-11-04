@@ -98,8 +98,10 @@ public class PlayerCombatantTests
 
         Assert.Equal(CreatureKind.Player, combatant.Actor.Kind);
         Assert.Equal(new Vector3(5f, 2.7f, 6f), combatant.GetCombatAnchorWorldPosition());
-        Assert.Equal(70, combatant.Health.CurrentHealth);
-        Assert.Equal(30, receipt.AppliedAmount);
+        // A default player is never naked in mitigation terms: Defense 2 (Agility 10 / 4) is armor, so
+        // the 30 arrives as 30 * 100 / 102 = 29.41 -> 29 and 71 of the 100 is left.
+        Assert.Equal(29, receipt.AppliedAmount);
+        Assert.Equal(71, combatant.Health.CurrentHealth);
         Assert.False(receipt.WasFatal);
     }
 }
