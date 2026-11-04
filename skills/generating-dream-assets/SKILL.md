@@ -41,8 +41,12 @@ content footprints): `references/asset-families.md`. Ground schema, budgets and 
 - Exported at `gen_props.WORLD_UNITS_PER_U` = 0.039 world units per u, glTF Y up, +Z front, base at y = 0. The player
   is 1.2 world units tall; a cover asset stays under 0.4.
 - Rigid, one node, embedded PNG, no URI, no skin or animation (characters excepted).
-- One baked albedo atlas (`charforge.unwrap_split` + `bake_albedo`, encoded by `gen_char_player.encode_atlas`): the
-  bytes are linear albedo, the lift applied once. Albedo, AO, cavity, wear, soot, dust only - **no directional key light
+- One baked albedo atlas (`charforge.unwrap_split` + `bake_albedo`). Props encode it with `gen_char_player.encode_atlas`
+  (true linear plus a lift). Ground assets use `groundkit.encode_ground_atlas` instead: baked bytes as-is times
+  `GROUND_ALBEDO_GAIN` (1.5), because the engine samples bytes as linear, like the terrain tiles. Decoding to true
+  linear made the ground assets about 6x too dark, so they read as black cutouts. Thin double-sided sheets (grass,
+  leaves, twigs, bushes) go through `groundkit.sheet_normals`: downward normals are flipped and leaned toward +Y. The
+  shaders have no back-face handling. Albedo, AO, cavity, wear, soot, dust only - **no directional key light
   and no cast shadow are baked**; the engine lights it and the sun moves.
 - Contact shadow = a separate alpha-MASK disc primitive (`gen_props.contact_texture` / `disc_arrays`), never BLEND
   (blending is off in the world pass). Ground: only accent and landmark assets carry one.
