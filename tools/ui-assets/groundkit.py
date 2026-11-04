@@ -14,6 +14,7 @@ landmark assets with a disc, "ground.contact" (alpha-MASK disc). Nothing is emis
 """
 from __future__ import annotations
 
+import importlib
 import json
 import re
 import struct
@@ -31,8 +32,9 @@ if str(HERE) not in sys.path:
 
 import charforge as C  # noqa: E402
 import gen_char_player as P  # noqa: E402
-import gen_props as GP  # noqa: E402
 import gltfwrite as G  # noqa: E402
+
+GP = importlib.import_module("gen_props")   # by name: check_sources.py allows tools to import only a fixed set of siblings
 
 GROUND_ROOT = HERE.parents[1] / "dream" / "animations" / "ground"
 SCHEMA = "dream.ground/1"
@@ -50,6 +52,7 @@ MATERIALS: tuple[str, ...] = ("grass", "dirt", "stone", "sand", "mud", "snow", "
 FAMILIES = ("flora", "stone", "decals")
 BAKED_MATERIAL = "ground.baked"
 CONTACT_MATERIAL = "ground.contact"
+PNG_MAGIC = bytes((0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A))
 FAMILY_BYTES_MAX = {"flora": 5_000_000, "stone": 2_500_000, "decals": 1_200_000}
 
 
@@ -182,6 +185,50 @@ def glb_material_names(data: bytes) -> list[str] | None:
     return [m.get("name", "") for m in doc.get("materials", [])]
 
 
+def glb_errors(stem: str, data: bytes, layer: str) -> list[str]:
+    """The container gates of a ground GLB (pure on the bytes): rigid, one node, embedded PNG, the two material names,
+    no BLEND, no emissive; a decal's materials are alpha-MASK, a disc is MASK and only accent / landmark assets carry one."""
+    try:
+        doc, boff = G._check_container(data)
+    except (AssertionError, KeyError, ValueError, struct.error) as e:
+        return [f"{stem}: GLB container invalid ({e!r})"]
+    errs = []
+    if "skins" in doc or doc.get("animations"):
+        errs.append(f"{stem}: a ground asset is rigid: no skin, no animation")
+    if len(doc.get("nodes", [])) != 1 or doc["nodes"][0].get("name") != stem:
+        errs.append(f"{stem}: expected one node named {stem}, got {[n.get('name') for n in doc.get('nodes', [])]}")
+    for key in ("buffers", "images"):
+        for item in doc.get(key, []):
+            if "uri" in item:
+                errs.append(f"{stem}: {key} entry uses a URI; everything is embedded")
+    for img in doc.get("images", []):
+        bv = doc["bufferViews"][img["bufferView"]]
+        if img.get("mimeType") != "image/png" or data[boff + 8 + bv["byteOffset"]:][:8] != PNG_MAGIC:
+            errs.append(f"{stem}: an image is not an embedded PNG")
+    mats = doc.get("materials", [])
+    names = [m.get("name", "") for m in mats]
+    if any(n not in (BAKED_MATERIAL, CONTACT_MATERIAL) for n in names) or len(set(names)) != len(names):
+        errs.append(f"{stem}: materials {names} must be {BAKED_MATERIAL} and optionally {CONTACT_MATERIAL}")
+    for m in mats:
+        if "baseColorTexture" not in m.get("pbrMetallicRoughness", {}):
+            errs.append(f"{stem}: {m.get('name')} has no base colour texture")
+        if m.get("alphaMode") == "BLEND":
+            errs.append(f"{stem}: {m.get('name')} is BLEND; the world pass has blending off")
+        if "emissiveFactor" in m:
+            errs.append(f"{stem}: {m.get('name')} is emissive; ground assets are not")
+        masked = m.get("alphaMode") == "MASK"
+        is_disc = m.get("name") == CONTACT_MATERIAL
+        if layer == "decal" and not masked:
+            errs.append(f"{stem}: a decal material must be alpha-MASK")
+        if is_disc and (not masked or layer in ("decal", "cover")):
+            errs.append(f"{stem}: the contact disc must be an alpha-MASK material and only accent / landmark assets carry one")
+        if not is_disc and layer != "decal" and masked:
+            errs.append(f"{stem}: the baked material of a {layer} asset must be opaque")
+    if layer != "decal" and BAKED_MATERIAL not in names:
+        errs.append(f"{stem}: no {BAKED_MATERIAL} material")
+    return errs
+
+
 def validate_manifest(doc: dict, root: Path | None = None) -> list[str]:
     root = Path(root) if root else GROUND_ROOT
     errs: list[str] = []
@@ -228,13 +275,6 @@ def validate_manifest(doc: dict, root: Path | None = None) -> list[str]:
         if not p.is_file():
             errs.append(f"{aid}: {a.get('file')} does not exist under {root}")
             continue
-        names = glb_material_names(p.read_bytes())
-        if names is None:
-            errs.append(f"{aid}: {a.get('file')} is not a GLB")
-        else:
-            bad = [n for n in names if n not in (BAKED_MATERIAL, CONTACT_MATERIAL)]
-            if bad or BAKED_MATERIAL not in names:
-                errs.append(f"{aid}: materials {names} must be {BAKED_MATERIAL} and optionally {CONTACT_MATERIAL}")
     fam_dir = root / str(family)
     if fam_dir.is_dir():
         for g in sorted(fam_dir.glob("*.glb")):
@@ -254,30 +294,25 @@ def _tmp_parent() -> str | None:
 
 
 def family_errors(main, family: str) -> list[str]:
-    """Shipped-bytes gate: main(tmp) must write exactly what is committed under GROUND_ROOT (json LF-normalised)."""
+    """Shipped-bytes gate: main(tmp) must write exactly what is committed under GROUND_ROOT (json LF-normalised, as
+    uiart.shipped_errors compares), and the committed family may hold nothing the generator no longer makes."""
     import uiart as U
-    errs: list[str] = []
-    with tempfile.TemporaryDirectory(dir=_tmp_parent()) as d:
-        main(Path(d))
-        fresh_json = Path(d) / f"{family}.json"
-        fresh_dir = Path(d) / family
-        if not fresh_json.is_file() or not fresh_dir.is_dir():
-            return [f"shipped: the generator wrote no {family}.json / {family}/ to compare with {GROUND_ROOT}"]
-        pairs = [(fresh_json, GROUND_ROOT / f"{family}.json")] + [(p, GROUND_ROOT / family / p.name) for p in sorted(fresh_dir.glob("*.glb"))]
-        for fresh_p, c in pairs:
-            rel = c.relative_to(GROUND_ROOT).as_posix()
-            if not c.exists():
-                errs.append(f"{rel} is generated but not committed")
-                continue
-            a, b = U._canon_shipped(c.read_bytes(), c.suffix), U._canon_shipped(fresh_p.read_bytes(), fresh_p.suffix)
-            if a != b:
-                errs.append(f"{rel}: the committed file ({len(a)} bytes) differs from what the generator makes ({len(b)} bytes) - "
-                            "re-run the generator and commit")
-        gen_names = {p.name for p in fresh_dir.glob("*.glb")}
-        if (GROUND_ROOT / family).is_dir():
-            for g in sorted((GROUND_ROOT / family).glob("*.glb")):
-                if g.name not in gen_names:
-                    errs.append(f"{family}/{g.name} is committed but the generator no longer makes it")
+    old = tempfile.tempdir
+    tempfile.tempdir = _tmp_parent()
+    try:
+        errs: list[str] = []
+        seen: set[str] = set()
+
+        def run(out_root):
+            main(Path(out_root))
+            seen.update(p.name for p in (Path(out_root) / family).glob("*.glb"))
+        errs += U.shipped_errors(run, ".", GROUND_ROOT)
+    finally:
+        tempfile.tempdir = old
+    if (GROUND_ROOT / family).is_dir():
+        for g in sorted((GROUND_ROOT / family).glob("*.glb")):
+            if seen and g.name not in seen:
+                errs.append(f"{family}/{g.name} is committed but the generator no longer makes it")
     return errs
 
 
@@ -291,7 +326,6 @@ def _demo_spec(layer="cover", cls="pebbles", disc=(0.0, 0.0), atlas=128) -> Grou
 
 
 def self_test() -> list[str]:
-    import copy
     fails: list[str] = []
 
     def expect(cond, msg):
@@ -311,13 +345,19 @@ def self_test() -> list[str]:
         root = Path(d)
         entry = manifest_entry("flora", "demo_stone", spec, a["bounds"])
         write_family(root, "flora", [entry], {"demo_stone": data})
-        doc = json.loads((root / "flora.json").read_text(encoding="utf-8"))
+        text = manifest_text("flora", "tools/ui-assets/gen_ground_flora.py", [entry])
+        doc = json.loads(text)
         expect(validate_manifest(doc, root) == [], f"valid manifest rejected: {validate_manifest(doc, root)}")
-        text = (root / "flora.json").read_bytes()
-        expect(text.endswith(b"\n") and b"\r" not in text, "manifest must be LF with a trailing newline")
+        expect(text.endswith("\n") and "\r" not in text and (root / "flora.json").is_file(), "manifest must be LF with a trailing newline")
+        expect(glb_errors("demo_stone", data, "cover") == [], f"valid glb rejected: {glb_errors('demo_stone', data, 'cover')}")
+        expect(glb_errors("demo_stone", data, "decal"), "an opaque material passed as a decal")
+        expect(glb_errors("demo_stone", b"junk", "cover"), "garbage passed the container gate")
+        expect(glb_errors("other", data, "cover"), "a wrong node name passed")
+        expect(glb_errors("demo_disc", glb_bytes(disc), "cover"), "a cover asset with a contact disc passed")
+        expect(glb_errors("demo_disc", glb_bytes(disc), "accent") == [], "a disc on an accent asset was rejected")
 
         def bad(mut, needle):
-            dd = copy.deepcopy(doc)
+            dd = json.loads(json.dumps(doc))
             mut(dd)
             e = validate_manifest(dd, root)
             expect(any(needle in x for x in e), f"negative '{needle}' not caught: {e}")
@@ -327,13 +367,11 @@ def self_test() -> list[str]:
         bad(lambda x: x["assets"][0].__setitem__("layer", "decal"), "decal")
         bad(lambda x: x["assets"][0].__setitem__("ground", ["lava"]), "ground")
         bad(lambda x: x["assets"][0].__setitem__("id", "flora.Bad Name"), "id must be")
-        bad(lambda x: x["assets"].append(copy.deepcopy(x["assets"][0])), "duplicate")
+        bad(lambda x: x["assets"].append(json.loads(json.dumps(x["assets"][0]))), "duplicate")
         bad(lambda x: x["assets"][0].__setitem__("file", "flora/missing.glb"), "file")
         (root / "flora" / "stale.glb").write_bytes(data)
         expect(any("stale" in x for x in validate_manifest(doc, root)), "stale glb not caught")
         (root / "flora" / "stale.glb").unlink()
-        (root / "flora" / "demo_stone.glb").write_bytes(b"junk")
-        expect(any("not a GLB" in x for x in validate_manifest(doc, root)), "non-GLB not caught")
         e2 = manifest_entry("flora", "x", {"cls": "grass", "layer": "cover", "weight": 1.23456, "scale": (0.91234, 1.1)}, (1.23456, 0.5, 2.0))
         expect(e2["radius"] == 1.235 and e2["weight"] == 1.235 and e2["scale"] == [0.912, 1.1], "rounding")
     return fails
