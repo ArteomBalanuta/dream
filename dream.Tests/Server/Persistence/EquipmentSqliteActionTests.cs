@@ -152,7 +152,10 @@ public sealed class EquipmentSqliteActionTests
         using (Run run = new(db))
         {
             Assert.True(run.Inventory.Ensure(Player));
-            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, 7));
+            // The kit wears the torch in the off hand; put it back in the bag, so the move under test
+            // starts from the main hand as it did before.
+            int torchAnchor = run.Inventory.UnequipStarterTorch(Player);
+            Assert.Equal(InventoryEquipOutcome.Equipped, run.Inventory.TryEquip(Player, torchAnchor));
             torch = MainHandId(run.Inventory);
 
             // The worn torch moves to the off hand by naming its worn slot as the source.

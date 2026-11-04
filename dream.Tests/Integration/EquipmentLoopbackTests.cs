@@ -19,12 +19,15 @@ public sealed class EquipmentLoopbackTests(ITestOutputHelper output)
         Wave12DeltaActorLoopbackTests.Peer holder = await rig.JoinAsync("h1-holder");
         Wave12DeltaActorLoopbackTests.Peer observer = await rig.JoinAsync("h1-observer");
         PlayerSessionId holderSession = new(holder.SessionId);
+        // The starter kit already wears the torch in the off hand, so it goes back to the bag over the
+        // wire first: the intents under test are the ones that put both items on from the board.
+        await SendAndWaitAsync(rig, holder, 1, new InventoryUnequipIntent(101));
         PlayerInventorySnapshot inventory = rig.Runtime.TryCaptureInventorySnapshot(holderSession)!.Value;
         int bladeSlot = inventory.Slots.First(slot => slot.Item?.ItemKind == "tool.field-blade").SlotIndex;
         int torchSlot = inventory.Slots.First(slot => slot.Item?.ItemKind == "tool.torch").SlotIndex;
 
-        await SendAndWaitAsync(rig, holder, 1, new InventoryEquipIntent(bladeSlot));
-        await SendAndWaitAsync(rig, holder, 2, new InventoryEquipIntent(torchSlot, 101));
+        await SendAndWaitAsync(rig, holder, 2, new InventoryEquipIntent(bladeSlot));
+        await SendAndWaitAsync(rig, holder, 3, new InventoryEquipIntent(torchSlot, 101));
         await WaitForLightAsync(rig, holder, HeldLightKind.Torch);
 
         PlayerInventorySnapshot held = rig.Runtime.TryCaptureInventorySnapshot(holderSession)!.Value;
@@ -34,7 +37,7 @@ public sealed class EquipmentLoopbackTests(ITestOutputHelper output)
             HeldLightKind.Torch,
             rig.Peers.Single(peer => peer == observer).Received[^1].Shown.First(actor => actor.SessionId == holder.SessionId).HeldLight);
 
-        await SendAndWaitAsync(rig, holder, 3, new InventoryUnequipIntent(101));
+        await SendAndWaitAsync(rig, holder, 4, new InventoryUnequipIntent(101));
         await WaitForLightAsync(rig, holder, HeldLightKind.None);
         Assert.Null(rig.Runtime.TryCaptureInventorySnapshot(holderSession)!.Value.Equipment);
         rig.AssertNoChainBreaksOrWithheldActors();

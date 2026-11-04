@@ -79,5 +79,9 @@ public static class ToolCatalog
     }
 }
 
-// One starter-kit kind and the kit version that introduced it (see ToolCatalog.StarterKit).
-public readonly record struct StarterKitEntry(string ItemKind, int IntroducedVersion);
+// One starter-kit kind, the kit version that introduced it (see ToolCatalog.StarterKit) and, when
+// the entry names one, the equipment well a brand-new character wears it in. EquipWell is null for a
+// kind that just goes in the bag, which is every kind but the torch; it is honoured only while
+// seeding a character that had no inventory at all, never on a later login or a top-up, so a
+// returning player's worn items are never touched (PlayerInventoryService.EquipStarterKitWells).
+public readonly record struct StarterKitEntry(string ItemKind, int IntroducedVersion, EquipmentSlot? EquipWell = null);

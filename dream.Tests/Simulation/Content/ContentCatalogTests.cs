@@ -145,7 +145,7 @@ public sealed class ContentCatalogTests
             new("tool.field-blade", 1),
             new("tool.stone-maul", 1),
             new("tool.survey-lantern", 1),
-            new("tool.torch", 2),
+            new("tool.torch", 2, EquipmentSlot.OffHand),
             new("consumable.weak-heal", 3),
             new("consumable.minor-heal", 3),
             new("potion.health", 4),
@@ -216,8 +216,14 @@ public sealed class ContentCatalogTests
     [InlineData("\"value\": -0.75", "\"value\": -9", "outside the range")]
     [InlineData("\"key\": \"tool.torch\"", "\"key\": \"tool.field-blade\"", "duplicate item key")]
     [InlineData("\"key\": \"tool.torch\"", "\"key\": \"TOOL.FIELD-BLADE\"", "duplicate item key")]
-    [InlineData("{ \"item\": \"tool.torch\", \"version\": 2 }", "{ \"item\": \"tool.missing\", \"version\": 2 }", "references missing item 'tool.missing'")]
-    [InlineData("{ \"item\": \"tool.torch\", \"version\": 2 }", "{ \"item\": \"tool.field-blade\", \"version\": 2 }", "duplicate starter kit item")]
+    [InlineData("{ \"item\": \"tool.torch\", \"version\": 2, \"equip\": \"OffHand\" }", "{ \"item\": \"tool.missing\", \"version\": 2 }", "references missing item 'tool.missing'")]
+    [InlineData("{ \"item\": \"tool.torch\", \"version\": 2, \"equip\": \"OffHand\" }", "{ \"item\": \"tool.field-blade\", \"version\": 2 }", "duplicate starter kit item")]
+    // A kit entry's equip well must be one the item itself lists, must be spelled as the enum spells
+    // it, must not be claimed by two kinds, and no other property may appear in an entry.
+    [InlineData("\"equip\": \"OffHand\"", "\"equip\": \"Head\"", "item 'tool.torch' cannot be equipped in Head")]
+    [InlineData("\"equip\": \"OffHand\"", "\"equip\": \"offhand\"", "unknown equipment slot 'offhand'")]
+    [InlineData("\"equip\": \"OffHand\"", "\"equip\": \"OffHand\", \"well\": \"OffHand\"", "unknown property")]
+    [InlineData("{ \"item\": \"tool.survey-lantern\", \"version\": 1 }", "{ \"item\": \"tool.survey-lantern\", \"version\": 1, \"equip\": \"OffHand\" }", "two starter kit items claim the OffHand slot")]
     [InlineData("\"starterKitVersion\": 4", "\"starterKitVersion\": 5", "must equal the highest starter kit entry version")]
     [InlineData("\"heldLight\": \"Torch\"", "\"heldLight\": \"Sun\"", "unknown held light")]
     [InlineData("\"visualId\": \"held.tool.torch\"", "\"visualId\": \"held.tool.torch\", \"extra\": 1", "unknown property")]

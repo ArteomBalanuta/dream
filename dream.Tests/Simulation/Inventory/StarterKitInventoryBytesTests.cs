@@ -67,9 +67,10 @@ public sealed class StarterKitInventoryBytesTests(ITestOutputHelper output)
         Assert.True(compact < v12, $"{compact} B is not smaller than the v12 shape's {v12} B");
         Assert.True(compact * 3 < v12, $"{compact} B is not under a third of {v12} B");
 
-        // The kit in its first fits: the hammer worn, the blade, maul, lantern and torch beside each other, then the four potions.
+        // The kit in its first fits: the hammer worn in the main hand and the torch in the off hand,
+        // the blade, maul and lantern beside each other, then the four potions.
         Assert.Equal(
-            """{"playerName":"Alice","columns":8,"rows":8,"bag":[[2,2,"tool.field-blade",0,[]],[4,3,"tool.stone-maul",0,[]],[6,4,"tool.survey-lantern",0,[]],[7,5,"tool.torch",0,[]],[22,6,"consumable.weak-heal",0,[]],[23,7,"consumable.minor-heal",0,[]],[24,8,"potion.health",0,[]],[25,9,"potion.mana",0,[]]],"worn":[[100,1,"tool.builder-hammer",0,[]]]}""",
+            """{"playerName":"Alice","columns":8,"rows":8,"bag":[[2,2,"tool.field-blade",0,[]],[4,3,"tool.stone-maul",0,[]],[6,4,"tool.survey-lantern",0,[]],[22,6,"consumable.weak-heal",0,[]],[23,7,"consumable.minor-heal",0,[]],[24,8,"potion.health",0,[]],[25,9,"potion.mana",0,[]]],"worn":[[100,1,"tool.builder-hammer",0,[]],[101,5,"tool.torch",0,[]]]}""",
             json);
     }
 }

@@ -338,7 +338,12 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
         Assert.True(target.IsAlive);
         Assert.Equal(vestMax, target.Combatant.Health.CurrentHealth);
         Assert.True(target.Combatant.EffectiveArmor > 0);
-        Assert.Equal("gear.leather-vest", runtime.InventoryService.BuildSnapshot(key).Equipment!.Single(slot => slot.Item != null).Item!.Value.ItemKind);
+        // The starter kit wears its torch in the off hand, so the vest is named by its own slot
+        // rather than as the only worn item.
+        Assert.Equal(
+            "gear.leather-vest",
+            runtime.InventoryService.BuildSnapshot(key).Equipment!
+                .Single(slot => slot.SlotIndex == EquipmentSlots.ToSlotIndex(EquipmentSlot.Body)).Item!.Value.ItemKind);
     }
 
     // ---- rename or release with a pending respawn or loot ----
