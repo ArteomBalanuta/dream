@@ -290,17 +290,36 @@ check_look.py --hud-rows                      now defaults to 96
 - **R9.** Asset size: three NPCs plus a hound at the player's budget add ~1.5 MB. `check_actors.py`
   carries a per-asset byte ceiling.
 
-## Open questions for the user
+## Decisions, all four taken
 
-- **Q1.** M2 reports rather than gates the open-ground number because the linear actor path bounds it
-  near 0.06. The alternative is a tonemap, which would nearly close A3 by itself and simultaneously
-  destroy A1's near-black share. **This is the real ceiling on actor legibility, and a product
-  decision:** should a figure read in open ground at night, or only in light?
-- **Q2.** Should villagers and the player stay at 1.20 m? That is half a person's height against the
-  1 m voxel grid, and the boxes being replaced are 1.64 m. Changing it touches
-  `WolfAssetDefinition.Normalization`, which is also the player's basis.
-- **Q3.** Should the default loadout carry a torch? It would put the player in M1's lit regime by
-  default, and a hooded figure carrying fire suits the art direction — but it changes the opening
-  minute of the game.
-- **Q4.** Retire the wolf outright this wave (it is the third-party Quaternius CC0 pack), or keep it
-  as a fallback until the hound is proven in play?
+Resolved 2026-11-04 rather than referred upward. Reverse any of them if the measured result argues
+against it; the reasoning is recorded so that argument can actually be had.
+
+- **Q1 — NO tonemap. The figure reads when lit, and the game puts light where the player goes.**
+  A tonemap would nearly close A3 by itself (DERIVED: open ground 0.059 -> ~0.197, torchlit 0.351 ->
+  0.478) but it would destroy A1, whose 0.66 near-black share exists **only** because the frame is
+  linear. That near-black *is* the grim look this project chose deliberately and tuned twice. Trading
+  it for actor legibility would be trading the thing that works for the thing that is missing. The
+  linear frame stays; legibility comes from light placement, which is cheaper, local and reversible.
+  **A1 is load-bearing; A3 is a deficit. Do not pay for the deficit with the asset.**
+
+- **Q2 — villagers and the player stay at 1.20 m.** Changing the height touches
+  `WolfAssetDefinition.Normalization`, which is also the player's basis, so it would move the player,
+  every enemy and the camera framing to fix a complaint nobody has made. The 1.64 m NPC boxes were
+  never authored as a height decision; they were placeholder cubes.
+
+- **Q3 — YES, the default loadout carries a torch.** This follows directly from Q1 and is the half of
+  that decision that costs something. Having chosen a world where a figure reads only when lit, it is
+  incoherent to start the player in the dark with no light source: at 22:00 in open ground with the
+  default loadout the figure measures a 0.059 spread, which is a near-invisible smudge, and the
+  nearest fix would be the tonemap just rejected. A hooded figure carrying fire also suits the art
+  direction. It does change the opening minute of the game, which is exactly why it is written down
+  here.
+  Ownership: `ViewModelAssets.DefaultLoadout` is **assigned to WS-2** for this wave; no other
+  workstream may touch it.
+
+- **Q4 — keep the wolf this wave; `enemy.hound` goes on `GraveHowler` only.** Retiring the
+  third-party Quaternius mesh is the right direction of travel, but doing it in the same wave that
+  first exercises our own skinned exporter would leave no fallback if the forged skin is wrong — and
+  R4 says a bad inverse-bind conversion fails silently rather than loudly. Prove the hound in play,
+  then retire the wolf in a follow-up whose only job is that swap.
