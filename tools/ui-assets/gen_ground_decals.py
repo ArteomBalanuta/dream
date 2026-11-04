@@ -84,7 +84,7 @@ DECALS: dict[str, Decal] = {
     "decal_puddle_03": Decal("decal.puddle", "puddle", 1.55, 0.54, ("mud", "dirt"), weight=0.8, base=(0.12, 0.135, 0.155), alt=(0.17, 0.15, 0.13), var=2),
     "decal_crack_01": Decal("decal.crack", "crack", 1.40, 0.55, ("stone", "rock"), base=(0.05, 0.05, 0.05), alt=(0.30, 0.30, 0.28), var=0),
     "decal_crack_02": Decal("decal.crack", "crack", 1.10, 0.52, ("stone", "rock"), base=(0.05, 0.05, 0.05), alt=(0.30, 0.30, 0.28), var=1),
-    "decal_crack_03": Decal("decal.crack", "crack", 1.65, 0.58, ("stone", "rock"), base=(0.05, 0.05, 0.05), alt=(0.30, 0.30, 0.28), var=2),
+    "decal_crack_03": Decal("decal.crack", "crack", 1.50, 0.58, ("stone", "rock"), base=(0.05, 0.05, 0.05), alt=(0.30, 0.30, 0.28), var=2),
     "decal_path_01": Decal("decal.path", "path", 2.20, 0.95, ("grass_path", "grass", "dirt"), atlas=256, scale=(0.9, 1.1), base=(0.37, 0.31, 0.22), alt=(0.52, 0.46, 0.36), var=0),
     "decal_path_02": Decal("decal.path", "path", 2.30, 0.92, ("grass_path", "grass", "dirt"), atlas=256, scale=(0.9, 1.08), base=(0.36, 0.31, 0.23), alt=(0.51, 0.46, 0.37), var=1),
     "decal_path_03": Decal("decal.path", "path", 2.10, 0.97, ("grass_path", "grass", "dirt"), atlas=256, scale=(0.9, 1.1), base=(0.37, 0.32, 0.23), alt=(0.53, 0.47, 0.37), var=2),
@@ -234,7 +234,7 @@ def paint_crack(cv: Canvas, d: Decal):
         wid = np.where(better, w, wid)
     wob = 0.012 * cv.waves("wob", 4, 0.04, 0.12)
     core = (dist + wob) < wid
-    halo_r = 0.42 + 0.10 * cv.waves("halo", 4, 0.3, 0.9)
+    halo_r = 0.46 + 0.10 * cv.waves("halo", 4, 0.3, 0.9)
     halo = 1.0 - _smooth(0.02, 1.0, dist / np.maximum(halo_r, 0.08))
     density = np.where(core, 1.0, 0.90 * halo ** 0.45)
     chip = np.clip(cv.dents("chip", 0.08, 0.9), 0, 1)
