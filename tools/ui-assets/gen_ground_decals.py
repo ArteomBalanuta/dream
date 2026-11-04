@@ -456,7 +456,7 @@ def main(out_root: Path = K.GROUND_ROOT, only: list[str] | None = None, with_pre
         entries.append(K.manifest_entry(FAMILY, stem, ASSETS[stem], a["bounds"]))
         files[stem] = a["glb"]
         print(f"gen_ground_decals: {stem:16s} r={a['bounds'][0]:.3f} size={len(a['glb']):6d}")
-    K.write_family(out_root, FAMILY, entries, files)
+    K.write_family(out_root, FAMILY, entries, files, partial=bool(only))
     if with_preview:
         preview(built)
 

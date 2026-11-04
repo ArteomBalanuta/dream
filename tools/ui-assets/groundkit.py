@@ -163,13 +163,17 @@ def manifest_text(family: str, generator: str, entries: list[dict]) -> str:
 
 
 def write_family(out_root: Path, family: str, entries: list[dict], files: dict[str, bytes],
-                 generator: str | None = None) -> None:
-    """files: stem -> GLB bytes. Writes <out_root>/<family>/<stem>.glb and <out_root>/<family>.json (LF)."""
+                 generator: str | None = None, partial: bool = False) -> None:
+    """files: stem -> GLB bytes. Writes <out_root>/<family>/<stem>.glb and <out_root>/<family>.json (LF).
+    partial=True (a --only run) writes just the given GLBs: the manifest is left untouched and nothing is deleted."""
     out_root = Path(out_root)
     d = out_root / family
     d.mkdir(parents=True, exist_ok=True)
     for stem, data in files.items():
         (d / f"{stem}.glb").write_bytes(data)
+    if partial:
+        print(f"groundkit: partial run, {family}.json is untouched (a full run rewrites it)")
+        return
     gen = generator or f"tools/ui-assets/gen_ground_{family}.py"
     (out_root / f"{family}.json").write_bytes(manifest_text(family, gen, entries).encode("utf-8"))
 
@@ -345,6 +349,12 @@ def self_test() -> list[str]:
         root = Path(d)
         entry = manifest_entry("flora", "demo_stone", spec, a["bounds"])
         write_family(root, "flora", [entry], {"demo_stone": data})
+        before = (root / "flora.json").stat()
+        write_family(root, "flora", [], {"demo_other": data}, partial=True)
+        after = (root / "flora.json").stat()
+        expect((after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns), "a partial write touched the manifest")
+        expect((root / "flora" / "demo_stone.glb").is_file() and (root / "flora" / "demo_other.glb").is_file(), "a partial write lost a GLB")
+        (root / "flora" / "demo_other.glb").unlink()
         text = manifest_text("flora", "tools/ui-assets/gen_ground_flora.py", [entry])
         doc = json.loads(text)
         expect(validate_manifest(doc, root) == [], f"valid manifest rejected: {validate_manifest(doc, root)}")

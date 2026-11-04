@@ -1017,7 +1017,7 @@ def render(only: list[str] | None = None):
 def main(out_root: Path = K.GROUND_ROOT, only: list[str] | None = None) -> Path:
     import hashlib
     entries, files, built = render(only)
-    K.write_family(Path(out_root), FAMILY, entries, files, GENERATOR)
+    K.write_family(Path(out_root), FAMILY, entries, files, GENERATOR, partial=bool(only))
     for e in entries:
         stem = e["id"].split(".", 1)[1]
         a = built[stem]
