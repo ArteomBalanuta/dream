@@ -38,16 +38,24 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
         using EnemyReplicationDriver driver = new(output, oldSpawn: true);
         Vector3 spawn = driver.WolfPosition!.Value;
 
-        // The player walks off along +Z in short bursts; the wolf chases. Several coalescing
+        // The player runs off along +Z; the wolf chases. Several coalescing
         // windows of growing length hit the chase.
         const int ChaseTicks = 260;
         int chaseStart = driver.Tick + 1;
         for (int i = 0; i < ChaseTicks; i++)
         {
             bool lagging = ChaseLag.Any(window => i >= window.Start && i < window.Start + window.Length);
-            // The player outruns the wolf at full speed, so it walks 3 ticks in 10 (about 1.8 m/s
-            // on average) and the wolf keeps up instead of losing aggro.
-            driver.Step(i % 10 < 3 ? driver.Walk(forward: 1f) : driver.Stand(), lagging);
+            // The player moves every tick and the wolf still keeps up, because the run cruise it
+            // settles at (PlayerSimulationTuning.DefaultRunSpeed, 4.3 m/s) is below the wolf's
+            // 5.0 m/s chase, so the wolf closes rather than losing aggro.
+            //
+            // This used to move 3 ticks in 10 to fake an average 1.8 m/s: back when the player had
+            // one flat 6.0 m/s speed it outran the wolf outright, and throttling the duty cycle was
+            // the only way to stay catchable. Two things from the gaits wave retired that trick:
+            // the default cruise is now slower than the wolf, so no throttling is needed, and the
+            // motor ramps instead of snapping to speed, so a 3-tick burst never escapes the ramp.
+            // Left as bursts the player moved centimetres and the wolf never left its spawn.
+            driver.Step(driver.Walk(forward: 1f), lagging);
         }
 
         int chaseEnd = driver.Tick;
