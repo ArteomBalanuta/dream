@@ -117,6 +117,20 @@ public class GameSettingsTests
     }
 
     [Fact]
+    public void WarMist_Starts_From_The_Environment_Setting_And_Toggles_For_The_Run()
+    {
+        var settings = new GameSettings(new Vector2i(1440, 1024));
+
+        Assert.Equal(Dream.Rendering.Mist.WarMistSettings.Current.Enabled, settings.WarMistEnabled);
+
+        settings.SetWarMistEnabled(false);
+        Assert.False(settings.WarMistEnabled);
+
+        settings.SetWarMistEnabled(true);
+        Assert.True(settings.WarMistEnabled);
+    }
+
+    [Fact]
     public void SetShowPerformanceCounters_Enables_Performance_Hud()
     {
         var settings = new GameSettings(new Vector2i(1440, 1024));
