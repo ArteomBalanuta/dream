@@ -27,28 +27,47 @@ public readonly record struct PlayerSimulationInput(
 public readonly record struct PlayerSimulationTuning(
     float EyeHeightOffset,
     float MouseSensitivity,
+    // MoveSpeed is the run cruise: the speed you move at by default. Walking and sprinting are
+    // the tiers either side of it.
     float MoveSpeed,
     float NoclipSpeed,
-    float JumpVelocity)
+    float JumpVelocity,
+    float WalkSpeed = PlayerSimulationTuning.DefaultWalkSpeed,
+    float SprintSpeed = PlayerSimulationTuning.DefaultSprintSpeed,
+    float GroundAcceleration = PlayerSimulationTuning.DefaultGroundAcceleration,
+    float GroundDeceleration = PlayerSimulationTuning.DefaultGroundDeceleration)
 {
+    public const float DefaultWalkSpeed = 1.6f;
+    public const float DefaultRunSpeed = 4.3f;
+    public const float DefaultSprintSpeed = 6.0f;
+    public const float DefaultGroundAcceleration = 18f;
+    public const float DefaultGroundDeceleration = 24f;
+
     // Movement values the authoritative server simulates with. Client prediction must use the
     // same ones: predicting with a local NoclipSpeed of 150 against a server at 18 pulled the
     // player back on every snapshot.
     public static PlayerSimulationTuning AuthoritativeDefault { get; } = new(
         EyeHeightOffset: 0.35f,
         MouseSensitivity: 2.5f,
-        MoveSpeed: 6f,
+        MoveSpeed: DefaultRunSpeed,
         NoclipSpeed: 18f,
         JumpVelocity: 5f);
 
-    // Keeps client-only view settings (eye height, mouse sensitivity) and takes movement from the server.
+    // Keeps client-only view settings (eye height, mouse sensitivity) and takes movement from the
+    // server. Every movement field has to come across, not just the speeds: predicting with a
+    // different acceleration ramp drifts from authority and gets pulled back on every snapshot
+    // exactly like a mismatched speed does.
     public PlayerSimulationTuning WithAuthoritativeMovement()
     {
         return this with
         {
             MoveSpeed = AuthoritativeDefault.MoveSpeed,
             NoclipSpeed = AuthoritativeDefault.NoclipSpeed,
-            JumpVelocity = AuthoritativeDefault.JumpVelocity
+            JumpVelocity = AuthoritativeDefault.JumpVelocity,
+            WalkSpeed = AuthoritativeDefault.WalkSpeed,
+            SprintSpeed = AuthoritativeDefault.SprintSpeed,
+            GroundAcceleration = AuthoritativeDefault.GroundAcceleration,
+            GroundDeceleration = AuthoritativeDefault.GroundDeceleration
         };
     }
 
