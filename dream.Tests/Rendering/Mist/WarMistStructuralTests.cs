@@ -106,9 +106,8 @@ public class WarMistStructuralTests
         int writesOnAt = IndexOf(draw, "GL.DepthMask(true);");
         int blendOffAt = IndexOf(draw, "GL.Disable(EnableCap.Blend);");
         int cullOnAt = IndexOf(draw, "GL.Enable(EnableCap.CullFace);");
-        int earlyReturnAt = IndexOf(draw, "return;");
 
-        Assert.True(earlyReturnAt < cullQueryAt, "An empty window returns before any state change.");
+        Assert.DoesNotContain("return;", draw);
         Assert.True(cullQueryAt < depthTestAt && cullQueryAt < cullOffAt);
         Assert.True(depthTestAt < drawAt && writesOffAt < drawAt && blendOnAt < drawAt && blendFuncAt < drawAt && cullOffAt < drawAt);
         Assert.True(noiseBindAt < explorationAt && explorationAt < drawAt);

@@ -81,14 +81,12 @@ public sealed class WarMistRenderer : IDisposable
     {
         Shader shader = _shader ?? throw new ObjectDisposedException(nameof(WarMistRenderer));
 
-        float minX = MathF.Max(0f, focus.X - WarMistField.HalfExtent);
-        float minZ = MathF.Max(0f, focus.Z - WarMistField.HalfExtent);
-        float maxX = MathF.Min(memory.Width, focus.X + WarMistField.HalfExtent);
-        float maxZ = MathF.Min(memory.Depth, focus.Z + WarMistField.HalfExtent);
-        if (maxX <= minX || maxZ <= minZ)
-        {
-            return;
-        }
+        // The window is not clipped to the map: past the edge the slices carry on over the void, so
+        // the veil has no visible rim there (the exploration texture clamps to its edge texel).
+        float minX = focus.X - WarMistField.HalfExtent;
+        float minZ = focus.Z - WarMistField.HalfExtent;
+        float maxX = focus.X + WarMistField.HalfExtent;
+        float maxZ = focus.Z + WarMistField.HalfExtent;
 
         bool cullWasEnabled = GL.IsEnabled(EnableCap.CullFace);
         GL.Enable(EnableCap.DepthTest);

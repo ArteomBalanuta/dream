@@ -14,19 +14,20 @@ uniform float uTime;             // seconds since the scene started
 uniform float uSliceCount;       // slices in the stack
 
 // These repeat WarMistField.cs; WarMistStructuralTests pins both.
-const float ClearRadius = 6.5;
-const float FullRadius = 12.0;
-const float UnexploredDensity = 0.72;
-const float ExploredDensity = 0.30;
+const float ClearRadius = 3.5;
+const float FullRadius = 7.5;
+const float UnexploredDensity = 0.92;
+const float ExploredDensity = 0.50;
 const float MaxTargetDensity = 0.95;
-const float NoiseModMin = 0.6;
-const float NoiseModMax = 1.3;
+const float NoiseModMin = 0.45;
+const float NoiseModMax = 1.35;
 
 const vec2 WindDirection = vec2(0.8, 0.6);
-const float WindSpeed = 0.35;          // metres per second
+const float WindSpeed = 0.6;           // metres per second
 const float BigScale = 1.0 / 30.0;     // noise tiles per metre, the large billows
 const float DetailScale = 1.0 / 11.0;  // the small curls
-const vec3 MistAlbedo = vec3(0.30, 0.31, 0.34);
+const float MistLightFloor = 0.48;      // the veil never goes darker than this, so it reads against the dark ground
+const vec3 MistAlbedo = vec3(0.62, 0.66, 0.74);
 
 // Premultiplied, blended with (One, OneMinusSrcAlpha). Nothing at all inside the clear radius
 // (the early out writes zero, which the blend leaves untouched; there is no discard). Beyond it
@@ -63,7 +64,7 @@ void main()
     float alpha = (1.0 - pow(1.0 - target, 1.0 / uSliceCount)) * sliceVariation;
 
     vec3 up = vec3(0.0, 1.0, 0.0);
-    vec3 lit = MistAlbedo * (dreamAmbient(up) + 0.6 * dreamDirect(up)) * uLightingParams.x;
+    vec3 lit = MistAlbedo * max((dreamAmbient(up) + 0.6 * dreamDirect(up)) * uLightingParams.x, vec3(MistLightFloor));
     lit *= mix(0.85, 1.05, n);
     FragColor = vec4(lit * alpha, alpha) * dreamFogTransmittance(vWorldPos);
 }
