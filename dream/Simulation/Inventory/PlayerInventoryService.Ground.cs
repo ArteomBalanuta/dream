@@ -259,6 +259,110 @@ internal sealed partial class PlayerInventoryService
         return InventoryEquipOutcome.Equipped;
     }
 
+    // Drops the item anchored at a bag cell onto the ground at the position (the player's own, resolved
+    // by the caller). The request names the item (like TryDestroy), so a queued drop cannot hit whatever
+    // moved there. A worn item is never dropped. The dropper holds the claim like a loot drop, so a
+    // mis-drop cannot be sniped at once. A full ground despawns its oldest item rather than refusing.
+    // WriteFailed like a sale, because a drop writes the item row and the slot rows. Checks come first,
+    // so a rejection changes and queues nothing.
+    internal InventoryEquipOutcome TryDropToGround(
+        string playerName,
+        int slotIndex,
+        long itemInstanceId,
+        Vector3 position,
+        int actorId,
+        ulong tick)
+    {
+        if (!InventoryConstants.IsBagAnchor(slotIndex))
+        {
+            return InventoryEquipOutcome.SlotOutOfRange;
+        }
+
+        if (!Ensure(playerName))
+        {
+            return InventoryEquipOutcome.StillLoading;
+        }
+
+        if (HasSeenFailedWrite(playerName))
+        {
+            return InventoryEquipOutcome.WriteFailed;
+        }
+
+        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
+            || !TryGetItem(slots, slotIndex, out PersistedItemInstance existing))
+        {
+            return InventoryEquipOutcome.SlotEmpty;
+        }
+
+        if (existing.ItemInstanceId != itemInstanceId)
+        {
+            return InventoryEquipOutcome.ItemMismatch;
+        }
+
+        if (FindEquipmentSlotOf(slots, itemInstanceId) >= 0)
+        {
+            return InventoryEquipOutcome.ItemEquipped;
+        }
+
+        if (!IsFinite(position))
+        {
+            return InventoryEquipOutcome.TooFar;
+        }
+
+        if (!TrySpendAction())
+        {
+            return InventoryEquipOutcome.Throttled;
+        }
+
+        if (_groundItems.Count >= MaxGroundItems)
+        {
+            DespawnOldestGroundItem();
+        }
+
+        List<int> rows = [];
+        foreach (KeyValuePair<int, long> row in slots)
+        {
+            if (row.Value == itemInstanceId)
+            {
+                rows.Add(row.Key);
+            }
+        }
+
+        // The guarded deletes of the slot rows ride in the same closure as the ground row (see SlotChanges).
+        SlotChanges changes = new();
+        foreach (int row in rows)
+        {
+            slots.Remove(row);
+            changes.Remove(row, itemInstanceId);
+        }
+
+        if (!IsReferencedByOtherInventory(playerName, itemInstanceId))
+        {
+            _itemInstances.Remove(itemInstanceId);
+        }
+
+        PersistedItemInstance groundRow = existing with
+        {
+            OwnerPlayerName = null,
+            WorldPosition = position,
+            State = GroundState,
+            UpdatedUtc = DateTime.UtcNow,
+        };
+        AddGroundItem(new GroundItem(
+            groundRow,
+            _nextGroundDropOrder++,
+            playerName,
+            actorId,
+            tick + GroundClaimTicks,
+            tick + GroundDespawnTicks));
+        DrainHeldBack(slots, changes);
+        // The row is saved first, inside the same savepoint as the guarded slot deletes, so it is never
+        // both slotted and Ground on disk.
+        QueueChanges(playerName, changes, world => world.SaveItemInstance(groundRow));
+        RefreshEquippedSummary(playerName);
+        return InventoryEquipOutcome.Equipped;
+    }
+
     // Lapses claims and despawns items that have been on the ground too long. Compares one number when
     // nothing is due.
     internal void StepGroundItems(ulong tick)

@@ -106,6 +106,7 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
             hostile.Add(new InventoryMoveIntent(2, bad));
             hostile.Add(new InventoryMoveIntent(bad, bad));
             hostile.Add(new InventoryDestroyIntent(bad, aliceBlade));
+            hostile.Add(new InventoryDropIntent(bad, aliceBlade));
         }
 
         foreach (int bad in NeverAWornSlot)
@@ -134,6 +135,11 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         hostile.Add(new InventoryDestroyIntent(2, aliceBlade + 1000));     // a stale id
         hostile.Add(new InventoryDestroyIntent(0, aliceHammer));           // the worn item, by a bag cell it is not in
         hostile.Add(new InventoryDestroyIntent(100, aliceHammer));         // the worn item, by its worn slot
+        hostile.Add(new InventoryDropIntent(12, 1));                       // empty slot
+        hostile.Add(new InventoryDropIntent(2, bobsBlade));                // another player's item id
+        hostile.Add(new InventoryDropIntent(2, aliceBlade + 1000));        // a stale id
+        hostile.Add(new InventoryDropIntent(0, aliceHammer));              // the worn item, by a bag cell it is not in
+        hostile.Add(new InventoryDropIntent(100, aliceHammer));            // the worn item, by its worn slot
 
         // The footprint rules: an overlap of two items, a position off the board, a "from" that is not an
         // anchor, a held-back row, a worn slot as the source or as the target.
