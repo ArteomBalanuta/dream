@@ -64,11 +64,19 @@ public class WarMistStructuralTests
         string fragment = StripComments(ReadShader(WarMistRenderer.FragmentShaderFile));
 
         Assert.Single(Regex.Matches(fragment, @"^\s*#include ""lighting\.glsl""\s*$", RegexOptions.Multiline));
-        Assert.Matches(@"FragColor = vec4\(lit \* alpha, alpha\) \* dreamFogTransmittance\(vWorldPos\);", fragment);
+        Assert.Matches(@"FragColor = vec4\(lit \* alpha, alpha\) \* dreamFogTransmittance\(vWorldPos\) \* \(1\.0 - dreamBoundaryOpacity\(vWorldPos\)\);", fragment);
         Assert.DoesNotContain("discard", fragment);
         Assert.DoesNotContain("dreamApplyFog", fragment);
         Assert.DoesNotContain("exp2(", fragment);
-        Assert.DoesNotContain("BoundaryMist", fragment);
+
+        // The one boundary mist include the veil takes (it never mixes toward the smoke itself): the
+        // slices must not lighten the wall, so they fade out exactly where the wall is opaque. The
+        // include comes after lighting.glsl, and the vertex shader reads neither.
+        Assert.Single(Regex.Matches(fragment, @"^\s*#include ""boundaryMist\.glsl""\s*$", RegexOptions.Multiline));
+        Assert.True(fragment.IndexOf("#include \"lighting.glsl\"", StringComparison.Ordinal)
+            < fragment.IndexOf("#include \"boundaryMist.glsl\"", StringComparison.Ordinal));
+        Assert.DoesNotContain("dreamApplyBoundaryMist", fragment);
+        Assert.Single(Regex.Matches(fragment, @"dreamBoundaryOpacity\("));
     }
 
     [Fact]

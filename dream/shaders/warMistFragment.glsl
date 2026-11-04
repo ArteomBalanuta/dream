@@ -1,5 +1,6 @@
 #version 330 core
 #include "lighting.glsl"
+#include "boundaryMist.glsl"
 
 in vec3 vWorldPos;
 flat in float vSlice;
@@ -61,5 +62,5 @@ void main()
     vec3 up = vec3(0.0, 1.0, 0.0);
     vec3 lit = MistAlbedo * max((dreamAmbient(up) + 0.6 * dreamDirect(up)) * uLightingParams.x, vec3(MistLightFloor));
     lit *= mix(0.85, 1.05, n);
-    FragColor = vec4(lit * alpha, alpha) * dreamFogTransmittance(vWorldPos);
+    FragColor = vec4(lit * alpha, alpha) * dreamFogTransmittance(vWorldPos) * (1.0 - dreamBoundaryOpacity(vWorldPos));
 }
