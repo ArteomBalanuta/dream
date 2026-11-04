@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
+using Dream.Simulation.Players;
 
 namespace Dream.Tests.Rendering.Actors;
 
@@ -453,6 +454,28 @@ public class PlayerAnimationStateMachineTests
         {
             Assert.Equal(1f, frame.PlaybackSpeed, 2);
         }
+    }
+
+    // The contract guard between the animation tiers and the authoritative movement tuning: a tier
+    // authored for a speed the simulation cannot produce is a clip that never plays, which is what
+    // SprintSpeedThreshold = 9 against a flat MoveSpeed of 6 did to the sprint clip. Whoever
+    // retunes the movement speeds has to retune the gaits with them, and this test is what says so.
+    [Fact]
+    public void TheAnimationTiersMatchTheAuthoritativeTuning()
+    {
+        Assert.Equal(PlayerSimulationTuning.DefaultWalkSpeed, PlayerAnimationStateMachine.ReferenceWalkSpeed, 4);
+        Assert.Equal(PlayerSimulationTuning.DefaultRunSpeed, PlayerAnimationStateMachine.ReferenceRunSpeed, 4);
+        Assert.Equal(PlayerSimulationTuning.DefaultSprintSpeed, PlayerAnimationStateMachine.ReferenceSprintSpeed, 4);
+
+        // Each threshold lies strictly between the two tiers it separates.
+        Assert.InRange(
+            PlayerAnimationStateMachine.RunSpeedThreshold,
+            PlayerAnimationStateMachine.ReferenceWalkSpeed + 1e-4f,
+            PlayerAnimationStateMachine.ReferenceRunSpeed - 1e-4f);
+        Assert.InRange(
+            PlayerAnimationStateMachine.SprintSpeedThreshold,
+            PlayerAnimationStateMachine.ReferenceRunSpeed + 1e-4f,
+            PlayerAnimationStateMachine.ReferenceSprintSpeed - 1e-4f);
     }
 
     // Accelerating from a stop to the sprint and back: the gait climbs through every tier and comes
