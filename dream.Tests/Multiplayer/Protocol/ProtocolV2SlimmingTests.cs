@@ -24,7 +24,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         new ClientHelloHandler().Handle(context, new ClientHelloMessage("client-a"));
 
-        Assert.Equal(19, TransportEnvelope.CurrentProtocolVersion);
+        Assert.Equal(20, TransportEnvelope.CurrentProtocolVersion);
         ServerHelloMessage hello = Assert.IsType<ServerHelloMessage>(Assert.Single(context.OutboundMessages));
         Assert.Equal(TransportEnvelope.CurrentProtocolVersion, hello.ProtocolVersion);
     }
@@ -250,7 +250,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1));
 
-        Assert.Equal("Unsupported protocol version 1. Supported version: 19.", ex.Message);
+        Assert.Equal("Unsupported protocol version 1. Supported version: 20.", ex.Message);
     }
 
     [Fact]
@@ -261,7 +261,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
             () => new TransportJsonCodec().Encode(new TransportEnvelope(1, message.MessageKind, 1), message));
 
-        Assert.Equal("Cannot encode protocol version 1. Supported version: 19.", ex.Message);
+        Assert.Equal("Cannot encode protocol version 1. Supported version: 20.", ex.Message);
     }
 
     [Fact]

@@ -337,6 +337,6 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
         byte[] v6 = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(v7).Replace("\"protocolVersion\":19", "\"protocolVersion\":6", StringComparison.Ordinal));
         Assert.NotEqual(v7, v6);
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => codec.DecodeFromClient(v6));
-        Assert.Equal("Unsupported protocol version 6. Supported version: 19.", error.Message);
+        Assert.Equal("Unsupported protocol version 6. Supported version: 20.", error.Message);
     }
 }

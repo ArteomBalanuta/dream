@@ -67,7 +67,7 @@ public class ProtocolVersionMismatchClientTests
 
         Assert.Equal("Server uses protocol v2; this client uses v19.", error.Message);
         Assert.Equal(2, error.PeerVersion);
-        Assert.Equal(19, error.LocalVersion);
+        Assert.Equal(20, error.LocalVersion);
     }
 
     // SCALE-2 moved the wire to protocol v4 (delta actor frames, the ack in the envelope header).
@@ -86,8 +86,8 @@ public class ProtocolVersionMismatchClientTests
 
         Assert.Equal("Server uses protocol v3; this client uses v19.", error.Message);
         Assert.Equal(3, error.PeerVersion);
-        Assert.Equal(19, error.LocalVersion);
-        Assert.Equal("Unsupported protocol version 3. Supported version: 19.", error.InnerException!.Message);
+        Assert.Equal(20, error.LocalVersion);
+        Assert.Equal("Unsupported protocol version 3. Supported version: 20.", error.InnerException!.Message);
     }
 
     // T1 moved the wire to protocol v5 (the world clock anchor in join-accepted). A v4 server (a
@@ -106,8 +106,8 @@ public class ProtocolVersionMismatchClientTests
 
         Assert.Equal("Server uses protocol v4; this client uses v19.", error.Message);
         Assert.Equal(4, error.PeerVersion);
-        Assert.Equal(19, error.LocalVersion);
-        Assert.Equal("Unsupported protocol version 4. Supported version: 19.", error.InnerException!.Message);
+        Assert.Equal(20, error.LocalVersion);
+        Assert.Equal("Unsupported protocol version 4. Supported version: 20.", error.InnerException!.Message);
     }
 
     // T2f moved the wire to protocol v6 (each player actor's held light, the Equipment group of an
@@ -126,8 +126,8 @@ public class ProtocolVersionMismatchClientTests
 
         Assert.Equal("Server uses protocol v5; this client uses v19.", error.Message);
         Assert.Equal(5, error.PeerVersion);
-        Assert.Equal(19, error.LocalVersion);
-        Assert.Equal("Unsupported protocol version 5. Supported version: 19.", error.InnerException!.Message);
+        Assert.Equal(20, error.LocalVersion);
+        Assert.Equal("Unsupported protocol version 5. Supported version: 20.", error.InnerException!.Message);
     }
 
     // What a v5 client reads from a v6 server's rejection: the frame's top-level version is
@@ -142,7 +142,7 @@ public class ProtocolVersionMismatchClientTests
             rejection);
 
         Assert.True(ProtocolVersionMismatchException.TryReadProtocolVersion(payload, out int version));
-        Assert.Equal(19, version);
+        Assert.Equal(20, version);
         Assert.Null(ProtocolVersionMismatchException.ReadForeignProtocolVersion(payload));
     }
 

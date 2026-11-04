@@ -139,7 +139,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
             """{"protocolVersion":999,"messageKind":"client.hello","sequence":1,"payload":{"clientName":"a"}}"""));
 
-        Assert.Equal("Unsupported protocol version 999. Supported version: 19.", ex.Message);
+        Assert.Equal("Unsupported protocol version 999. Supported version: 20.", ex.Message);
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
             """{"messageKind":"client.hello","payload":{"clientName":"a"}}"""));
 
-        Assert.Equal("Unsupported protocol version 0. Supported version: 19.", ex.Message);
+        Assert.Equal("Unsupported protocol version 0. Supported version: 20.", ex.Message);
     }
 
     [Fact]
@@ -186,7 +186,7 @@ public class TransportJsonCodecDecodeTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => DecodeJson(
             """{"protocolVersion":999,"messageKind":"client.bogus","sequence":1}"""));
 
-        Assert.Equal("Unsupported protocol version 999. Supported version: 19.", ex.Message);
+        Assert.Equal("Unsupported protocol version 999. Supported version: 20.", ex.Message);
     }
 
     [Fact]

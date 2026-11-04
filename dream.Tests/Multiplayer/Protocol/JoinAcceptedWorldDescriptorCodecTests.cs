@@ -71,7 +71,7 @@ public class JoinAcceptedWorldDescriptorCodecTests
         string v6 = Encode(join, 1).Replace("\"protocolVersion\":19", "\"protocolVersion\":6", StringComparison.Ordinal);
 
         InvalidOperationException decodeError = Assert.Throws<InvalidOperationException>(() => Codec.Decode(Encoding.UTF8.GetBytes(v6)));
-        Assert.Equal("Unsupported protocol version 6. Supported version: 19.", decodeError.Message);
+        Assert.Equal("Unsupported protocol version 6. Supported version: 20.", decodeError.Message);
         Assert.Throws<InvalidOperationException>(() => Codec.Encode(new TransportEnvelope(6, join.MessageKind, 1), join));
 
         Assert.Equal(
