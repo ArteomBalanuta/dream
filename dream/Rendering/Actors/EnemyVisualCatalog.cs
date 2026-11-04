@@ -63,7 +63,9 @@ public readonly record struct EnemyClipSet(
 
         bool sprinting = speed >= SprintSpeedThreshold;
         float reference = sprinting ? SprintReferenceSpeed : MoveReferenceSpeed;
-        if (!(reference > 0f) || !float.IsFinite(speed))
+        // No measurement at all (a caller with no pose to measure, the frame an enemy is first
+        // drawn) plays the clip as authored instead of at the slow end of the clamp.
+        if (!(speed > 0f) || !(reference > 0f) || !float.IsFinite(speed))
         {
             return 1f;
         }

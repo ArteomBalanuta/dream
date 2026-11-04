@@ -119,6 +119,10 @@ public sealed class EnemyVisualCatalogTests
         Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 5.0f), 4);
         // Dragged along at a crawl or snapped across the floor, the stride stays inside 0.6..1.6.
         Assert.Equal(EnemyClipSet.MinPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 0.1f), 4);
+        // But NO measurement at all is not a crawl: it plays as authored, so a caller with no pose
+        // to measure (and the frame an enemy is first drawn) does not animate in slow motion.
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 0f), 4);
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, -3f), 4);
         Assert.Equal(EnemyClipSet.MaxPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 2.9f), 4);
         Assert.Equal(EnemyClipSet.MaxPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 40f), 4);
         Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, float.NaN), 4);

@@ -23,8 +23,15 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
 
     // A newer enemy sample farther than this from the previous one is a teleport (a respawn whose
     // death snapshot was coalesced away, or a server-side reposition): the buffer restarts there
-    // instead of sliding across the gap. Wolves move under 3 m/s, so a real step never comes close.
-    public const float EnemyTeleportDistance = 4f;
+    // instead of sliding across the gap.
+    //
+    // It is a DERIVED number, not a taste one: it has to exceed what the fastest enemy can legally
+    // cover across the longest span the buffer interpolates, or an ordinary chase reads as a
+    // teleport and pops. The fastest shipped chase speed is the Grave Howler's 6.0 m/s and the span
+    // is TickInterpolationBuffer.DefaultMaxTickSpan (64 ticks = 1 s), so 6.0 m of travel is legal
+    // and this sits just above it. It was 4 m while every enemy moved under 3 m/s;
+    // EnemyInterpolationReplicationIntegrationTests measures the relation rather than the number.
+    public const float EnemyTeleportDistance = 6.5f;
 
     // Wire levels are hostile; a level shown beside health is clamped to 1..9999.
     public const int MaxDisplayLevel = 9999;
