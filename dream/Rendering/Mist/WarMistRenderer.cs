@@ -28,7 +28,7 @@ public sealed class WarMistRenderer : IDisposable
         "uExploration",
         "uFocus",
         "uMapSize",
-        "uTime",
+        "uSliceOffsets",
         "uSliceCount",
     ];
 
@@ -40,11 +40,12 @@ public sealed class WarMistRenderer : IDisposable
     private const int LocationExploration = 5;
     private const int LocationFocus = 6;
     private const int LocationMapSize = 7;
-    private const int LocationTime = 8;
+    private const int LocationSliceOffsets = 8;
     private const int LocationSliceCount = 9;
 
     private readonly int[] _locations = new int[UniformNames.Length];
     private readonly float[] _sliceHeights;
+    private readonly float[] _sliceOffsets = new float[WarMistSettings.MaxSlices * 4];
     private readonly int _sliceCount;
     private readonly ExplorationTexture _exploration = new();
     private Shader? _shader;
@@ -77,7 +78,7 @@ public sealed class WarMistRenderer : IDisposable
 
     // Draws the slices around the focus over the world and restores the world pass state afterwards:
     // depth writes on, blending off, face culling as it was, no VAO, texture units 0 and 1 empty.
-    public void Draw(Matrix4 viewProjection, Vector3 focus, float timeSeconds, ExplorationMemory memory)
+    public void Draw(Matrix4 viewProjection, Vector3 focus, double timeSeconds, ExplorationMemory memory)
     {
         Shader shader = _shader ?? throw new ObjectDisposedException(nameof(WarMistRenderer));
 
@@ -110,7 +111,13 @@ public sealed class WarMistRenderer : IDisposable
 
         Upload(_locations[LocationFocus], focus.X, focus.Z);
         Upload(_locations[LocationMapSize], memory.Width, memory.Depth);
-        Upload(_locations[LocationTime], timeSeconds);
+        WarMistField.SliceOffsets(timeSeconds, _sliceCount, _sliceOffsets);
+        if (_locations[LocationSliceOffsets] >= 0)
+        {
+            GL.Uniform4(_locations[LocationSliceOffsets], WarMistSettings.MaxSlices, _sliceOffsets);
+            RenderCounters.CountUniformUpload();
+        }
+
         Upload(_locations[LocationSliceCount], (float)_sliceCount);
 
         GL.ActiveTexture(TextureUnit.Texture0);

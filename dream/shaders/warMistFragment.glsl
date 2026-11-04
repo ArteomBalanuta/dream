@@ -10,7 +10,7 @@ uniform sampler2D uNoise;        // tileable RG8 fbm (WarMistNoiseTexture), repe
 uniform sampler2D uExploration;  // R8, one texel per map cell (ExplorationTexture), clamp
 uniform vec2 uFocus;             // XZ of the camera focus (the player)
 uniform vec2 uMapSize;           // map width and depth in metres
-uniform float uTime;             // seconds since the scene started
+uniform vec4 uSliceOffsets[8];   // per slice: xy big-noise offset, zw detail-noise offset, wrapped to [0,1) on the CPU in double (WarMistField.SliceOffsets)
 uniform float uSliceCount;       // slices in the stack
 
 // These repeat WarMistField.cs; WarMistStructuralTests pins both.
@@ -22,8 +22,6 @@ const float MaxTargetDensity = 0.95;
 const float NoiseModMin = 0.45;
 const float NoiseModMax = 1.35;
 
-const vec2 WindDirection = vec2(0.8, 0.6);
-const float WindSpeed = 0.6;           // metres per second
 const float BigScale = 1.0 / 30.0;     // noise tiles per metre, the large billows
 const float DetailScale = 1.0 / 11.0;  // the small curls
 const float MistLightFloor = 0.48;      // the veil never goes darker than this, so it reads against the dark ground
@@ -45,14 +43,11 @@ void main()
         return;
     }
 
-    // Layers drift at slightly different speeds (1.0x at the bottom to 1.3x at the top) and start
-    // from different places, so the stack parallaxes instead of moving as one sheet.
-    float layer01 = vSlice / max(uSliceCount - 1.0, 1.0);
-    float speed = mix(1.0, 1.3, layer01);
-    vec2 phase = vec2(vSlice * 0.37, vSlice * 0.61);
-    vec2 drift = WindDirection * (WindSpeed * speed * uTime);
-    vec2 bigUv = (vWorldPos.xz + drift) * BigScale + phase;
-    vec2 detailUv = (vWorldPos.xz + vec2(-drift.y, drift.x) * 0.6) * DetailScale - phase;
+    // The CPU gives each slice its own wrapped offsets (layers drift at 1.0x at the bottom to 1.3x at
+    // the top and start from different places, so the stack parallaxes instead of moving as one sheet).
+    vec4 offsets = uSliceOffsets[int(vSlice + 0.5)];
+    vec2 bigUv = vWorldPos.xz * BigScale + offsets.xy;
+    vec2 detailUv = vWorldPos.xz * DetailScale + offsets.zw;
     float big = texture(uNoise, bigUv).r;
     float detail = texture(uNoise, detailUv).g;
 

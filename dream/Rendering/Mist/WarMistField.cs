@@ -26,6 +26,39 @@ public static class WarMistField
     // The reference stack for six slices, bottom first: metres above the floor top.
     private static readonly float[] ReferenceHeights = [0.10f, 0.60f, 1.20f, 1.90f, 2.70f, 3.60f];
 
+    // The wind the veil drifts along, its speed in metres per second, and how many noise tiles one
+    // metre covers for the large billows and the small curls. The shader repeats the two scales.
+    public const float WindX = 0.8f;
+    public const float WindZ = 0.6f;
+    public const float WindSpeed = 0.6f;
+    public const double BigScale = 1d / 30d;
+    public const double DetailScale = 1d / 11d;
+
+    // Writes the per-slice texture offsets for the clock into dest (4 floats per slice, MaxSlices
+    // slices): xy shift the large noise, zw the small one, each wrapped to [0, 1) in double, the
+    // noise texture being tileable at 1. A slice's layers drift at 1.0x (bottom) to 1.3x (top) of
+    // the wind speed and start from their own phase, so the stack parallaxes. Keeping the clock and
+    // the wrap in double stops the drift from losing precision as the scene ages.
+    public static void SliceOffsets(double seconds, int sliceCount, float[] dest)
+    {
+        int count = Math.Clamp(sliceCount, WarMistSettings.MinSlices, WarMistSettings.MaxSlices);
+        for (int i = 0; i < WarMistSettings.MaxSlices; i++)
+        {
+            double layer01 = Math.Min(i, count - 1) / (double)Math.Max(count - 1, 1);
+            double travel = WindSpeed * (1d + 0.3d * layer01) * seconds;
+            double driftX = WindX * travel;
+            double driftZ = WindZ * travel;
+            double phaseX = i * 0.37d;
+            double phaseZ = i * 0.61d;
+            dest[i * 4] = Fract(driftX * BigScale + phaseX);
+            dest[i * 4 + 1] = Fract(driftZ * BigScale + phaseZ);
+            dest[i * 4 + 2] = Fract(-driftZ * 0.6d * DetailScale - phaseX);
+            dest[i * 4 + 3] = Fract(driftX * 0.6d * DetailScale - phaseZ);
+        }
+    }
+
+    private static float Fract(double value) => (float)(value - Math.Floor(value));
+
     // 0 inside ClearRadius, 1 from FullRadius out, smooth between.
     public static float Veil(float distance) => SmoothStep(ClearRadius, FullRadius, distance);
 

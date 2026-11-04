@@ -15,6 +15,59 @@ public class WarMistFieldTests
         Assert.Equal(0f, WarMistField.TargetDensity(distance, 1f, WarMistField.NoiseModMax));
     }
 
+    [Theory]
+    [InlineData(0d)]
+    [InlineData(1.5d)]
+    [InlineData(86400d)]
+    [InlineData(3e7d)]
+    public void Slice_Offsets_Are_Wrapped_Into_The_Unit_Interval(double seconds)
+    {
+        float[] offsets = new float[WarMistSettings.MaxSlices * 4];
+
+        WarMistField.SliceOffsets(seconds, 6, offsets);
+
+        Assert.All(offsets, value => Assert.InRange(value, 0f, 0.99999994f));
+    }
+
+    [Fact]
+    public void Slice_Offsets_Keep_Their_Precision_After_Days_Of_Play()
+    {
+        float[] early = new float[WarMistSettings.MaxSlices * 4];
+        float[] late = new float[WarMistSettings.MaxSlices * 4];
+
+        WarMistField.SliceOffsets(10d, 6, early);
+        WarMistField.SliceOffsets(10d + 0.016d, 6, late);
+
+        // A 16 ms step still moves the offsets by a tiny but nonzero, smooth amount.
+        for (int i = 0; i < 6 * 4; i++)
+        {
+            float delta = Math.Abs(late[i] - early[i]);
+            Assert.True(delta > 0f && delta < 0.01f, $"slice value {i}: {delta}");
+        }
+
+        // After 30 days of scene time the same 16 ms step must still resolve (a float clock cannot).
+        WarMistField.SliceOffsets(2_592_000d, 6, early);
+        WarMistField.SliceOffsets(2_592_000d + 0.016d, 6, late);
+        for (int i = 0; i < 6 * 4; i++)
+        {
+            float delta = Math.Abs(late[i] - early[i]);
+            Assert.True(delta > 0f && delta < 0.01f, $"late slice value {i}: {delta}");
+        }
+    }
+
+    [Fact]
+    public void Upper_Slices_Drift_Faster_Than_Lower_Ones()
+    {
+        float[] offsets = new float[WarMistSettings.MaxSlices * 4];
+        float[] later = new float[WarMistSettings.MaxSlices * 4];
+        WarMistField.SliceOffsets(0d, 6, offsets);
+        WarMistField.SliceOffsets(1d, 6, later);
+
+        float Step(int slice) => (later[slice * 4] - offsets[slice * 4] + 1f) % 1f;
+
+        Assert.True(Step(5) > Step(0));
+    }
+
     [Fact]
     public void Unexplored_Is_Denser_Than_Explored_Beyond_The_Full_Radius()
     {

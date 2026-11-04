@@ -89,6 +89,23 @@ public class WarMistStructuralTests
     }
 
     [Fact]
+    public void The_Slice_Offsets_Come_From_The_Cpu_In_Double_And_The_Shader_Keeps_No_Clock()
+    {
+        string fragment = StripComments(ReadShader(WarMistRenderer.FragmentShaderFile));
+        string draw = Method(ReadSource("dream/Rendering/Mist/WarMistRenderer.cs"), "public void Draw(");
+
+        Assert.Contains($"uniform vec4 uSliceOffsets[{WarMistSettings.MaxSlices}];", fragment);
+        Assert.DoesNotContain("uTime", fragment);
+        Assert.Contains("const float BigScale = 1.0 / 30.0;", fragment);
+        Assert.Contains("const float DetailScale = 1.0 / 11.0;", fragment);
+        Assert.Equal(1d / 30d, WarMistField.BigScale);
+        Assert.Equal(1d / 11d, WarMistField.DetailScale);
+        Assert.Contains("double timeSeconds", ReadSource("dream/Rendering/Mist/WarMistRenderer.cs"));
+        Assert.Contains("WarMistField.SliceOffsets(timeSeconds, _sliceCount, _sliceOffsets);", draw);
+        Assert.Contains("private double _warMistSeconds;", ReadSource("dream/Client/Scenes/PlayScene.WarMist.cs"));
+    }
+
+    [Fact]
     public void Draw_Sets_Its_State_Restores_It_And_Allocates_Nothing()
     {
         string draw = Method(ReadSource("dream/Rendering/Mist/WarMistRenderer.cs"), "public void Draw(");

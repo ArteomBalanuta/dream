@@ -18,7 +18,7 @@ public partial class PlayScene
     private bool _warMistFailed;
     private ExplorationMemory? _exploration;
     private Map? _explorationMap;
-    private float _warMistSeconds;
+    private double _warMistSeconds;
 
     // Runs at the top of the effects pass, in the Actors GPU section: the opaque world and the
     // actors are drawn, and the effects section has not started.
