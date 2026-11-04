@@ -20,9 +20,20 @@ public static class BoundaryMistField
     // The noise term fades in over this much inset, so the opacity is exactly 1 on the edge.
     public const float NoiseFadeDistance = 0.5f;
 
-    // Seconds after which the shader time wraps. The noise lattice shifts by whole cells in this
-    // period, so the wrap is invisible.
-    public const float TimeWrapSeconds = 600f;
+    // Seconds after which the shader time wraps. Every lattice shift below is a whole multiple of
+    // HashPeriod cells over this period and the hash repeats every HashPeriod cells, so the wrap
+    // is invisible.
+    public const double TimeWrapSeconds = 6400d;
+
+    // The noise hash repeats every this many lattice cells (the shader takes mod(cell, 64.0)).
+    public const int HashPeriod = 64;
+
+    // Lattice cells per second each noise octave drifts along x and z (the shader repeats these).
+    // rate x TimeWrapSeconds must be a multiple of HashPeriod on both axes.
+    public static readonly (double X, double Z) EdgeRate = (0.20, 0.15);
+    public static readonly (double X, double Z) Octave1Rate = (0.12, 0.09);
+    public static readonly (double X, double Z) Octave2Rate = (-0.21, 0.28);
+    public const double Octave3Rate = 0.4; // along the second axis only
 
     // How far inside the edge a player is stopped (the shared movement clamp).
     public static float StopInset => Player.EdgeMargin;

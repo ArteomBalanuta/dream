@@ -6,7 +6,7 @@ namespace Dream.Rendering.Mist;
 // What the scene tells the renderer about the boundary mist each frame: the map size, the clock
 // and the switch. The scene sets it before the world pass; Enabled false (DREAM_BOUNDARY_MIST=0)
 // uploads strength 0, which makes every shader skip the mist.
-public readonly record struct BoundaryMistInput(float Width, float Depth, float TimeSeconds, bool Enabled);
+public readonly record struct BoundaryMistInput(float Width, float Depth, double TimeSeconds, bool Enabled);
 
 // Mirrors the std140 BoundaryMist uniform block in shaders/boundaryMist.glsl member for member.
 [StructLayout(LayoutKind.Explicit, Size = SizeInBytes)]

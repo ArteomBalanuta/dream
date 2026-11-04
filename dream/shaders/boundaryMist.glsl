@@ -11,7 +11,7 @@
 // functions, so the two meet with no seam. Mirrors Rendering/Mist/BoundaryMistField.cs.
 //
 // uMistBounds: minX, minZ, maxX (map width), maxZ (map depth).
-// uMistParams: x strength (1 on, 0 off or view model), y time in seconds (wrapped at 600),
+// uMistParams: x strength (1 on, 0 off or view model), y time in seconds (wrapped at 6400),
 //              z floor top y, w ramp start (metres inside the edge where the mist ends).
 // uMistEye:    xyz the true camera position in world space (uCameraPosition is the focus in
 //              isometric view), w 0.
@@ -23,8 +23,9 @@ const float MistNoiseAmp = 0.35;   // BoundaryMistField.NoiseAmp
 const float MistNoiseFade = 0.5;   // BoundaryMistField.NoiseFadeDistance
 const float MistGamma = 3.0;       // BoundaryMistField.Gamma
 
-// Hash-based value noise, no texture. The lattice shifts below move by whole cells every 600 s
-// (the time wrap), so the wrap is invisible: lattice offset per second times 600 is an integer.
+// Hash-based value noise, no texture. The hash is periodic over 64 cells (BoundaryMistField.HashPeriod)
+// and every lattice shift below moves by a whole multiple of 64 cells per time wrap (6400 s), so
+// the wrap is invisible. BoundaryMistField holds the rates; a test checks rate x wrap.
 float dreamMistHash(vec2 p)
 {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -37,10 +38,10 @@ float dreamMistValueNoise(vec2 q)
     vec2 cell = floor(q);
     vec2 f = fract(q);
     f = f * f * (3.0 - 2.0 * f);
-    float a = dreamMistHash(cell);
-    float b = dreamMistHash(cell + vec2(1.0, 0.0));
-    float c = dreamMistHash(cell + vec2(0.0, 1.0));
-    float d = dreamMistHash(cell + vec2(1.0, 1.0));
+    float a = dreamMistHash(mod(cell, 64.0));
+    float b = dreamMistHash(mod(cell + vec2(1.0, 0.0), 64.0));
+    float c = dreamMistHash(mod(cell + vec2(0.0, 1.0), 64.0));
+    float d = dreamMistHash(mod(cell + vec2(1.0, 1.0), 64.0));
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -53,7 +54,7 @@ float dreamMistInset(vec3 p)
 // The slow noise that moves the wall's inner border: one octave drifting at 0.25 m/s.
 float dreamMistEdgeNoise(vec2 xz)
 {
-    return dreamMistValueNoise(xz * 0.9 + vec2(0.8, 0.6) * (0.225 * uMistParams.y) + 5.0);
+    return dreamMistValueNoise(xz * 0.9 + vec2(0.20, 0.15) * uMistParams.y + 5.0);
 }
 
 // 0 where the mist is absent, uMistParams.x (1) on and past the edge.
@@ -94,8 +95,8 @@ vec3 dreamMistFloorPoint(vec3 p)
 float dreamMistSmokeNoise(vec2 xz)
 {
     float t = uMistParams.y;
-    float o1 = dreamMistValueNoise(xz * 0.5 + vec2(0.8, 0.6) * (0.125 * t));
-    float o2 = dreamMistValueNoise(xz * 1.0 + vec2(-0.6, 0.8) * (0.325 * t) + 17.0);
+    float o1 = dreamMistValueNoise(xz * 0.5 + vec2(0.12, 0.09) * t);
+    float o2 = dreamMistValueNoise(xz * 1.0 + vec2(-0.21, 0.28) * t + 17.0);
     float o3 = dreamMistValueNoise(vec2(dot(xz, vec2(0.6, 0.35)), t * 0.4) + 41.0);
     return smoothstep(0.22, 0.78, 0.5 * o1 + 0.32 * o2 + 0.18 * o3);
 }

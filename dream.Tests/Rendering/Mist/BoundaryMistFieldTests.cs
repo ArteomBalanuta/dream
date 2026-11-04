@@ -1,3 +1,4 @@
+using System.IO;
 using Dream.Rendering.Mist;
 using Dream.Simulation.Players;
 using Xunit;
@@ -79,9 +80,52 @@ public class BoundaryMistFieldTests
     public void The_Wrapped_Time_Stays_In_Range()
     {
         Assert.Equal(0f, BoundaryMistField.WrapTime(0d));
-        Assert.Equal(5f, BoundaryMistField.WrapTime(605d));
-        Assert.InRange(BoundaryMistField.WrapTime(1e7), 0f, BoundaryMistField.TimeWrapSeconds);
-        Assert.InRange(BoundaryMistField.WrapTime(-3d), 0f, BoundaryMistField.TimeWrapSeconds);
+        Assert.Equal(5f, BoundaryMistField.WrapTime(6405d));
+        Assert.InRange((double)BoundaryMistField.WrapTime(1e7), 0d, BoundaryMistField.TimeWrapSeconds);
+        Assert.InRange((double)BoundaryMistField.WrapTime(-3d), 0d, BoundaryMistField.TimeWrapSeconds);
+    }
+
+    [Fact]
+    public void Every_Lattice_Rate_Times_The_Wrap_Is_A_Whole_Multiple_Of_The_Hash_Period()
+    {
+        double[] rates =
+        [
+            BoundaryMistField.EdgeRate.X, BoundaryMistField.EdgeRate.Z,
+            BoundaryMistField.Octave1Rate.X, BoundaryMistField.Octave1Rate.Z,
+            BoundaryMistField.Octave2Rate.X, BoundaryMistField.Octave2Rate.Z,
+            BoundaryMistField.Octave3Rate,
+        ];
+
+        foreach (double rate in rates)
+        {
+            double periods = rate * BoundaryMistField.TimeWrapSeconds / BoundaryMistField.HashPeriod;
+            Assert.True(Math.Abs(periods - Math.Round(periods)) < 1e-9, $"rate {rate} shifts {periods} periods per wrap");
+        }
+    }
+
+    [Fact]
+    public void The_Shader_Drifts_At_The_Rates_The_Field_Declares_And_Hashes_Periodically()
+    {
+        string shader = System.Text.RegularExpressions.Regex.Replace(
+            File.ReadAllText(Path.Combine(RepoRoot(), "dream", "shaders", "boundaryMist.glsl")), @"//[^\n]*", string.Empty);
+        System.Globalization.CultureInfo c = System.Globalization.CultureInfo.InvariantCulture;
+
+        Assert.Contains($"vec2({BoundaryMistField.EdgeRate.X.ToString("0.00", c)}, {BoundaryMistField.EdgeRate.Z.ToString("0.00", c)}) * uMistParams.y", shader);
+        Assert.Contains($"vec2({BoundaryMistField.Octave1Rate.X.ToString("0.00", c)}, {BoundaryMistField.Octave1Rate.Z.ToString("0.00", c)}) * t", shader);
+        Assert.Contains($"vec2({BoundaryMistField.Octave2Rate.X.ToString("0.00", c)}, {BoundaryMistField.Octave2Rate.Z.ToString("0.00", c)}) * t", shader);
+        Assert.Contains($"t * {BoundaryMistField.Octave3Rate.ToString("0.0", c)}", shader);
+        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(shader, $@"dreamMistHash\(mod\(cell[^;]*, {BoundaryMistField.HashPeriod}\.0\)\)").Count);
+    }
+
+    private static string RepoRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory != null && !File.Exists(Path.Combine(directory.FullName, "dream", "dream.csproj")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? throw new InvalidOperationException("Repository root not found.");
     }
 }
 

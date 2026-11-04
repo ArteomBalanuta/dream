@@ -90,7 +90,7 @@ public partial class PlayScene
         _render.BoundaryMist = new BoundaryMistInput(
             _runtime.Map.Width,
             _runtime.Map.Depth,
-            (float)_clientPresentationTimeSeconds,
+            _clientPresentationTimeSeconds,
             _boundaryMistSettings.Enabled);
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
         // Scenery after the terrain and before the actors: the braziers' bowls, the village, the graves. The index

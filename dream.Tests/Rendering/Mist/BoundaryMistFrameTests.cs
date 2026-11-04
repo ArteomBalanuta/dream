@@ -25,7 +25,7 @@ public class BoundaryMistFrameTests
     [Fact]
     public void The_World_Range_Carries_The_Map_The_Clock_And_The_True_Eye()
     {
-        BoundaryMistInput input = new(56f, 40f, 605f, Enabled: true);
+        BoundaryMistInput input = new(56f, 40f, 6405d, Enabled: true);
 
         BoundaryMistFrame frame = BoundaryMistFrame.ForWorld(in input, new Vector3(13.2f, 14.8f, 13.2f));
 
