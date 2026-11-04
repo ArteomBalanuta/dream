@@ -6,6 +6,7 @@ public static class KeyBindingsPanel
     public const int FirstId = 0x5300;
     public const float PanelWidthUnits = 300f;
     public const float RowHeightUnits = 17f;
+    public const float EffectColumnUnits = 92f;
 
     public static readonly (string Input, string Effect)[] Entries =
     [
@@ -36,16 +37,18 @@ public static class KeyBindingsPanel
         UiRect panel = w.Centered(top, PanelWidthUnits, heightUnits);
         w.DrawPanel(panel);
 
-        UiTextStyle titleStyle = w.FitStyle("KEY BINDINGS", panel.W);
-        w.TextCentred("KEY BINDINGS", w.CentreX, panel.Y + 12f * w.Scale, titleStyle, MenuWidgets.Gold);
+        UiSizedText titleStyle = w.FitText("KEY BINDINGS", panel.W, MenuWidgets.PanelTitleUnits);
+        w.TextCentred("KEY BINDINGS", w.CentreX, panel.Y + 12f * w.Scale, in titleStyle, MenuWidgets.Gold);
         w.DrawDivider(w.Inside(panel, 30f, 34f, PanelWidthUnits - 60f, 6f));
 
-        UiTextStyle style = UiTextStyle.Body;
         for (int i = 0; i < Entries.Length; i++)
         {
             UiRect row = w.Inside(panel, 18f, 46f + i * RowHeightUnits, PanelWidthUnits - 36f, RowHeightUnits);
-            w.TextLeftCentred(Entries[i].Input, row, row.X, style, MenuWidgets.Gold);
-            w.TextLeftCentred(Entries[i].Effect, row, row.X + 92f * w.Scale, style, MenuWidgets.Bone);
+            float effectX = row.X + EffectColumnUnits * w.Scale;
+            UiSizedText input = w.FitTextInBox(Entries[i].Input, (EffectColumnUnits - 4f) * w.Scale, MenuWidgets.OptionRowUnits, RowHeightUnits);
+            UiSizedText effect = w.FitTextInBox(Entries[i].Effect, row.Right - effectX, MenuWidgets.OptionRowUnits, RowHeightUnits);
+            w.TextLeftCentred(Entries[i].Input, row, row.X, in input, MenuWidgets.Gold);
+            w.TextLeftCentred(Entries[i].Effect, row, effectX, in effect, MenuWidgets.Bone);
         }
 
         UiRect back = w.Inside(

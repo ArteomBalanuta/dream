@@ -29,8 +29,8 @@ public static class OptionsPanel
         UiRect panel = w.Centered(top, PanelWidthUnits, heightUnits);
         w.DrawPanel(panel);
 
-        UiTextStyle titleStyle = w.FitStyle("OPTIONS", panel.W);
-        w.TextCentred("OPTIONS", w.CentreX, panel.Y + 12f * w.Scale, titleStyle, MenuWidgets.Gold);
+        UiSizedText titleStyle = w.FitText("OPTIONS", panel.W, MenuWidgets.PanelTitleUnits);
+        w.TextCentred("OPTIONS", w.CentreX, panel.Y + 12f * w.Scale, in titleStyle, MenuWidgets.Gold);
         w.DrawDivider(w.Inside(panel, 30f, 34f, PanelWidthUnits - 60f, 6f));
 
         float rowsTop = 46f;
@@ -62,15 +62,15 @@ public static class OptionsPanel
         if (row.Kind == MenuOptionKind.Header)
         {
             // The same size and colour as the row labels, so a section header does not shrink or turn orange.
-            UiTextStyle headerStyle = w.FitStyle(row.Label, LabelWidthUnits * w.Scale);
-            w.TextLeftCentred(row.Label, rect, rect.X, headerStyle, MenuWidgets.Bone);
+            UiSizedText headerStyle = w.FitTextInBox(row.Label, LabelWidthUnits * w.Scale, MenuWidgets.OptionRowUnits, RowHeightUnits);
+            w.TextLeftCentred(row.Label, rect, rect.X, in headerStyle, MenuWidgets.Bone);
             return;
         }
 
         bool enabled = row.Enabled;
         float labelWidth = LabelWidthUnits * w.Scale;
-        UiTextStyle style = w.FitStyle(row.Label, labelWidth);
-        w.TextLeftCentred(row.Label, rect, rect.X, style, enabled ? MenuWidgets.Bone : MenuWidgets.Disabled);
+        UiSizedText style = w.FitTextInBox(row.Label, labelWidth, MenuWidgets.OptionRowUnits, RowHeightUnits);
+        w.TextLeftCentred(row.Label, rect, rect.X, in style, enabled ? MenuWidgets.Bone : MenuWidgets.Disabled);
 
         float controlX = LabelWidthUnits + 6f;
         if (row.Kind == MenuOptionKind.Toggle)
@@ -108,7 +108,7 @@ public static class OptionsPanel
 
         string valueText = row.FormatValue(shown);
         float valueX = rect.X + (controlX + TrackWidthUnits + 6f) * w.Scale;
-        UiTextStyle valueStyle = w.FitStyle(valueText, rect.Right - valueX);
-        w.TextLeftCentred(valueText, rect, valueX, valueStyle, enabled ? MenuWidgets.Muted : MenuWidgets.Disabled);
+        UiSizedText valueStyle = w.FitTextInBox(valueText, rect.Right - valueX, MenuWidgets.OptionRowUnits, RowHeightUnits);
+        w.TextLeftCentred(valueText, rect, valueX, in valueStyle, enabled ? MenuWidgets.Muted : MenuWidgets.Disabled);
     }
 }
