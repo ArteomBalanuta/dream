@@ -307,6 +307,10 @@ public static class CharacterPanelModel
         {
             // The server refuses to destroy an equipped item, so the menu does not offer it.
             entries.Add(new CharacterMenuEntry(
+                "Drop",
+                new InventoryHudAction(InventoryHudActionKind.Drop, backpackSlotIndex, 0, item.ItemInstanceId),
+                RequiresConfirm: false));
+            entries.Add(new CharacterMenuEntry(
                 "Destroy...",
                 new InventoryHudAction(InventoryHudActionKind.Destroy, backpackSlotIndex, 0, item.ItemInstanceId),
                 RequiresConfirm: true));

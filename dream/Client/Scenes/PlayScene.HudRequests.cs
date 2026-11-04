@@ -149,6 +149,7 @@ public partial class PlayScene
             action.Target == CharacterPanelModel.FirstFitCell ? null : action.Target),
         InventoryHudActionKind.Move => new InventoryMoveIntent(action.SlotIndex, action.Target),
         InventoryHudActionKind.Destroy => new InventoryDestroyIntent(action.SlotIndex, action.ItemInstanceId),
+        InventoryHudActionKind.Drop => new InventoryDropIntent(action.SlotIndex, action.ItemInstanceId),
         InventoryHudActionKind.SpendStat => new PlayerStatSpendIntent((StatId)action.SlotIndex, action.Target),
         InventoryHudActionKind.Use => new ItemUseIntent(action.SlotIndex, action.ItemInstanceId),
         _ => new InventoryEquipIntent(action.SlotIndex, action.Target)
