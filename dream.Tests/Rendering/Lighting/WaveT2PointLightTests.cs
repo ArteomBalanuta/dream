@@ -371,7 +371,7 @@ public class WaveT2PointLightTests
     {
         string source = File.ReadAllText(Path.Combine(ShaderDirectory(), "cubeFragment.glsl"));
         Assert.Contains("vec3 lit = (dreamAmbient(n) + dreamDirect(n) + dreamPointLights(n, fragPos)) * baseColor.rgb;", source);
-        Assert.Contains("FragColor = vec4(dreamApplyFog(dreamExpose(lit) + emissive, fragPos), baseColor.a);", source);
+        Assert.Contains("FragColor = vec4(dreamApplyBoundaryMist(dreamApplyFog(dreamExpose(lit) + emissive, fragPos), fragPos), baseColor.a);", source);
     }
 
     [Fact]

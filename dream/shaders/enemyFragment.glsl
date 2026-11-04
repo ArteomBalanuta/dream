@@ -36,6 +36,8 @@ uniform vec3 uActorTintOffset;
 
 #include "lighting.glsl"
 #include "pointLights.glsl"
+// The boundary mist wall: the final colour is mixed toward smoke at and near the map edge.
+#include "boundaryMist.glsl"
 
 // Actors read brighter than terrain by day: the frame ambient is scaled by FrameLighting.Params.z
 // (uLightingParams.z, set per time of day by SkyModel), the direct light down, and the result never
@@ -70,5 +72,5 @@ void main()
     if (material.hasEmissiveTexture) {
         emissive *= texture(material.emissiveTexture, texCoord0 + material.emissiveUvScroll * uTime).rgb;
     }
-    FragColor = vec4(dreamApplyFog(dreamExpose(lit) + emissive, fragPos), baseColor.a);
+    FragColor = vec4(dreamApplyBoundaryMist(dreamApplyFog(dreamExpose(lit) + emissive, fragPos), fragPos), baseColor.a);
 }

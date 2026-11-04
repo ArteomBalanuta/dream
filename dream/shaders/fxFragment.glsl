@@ -1,5 +1,6 @@
 #version 330 core
 #include "lighting.glsl"
+#include "boundaryMist.glsl"
 
 in vec2 vUv;
 in vec4 vColor;
@@ -14,8 +15,9 @@ uniform sampler2D uAtlas;
 // whole result, alpha included, is scaled by the fog transmittance, so a distant particle fades
 // into the fog colour already on screen instead of being mixed towards it. Not exposed (the
 // atlas holds light that is meant to read as bright) and no discard (the strip's blend does the
-// cut-out).
+// cut-out). Particles past the map edge fade out with the boundary mist (boundaryMist.glsl), so
+// a spark or a flash beyond the wall does not show through it.
 void main()
 {
-    FragColor = texture(uAtlas, vUv) * vColor * dreamFogTransmittance(vWorldPos);
+    FragColor = texture(uAtlas, vUv) * vColor * dreamFogTransmittance(vWorldPos) * (1.0 - dreamBoundaryOpacity(vWorldPos));
 }

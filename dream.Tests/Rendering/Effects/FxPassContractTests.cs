@@ -129,7 +129,7 @@ public class FxPassContractTests
         string fragment = StripComments(ReadShader(FxRenderer.FragmentShaderFile));
 
         Assert.Single(Regex.Matches(fragment, @"^\s*#include ""lighting\.glsl""\s*$", RegexOptions.Multiline));
-        Assert.Matches(@"FragColor = texture\(uAtlas, vUv\) \* vColor \* dreamFogTransmittance\(vWorldPos\);", fragment);
+        Assert.Matches(@"FragColor = texture\(uAtlas, vUv\) \* vColor \* dreamFogTransmittance\(vWorldPos\) \* \(1\.0 - dreamBoundaryOpacity\(vWorldPos\)\);", fragment);
         Assert.DoesNotContain("discard", fragment);
         Assert.DoesNotContain("dreamExpose", fragment);
         Assert.DoesNotContain("dreamApplyFog", fragment);

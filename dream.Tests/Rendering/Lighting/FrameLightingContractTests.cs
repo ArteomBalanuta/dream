@@ -87,7 +87,7 @@ public class FrameLightingContractTests
         // Wave T2 C0: the material emissive is added after exposure and before fog. Wave T2a: point
         // lights count as direct light (scaled by ActorDirectScale) and are added before the floor.
         Assert.Matches(
-            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ \(dreamDirect\(n\) \+ dreamPointLights\(n, fragPos\)\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), baseColor\.a\);",
+            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ \(dreamDirect\(n\) \+ dreamPointLights\(n, fragPos\)\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
             source);
     }
 
