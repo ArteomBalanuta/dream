@@ -544,8 +544,9 @@ public sealed class InventoryWindowTests : IDisposable
             Assert.Equal(9, st.DragSource);
             Assert.Equal(9, _scene.Input.ActiveDragPayload);
 
-            // Let go off the board so nothing is sent, and the next cell starts clean.
-            _scene.Input.Pointer = new Vector2(5f, 5f);
+            // Let go on the window frame (not a target, not the world) so nothing is sent, and the
+            // next cell starts clean.
+            _scene.Input.Pointer = new Vector2(_scene.Layout.Inventory.X + 1f, _scene.Layout.Inventory.Y + 1f);
             _scene.Input.ReleaseDrag = true;
             _scene.Frame();
             Assert.False(st.DragActive);
@@ -1206,7 +1207,8 @@ public sealed class InventoryWindowTests : IDisposable
         _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(1));
         _scene.Input.StartDrag = true;
         _scene.Frame();
-        _scene.Input.Pointer = new Vector2(10f, 10f);
+        // On the window frame: neither a target nor the world. (Released in the world it is a Drop.)
+        _scene.Input.Pointer = new Vector2(_scene.Layout.Inventory.X + 1f, _scene.Layout.Inventory.Y + 1f);
         _scene.Input.ReleaseDrag = true;
         _scene.Frame();
 
@@ -1423,5 +1425,147 @@ public sealed class InventoryWindowTests : IDisposable
         Assert.Equal(64, _scene.Canvas.Named("cell.occupied").Count());
         Assert.Empty(_scene.Canvas.Named("cell.empty"));
         Assert.Equal(64, _scene.Canvas.Calls.Count(c => c.Name is "item.gem.amber" or "item.gear.iron-band"));
+    }
+
+    // ---- drop onto the ground ---------------------------------------------------------------
+
+    private static readonly Vector2 WorldPoint = new(40f, 40f);
+
+    private InventoryWindow.DropVerdict Release(int source, Vector2 p, out InventoryHudAction action) =>
+        InventoryWindow.TryResolveRelease(_scene.Layout, _scene.Layout.Inventory, _scene.View, source, p, out action);
+
+    [Fact]
+    public void WorldPoint_IsClearOfTheBarAndBothWindows()
+    {
+        Assert.True(ClassicHudHitTest.OverWorld(_scene.Layout, true, WorldPoint));
+        Assert.False(ClassicHudHitTest.OverWorld(_scene.Layout, true, InventoryScene.Centre(_scene.Layout.Bar)));
+        Assert.False(ClassicHudHitTest.OverWorld(_scene.Layout, true, InventoryScene.Centre(_scene.Layout.Inventory)));
+        Assert.False(ClassicHudHitTest.OverWorld(_scene.Layout, true, InventoryScene.Centre(_scene.Layout.Character)));
+        Assert.False(ClassicHudHitTest.OverWorld(_scene.Layout, true, new Vector2(float.NaN, 40f)));
+        Assert.False(ClassicHudHitTest.OverWorld(_scene.Layout, true, new Vector2(40f, float.PositiveInfinity)));
+    }
+
+    [Fact]
+    public void TryResolveRelease_BagItemAtAWorldPoint_IsAValidDropNamingTheItem()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+
+        Assert.Equal(InventoryWindow.DropVerdict.Valid, Release(9, WorldPoint, out InventoryHudAction action));
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Drop, 9, 0, 77), action);
+    }
+
+    [Fact]
+    public void TryResolveRelease_OverTheBar_TheWindowFrameOrTheCharacterWindow_IsNone()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+        UiRect win = _scene.Layout.Inventory;
+
+        foreach (Vector2 p in new[]
+                 {
+                     InventoryScene.Centre(_scene.Layout.Bar),
+                     new Vector2(win.X + 1f, win.Y + 1f),
+                     InventoryScene.Centre(_scene.Layout.Character),
+                     new Vector2(float.NaN, float.NaN),
+                     new Vector2(float.PositiveInfinity, 40f)
+                 })
+        {
+            Assert.Equal(InventoryWindow.DropVerdict.None, Release(9, p, out InventoryHudAction action));
+            Assert.Equal(default, action);
+        }
+    }
+
+    [Fact]
+    public void TryResolveRelease_AWornItemAtAWorldPoint_IsInvalidAndEmitsNothing()
+    {
+        _scene.Worn[2] = InventoryScene.Item(5, "helm.gilded", HeadMask);
+        _scene.Refresh();
+
+        Assert.Equal(InventoryWindow.DropVerdict.Invalid, Release(EquipmentSlots.FirstSlotIndex + 2, WorldPoint, out InventoryHudAction action));
+        Assert.Equal(default, action);
+    }
+
+    [Fact]
+    public void TryResolveRelease_AnEmptySource_IsNone()
+    {
+        Assert.Equal(InventoryWindow.DropVerdict.None, Release(9, WorldPoint, out _));
+    }
+
+    [Fact]
+    public void TryResolveRelease_AnInWindowTargetWinsOverTheWorld()
+    {
+        _scene.Items[1] = InventoryScene.Item(1, "gem.amber");
+        _scene.Refresh();
+
+        Assert.Equal(InventoryWindow.DropVerdict.Valid, Release(1, InventoryScene.Centre(_scene.Slot(10)), out InventoryHudAction action));
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Move, 1, 10), action);
+    }
+
+    [Fact]
+    public void Drag_ReleasedInTheWorld_RecordsExactlyOneDrop()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+
+        Drag(InventoryScene.Centre(_scene.Slot(9)), WorldPoint);
+
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Drop, 9, 0, 77), Assert.Single(_scene.Actions.Picked));
+        _scene.Frame();
+        Assert.Single(_scene.Actions.Picked);
+    }
+
+    [Fact]
+    public void Drag_OfAWornItemReleasedInTheWorld_RecordsNothing()
+    {
+        _scene.Worn[2] = InventoryScene.Item(5, "helm.gilded", HeadMask);
+        _scene.Refresh();
+
+        Drag(InventoryScene.Centre(_scene.Well(2)), WorldPoint);
+
+        Assert.Empty(_scene.Actions.Picked);
+    }
+
+    [Fact]
+    public void Drag_ReleasedOverTheBarOrTheCharacterWindow_RecordsNothing()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+
+        Drag(InventoryScene.Centre(_scene.Slot(9)), InventoryScene.Centre(_scene.Layout.Bar));
+        Drag(InventoryScene.Centre(_scene.Slot(9)), InventoryScene.Centre(_scene.Layout.Character));
+        Drag(InventoryScene.Centre(_scene.Slot(9)), new Vector2(float.NaN, float.NaN));
+
+        Assert.Empty(_scene.Actions.Picked);
+    }
+
+    [Fact]
+    public void Drag_CancelledByASnapshotChange_RecordsNoDrop()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+
+        Hold(InventoryScene.Centre(_scene.Slot(9)), WorldPoint);
+        _scene.Refresh();   // a new snapshot while the item is held
+        _scene.Input.ReleaseDrag = true;
+        _scene.Frame();
+
+        Assert.Empty(_scene.Actions.Picked);
+    }
+
+    [Fact]
+    public void Drag_WhenTheWindowClosesMidDrag_RecordsNoDrop()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+
+        Hold(InventoryScene.Centre(_scene.Slot(9)), WorldPoint);
+        _scene.View.InventoryOpen = false;
+        _scene.Input.ReleaseDrag = true;
+        _scene.Frame();
+        _scene.View.InventoryOpen = true;
+        _scene.Frame();
+
+        Assert.Empty(_scene.Actions.Picked);
     }
 }

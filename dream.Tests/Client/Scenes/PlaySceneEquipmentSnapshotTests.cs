@@ -284,6 +284,7 @@ public sealed class PlaySceneEquipmentSnapshotTests
     [InlineData(InventoryHudActionKind.Unequip, typeof(InventoryUnequipIntent))]
     [InlineData(InventoryHudActionKind.Move, typeof(InventoryMoveIntent))]
     [InlineData(InventoryHudActionKind.Destroy, typeof(InventoryDestroyIntent))]
+    [InlineData(InventoryHudActionKind.Drop, typeof(InventoryDropIntent))]
     public void EachHudAction_MapsToExactlyOneMatchingIntent(InventoryHudActionKind kind, Type intentType)
     {
         IPlayerActionPayload intent = PlayScene.ToInventoryIntent(new InventoryHudAction(kind, 3, 101, 42));
@@ -303,6 +304,7 @@ public sealed class PlaySceneEquipmentSnapshotTests
         Assert.Equal(new InventoryUnequipIntent(102, 0), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Unequip, 102)));
         Assert.Equal(new InventoryMoveIntent(1, 5), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Move, 1, 5)));
         Assert.Equal(new InventoryDestroyIntent(2, 99), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Destroy, 2, 0, 99)));
+        Assert.Equal(new InventoryDropIntent(2, 99), PlayScene.ToInventoryIntent(new(InventoryHudActionKind.Drop, 2, 0, 99)));
     }
 
     private static InventoryItemSnapshot Item(string kind, string visual, HeldLightKind light, params StatModifier[] modifiers) =>

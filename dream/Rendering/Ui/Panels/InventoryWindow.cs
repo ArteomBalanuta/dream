@@ -174,8 +174,7 @@ public static class InventoryWindow
         {
             if (st.DragActive && !st.DragCancelled && payload == st.DragSource)
             {
-                int target = ResolveTarget(l, win, v, payload, dropPosition);
-                if (TryResolveDrop(v, payload, target, out InventoryHudAction action) == DropVerdict.Valid)
+                if (TryResolveRelease(l, win, v, payload, dropPosition, out InventoryHudAction action) == DropVerdict.Valid)
                 {
                     a.Inventory(action);
                 }
@@ -291,6 +290,44 @@ public static class InventoryWindow
         return TryDragFootprint(v, source, out ItemFootprint footprint) && TryDropAnchor(l, win, p, footprint, out int anchor)
             ? anchor
             : -1;
+    }
+
+    // What a release at p does: a well or bag anchor first (TryResolveDrop); with no in-window target,
+    // a bag item released over the world is dropped on the ground (no confirm: it stays recoverable).
+    // A worn item released into the world is Invalid (the server refuses it, as with Destroy and Sell).
+    // Anything else, including a non-finite pointer, is None. The window is open here.
+    internal static DropVerdict TryResolveRelease(
+        in UiLayout l, UiRect win, HudView v, int source, Vector2 p, out InventoryHudAction action)
+    {
+        action = default;
+        if (!float.IsFinite(p.X) || !float.IsFinite(p.Y))
+        {
+            return DropVerdict.None;
+        }
+
+        int target = ResolveTarget(l, win, v, source, p);
+        if (target >= 0)
+        {
+            return TryResolveDrop(v, source, target, out action);
+        }
+
+        if (!ClassicHudHitTest.OverWorld(in l, inventoryOpen: true, p))
+        {
+            return DropVerdict.None;
+        }
+
+        if (EquipmentSlots.TryFromSlotIndex(source, out EquipmentSlot sourceSlot))
+        {
+            return TryItem(v.Worn, (int)sourceSlot, out _) ? DropVerdict.Invalid : DropVerdict.None;
+        }
+
+        if (!IsPlaced(v, source))
+        {
+            return DropVerdict.None;
+        }
+
+        action = new InventoryHudAction(InventoryHudActionKind.Drop, source, 0, v.Backpack[source].Item.ItemInstanceId);
+        return DropVerdict.Valid;
     }
 
     // Scale that fits an icon with the given footprint into a box of boxW x boxH units: the

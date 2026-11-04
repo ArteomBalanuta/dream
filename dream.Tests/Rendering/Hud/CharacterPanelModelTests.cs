@@ -229,6 +229,29 @@ public sealed class CharacterPanelModelTests
     }
 
     [Fact]
+    public void BackpackMenu_OffersOneNonConfirmingDrop_NamingTheAnchorAndTheItem()
+    {
+        InventoryItemSnapshot rolled = Item(6, "Rolled Cap", 4, ItemRarity.Uncommon, true);
+
+        List<CharacterMenuEntry> menu = CharacterPanelModel.BackpackMenu(FullInventory(), 5, rolled);
+
+        CharacterMenuEntry drop = Assert.Single(menu, e => e.Action.Kind == InventoryHudActionKind.Drop);
+        Assert.Equal("Drop", drop.Label);
+        Assert.False(drop.RequiresConfirm);
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Drop, 5, 0, 6), drop.Action);
+        Assert.True(menu.FindIndex(e => e.Action.Kind == InventoryHudActionKind.Drop) + 1
+            == menu.FindIndex(e => e.Action.Kind == InventoryHudActionKind.Destroy));
+    }
+
+    [Fact]
+    public void BackpackMenu_ForAnEquippedItem_OffersNoDrop()
+    {
+        List<CharacterMenuEntry> menu = CharacterPanelModel.BackpackMenu(FullInventory(), 0, Item(1, "Blade", 1, ItemRarity.Rare, true));
+
+        Assert.DoesNotContain(menu, e => e.Action.Kind == InventoryHudActionKind.Drop);
+    }
+
+    [Fact]
     public void BackpackMenu_ForAnEquippedItem_OffersUnequipOfItsSlot_AndNoDestroy()
     {
         PlayerInventorySnapshot inventory = FullInventory();
