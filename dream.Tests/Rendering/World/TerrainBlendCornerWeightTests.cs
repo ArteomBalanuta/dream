@@ -246,6 +246,62 @@ public class TerrainBlendCornerWeightTests
     }
 
     [Fact]
+    public void The_Shader_Corner_Weight_Functions_Keep_The_Statements_The_Mirror_Copies()
+    {
+        string shader = StripComments(ReadShader());
+        string split = Squash(Body(shader, "vec3 dreamTerrainSplitMissing("));
+        string[] splitStatements =
+        [
+            "floatsp=okp?wp:0.0;",
+            "floatsq=okq?wq:0.0;",
+            "floatt=sp+sq;",
+            "if(t>1e-6){returnm*vec3(sp,sq,0.0)/t;}",
+            "returnvec3(0.0,0.0,m);"
+        ];
+        AssertInOrder(split, splitStatements);
+
+        string weights = Squash(Body(shader, "vec4 dreamTerrainCornerWeights("));
+        string[] weightStatements =
+        [
+            "floatr0=(1.0-a.x)*(1.0-a.y);",
+            "floatr1=a.x*(1.0-a.y);",
+            "floatr2=(1.0-a.x)*a.y;",
+            "floatr3=a.x*a.y;",
+            "floatw0=r0;",
+            "floatw1=px?r1:0.0;",
+            "floatw2=pz?r2:0.0;",
+            "floatw3=pd?r3:0.0;",
+            "if(!px){vec3g=dreamTerrainSplitMissing(r1,r0,true,r3,pd);w0+=g.x;w3+=g.y;w2+=g.z;}",
+            "if(!pz){vec3g=dreamTerrainSplitMissing(r2,r0,true,r3,pd);w0+=g.x;w3+=g.y;w1+=g.z;}",
+            "if(!pd){vec3g=dreamTerrainSplitMissing(r3,r2,pz,r1,px);w2+=g.x;w1+=g.y;w0+=g.z;}",
+            "returnvec4(w0,w1,w2,w3);"
+        ];
+        AssertInOrder(weights, weightStatements);
+
+        // The band setup the mirror's Evaluate copies.
+        string albedo = Squash(Body(shader, "vec3 dreamTerrainAlbedo("));
+        Assert.Contains("vec2e=min(l,1.0-l);", albedo);
+        Assert.Contains("vec2a=0.5*(1.0-clamp(e/max(uTerrainBlendBand,0.001),0.0,1.0));", albedo);
+        Assert.Contains("ivec2dir=ivec2(l.x>=0.5?1:-1,l.y>=0.5?1:-1);", albedo);
+        Assert.Contains("inttx=a.x>0.0?dreamTerrainTexel(cell+ivec3(dir.x,0,0)):0;", albedo);
+        Assert.Contains("inttz=a.y>0.0?dreamTerrainTexel(cell+ivec3(0,0,dir.y)):0;", albedo);
+        Assert.Contains("inttd=(a.x>0.0&&a.y>0.0)?dreamTerrainTexel(cell+ivec3(dir.x,0,dir.y)):0;", albedo);
+    }
+
+    private static string Squash(string text) => Regex.Replace(text, @"\s+", string.Empty);
+
+    private static void AssertInOrder(string squashedBody, string[] statements)
+    {
+        int at = 0;
+        foreach (string statement in statements)
+        {
+            int found = squashedBody.IndexOf(statement, at, StringComparison.Ordinal);
+            Assert.True(found >= 0, $"shader no longer has (in order): {statement}");
+            at = found + statement.Length;
+        }
+    }
+
+    [Fact]
     public void Blendable_Materials_Have_A_White_Base_Color_Factor_So_Neighbour_Tiles_Are_Not_Tinted()
     {
         for (int id = 0; id < TerrainMaterialMap.BlendableMaterialCount; id++)

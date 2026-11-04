@@ -149,6 +149,44 @@ public class StaticWorldChunkRendererMaterialMapTests
     }
 
     [Fact]
+    public void AFailedBuild_KeepsTheActiveMapAndThePendingMap_UntilTheRetryApplies()
+    {
+        MapStore store = new();
+        int calls = 0;
+        using StaticWorldChunkRenderer renderer = new(
+            request => ++calls == 1
+                ? Task.FromException<StaticWorldChunkBuildBatch>(new InvalidOperationException("build failed"))
+                : Task.FromResult(StaticWorldChunkRenderer.BuildBatch(request)),
+            new RenderFaultLog(_ => { }),
+            store);
+        Camera camera = new(new Vector3(3f, 2f, 3f));
+        camera.SetFacing(new Vector3(-1f, -0.5f, -1f));
+        ViewFrustum frustum = ViewFrustum.FromViewAndProjection(camera.GetViewMatrix(), ViewFrustumTests.GameProjection());
+        GeometryRenderExport export = CreateExport(new() { [(0, 0, 0)] = GeometryMaterialId.Grass }, 1, []);
+
+        renderer.Draw(UnusedRender, camera, in frustum, export);
+        renderer.Draw(UnusedRender, camera, in frustum, export);
+
+        // The only build failed: nothing applied, so the active map is still the empty initial one
+        // while the map built for the request waits for the retry.
+        Assert.Equal(1, calls);
+        Assert.True(renderer.HasPendingTerrainMaterialMap);
+        Assert.True(renderer.TerrainMaterialMap.IsEmpty);
+        Assert.Equal(0, store.SyncCount);
+
+        for (int i = 0; i < 40 && renderer.HasPendingTerrainMaterialMap; i++)
+        {
+            renderer.Draw(UnusedRender, camera, in frustum, export);
+        }
+
+        Assert.True(calls >= 2, "the failed build was never retried");
+        Assert.False(renderer.HasPendingTerrainMaterialMap);
+        Assert.Equal(new Vector3i(1, 1, 1), renderer.TerrainMaterialMap.Size);
+        renderer.Draw(UnusedRender, camera, in frustum, export);
+        Assert.Equal(1, store.SyncCount);
+    }
+
+    [Fact]
     public void FramesThatDrawNothing_DoNotSync_AndTheNextDrawingFrameSyncsOnce()
     {
         MapStore store = new();
