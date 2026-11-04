@@ -21,17 +21,16 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     private readonly Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>> _startBuildTask;
     private readonly IRenderFaultSink _faultSink;
     private readonly IStaticWorldChunkMeshStore _meshStore;
-    // Two reusable maps. _materialMap is the one the store draws with; _pendingMaterialMap is built
-    // for the latest scheduled request (its export signature is _pendingMaterialMapSignature) and is
-    // swapped in only when a batch with that same signature finishes applying. A newer request
-    // overwrites the pending map (latest wins). A batch of another signature, such as an older one
-    // that finishes while a newer request is in flight, leaves the active map alone: the blend may
-    // then lag the meshes (a stale or missing texel just does not blend), but it never describes a
-    // request whose meshes have not been applied.
+    // Two reusable maps. _materialMap is the one the store draws with. _pendingMaterialMap is built
+    // from the cells of the request whose batch DrainCompletedBuild has just taken for upload, and
+    // is swapped in when that same upload batch finishes applying. Only one upload batch exists at a
+    // time, so the active map always describes the most recently applied meshes: it never runs
+    // ahead of them (a faulted build has no batch, so it never swaps) and it is not starved by a
+    // continuous edit stream, where the applied batch is always older than the newest request. The
+    // pending flag is true only between taking a batch and applying it.
     private TerrainMaterialMap _materialMap = new();
     private TerrainMaterialMap _pendingMaterialMap = new();
     private bool _hasPendingMaterialMap;
-    private int _pendingMaterialMapSignature;
     // Counts every change of the active map (swap or reset); the store syncs when it moves. Not the
     // maps' own Version, which is per instance.
     private int _materialMapGeneration;
@@ -82,14 +81,14 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     // Runs on the build worker: plans from the request's cell snapshot and signature copy, then
     // builds the meshes. Touches no Cube and no renderer state.
     // The material map of the full cells of the last applied build. The terrain shader blends top
-    // faces with it; it is built when a build is scheduled but becomes active only when a batch of
-    // that request's export signature has been applied, and is cleared with the buffers.
+    // faces with it; it is built from the cells of each completed build and becomes active when that
+    // build's upload batch has been applied, and is cleared with the buffers.
     internal TerrainMaterialMap TerrainMaterialMap => _materialMap;
 
     // Increments whenever the active map changes (a batch applied, or a reset).
     internal int TerrainMaterialMapGeneration => _materialMapGeneration;
 
-    // True while a map built for a scheduled build waits for its batch to apply.
+    // True between taking a completed build for upload and applying its batch.
     internal bool HasPendingTerrainMaterialMap => _hasPendingMaterialMap;
 
     public static StaticWorldChunkBuildBatch BuildBatch(StaticWorldChunkBuildRequest request)
@@ -209,9 +208,6 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             // ExtractCells reads the mutable Cube positions, so it stays on the render thread; the
             // worker gets plain cell values. StartBuild adds the signature snapshot.
             IReadOnlyList<StaticVoxelRenderCell> cells = StaticWorldChunkExtractor.ExtractCells(export);
-            _pendingMaterialMap.Rebuild(cells);
-            _pendingMaterialMapSignature = exportSignature;
-            _hasPendingMaterialMap = true;
             extractMilliseconds = ElapsedMilliseconds(ref timestamp);
             ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks!, cells));
         }
@@ -477,6 +473,19 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             return;
         }
 
+        // The map belongs to the batch being uploaded, so it is built from this request's own cells
+        // (an immutable list, fresh per extraction; a merged superseded request carries the newest
+        // request's cells). The pending buffer is free: the previous swap left the old map there.
+        if (_activeBuildRequest != null)
+        {
+            _pendingMaterialMap.Rebuild(_activeBuildRequest.Cells);
+            _hasPendingMaterialMap = true;
+        }
+        else
+        {
+            _hasPendingMaterialMap = false;
+        }
+
         _activeBuildRequest = null;
         _consecutiveBuildFaults = 0;
         // A batch already superseded by the queued request is still uploaded. Dropping it starved
@@ -568,11 +577,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
             _lastAppliedExportSignature = _activeUploadBatch.ExportSignature;
             _hasAppliedExport = true;
-            if (_hasPendingMaterialMap && _pendingMaterialMapSignature == _activeUploadBatch.ExportSignature)
+            if (_hasPendingMaterialMap)
             {
-                // The meshes of the request the pending map was built for are in: the blend may now
-                // see it. A batch of another signature (older than the pending request) keeps the
-                // pending map waiting for its own batch.
+                // The meshes of the batch the pending map was built from are in: the blend may now
+                // see it.
                 (_materialMap, _pendingMaterialMap) = (_pendingMaterialMap, _materialMap);
                 _hasPendingMaterialMap = false;
                 _materialMapGeneration++;
