@@ -385,6 +385,7 @@ def main():
         import gen_hud
 
         errs += U.determinism_errors(gen_hud.main, ["hud"])
+        errs += U.shipped_errors(gen_hud.main, "hud", ROOT)
     for e in errs:
         print("FAIL", e)
     print(f"check_hud: {len(doc['sprites'])} + {len(cur['sprites'])} sprites, {len(errs)} errors")

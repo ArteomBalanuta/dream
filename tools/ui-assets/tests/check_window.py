@@ -1,4 +1,14 @@
-"""Checks for dream/ui/window: plan 07 sections "Checks" (All, Window). Exits nonzero on failure."""
+"""Checks for dream/ui/window: plan 07 sections "Checks" (All, Window). Exits nonzero on failure.
+
+`--fast` skips the one render that checks the committed atlas against the generator's bytes (about 3 minutes).
+
+This gate READS dream/ui/window and never writes it. It used to open with `gen_window.main(ROOT)` - it
+regenerated the atlas into the repository and then compared those just-overwritten files with a temp render, so
+what it called a committed-bytes check was two renders of the same source compared with each other. A gate that
+mutates the thing it measures cannot detect staleness, and the failure is invisible: it reports success BECAUSE
+it destroyed the evidence. That is worse than a gate that is always red, because nothing ever looks wrong. A
+gate reads; a generator writes; build_all.py is where writing belongs.
+"""
 from __future__ import annotations
 
 import re
@@ -335,30 +345,31 @@ def check_seams() -> None:
         fail("win.bottom: must close below the slab")
 
 
-def build_matches_committed() -> list[str]:
-    """Reproducibility: a second build into a temp folder must equal the one just written, byte for byte."""
-    import hashlib
-    import tempfile
+def check_shipped() -> None:
+    """The committed atlas must BE what the generator makes: one render into a temp dir, compared with the files
+    on disk that every other check in this file reads.
 
-    errs = []
-    with tempfile.TemporaryDirectory() as tmp:
-        gen_window.main(Path(tmp))
-        for f in ("window.png", "window.json"):
-            a = hashlib.sha256((ROOT / "window" / f).read_bytes()).hexdigest()
-            b = hashlib.sha256((Path(tmp) / "window" / f).read_bytes()).hexdigest()
-            if a != b:
-                errs.append(f"nondeterministic: window/{f}")
-    return errs
+    This replaces a hand-rolled sha256 loop so window gets the same .json line-ending normalisation as the other
+    gates (uiart._canon_shipped): the terrain manifest spent a wave always-red for want of it.
+
+    One render, not two. The old pass rendered twice, and two renders equal to each other is a weaker property
+    than a render equal to a fixed committed reference, which is what this asserts: any nondeterminism makes this
+    comparison fail against the committed bytes. What one process rendering twice adds is catching per-call
+    nondeterminism deterministically within a single run rather than probabilistically across runs - and at about
+    400 s a render that is not worth a third pass here. uiart.determinism_errors(gen_window.main, ["window"]) is
+    the call to add if that ever stops being true."""
+    for e in ua.shipped_errors(gen_window.main, "window", ROOT / "window"):
+        fail(e)
 
 
 def main() -> int:
-    gen_window.main(ROOT)
     check_sprites()
     check_source()
     check_colours()
     check_silhouettes()
     check_seams()
-    errors.extend(build_matches_committed())
+    if "--fast" not in sys.argv:
+        check_shipped()
     for e in errors:
         print("FAIL", e)
     print(f"check_window: {len(errors)} failure(s)")
