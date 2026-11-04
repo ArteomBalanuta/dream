@@ -78,5 +78,49 @@ public class TerrainSurfaceSettingsTests
         Assert.True(TerrainSurfaceSettings.Default.Enabled);
         Assert.Equal(1f, TerrainSurfaceSettings.Default.Variation);
         Assert.Equal(0f, new TerrainSurfaceSettings(false).Variation);
+        Assert.True(TerrainSurfaceSettings.Default.Blend);
+        Assert.True(TerrainSurfaceSettings.Default.Relief);
+    }
+
+    [Theory]
+    [InlineData(null, null, null, true, true, true)]
+    [InlineData("1", "1", "1", true, true, true)]
+    [InlineData("1", "0", "1", true, false, true)]
+    [InlineData("1", "1", " 0 ", true, true, false)]
+    [InlineData("1", "0", "0", true, false, false)]
+    [InlineData("0", null, null, false, false, false)]
+    [InlineData("0", "1", "1", false, false, false)]
+    public void Blend_And_Relief_Parse_And_Are_Forced_Off_With_The_Variation(
+        string? variation, string? blend, string? relief, bool enabled, bool expectedBlend, bool expectedRelief)
+    {
+        List<string> warnings = [];
+
+        TerrainSurfaceSettings settings = TerrainSurfaceSettings.Parse(variation, blend, relief, warnings.Add);
+
+        Assert.Equal(enabled, settings.Enabled);
+        Assert.Equal(expectedBlend, settings.Blend);
+        Assert.Equal(expectedRelief, settings.Relief);
+        Assert.Empty(warnings);
+    }
+
+    [Theory]
+    [InlineData("yes", "DREAM_TERRAIN_BLEND")]
+    [InlineData("2", "DREAM_TERRAIN_BLEND")]
+    [InlineData("on", "DREAM_TERRAIN_RELIEF")]
+    public void Invalid_Blend_Or_Relief_Warns_Once_And_Keeps_The_Default(string value, string name)
+    {
+        List<string> warnings = [];
+        bool blend = name == TerrainSurfaceSettings.BlendEnvironmentVariable;
+
+        TerrainSurfaceSettings settings = TerrainSurfaceSettings.Parse(
+            null,
+            blend ? value : null,
+            blend ? null : value,
+            warnings.Add);
+
+        Assert.Equal(TerrainSurfaceSettings.Default, settings);
+        string warning = Assert.Single(warnings);
+        Assert.Contains(name, warning);
+        Assert.Contains(value, warning);
     }
 }

@@ -13,6 +13,7 @@ public partial class Render : IDisposable
 {
     private readonly List<FloatingCombatTextRenderState> _floatingCombatTextStates = new();
     private readonly StaticTerrainTextureCache _staticTerrainTextures = new();
+    private readonly StaticTerrainTileArray _terrainTiles = new();
     private readonly List<WorldActorLabelState> _worldActorLabels = new();
     private readonly ActorHealthLabelCache _actorHealthLabels = new();
 

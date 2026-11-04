@@ -23,8 +23,9 @@ public class Wave9AlphaMaskUniformCoverageTests
         string fragment = File.ReadAllText(Path.Combine(shaders, fragmentFile));
         // uTerrainVariation lives in the DREAM_TERRAIN block, a program that never has a MASK
         // variant (a WORLD_ALPHA_MASK build of it is an #error, pinned by TerrainSurfaceShaderContractTests).
-        List<string> uniforms = [.. DeclaredUniforms(vertex), .. DeclaredUniforms(fragment)];
-        uniforms.Remove("uTerrainVariation");
+        // The whole terrain block is stripped first (uTerrainVariation, uTerrainLayer, the blend and
+        // relief uniforms, the tile array and the material map).
+        List<string> uniforms = [.. DeclaredUniforms(vertex), .. DeclaredUniforms(StripTerrainBlocks(fragment))];
         Assert.Contains("model", uniforms);
         Assert.Contains("material.alphaCutoff", uniforms);
 
@@ -71,6 +72,44 @@ public class Wave9AlphaMaskUniformCoverageTests
         string applySkinning = MethodBody(animatedModel, "private void ApplySkinning(");
         Assert.Contains("shader.SetBool(\"useSkinning\", false);", applySkinning);
         Assert.Contains("shader.SetBool(\"useSkinning\", true);", applySkinning);
+    }
+
+    // Removes every `#ifdef DREAM_TERRAIN ... #endif` block (programs that have no MASK variant),
+    // honouring nested conditionals.
+    private static string StripTerrainBlocks(string source)
+    {
+        System.Text.StringBuilder result = new();
+        int depth = 0;
+        bool inTerrain = false;
+        foreach (string line in source.Split('\n'))
+        {
+            string trimmed = line.TrimStart();
+            bool opens = trimmed.StartsWith("#if", StringComparison.Ordinal);
+            if (!inTerrain && trimmed.StartsWith("#ifdef DREAM_TERRAIN", StringComparison.Ordinal))
+            {
+                inTerrain = true;
+                depth = 1;
+                continue;
+            }
+
+            if (inTerrain)
+            {
+                if (opens)
+                {
+                    depth++;
+                }
+                else if (trimmed.StartsWith("#endif", StringComparison.Ordinal) && --depth == 0)
+                {
+                    inTerrain = false;
+                }
+
+                continue;
+            }
+
+            result.Append(line).Append('\n');
+        }
+
+        return result.ToString();
     }
 
     // `uniform T name;` plus the members of `uniform Struct name;` as name.member.
