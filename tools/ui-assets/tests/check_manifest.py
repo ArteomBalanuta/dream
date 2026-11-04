@@ -118,7 +118,7 @@ def parse_plan() -> dict[str, dict[str, tuple[int, int]]]:
                 for n in names:
                     expected[section][n] = (w * 4, h * 4)
         else:
-            if not cells[0].startswith(("1x1", "1x2", "2x2", "2x3", "2x4", "3x2")):
+            if not re.match(r"\d+x\d+$", cells[0]):
                 continue
             w, h = (int(v) for v in SIZE_RE.search(cells[1]).groups())
             for n in re.findall(r"`([^`]+)`", cells[2]):
@@ -147,7 +147,7 @@ def main() -> int:
     }
     expected["cursors"] = cursors
     # sanity on the parser itself: counts the plan implies
-    for key, n in (("window", 54), ("hud", 95), ("items", 28), ("cursors", 5)):
+    for key, n in (("window", 54), ("hud", 95), ("items", 69), ("cursors", 5)):
         if len(expected[key]) != n:
             errs.append(f"parser produced {len(expected[key])} {key} sprites, hand count is {n}")
     for key, exp in expected.items():
