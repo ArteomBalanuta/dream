@@ -14,6 +14,10 @@ public partial class Render
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("cubeFragment.glsl"));
 
+        LoadTerrainShader(TerrainShaderName,
+            AssetPaths.Shader("cubeVertex.glsl"),
+            AssetPaths.Shader("cubeFragment.glsl"));
+
         LoadWorldShader("enemy",
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("enemyFragment.glsl"));
@@ -49,6 +53,15 @@ public partial class Render
             throw;
         }
 
+        _shaders.Replace(name, shader);
+    }
+
+    // The terrain-only program: the cube sources with Shader.TerrainDefine. Terrain is opaque, so it
+    // has no MASK variant. Uniform blocks (frame lighting, lights, boundary mist) are bound to their
+    // fixed binding points at link time inside Shader, so it needs no further frame setup.
+    public void LoadTerrainShader(string name, string vertexPath, string fragmentPath)
+    {
+        Shader shader = new(vertexPath, fragmentPath, Shader.TerrainDefine);
         _shaders.Replace(name, shader);
     }
 }

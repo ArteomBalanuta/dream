@@ -21,7 +21,10 @@ public class Wave9AlphaMaskUniformCoverageTests
         string shaders = Path.Combine(RepoRoot(), "dream", "shaders");
         string vertex = File.ReadAllText(Path.Combine(shaders, "cubeVertex.glsl"));
         string fragment = File.ReadAllText(Path.Combine(shaders, fragmentFile));
+        // uTerrainVariation lives in the DREAM_TERRAIN block, a program that never has a MASK
+        // variant (a WORLD_ALPHA_MASK build of it is an #error, pinned by TerrainSurfaceShaderContractTests).
         List<string> uniforms = [.. DeclaredUniforms(vertex), .. DeclaredUniforms(fragment)];
+        uniforms.Remove("uTerrainVariation");
         Assert.Contains("model", uniforms);
         Assert.Contains("material.alphaCutoff", uniforms);
 

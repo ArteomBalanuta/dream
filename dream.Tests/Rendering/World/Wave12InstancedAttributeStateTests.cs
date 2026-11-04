@@ -99,7 +99,7 @@ public class Wave12InstancedAttributeStateTests
     {
         string render = PartialClassSource.Read(Path.Combine(RepoRoot(), "dream", "Rendering", "Core", "Render.cs"));
         string fallback = Method(render, "public void DrawFallbackInstances(");
-        Assert.Matches(new Regex(@"GetShader\(""cube""\)\.SetBool\(""useInstancing"", false\);\s*\}$"), fallback);
+        Assert.Matches(new Regex(@"GetShader\(TerrainShaderName\)\.SetBool\(""useInstancing"", false\);\s*\}$"), fallback);
         Assert.Contains("shader.SetBool(\"useInstancing\", false);", Method(render, "public void BeginStaticTerrainPass("));
         Assert.Contains("shader.SetBool(\"useInstancing\", instanced);", Method(render, "private void BindTerrainMaterial("));
 

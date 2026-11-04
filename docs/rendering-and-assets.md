@@ -142,6 +142,15 @@ If no model resolves for the material, `Render.DrawTerrainCubeFallback` draws a 
 
 See [Performance And Optimizations](performance-and-optimizations.md) for the guardrails.
 
+### Terrain surface
+
+Terrain draws with its own program, `Render.TerrainShaderName` (`"terrain"`): `cubeFragment.glsl` compiled a third time with `Shader.TerrainDefine` (`DREAM_TERRAIN`) over `cubeVertex.glsl`, with no MASK variant (a `WORLD_ALPHA_MASK` build of it is a compile-time `#error`). The shared `cube` program still serves model-backed cubes, ground scatter decals, view models and `AnimatedModel`. Terrain UVs run 0..cellSize per voxel face, so one 256 px tile repeats every 1 m cell; the terrain program breaks that up. Frame lighting, point lights and the boundary mist are uniform blocks bound to fixed binding points when a program links, so the terrain program receives them like any other world program.
+
+- **Tile alpha is relief height.** 0 is a crevice or puddle, 255 a crest, and the tile is seamless. Old tiles have alpha 255 everywhere, which the shader treats as a plain smooth blend. Terrain output alpha is always 1.
+- **`uTerrainVariation`** (set once per pass in `BeginStaticTerrainPass` and per bind in `BindTerrainMaterial`; `DREAM_TERRAIN_VARIATION`, default 1). 0 is one plain `texture()` sample, exactly the shared look. 1 is stochastic sampling plus macro variation.
+- **Stochastic sampling.** A world-space value noise on the surface plane (top faces xz, side faces zy or xy) picks a position along 0..8; the two neighbouring integer variants are sampled with `textureGrad` (the screen derivatives are taken at the top of `main`) and blended with `smoothstep(0.3, 0.7, f + heightDifference * 0.6 * 4f(1-f))`, so the higher crest wins the seam while the bias vanishes where the variant pair changes. Each variant has an offset from a pcg2d hash of its integer id; top faces also get a quarter turn and a mirror, side faces an offset and an x mirror only. The tiles must survive quarter turns and mirroring. Hashes see integer ids and lattice corners only, never the interpolated UV. Terrain textures use `Repeat` wrap (`TextureDecoder.UploadTexture2D`), which the tile-space offsets rely on.
+- **Macro variation.** Two world-space octaves (scales 0.08 and 0.21) scale the colour by 0.82..1.08 (mean about 0.95: it never brightens on average) and a third, broader octave adds a slight desaturated cool/warm tint.
+
 ## Enemy Rendering Path
 
 The first non-cube world actor uses `EnemyRenderer` rather than trying to squeeze through `Cube.Animation`.
