@@ -85,6 +85,19 @@ DERIVED, applying the real formula with the real night constants:
 | night, brazier 1 m, half lit / half shadowed | **0.191** |
 | day noon, full sun, lambert 1.0 | **0.682** |
 
+**Correction 2026-11-04, MEASURED against the shaders:** the spread column above is **not reproducible
+from C4's own formula and constants** and should not be used as a source of absolute numbers. C4's
+constants were re-derived independently and match (moon intensity 0.0660, actor floor 0.0245), and
+the table's *ratios* between distances match the window function to three decimals — but its
+point-light term is uniformly **0.603x** what C4 gives (a brazier at 1.5 u with lambert 1.0 yields a
+red-channel gain of 2.08, where the table implies 1.325 at 1 m). `enginelook.py` is built to the
+shaders, not to this table. Nothing downstream depends on the absolute values **except M1's "0.45
+allows partial coverage" headroom claim**, which must be re-checked against a real capture.
+
+Also: the shader clamps where this prose does not. C4 writes the point window as `(1-s)^2/(1+1.5s)`;
+`pointLights.glsl:18` writes `clamp(1-s,0,1)^2/(1+1.5s)`. They differ only past the radius, where the
+shader is 0 and the prose is positive.
+
 DERIVED, the albedo spread you would need to output 0.45 at a uniform gain:
 
 | gain | needed albedo spread |
@@ -276,9 +289,16 @@ check_look.py --hud-rows                      now defaults to 96
   `fk_vertices` already does for the rigid path.
 - **R5.** Villager height: the boxes are 1.64 m, the player is 1.20 m. Decided above: match the
   player. See Q2.
-- **R6.** A1's bright share is 0.028 against a 0.020 floor and moves with the HUD crop. An emissive
-  accent helps it; a darker plate-shadowed figure slightly hurts it. If it drops below the floor the
-  answer is more or better-placed light, not a lower gate.
+- **R6, and its premise was wrong in both directions.** A1's bright share is thin (0.022 measured
+  against the 0.020 floor) and moves with the HUD crop, which is why `--hud-rows` now defaults to 96.
+  But MEASURED: **an emissive accent does not help it at any sane size** — the player's eye sockets
+  own 67 of 15,388 silhouette pixels at value 0.226-0.241, and `BRIGHT_V` is 0.60, so they contribute
+  exactly zero. (The brazier's coals at 0.30 contribute nothing either; its bright pixels come from
+  the fire FX.) And **the plate geometry moves the bright share UP, not down**: the reworked figure
+  owns ~1000 pixels above `BRIGHT_V` where the old one owned essentially none, because deep undercuts
+  only dim pixels that were already far below 0.60 while plates create pixels above it. Size the
+  emissive accent on art grounds, not for A1. If the bright share does drop below the floor the
+  answer remains more or better-placed light, not a lower gate.
 - **R7.** Raising `TorchIntensity` is world-wide — every remote player's torch brightens. Changing
   the **intensity** is safe; changing the **radius** is not, because `BrazierRadius == LampRadius ==
   10f` is what `FxSimulation.TryClassify` matches for the fire halo and the torch's `8f` deliberately
