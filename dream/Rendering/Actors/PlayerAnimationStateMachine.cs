@@ -12,6 +12,16 @@ public enum PlayerClipMode
     Hold
 }
 
+// The ground gait the body is running, in speed order. The simulation has three ground speeds
+// (walk 1.6, run 4.3, sprint 6.0 m/s) and each one has its own authored cycle; the tier is picked
+// from the speed the player is ACTUALLY moving at, with hysteresis on both boundaries.
+public enum PlayerGaitTier
+{
+    Walk,
+    Run,
+    Sprint
+}
+
 // What one player shows this frame, from the facts the renderer has about it. Serials count events
 // (an attack swing, a hit taken); the state machine starts an animation when a serial it has not
 // seen changes. The first serial it sees only sets the baseline, so a player that comes into view
@@ -49,13 +59,15 @@ public readonly record struct PlayerAnimationFrame(
     float LegTwistRadians = 0f);
 
 // The animation priority for one player: die (held) > attack (one-shot; the shooting pose for a
-// bow) > walk or sprint (playback speed follows the real speed) > idle. A hit adds a short torso
+// bow) > the ground gait - walk, run or sprint, picked from the real speed, its playback rate
+// following that speed inside the tier > idle. A hit adds a short torso
 // flinch and a red flash on top of whatever plays, and leaving the ground adds a leg tuck.
 // Holding an item raises the arm that holds it. One instance per player; Update allocates nothing.
 public sealed class PlayerAnimationStateMachine
 {
     public const string IdleClip = "idle";
     public const string WalkClip = "walk";
+    public const string RunClip = "run";
     public const string SprintClip = "sprint";
     public const string DieClip = "die";
     public const string MeleeClip = "attack-melee-right";
@@ -72,10 +84,29 @@ public sealed class PlayerAnimationStateMachine
     public const float ShootSeconds = 0.20f;
     public const float HitSeconds = 0.32f;
 
-    // Authoritative walking speed; the walk cycle plays at its authored rate there.
-    public const float ReferenceWalkSpeed = 6f;
+    // The speed each gait's cycle is authored for: at exactly this speed the clip plays at its
+    // authored rate (playback 1.0). They are the simulation's three ground speeds, which
+    // PlayerAnimationStateMachineTests pins against PlayerSimulationTuning - a tier authored for a
+    // speed the player cannot reach is a clip that never plays, which is what the single 6 m/s
+    // reference did to the sprint before this wave.
+    public const float ReferenceWalkSpeed = 1.6f;
+    public const float ReferenceRunSpeed = 4.3f;
+    public const float ReferenceSprintSpeed = 6.0f;
+
     public const float MovingSpeedThreshold = 0.35f;
-    public const float SprintSpeedThreshold = 9f;
+
+    // The tier boundaries, between the speeds they separate rather than on top of one of them, so a
+    // player cruising at exactly one tier's speed never sits on a boundary.
+    public const float RunSpeedThreshold = 2.6f;
+    public const float SprintSpeedThreshold = 5.2f;
+
+    // Deadband on BOTH tier boundaries, in favour of the tier already playing, for the same reason
+    // SectorHysteresisRadians exists: AnimationPlaybackState.Play resets the clip time to 0 when the
+    // clip NAME changes, so a speed hovering at a boundary would restart the stride every frame and
+    // the legs would stutter instead of walking. Acceleration carries the body across a boundary in
+    // far less time than a stride, so the damping costs nothing visible.
+    public const float GaitHysteresisSpeed = 0.4f;
+
     public const float MinPlaybackSpeed = 0.6f;
     public const float MaxPlaybackSpeed = 1.6f;
 
@@ -120,6 +151,8 @@ public sealed class PlayerAnimationStateMachine
     private float _mainArm;
     private float _offArm;
     private bool _moving;
+    // The gait tier playing, so ResolveGaitTier can hold it past its boundary.
+    private PlayerGaitTier _gait;
     // The directional walk clip picked last, so its sector can hold on past its boundary. Kept
     // across a pause, which only widens the sector a resumed walk starts in by the deadband.
     private string? _walkClip;
@@ -188,10 +221,36 @@ public sealed class PlayerAnimationStateMachine
         return WalkBackClip;
     }
 
+    // The gait tier for a speed, with GaitHysteresisSpeed of deadband in favour of `current`: the
+    // tier already playing holds on for that much speed past its boundary, in both directions. Pure
+    // and allocation-free.
+    public static PlayerGaitTier ResolveGaitTier(float speed, PlayerGaitTier current)
+    {
+        float runBoundary = RunSpeedThreshold +
+            (current == PlayerGaitTier.Walk ? GaitHysteresisSpeed : -GaitHysteresisSpeed);
+        float sprintBoundary = SprintSpeedThreshold +
+            (current == PlayerGaitTier.Sprint ? -GaitHysteresisSpeed : GaitHysteresisSpeed);
+        if (speed >= sprintBoundary)
+        {
+            return PlayerGaitTier.Sprint;
+        }
+
+        return speed >= runBoundary ? PlayerGaitTier.Run : PlayerGaitTier.Walk;
+    }
+
+    // The speed the tier's clip is authored for, which the playback rate divides by.
+    public static float ReferenceSpeed(PlayerGaitTier tier) => tier switch
+    {
+        PlayerGaitTier.Sprint => ReferenceSprintSpeed,
+        PlayerGaitTier.Run => ReferenceRunSpeed,
+        _ => ReferenceWalkSpeed
+    };
+
     // The plain walk cycle stands in for a directional clip a model does not carry: a clip name the
     // skeleton lacks stops playback and freezes the pose, so the fallback keeps the legs moving on a
     // model forged before C2's clips existed. Every other clip is its own fallback.
     public static string FallbackClip(string clipName) =>
+        string.Equals(clipName, RunClip, StringComparison.Ordinal) ||
         string.Equals(clipName, WalkBackClip, StringComparison.Ordinal) ||
         string.Equals(clipName, StrafeLeftClip, StringComparison.Ordinal) ||
         string.Equals(clipName, StrafeRightClip, StringComparison.Ordinal)
@@ -290,21 +349,28 @@ public sealed class PlayerAnimationStateMachine
         float speed = 1f;
         if (_moving && !inputs.Airborne)
         {
-            bool sprint = inputs.HorizontalSpeed >= SprintSpeedThreshold;
-            if (sprint)
+            _gait = ResolveGaitTier(inputs.HorizontalSpeed, _gait);
+            if (_gait == PlayerGaitTier.Sprint)
             {
                 // One sprint clip, so the twist stays the raw delta under the wider sprint clamp.
                 clip = SprintClip;
             }
             else
             {
-                clip = ResolveWalkClip(rawTwist, _walkClip, out float residual);
-                _walkClip = clip;
+                // The walk AND the run tier go through C2's sector table: the run tier is the
+                // default cruise, so a run that skipped the table would leave the moonwalk fix
+                // applying only at speeds the player almost never moves at. The forward sector
+                // swaps in the run cycle; the other three sectors reuse the directional walk clips
+                // played faster, and the sector hysteresis keeps holding the sector's own name.
+                string sector = ResolveWalkClip(rawTwist, _walkClip, out float residual);
+                _walkClip = sector;
+                clip = _gait == PlayerGaitTier.Run && string.Equals(sector, WalkClip, StringComparison.Ordinal)
+                    ? RunClip
+                    : sector;
                 legTwist = Math.Clamp(residual, -MaxLegTwistRadians, MaxLegTwistRadians);
             }
 
-            float reference = sprint ? SprintSpeedThreshold : ReferenceWalkSpeed;
-            speed = Math.Clamp(inputs.HorizontalSpeed / reference, MinPlaybackSpeed, MaxPlaybackSpeed);
+            speed = Math.Clamp(inputs.HorizontalSpeed / ReferenceSpeed(_gait), MinPlaybackSpeed, MaxPlaybackSpeed);
         }
         else
         {

@@ -40,7 +40,12 @@ public partial class PlayScene
 
     private sealed class AudioWalker(float walkStride)
     {
-        public FootstepCadence Steps { get; } = new(walkStride, walkStride * 1.3f, 7f);
+        // One authored walking stride per actor, with the faster gaits in the player's own
+        // proportions, so an actor with shorter legs keeps them at every speed.
+        public FootstepCadence Steps { get; } = new(
+            walkStride,
+            walkStride * (FootstepCadence.RunStride / FootstepCadence.WalkStride),
+            walkStride * (FootstepCadence.SprintStride / FootstepCadence.WalkStride));
 
         public Vector3 LastPosition;
         public bool HasLast;

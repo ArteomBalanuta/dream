@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Audio;
+using Dream.Rendering.Actors;
 
 namespace Dream.Tests.Client.Audio;
 
@@ -27,16 +28,38 @@ public class FootstepCadenceTests
     [Fact]
     public void Walking_Steps_Once_Per_Stride()
     {
-        // 4 m/s for 4 s is 16 m: ten 1.6 m strides.
-        Assert.InRange(CountSteps(new FootstepCadence(), 4f, 4f), 9, 10);
+        // The walk tier, 1.6 m/s for 4 s: 6.4 m of 0.85 m strides, about 1.9 steps/s - real walking
+        // cadence, which the old 1.6 m stride (one footfall every four metres) was nowhere near.
+        Assert.InRange(CountSteps(new FootstepCadence(), 1.6f, 4f), 7, 8);
+    }
+
+    [Fact]
+    public void Running_Uses_The_Run_Stride()
+    {
+        // The run tier, 4.3 m/s for 2 s: 8.6 m of 1.5 m strides, about 2.9 steps/s. The walking
+        // stride would have given ten steps at this speed.
+        int steps = CountSteps(new FootstepCadence(), 4.3f, 2f);
+        Assert.InRange(steps, 5, 6);
     }
 
     [Fact]
     public void Sprinting_Uses_The_Longer_Stride()
     {
-        // 11 m/s for 2 s is 22 m: ten 2.2 m strides, fewer than the 13 a walking stride would give.
-        int steps = CountSteps(new FootstepCadence(), 11f, 2f);
-        Assert.InRange(steps, 9, 10);
+        // The sprint tier, 6 m/s for 2 s: 12 m of 2.0 m strides, fewer than the 8 the run stride
+        // would give over the same ground.
+        int steps = CountSteps(new FootstepCadence(), 6f, 2f);
+        Assert.InRange(steps, 5, 6);
+    }
+
+    [Fact]
+    public void TheStrideTiersMatchTheAnimationTiers()
+    {
+        Assert.True(FootstepCadence.WalkStride < FootstepCadence.RunStride);
+        Assert.True(FootstepCadence.RunStride < FootstepCadence.SprintStride);
+        Assert.Equal(
+            PlayerAnimationStateMachine.RunSpeedThreshold, FootstepCadence.RunSpeedThreshold, 4);
+        Assert.Equal(
+            PlayerAnimationStateMachine.SprintSpeedThreshold, FootstepCadence.SprintSpeedThreshold, 4);
     }
 
     [Fact]
