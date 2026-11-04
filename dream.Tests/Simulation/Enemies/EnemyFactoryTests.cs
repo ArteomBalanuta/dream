@@ -169,12 +169,50 @@ public sealed class EnemyFactoryTests
 
         EnemyActor restored = EnemyFactory.Restore(row, ContentCatalog.Shipped.Wolf, 2100, Events, CombatFormulaService.Default);
 
-        Assert.Equal(50f, restored.Combatant.StatSheet.Base[StatId.Strength]);
+        // The ceiling is the enemy one (StatRules.MaxEnemyBase), not the player's MaxStrength.
+        Assert.Equal(StatRules.MaxEnemyBase, restored.Combatant.StatSheet.Base[StatId.Strength]);
         Assert.Equal(1f, restored.Combatant.StatSheet.Base[StatId.Vitality]);
         Assert.Equal(0.5f, restored.Combatant.StatSheet.Base[StatId.AttackSpeed]);
         Assert.Equal(52, restored.Combatant.AttackDamage);
         Assert.Equal(2.0f, restored.Combatant.AttackIntervalSeconds);
         Assert.Equal(10, restored.Combatant.Health.MaxHealth);
+    }
+
+    // The enemy base ceiling is a damage ceiling, because `enemy.attack_damage = strength + 2`. It must
+    // stay far below the player stat ceiling (1000 since the character sheet landed): clamping an enemy
+    // with the player cap turns a tampered or corrupt row's bite from 52 into 1002, which one-shots any
+    // player through a base max health of 100 regardless of gear. The shipped templates top out at
+    // Strength 40 (Wolf 10, DireWolf 16, AshenProwler 24, GraveHowler 40), so 50 keeps real headroom.
+    // Do not widen this to the player ceiling, and do not re-pin it upward to make a failure go away.
+    [Fact]
+    public void AHostileStrengthRow_ClampsToTheEnemyCeiling_NotThePlayerCeiling_SoTheWorstBiteIs52()
+    {
+        PersistedEnemyInstance row = WolfIntervalBitsTest.Row(strength: int.MaxValue, vitality: int.MaxValue, attackSpeed: 1.0f, currentHealth: 5, maxHealth: 10);
+
+        EnemyActor restored = EnemyFactory.Restore(row, ContentCatalog.Shipped.Wolf, 2101, Events, CombatFormulaService.Default);
+
+        Assert.Equal(50f, StatRules.MaxEnemyBase);
+        Assert.True(StatRules.MaxEnemyBase < PlayerCombatStats.MaxStrength, "the enemy ceiling must stay under the player ceiling");
+        Assert.Equal(StatRules.MaxEnemyBase, restored.Combatant.StatSheet.Base[StatId.Strength]);
+        Assert.Equal(StatRules.MaxEnemyBase, restored.Combatant.StatSheet.Base[StatId.Vitality]);
+        // strength + 2 = 50 + 2.
+        Assert.Equal(52, restored.Combatant.AttackDamage);
+        // A fresh player has 100 max health, so the worst row survives a bite with room to spare.
+        Assert.True(restored.Combatant.AttackDamage < 100);
+    }
+
+    // The flip side of the ceiling: no shipped template may sit above it, or EnemyFactory would clamp a
+    // legitimate enemy down without a word. Today the maxima are Strength 40 and Vitality 50, and
+    // Vitality is exactly at the ceiling - this is the test that fails if either is raised past it.
+    [Fact]
+    public void EveryShippedEnemyTemplate_FitsUnderTheEnemyCeiling_SoNoneIsSilentlyClamped()
+    {
+        Assert.NotEmpty(ContentCatalog.Shipped.Enemies);
+        foreach (EnemyTemplate template in ContentCatalog.Shipped.Enemies)
+        {
+            Assert.True(template.Strength <= StatRules.MaxEnemyBase, $"{template.Key} strength {template.Strength} is above the enemy ceiling {StatRules.MaxEnemyBase}");
+            Assert.True(template.Vitality <= StatRules.MaxEnemyBase, $"{template.Key} vitality {template.Vitality} is above the enemy ceiling {StatRules.MaxEnemyBase}");
+        }
     }
 
     [Fact]

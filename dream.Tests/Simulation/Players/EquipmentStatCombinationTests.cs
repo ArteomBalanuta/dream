@@ -53,12 +53,21 @@ public sealed class EquipmentStatCombinationTests
     private static readonly int[] VitalityGrid = [PlayerCombatStats.MinVitality, 10, 45, PlayerCombatStats.MaxVitality];
     private static readonly float[] SpeedGrid = [PlayerCombatStats.MinAttackSpeed, 2f, PlayerCombatStats.MaxAttackSpeed];
 
-    private static (float Strength, float Speed, float Vitality, float Armor) Oracle(
-        int strength, float speed, int vitality, Option[] worn)
+    // The default and one value that is not, so the Agility term in the attack speed is exercised and
+    // cannot be satisfied by a single point on the grid. 37 also spans the Defense step (37 / 4 = 9).
+    private static readonly int[] AgilityGrid = [PlayerStatRules.StartAgility, 37];
+
+    // Effective stats, worked out from the constants rather than by calling the production rule: the
+    // sheet sums the flats and clamps, then attack speed gains AttackSpeedPerAgility per point of
+    // effective Agility and is clamped again. Calling PlayerStatRules.EffectiveAttackSpeed here would
+    // make the comparison tautological, so the two clamps and the multiply are written out.
+    private static (float Strength, float Speed, float Vitality, float Armor, int Agility) Oracle(
+        int strength, float speed, int vitality, int agility, Option[] worn)
     {
         float s = strength;
         float a = speed;
         float v = vitality;
+        float g = agility;
         float armor = 0f;
         foreach (Option option in worn)
         {
@@ -70,16 +79,25 @@ public sealed class EquipmentStatCombinationTests
                     case StatId.Strength: s += m.Value; break;
                     case StatId.AttackSpeed: a += m.Value; break;
                     case StatId.Vitality: v += m.Value; break;
+                    case StatId.Agility: g += m.Value; break;
                     case StatId.Armor: armor += m.Value; break;
                 }
             }
         }
 
+        int effectiveAgility = (int)Math.Clamp(g, PlayerCombatStats.MinAgility, PlayerCombatStats.MaxAgility);
+        float sheetSpeed = Math.Clamp(a, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed);
+        float withAgility = Math.Clamp(
+            sheetSpeed + (PlayerStatRules.AttackSpeedPerAgility * effectiveAgility),
+            PlayerCombatStats.MinAttackSpeed,
+            PlayerCombatStats.MaxAttackSpeed);
+
         return (
             Math.Clamp(s, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength),
-            Math.Clamp(a, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed),
+            withAgility,
             Math.Clamp(v, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality),
-            Math.Clamp(armor, 0f, StatRules.DefaultMaxUnused));
+            Math.Clamp(armor, 0f, StatRules.DefaultMaxUnused),
+            effectiveAgility);
     }
 
     [Fact]
@@ -102,21 +120,23 @@ public sealed class EquipmentStatCombinationTests
             foreach (int strength in StrengthGrid)
             foreach (int vitality in VitalityGrid)
             foreach (float speed in SpeedGrid)
+            foreach (int agility in AgilityGrid)
             {
                 PlayerCombatant combatant = new(() => Vector3.Zero, stats: new PlayerCombatStats
                 {
                     Strength = strength,
                     Vitality = vitality,
-                    AttackSpeed = speed
+                    AttackSpeed = speed,
+                    Agility = agility
                 });
-                string where = $"[{string.Join(" | ", worn.Select(w => w.Name))}] base {strength}/{speed}/{vitality}";
+                string where = $"[{string.Join(" | ", worn.Select(w => w.Name))}] base {strength}/{speed}/{vitality}/ag {agility}";
                 PlayerCombatStatsSnapshot baseBefore = PlayerCombatStatsSnapshot.From(combatant.BaseStats);
                 int bareMax = combatant.Health.MaxHealth;
                 int bareArmor = combatant.EffectiveArmor;
                 float bareSpeedBits = combatant.Stats.AttackSpeed;
 
                 combatant.ApplyEquipment(loadout);
-                (float s, float a, float v, float armor) = Oracle(strength, speed, vitality, worn);
+                (float s, float a, float v, float armor, int ag) = Oracle(strength, speed, vitality, agility, worn);
 
                 Assert.True(s == combatant.Stats.Strength, $"{where}: strength {combatant.Stats.Strength} vs {s}");
                 Assert.True(
@@ -124,6 +144,7 @@ public sealed class EquipmentStatCombinationTests
                     $"{where}: attack speed {combatant.Stats.AttackSpeed} vs {a}");
                 Assert.True(v == combatant.Stats.Vitality, $"{where}: vitality {combatant.Stats.Vitality} vs {v}");
                 Assert.True((int)armor == combatant.EffectiveArmor, $"{where}: armor {combatant.EffectiveArmor} vs {armor}");
+                Assert.True(ag == combatant.Stats.Agility, $"{where}: agility {combatant.Stats.Agility} vs {ag}");
 
                 Assert.InRange(combatant.Stats.Strength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength);
                 Assert.InRange(combatant.Stats.Vitality, PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality);

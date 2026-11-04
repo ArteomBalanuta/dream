@@ -23,13 +23,19 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
 
     public StatSheet StatSheet => _statSheet;
 
-    // The Armor the equipment adds up to (base 0, effective range 0..1000). Damage taken is
-    // mitigated by it (MitigateDamage); Armor 0 takes every hit unchanged.
+    // The Armor the equipment adds up to (base 0, effective range 0..1000) - gear only, it carries no
+    // Defense. The number damage mitigation actually divides by is MitigationArmor.
     public int EffectiveArmor => (int)_statSheet.Effective[StatId.Armor];
 
-    // Share of incoming damage taken, from player.damage_taken_factor. Cached: it is evaluated only
-    // when the effective Armor differs from the armor it was last evaluated for (never per hit, and not
-    // on the client's per-snapshot ApplyBaseStats). 1.0 at Armor 0.
+    // The armor damage mitigation is evaluated for: gear Armor plus Defense (Agility / 4). This is the
+    // one number the character sheet shows as "Defense" (CharacterSheetModel: Defense + Armor), so the
+    // HUD and mitigation never disagree. It is 0 only at Armor 0 and Agility under 4.
+    public int MitigationArmor => EffectiveArmor + Defense;
+
+    // Share of incoming damage taken, from player.damage_taken_factor, evaluated for MitigationArmor.
+    // Cached: it is evaluated only when MitigationArmor differs from the armor it was last evaluated for
+    // (never per hit, and not on the client's per-snapshot ApplyBaseStats). 1.0 only at MitigationArmor 0,
+    // which a default character is not: Agility 10 gives Defense 2 and so ~2% mitigation while naked.
     public double DamageTakenFactor { get; private set; } = 1.0;
 
     private int _factorArmor;
@@ -140,8 +146,8 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         return receipt;
     }
 
-    // Pure and allocation free. Armor 0 (or an amount of 0 or less) returns the amount unchanged; otherwise
-    // the amount scaled by the cached factor, rounded away from zero, and at least 1.
+    // Pure and allocation free. MitigationArmor 0 (or an amount of 0 or less) returns the amount unchanged;
+    // otherwise the amount scaled by the cached factor, rounded away from zero, and at least 1.
     public int MitigateDamage(int amount)
     {
         if (amount <= 0 || _factorArmor <= 0)
@@ -224,7 +230,7 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         Defense = PlayerStatRules.Defense(Stats.Agility);
         MagicMinDamage = PlayerStatRules.MagicMinDamage(Stats.Energy);
         MagicMaxDamage = PlayerStatRules.MagicMaxDamage(Stats.Energy);
-        int armor = EffectiveArmor + Defense;
+        int armor = MitigationArmor;
         if (armor != _factorArmor)
         {
             _factorArmor = armor;
