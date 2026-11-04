@@ -134,6 +134,8 @@ public sealed class CharacterPanelModelTests
 
         CharacterSlotRow[] rows = CharacterPanelModel.BuildSlotRows(hostile);
 
+        // Pin the count first: an empty return would make both Assert.All calls below vacuous.
+        Assert.Equal(EquipmentSlots.Count, rows.Length);
         Assert.All(rows, row => Assert.Null(row.Item));
         Assert.All(rows, row => Assert.Equal("Empty", row.ItemLabel));
         Assert.Equal(EquipmentSlots.Count, CharacterPanelModel.BuildSlotRows(null).Length);

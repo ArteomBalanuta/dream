@@ -23,6 +23,13 @@
     <ProjectReference Include="..\dream\dream.csproj" />
   </ItemGroup>
 
+  <!-- Opt-in only: a plain `dotnet test` never restores or loads coverlet. Pass -p:Coverage=true to
+       get the collector, and use coverage.runsettings, which turns on IncludeTestAssembly so the
+       assertions themselves are instrumented (an Assert. line with zero hits is a dead check). -->
+  <ItemGroup Condition="'$(Coverage)' == 'true'">
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- xUnit reads its runner settings (parallel algorithm, thread count) from the output folder. -->
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />

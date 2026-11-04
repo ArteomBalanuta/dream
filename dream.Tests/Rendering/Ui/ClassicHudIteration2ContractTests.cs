@@ -149,7 +149,16 @@ public sealed class ClassicHudIteration2ContractTests
         ];
         Assert.All(required, name => Assert.Contains(name, UiSpriteNames.Required));
         Assert.All(added.Except(required), name => Assert.DoesNotContain(name, UiSpriteNames.Required));
-        Assert.All(UiSpriteNames.PendingRequired, name => Assert.Contains(name, UiSpriteNames.Required));
+        // Required spreads PendingRequired into itself, so "every pending name is required" can only
+        // restate the spread operator and shrinks with the list it checks. Pin the membership instead:
+        // these are the bar names iteration 2 made mandatory, and dropping one now fails here.
+        Assert.Equal(
+            [
+                "gem.setting.left", "gem.setting.right", "gem.hp.spill", "gem.mp.spill", "hudnum.slash",
+                "hudnum.0", "hudnum.1", "hudnum.2", "hudnum.3", "hudnum.4",
+                "hudnum.5", "hudnum.6", "hudnum.7", "hudnum.8", "hudnum.9",
+            ],
+            UiSpriteNames.PendingRequired);
     }
 
     [Fact]
