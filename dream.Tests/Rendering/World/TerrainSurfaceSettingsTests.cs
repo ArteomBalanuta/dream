@@ -59,4 +59,24 @@ public class TerrainSurfaceSettingsTests
     {
         Assert.Equal(TerrainSurfaceSettings.Default, TerrainSurfaceSettings.Parse("nope"));
     }
+
+    [Theory]
+    [InlineData("01")]
+    [InlineData("1.0")]
+    [InlineData("true")]
+    public void Near_Misses_Are_Invalid_Not_Parsed_Leniently(string value)
+    {
+        List<string> warnings = [];
+
+        Assert.Equal(TerrainSurfaceSettings.Default, TerrainSurfaceSettings.Parse(value, warnings.Add));
+        Assert.Single(warnings);
+    }
+
+    [Fact]
+    public void Default_Is_Enabled_And_Variation_Matches_Enabled()
+    {
+        Assert.True(TerrainSurfaceSettings.Default.Enabled);
+        Assert.Equal(1f, TerrainSurfaceSettings.Default.Variation);
+        Assert.Equal(0f, new TerrainSurfaceSettings(false).Variation);
+    }
 }
