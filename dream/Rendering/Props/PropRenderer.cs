@@ -25,12 +25,14 @@ public sealed class PropRenderer
 
     private readonly Render _render;
     private readonly PropIndex _index = new();
+    private readonly Dream.Rendering.Ground.GroundScatterRenderer _ground;
     private readonly int[] _visibleByKind = new int[PropCatalog.KindCount];
     private bool _preloaded;
 
     public PropRenderer(Render render)
     {
         _render = render;
+        _ground = new Dream.Rendering.Ground.GroundScatterRenderer(render);
     }
 
     public PropIndex Index => _index;
@@ -39,11 +41,19 @@ public sealed class PropRenderer
     public int LastDrawnCount { get; private set; }
 
     // After CollectFrameLights, once per frame.
-    public void Update(in Dream.Simulation.World.Geometry.GeometryRenderExport export, Dream.Rendering.Lighting.PlacedLightIndex placedLights) =>
+    public Dream.Rendering.Ground.GroundScatterRenderer Scatter => _ground;
+
+    public void Update(in Dream.Simulation.World.Geometry.GeometryRenderExport export, Dream.Rendering.Lighting.PlacedLightIndex placedLights)
+    {
         _index.Update(in export, placedLights);
+        _ground.Update(_index);
+    }
 
     public void Draw(Dream.Simulation.Players.Camera camera, Vector3 focus)
     {
+        // The floor clutter first (DREAM_WORLD_PROPS does not gate it; DREAM_GROUND_SCATTER does), before the early return.
+        _ground.Draw(camera, focus);
+
         IReadOnlyList<PropPlacement> placements = _index.Placements;
         LastDrawnCount = 0;
         if (placements.Count == 0 || !_enabled)

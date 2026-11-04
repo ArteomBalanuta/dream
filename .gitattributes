@@ -11,3 +11,6 @@ tools/ui-assets/terrain/*.png binary
 # The actor and prop GLBs are compared byte for byte against their generators (check_char, check_actors,
 # check_props). Git auto-detects them as binary today; pin it, because an eol filter on these would be silent.
 dream/animations/**/*.glb binary
+
+# The ground asset manifests are compared byte for byte against their generators (check_ground_*): keep LF
+dream/animations/ground/*.json text eol=lf

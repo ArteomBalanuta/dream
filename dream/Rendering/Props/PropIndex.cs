@@ -17,6 +17,9 @@ public sealed class PropIndex
     // Times the layout was rebuilt (tests).
     public int RebuildCount { get; private set; }
 
+    // The ground the last Update scanned; RebuildCount is its change signal. Shared: callers must not mutate.
+    public StaticGround Ground => _ground;
+
     // Sorted by kind then position. Shared and reused: callers must not mutate.
     public IReadOnlyList<PropPlacement> Placements => _placements;
 
