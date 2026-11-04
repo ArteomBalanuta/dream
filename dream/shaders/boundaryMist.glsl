@@ -51,10 +51,10 @@ float dreamMistInset(vec3 p)
     return min(min(p.x - uMistBounds.x, uMistBounds.z - p.x), min(p.z - uMistBounds.y, uMistBounds.w - p.z));
 }
 
-// The slow noise that moves the wall's inner border: one octave drifting at 0.25 m/s.
+// The slow noise that moves the wall's inner border: one octave drifting at about 0.07 m/s.
 float dreamMistEdgeNoise(vec2 xz)
 {
-    return dreamMistValueNoise(xz * 0.9 + vec2(0.20, 0.15) * uMistParams.y + 5.0);
+    return dreamMistValueNoise(xz * 0.9 + vec2(0.06, 0.04) * uMistParams.y + 5.0);
 }
 
 // 0 where the mist is absent, uMistParams.x (1) on and past the edge.
@@ -91,27 +91,74 @@ vec3 dreamMistFloorPoint(vec3 p)
     return p + v * clamp((uMistParams.z - p.y) / v.y, -1.0, 1.0);
 }
 
-// Three drifting octaves: two advected along the wind, one rising with time (the boil).
-float dreamMistSmokeNoise(vec2 xz)
+// The smoke's palette: a near-black base, a body that wanders between cold indigo and bruised
+// violet, a slightly lighter crest on the tongues, and a dim ember that smoulders in the crevices.
+const vec3 MistBase = vec3(0.016, 0.012, 0.026);
+const vec3 MistIndigo = vec3(0.042, 0.045, 0.105);
+const vec3 MistBruise = vec3(0.090, 0.040, 0.105);
+const vec3 MistCrest = vec3(0.165, 0.115, 0.215);
+const vec3 MistEmber = vec3(0.40, 0.080, 0.030);
+const float MistEmberGain = 0.36;   // the ember is self-lit, so the veins still glow at night
+const float MistSelfLight = 0.16;   // a faint self-lit floor so the tongues never go flat black
+
+// Ridged value noise: 1 on the noise's mid-level contour, 0 at its extremes, so warped contours
+// read as thin licking tongues and filaments.
+float dreamMistRidge(vec2 q)
 {
-    float t = uMistParams.y;
-    float o1 = dreamMistValueNoise(xz * 0.5 + vec2(0.12, 0.09) * t);
-    float o2 = dreamMistValueNoise(xz * 1.0 + vec2(-0.21, 0.28) * t + 17.0);
-    float o3 = dreamMistValueNoise(vec2(dot(xz, vec2(0.6, 0.35)), t * 0.4) + 41.0);
-    return smoothstep(0.22, 0.78, 0.5 * o1 + 0.32 * o2 + 0.18 * o3);
+    return 1.0 - abs(2.0 * dreamMistValueNoise(q) - 1.0);
 }
 
-// The smoke's colour at world point p, lit as an up-facing surface: brighter churn in the first
-// 2 m past the edge, darker and quieter deeper. No point lights.
+// The flame structure at floor point xz: x the tongue body (0..1), y the ember veins in the
+// crevices between tongues (0..1, pulsing slowly), z the indigo-to-violet tint (0..1).
+// The lattice is stretched along the wind (0.8, 0.6) so tongues read as long flowing wisps, then
+// warped twice (a large slow swirl and a smaller curl) before three ridged octaves drift through
+// it at their own slow speeds (about 0.03 to 0.07 m/s). Every time term is a whole multiple of 64
+// cells per 6400 s (BoundaryMistField.FlameRates), so the wrap is invisible.
+vec3 dreamMistFlame(vec2 xz)
+{
+    float t = uMistParams.y;
+    vec2 s = vec2(dot(xz, vec2(0.8, 0.6)) * 0.32, dot(xz, vec2(-0.6, 0.8)) * 0.80);
+
+    vec2 swirl = vec2(
+        dreamMistValueNoise(s * 0.45 + vec2(0.01, 0.01) * t + 3.0),
+        dreamMistValueNoise(s * 0.45 + vec2(-0.01, 0.01) * t + 11.0)) - 0.5;
+    vec2 q = s + 2.0 * swirl;
+    vec2 curl = vec2(
+        dreamMistValueNoise(q * 1.3 + vec2(0.03, -0.01) * t + 23.0),
+        dreamMistValueNoise(q * 1.3 + vec2(-0.01, -0.03) * t + 31.0)) - 0.5;
+    q += 0.9 * curl;
+
+    // Cubed ridges: thin bright crests (the tongues) with dark gaps between them; a coarse mask
+    // gathers the tongues into licking clusters instead of an even marbling.
+    float r1 = dreamMistRidge(q + vec2(0.02, 0.01) * t + 17.0);
+    float r2 = dreamMistRidge(q * 2.1 + vec2(-0.03, 0.05) * t + 29.0);
+    float r3 = dreamMistRidge(q * 4.3 + vec2(0.06, -0.04) * t + 43.0);
+    float mask = 0.45 + 1.1 * (swirl.y + 0.5);
+    float body = clamp((0.52 * r1 * r1 * r1 + 0.32 * r2 * r2 * r2 + 0.16 * r3 * r3) * mask, 0.0, 1.0);
+
+    float vein = pow(dreamMistRidge(q * 1.7 + vec2(-0.02, 0.03) * t + 53.0), 7.0);
+    vein *= 1.0 - smoothstep(0.10, 0.40, body);
+    float pulse = 0.65 + 0.35 * dreamMistValueNoise(vec2(t * 0.05, s.x * 0.3) + 61.0);
+
+    return vec3(body, vein * pulse, smoothstep(0.30, 0.70, swirl.x + 0.5));
+}
+
+// The smoke's colour at world point p: lit as an up-facing surface from the frame lighting (no
+// point lights) plus a small self-lit term, so it stays dark by day and alive at night. The
+// tongues are livelier in the first 2 m past the edge and calmer deeper.
 vec3 dreamBoundarySmoke(vec3 p)
 {
     vec3 f = dreamMistFloorPoint(p);
-    float n = dreamMistSmokeNoise(f.xz);
+    vec3 flame = dreamMistFlame(f.xz);
     float beyond = max(-dreamMistInset(f), 0.0);
-    float churn = n * mix(1.0, 0.35, smoothstep(2.0, 10.0, beyond));
-    vec3 albedo = mix(vec3(0.11, 0.11, 0.13), vec3(0.38, 0.38, 0.42), churn);
+    float life = mix(1.0, 0.5, smoothstep(2.0, 12.0, beyond));
+    float body = smoothstep(0.05, 0.85, flame.x) * life;
+
+    vec3 albedo = mix(MistBase, mix(MistIndigo, MistBruise, flame.z), smoothstep(0.0, 0.55, body));
+    albedo = mix(albedo, MistCrest, smoothstep(0.55, 1.0, body));
     vec3 up = vec3(0.0, 1.0, 0.0);
-    return albedo * (dreamAmbient(up) + 0.6 * dreamDirect(up)) * uLightingParams.x;
+    vec3 lit = albedo * (dreamAmbient(up) + 0.6 * dreamDirect(up)) * uLightingParams.x;
+    return lit + albedo * MistSelfLight + MistEmber * (flame.y * MistEmberGain * life);
 }
 
 // Mixes a lit, fogged colour toward the smoke by the opacity at p. The noise runs only where the

@@ -28,12 +28,23 @@ public static class BoundaryMistField
     // The noise hash repeats every this many lattice cells (the shader takes mod(cell, 64.0)).
     public const int HashPeriod = 64;
 
-    // Lattice cells per second each noise octave drifts along x and z (the shader repeats these).
-    // rate x TimeWrapSeconds must be a multiple of HashPeriod on both axes.
-    public static readonly (double X, double Z) EdgeRate = (0.20, 0.15);
-    public static readonly (double X, double Z) Octave1Rate = (0.12, 0.09);
-    public static readonly (double X, double Z) Octave2Rate = (-0.21, 0.28);
-    public const double Octave3Rate = 0.4; // along the second axis only
+    // Lattice cells per second each noise term drifts along its two lattice axes (the shader
+    // repeats these as vec2(x, z) * t; the edge term as vec2(x, z) * uMistParams.y). Every
+    // rate x TimeWrapSeconds must be a multiple of HashPeriod on both axes, i.e. a multiple of 0.01.
+    public static readonly (double X, double Z) EdgeRate = (0.06, 0.04);
+
+    // The flame structure, in shader order: the two swirl warps, the two curl warps, the three
+    // ridged octaves and the ember veins. All slow: about 0.03 to 0.07 m/s apparent drift.
+    public static readonly IReadOnlyList<(double X, double Z)> FlameRates =
+    [
+        (0.01, 0.01), (-0.01, 0.01),
+        (0.03, -0.01), (-0.01, -0.03),
+        (0.02, 0.01), (-0.03, 0.05), (0.06, -0.04),
+        (-0.02, 0.03),
+    ];
+
+    // The ember pulse, along the first lattice axis only (the shader's t * 0.05).
+    public const double PulseRate = 0.05;
 
     // How far inside the edge a player is stopped (the shared movement clamp).
     public static float StopInset => Player.EdgeMargin;

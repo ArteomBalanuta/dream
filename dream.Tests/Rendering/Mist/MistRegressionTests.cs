@@ -111,7 +111,7 @@ public class MistRegressionTests
     [Fact]
     public void War_Mist_Density_Is_Exactly_Zero_Everywhere_Inside_The_Clear_Radius_For_Any_Input()
     {
-        Assert.Equal(5.0f, WarMistField.ClearRadius);
+        Assert.Equal(3.75f, WarMistField.ClearRadius);
         for (float distance = 0f; distance <= WarMistField.ClearRadius; distance += 0.05f)
         {
             foreach (float explored in new[] { 0f, 0.5f, 1f, -1f, 2f })

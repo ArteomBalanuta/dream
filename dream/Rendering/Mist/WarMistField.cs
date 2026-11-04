@@ -9,12 +9,12 @@ namespace Dream.Rendering.Mist;
 // composed together (1 - (1 - a)^N) give the target density.
 public static class WarMistField
 {
-    public const float ClearRadius = 5.0f;
-    public const float FullRadius = 10.5f;
-    public const float UnexploredDensity = 0.78f;
-    public const float ExploredDensity = 0.35f;
-    public const float MaxTargetDensity = 0.90f;
-    public const float NoiseModMin = 0.55f;
+    public const float ClearRadius = 3.75f;
+    public const float FullRadius = 8.0f;
+    public const float UnexploredDensity = 0.88f;
+    public const float ExploredDensity = 0.58f;
+    public const float MaxTargetDensity = 0.92f;
+    public const float NoiseModMin = 0.70f;
     public const float NoiseModMax = 1.30f;
 
     // The quads' half extent around the focus, in metres. Not clipped to the map.
@@ -30,7 +30,7 @@ public static class WarMistField
     // metre covers for the large billows and the small curls. The shader repeats the two scales.
     public const float WindX = 0.8f;
     public const float WindZ = 0.6f;
-    public const float WindSpeed = 0.6f;
+    public const float WindSpeed = 0.3f;
     public const double BigScale = 1d / 30d;
     public const double DetailScale = 1d / 11d;
 

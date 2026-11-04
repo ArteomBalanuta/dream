@@ -88,18 +88,32 @@ public class BoundaryMistFieldTests
     [Fact]
     public void Every_Lattice_Rate_Times_The_Wrap_Is_A_Whole_Multiple_Of_The_Hash_Period()
     {
-        double[] rates =
-        [
-            BoundaryMistField.EdgeRate.X, BoundaryMistField.EdgeRate.Z,
-            BoundaryMistField.Octave1Rate.X, BoundaryMistField.Octave1Rate.Z,
-            BoundaryMistField.Octave2Rate.X, BoundaryMistField.Octave2Rate.Z,
-            BoundaryMistField.Octave3Rate,
-        ];
+        List<double> rates = [BoundaryMistField.EdgeRate.X, BoundaryMistField.EdgeRate.Z, BoundaryMistField.PulseRate];
+        foreach ((double x, double z) in BoundaryMistField.FlameRates)
+        {
+            rates.Add(x);
+            rates.Add(z);
+        }
 
+        Assert.True(BoundaryMistField.FlameRates.Count >= 8);
         foreach (double rate in rates)
         {
             double periods = rate * BoundaryMistField.TimeWrapSeconds / BoundaryMistField.HashPeriod;
             Assert.True(Math.Abs(periods - Math.Round(periods)) < 1e-9, $"rate {rate} shifts {periods} periods per wrap");
+        }
+    }
+
+    [Fact]
+    public void Every_Term_Drifts_Slowly()
+    {
+        // The user asked for a slow, calm drift. The flame lattices run from about 0.14 to 1.4 cells
+        // per metre along the wind (the shader puts the faster rates on the finer lattices) and the
+        // edge noise is 0.9 cells per metre, so these caps keep every term to roughly 0.1 m/s.
+        Assert.True(Math.Abs(BoundaryMistField.EdgeRate.X) <= 0.1 && Math.Abs(BoundaryMistField.EdgeRate.Z) <= 0.1);
+        foreach ((double x, double z) in BoundaryMistField.FlameRates)
+        {
+            Assert.InRange(Math.Abs(x), 0d, 0.06d);
+            Assert.InRange(Math.Abs(z), 0d, 0.06d);
         }
     }
 
@@ -111,9 +125,17 @@ public class BoundaryMistFieldTests
         System.Globalization.CultureInfo c = System.Globalization.CultureInfo.InvariantCulture;
 
         Assert.Contains($"vec2({BoundaryMistField.EdgeRate.X.ToString("0.00", c)}, {BoundaryMistField.EdgeRate.Z.ToString("0.00", c)}) * uMistParams.y", shader);
-        Assert.Contains($"vec2({BoundaryMistField.Octave1Rate.X.ToString("0.00", c)}, {BoundaryMistField.Octave1Rate.Z.ToString("0.00", c)}) * t", shader);
-        Assert.Contains($"vec2({BoundaryMistField.Octave2Rate.X.ToString("0.00", c)}, {BoundaryMistField.Octave2Rate.Z.ToString("0.00", c)}) * t", shader);
-        Assert.Contains($"t * {BoundaryMistField.Octave3Rate.ToString("0.0", c)}", shader);
+        foreach ((double x, double z) in BoundaryMistField.FlameRates)
+        {
+            Assert.Contains($"vec2({x.ToString("0.00", c)}, {z.ToString("0.00", c)}) * t", shader);
+        }
+
+        Assert.Contains($"t * {BoundaryMistField.PulseRate.ToString("0.00", c)}", shader);
+
+        // No time term the field does not declare: one per flame rate, one pulse, one edge term.
+        Assert.Equal(BoundaryMistField.FlameRates.Count, System.Text.RegularExpressions.Regex.Matches(shader, @"\) \* t\b").Count);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(shader, @"\bt \* "));
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(shader, @"\* uMistParams\.y\b"));
         Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(shader, $@"dreamMistHash\(mod\(cell[^;]*, {BoundaryMistField.HashPeriod}\.0\)\)").Count);
     }
 
