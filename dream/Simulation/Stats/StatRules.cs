@@ -10,6 +10,16 @@ public static class StatRules
 {
     public const float DefaultMaxUnused = 1000f;
 
+    /// <summary>
+    /// The base ceiling for an enemy's Strength and Vitality. Enemies do not share the player ceiling
+    /// (<see cref="PlayerCombatStats.MaxStrength"/>, raised to 1000 for the character sheet's point
+    /// spend): the shipped templates top out at Strength 40, and `enemy.attack_damage = strength + 2`
+    /// turns the ceiling straight into the worst bite a corrupt or tampered row can deal. At 50 that is
+    /// 52, survivable against a player's 100 base max health; at the player ceiling it would be 1002, a
+    /// one-shot on anyone. Keep this well under the player ceiling, and above the content maximum of 40.
+    /// </summary>
+    public const float MaxEnemyBase = 50f;
+
     public static float MinBase(StatId stat) => stat switch
     {
         StatId.Strength => PlayerCombatStats.MinStrength,
@@ -25,6 +35,20 @@ public static class StatRules
         StatId.AttackSpeed => PlayerCombatStats.MaxAttackSpeed,
         _ => DefaultMaxUnused
     };
+
+    /// <summary>
+    /// The enemy base ceiling per stat: Strength and Vitality are capped at <see cref="MaxEnemyBase"/>,
+    /// every other stat keeps the shared limit.
+    /// </summary>
+    public static float MaxEnemyBaseFor(StatId stat) => stat switch
+    {
+        StatId.Strength or StatId.Vitality => MaxEnemyBase,
+        _ => MaxBase(stat)
+    };
+
+    // The enemy counterpart of ClampBase. NaN maps to the minimum, as there.
+    public static float ClampEnemyBase(StatId stat, float value)
+        => float.IsNaN(value) ? MinBase(stat) : Math.Clamp(value, MinBase(stat), MaxEnemyBaseFor(stat));
 
     public static float MinEffective(StatId stat) => MinBase(stat);
 

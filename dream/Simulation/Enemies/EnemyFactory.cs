@@ -121,15 +121,18 @@ internal static class EnemyFactory
             homePosition: home);
     }
 
+    // Enemies are clamped against the enemy ceiling (StatRules.ClampEnemyBase), not the player one: the
+    // player ceiling is 1000 and `enemy.attack_damage = strength + 2`, so a tampered row would otherwise
+    // one-shot anyone. See StatRules.MaxEnemyBase.
     private static StatBlock Clamped(int strength, int agility, int vitality, int energy, float movementSpeed, float attackSpeed)
     {
         StatBlock block = default;
-        block[StatId.Strength] = StatRules.ClampBase(StatId.Strength, strength);
-        block[StatId.Agility] = StatRules.ClampBase(StatId.Agility, agility);
-        block[StatId.Vitality] = StatRules.ClampBase(StatId.Vitality, vitality);
-        block[StatId.Energy] = StatRules.ClampBase(StatId.Energy, energy);
-        block[StatId.MovementSpeed] = StatRules.ClampBase(StatId.MovementSpeed, movementSpeed);
-        block[StatId.AttackSpeed] = StatRules.ClampBase(StatId.AttackSpeed, attackSpeed);
+        block[StatId.Strength] = StatRules.ClampEnemyBase(StatId.Strength, strength);
+        block[StatId.Agility] = StatRules.ClampEnemyBase(StatId.Agility, agility);
+        block[StatId.Vitality] = StatRules.ClampEnemyBase(StatId.Vitality, vitality);
+        block[StatId.Energy] = StatRules.ClampEnemyBase(StatId.Energy, energy);
+        block[StatId.MovementSpeed] = StatRules.ClampEnemyBase(StatId.MovementSpeed, movementSpeed);
+        block[StatId.AttackSpeed] = StatRules.ClampEnemyBase(StatId.AttackSpeed, attackSpeed);
         return block;
     }
 }

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Stats;
@@ -351,6 +351,12 @@ public sealed class ContentCatalogTests
     [InlineData("\"strength\": 10", "\"strength\": 1001", "outside the range")]
     [InlineData("\"vitality\": 10", "\"vitality\": 0", "outside the range")]
     [InlineData("\"vitality\": 10", "\"vitality\": 1001", "outside the range")]
+    // 51 is the case that tells the enemy ceiling from the player one: it is inside the player
+    // cap of 1000 but over StatRules.MaxEnemyBase, so these two rows fail if the content gate is
+    // ever widened back to PlayerCombatStats.MaxStrength/MaxVitality. The 1001 rows above throw
+    // under either bound and so cannot catch that.
+    [InlineData("\"strength\": 10", "\"strength\": 51", "outside the range")]
+    [InlineData("\"vitality\": 10", "\"vitality\": 51", "outside the range")]
     [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 0.49", "outside the range")]
     [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 5.1", "outside the range")]
     [InlineData("\"moveSpeed\": 2.8,", "\"moveSpeed\": 2.8, \"attackIntervalSeconds\": 0,", "outside the range")]
