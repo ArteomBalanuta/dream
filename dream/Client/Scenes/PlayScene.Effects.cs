@@ -112,15 +112,22 @@ public partial class PlayScene
 
     private void DisposeEffects()
     {
-        DisposeWarMist();
-        // The bridge goes first so no event reaches a simulation whose renderer is gone.
-        _fxBridge?.Dispose();
-        _fxBridge = null;
-        _fxSimulation = null;
-        _fxFlashes = null;
-        _fxShadows = null;
-        _fxRemotePlayers = null;
-        _fxRenderer?.Dispose();
-        _fxRenderer = null;
+        // The war mist goes first; a throw from its disposal must not skip the effects' own.
+        try
+        {
+            DisposeWarMist();
+        }
+        finally
+        {
+            // The bridge goes first so no event reaches a simulation whose renderer is gone.
+            _fxBridge?.Dispose();
+            _fxBridge = null;
+            _fxSimulation = null;
+            _fxFlashes = null;
+            _fxShadows = null;
+            _fxRemotePlayers = null;
+            _fxRenderer?.Dispose();
+            _fxRenderer = null;
+        }
     }
 }

@@ -273,6 +273,8 @@ public class WarMistStructuralTests
         Assert.Contains("RenderFaultLog.Shared.Report(\"war-mist\", exception);", pass);
         Assert.Contains("_runtime.LastCameraFocus", pass);
         Assert.Contains("DisposeWarMist();", disposeEffects);
+        // A throw from the war mist disposal must not skip the effects disposal after it.
+        Assert.Matches(@"try\s*\{\s*DisposeWarMist\(\);\s*\}\s*finally\s*\{[^}]*_fxBridge\?\.Dispose\(\);", disposeEffects);
         Assert.Contains("_warMistRenderer?.Dispose();", disposeWarMist);
         Assert.Contains("_warMistRenderer = null;", disposeWarMist);
         Assert.DoesNotContain("GpuTimerSection", pass);
