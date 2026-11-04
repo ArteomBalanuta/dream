@@ -8,7 +8,7 @@ public class WarMistFieldTests
     [Theory]
     [InlineData(0f)]
     [InlineData(3f)]
-    [InlineData(3.5f)]
+    [InlineData(5f)]
     public void Nothing_Inside_The_Clear_Radius(float distance)
     {
         Assert.Equal(0f, WarMistField.TargetDensity(distance, 0f, WarMistField.NoiseModMax));
@@ -71,7 +71,7 @@ public class WarMistFieldTests
     [Fact]
     public void Unexplored_Is_Denser_Than_Explored_Beyond_The_Full_Radius()
     {
-        foreach (float distance in new[] { 7.5f, 15f, 30f })
+        foreach (float distance in new[] { 10.5f, 15f, 30f })
         {
             float unexplored = WarMistField.TargetDensity(distance, 0f, 1f);
             float explored = WarMistField.TargetDensity(distance, 1f, 1f);

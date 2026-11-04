@@ -9,13 +9,13 @@ namespace Dream.Rendering.Mist;
 // composed together (1 - (1 - a)^N) give the target density.
 public static class WarMistField
 {
-    public const float ClearRadius = 3.5f;
-    public const float FullRadius = 7.5f;
-    public const float UnexploredDensity = 0.92f;
-    public const float ExploredDensity = 0.50f;
-    public const float MaxTargetDensity = 0.95f;
-    public const float NoiseModMin = 0.45f;
-    public const float NoiseModMax = 1.35f;
+    public const float ClearRadius = 5.0f;
+    public const float FullRadius = 10.5f;
+    public const float UnexploredDensity = 0.78f;
+    public const float ExploredDensity = 0.35f;
+    public const float MaxTargetDensity = 0.90f;
+    public const float NoiseModMin = 0.55f;
+    public const float NoiseModMax = 1.30f;
 
     // The quads' half extent around the focus, in metres. Not clipped to the map.
     public const float HalfExtent = 26f;
