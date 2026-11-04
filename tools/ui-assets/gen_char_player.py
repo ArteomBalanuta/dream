@@ -16,8 +16,10 @@ Authored in u (16 u = 1 m, the isoforge scale), iso axes (x right, y forward, z 
 Y up, +Z forward, matching PlayerModelAssetDefinition.AuthoredForwardAxis. The engine measures the authored
 height at runtime (WorldAssetBounds.MeasureDimensions), so the figure needs no C# constant to change.
 
-Texture: one baked albedo atlas (charforge.unwrap_split + bake_albedo) on one material. How the engine reads
-it matters and is stated at encode_atlas().
+Texture: one baked albedo atlas (charforge.unwrap_split + bake_albedo) on material 0. The figure ships TWO
+materials: that textured atlas, and one untextured emissive accent (material 1) carrying only an
+emissiveFactor - emissive is added after dreamExpose, so it bypasses the actor gain entirely and has to stay
+dim. How the engine reads the atlas matters and is stated at encode_atlas().
 
 Art direction: docs/superpowers/specs/2026-11-02-grim-actor-forge/01-art-direction.md.
 All geometry is original. Colours come from the grim.* palette plus one dull accent.

@@ -52,7 +52,9 @@ namespace Dream.Client.Scenes;
 //                             line after it reports the keys the written frame was rendered with
 //   status                   the player, the click goal, the mode, the enemies, and actorbox <x0>,<y0>,<x1>,<y1>:
 //                             the local player's projected screen bbox, clamped to the viewport and the bar,
-//                             or "actorbox none: <reason>" when there is no figure to measure
+//                             or "actorbox none: <reason>" when there is no figure to measure; and
+//                             actorclip <clip>, the animation clip the state machine selected for that
+//                             frame with its raw delta and residual (acceptance M6)
 //   cell:<x>:<z>             print which levels of that column hold a cell, and the player and goal
 //   wait:<frames>, snap, log  idle, capture, print the inventory (and the player's position)
 //   fight:<frames>            for that many frames, face the nearest enemy, close in and attack in combat
@@ -770,6 +772,29 @@ public partial class PlayScene
             $"alive {_runtime.Player.Combatant.Health.IsAlive} hp {_runtime.Player.Combatant.Health.CurrentHealth} nearest {near} " +
             $"target {(_clickMove.Target is { } t ? $"alive {t.IsAlive} {(t.Anchor - _runtime.Player.Camera.Position).Length:0.0} m at {t.Anchor.X:0.0},{t.Anchor.Z:0.0}" : "none")}");
         LogCaptureActorBox();
+        LogCaptureActorClip();
+    }
+
+    // The clip the player's state machine actually selected this frame (acceptance M6). Logged next
+    // to actorbox so a capture carries the clip NAME instead of leaving it to be derived from the
+    // axes plus a reading of ResolveWalkClip - a derivation that cannot catch a state machine which
+    // computes the right sector and then plays the wrong clip. The raw delta and the residual are on
+    // the same line, which is exactly contract C2's table: clip, raw |delta|, residual.
+    private void LogCaptureActorClip()
+    {
+        if (_render.LocalPlayers.LastAnimationFrame is not { } frame)
+        {
+            Console.WriteLine(
+                "[hud-capture] actorclip none: the local player has not been drawn " +
+                "(first person, or the player model is not uploaded yet)");
+            return;
+        }
+
+        float raw = _render.LocalPlayers.LastRawLegTwistRadians;
+        Console.WriteLine(
+            $"[hud-capture] actorclip {frame.Clip} mode {frame.Mode} playbackSpeed {frame.PlaybackSpeed:0.00} " +
+            $"rawDeltaDeg {MathHelper.RadiansToDegrees(raw):0.0} residualDeg {MathHelper.RadiansToDegrees(frame.LegTwistRadians):0.0} " +
+            $"airTuck {frame.AirTuck:0.00} hitFlinch {frame.HitFlinch:0.00} dead {frame.IsDead}");
     }
 
     // The local player's projected screen bbox, so an actor crop is the renderer's own number instead of

@@ -72,8 +72,10 @@ public static class NpcVisualCatalog
 // (M5). Shaped exactly like EnemyRenderer: poll ModelAssets.TryGet, keep one AnimatedModelInstance
 // per actor id in a keyed cache, advance it once per frame by this frame's dt, prune the ids that
 // left. The pose comes from ClientNpcCache (position and facing are already replicated), so there
-// is no protocol or server change and no pose source to plumb. No tint is applied: the enemy
-// renderer resets uActorTintOffset after its own draws, and villagers draw after the enemies.
+// is no protocol or server change and no pose source to plumb. The villagers are untinted, and they
+// say so themselves: uActorTintOffset is one uniform shared with the enemy draws, so this class
+// uploads zero to it once per frame instead of relying on EnemyRenderer's reset still running
+// before it (an undeclared cross-class invariant on shared GL state, invisible to any test).
 public sealed class NpcModelRenderer
 {
     private readonly Render _render;
@@ -95,6 +97,21 @@ public sealed class NpcModelRenderer
 
         _currentIds.Clear();
         DrawnCount = 0;
+
+        // Zero the shared tint once, before the loop: whatever the enemy pass left in
+        // uActorTintOffset (the Dire Wolf's -0.45 dark offset, say) would otherwise darken every
+        // villager if its reset were skipped or the passes were reordered. The MASK variant reads
+        // the per-model value, which is already zero on a villager model.
+        Shader shader = _render.GetShader(ShaderName);
+        shader.Use();
+        shader.SetVector3(TintUniformName, Vector3.Zero);
+        if (shader.AlphaMaskVariant is { } maskProgram)
+        {
+            maskProgram.Use();
+            maskProgram.SetVector3(TintUniformName, Vector3.Zero);
+            shader.Use();
+        }
+
         for (int n = 0; n < npcs.Count; n++)
         {
             ClientNpc npc = npcs[n];
@@ -119,7 +136,6 @@ public sealed class NpcModelRenderer
                 visual.IdleClip,
                 deltaTime);
 
-            Shader shader = _render.GetShader(ShaderName);
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
             model.RenderPrepared(shader, instance, BuildModelMatrix(in visual, npc.Position, npc.Facing));
             model.EndRender();
@@ -133,6 +149,9 @@ public sealed class NpcModelRenderer
     public const float DrawDistance = WorldEntityRenderer.DrawDistance;
 
     public const string ShaderName = "enemy";
+
+    // The same uniform EnemyRenderer tints with; the villagers hold it at zero.
+    public const string TintUniformName = "uActorTintOffset";
 
     private const float DrawDistanceSquared = DrawDistance * DrawDistance;
 

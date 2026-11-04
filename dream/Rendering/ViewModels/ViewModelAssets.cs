@@ -103,10 +103,12 @@ public static class ViewModelAssets
             TorchToolDefinition
         });
 
-    // The default hands carry a torch: the frame stays linear (no tonemap), so a figure reads only
-    // where there is light, and at 22:00 in open ground an unlit player measures a 0.059 internal
-    // spread. The torch puts the default player in the lit regime.
+    // The MAIN-HAND view model shown before the first snapshot arrives, and nothing else: a loadout
+    // has no off-hand field, and the one consumer (PlayScene.Replication) hard-codes
+    // HeldLightKind.None for it, so a torch here would cast no light and would only make the
+    // opening frames show a torch that pops to the hammer. The authoritative kit - hammer in main,
+    // torch in off - is server-side, in PlayerInventoryService.EquipStarterKitWells.
     public static readonly ViewModelLoadout DefaultLoadout = new(
         DebugHandsDefinition.Id,
-        TorchToolDefinition.Id);
+        BuilderToolDefinition.Id);
 }

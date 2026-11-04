@@ -1245,7 +1245,10 @@ public sealed partial class ContentCatalog
         foreach (StarterKitEntry entry in items.StarterKit)
         {
             text.Append("kit|");
-            AppendField(text, entry.ItemKind).Append('|').Append(entry.IntroducedVersion.ToString(c)).Append('\n');
+            // The equip well is simulation-visible - it decides what a brand-new character wears -
+            // so two catalogs whose items.json differ only in "equip" must not hash alike.
+            AppendField(text, entry.ItemKind).Append('|').Append(entry.IntroducedVersion.ToString(c))
+                .Append('|').Append(entry.EquipWell?.ToString() ?? "-").Append('\n');
         }
 
         foreach (ItemDefinition item in items.List.OrderBy(i => i.Key, StringComparer.Ordinal))

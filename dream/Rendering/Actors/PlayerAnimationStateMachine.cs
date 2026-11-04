@@ -84,10 +84,27 @@ public sealed class PlayerAnimationStateMachine
     // within-sector residual: at most 45 degrees by construction, and the clamp is the guard.
     public const float MaxLegTwistRadians = MathF.PI / 4f;
 
+    // The paths that deliberately play ONE non-directional clip - the sprint, an attack while
+    // moving, and the airborne idle - still feed the pose layers the RAW delta, so they keep the
+    // wider clamp the whole state machine used before the directional clips existed. Clamping their
+    // raw delta to pi/4 would leave a backwards sprint 135 degrees off its travel, which is further
+    // from the truth than the 90 degrees it had before this wave.
+    public const float MaxSprintLegTwistRadians = MathF.PI / 2f;
+
     // The sector boundaries of C2's table: |delta| <= 45 degrees walks forward, 45..135 strafes,
     // beyond 135 walks backwards.
     public const float StrafeSectorStartRadians = MathF.PI / 4f;
     public const float BackSectorStartRadians = 3f * MathF.PI / 4f;
+
+    // Deadband on those boundaries, in the shape of the _moving hysteresis below: the sector that is
+    // already playing holds on for this much past its boundary. AnimationPlaybackState.Play resets
+    // the clip time to 0 whenever the clip NAME changes, and travel is quantised to eight WASD
+    // octants while facing is continuous from the cursor, so a cursor sitting near 45 degrees off
+    // the key direction - an ordinary configuration - would otherwise flip walk <-> walk-strafe-
+    // right frame to frame on mouse jitter and restart the stride at frame 0 each time: the legs
+    // stutter instead of walking. A residual may exceed 45 degrees by this much inside the sticky
+    // band, which the MaxLegTwistRadians clamp absorbs.
+    public const float SectorHysteresisRadians = 5f * MathF.PI / 180f;
 
     private const float LayerBlendPerSecond = 12f;
 
@@ -103,6 +120,9 @@ public sealed class PlayerAnimationStateMachine
     private float _mainArm;
     private float _offArm;
     private bool _moving;
+    // The directional walk clip picked last, so its sector can hold on past its boundary. Kept
+    // across a pause, which only widens the sector a resumed walk starts in by the deadband.
+    private string? _walkClip;
 
     public bool IsDead => _dead;
 
@@ -124,17 +144,41 @@ public sealed class PlayerAnimationStateMachine
     // C2's table: the walk clip for a raw travel-minus-facing delta, and the residual twist the
     // pose layers still have to apply. |residual| is at most 45 degrees in every sector, so the
     // clip carries the direction and the twist only trims what is left inside it.
-    public static string ResolveWalkClip(float deltaRadians, out float residualRadians)
+    public static string ResolveWalkClip(float deltaRadians, out float residualRadians) =>
+        ResolveWalkClip(deltaRadians, null, out residualRadians);
+
+    // The same table, with SectorHysteresisRadians of deadband in favour of the clip already
+    // playing. currentClip null is the plain table above. Allocates nothing.
+    public static string ResolveWalkClip(float deltaRadians, string? currentClip, out float residualRadians)
     {
         float delta = MathF.IEEERemainder(deltaRadians, MathF.Tau);
         float magnitude = MathF.Abs(delta);
-        if (magnitude <= StrafeSectorStartRadians)
+        float strafeStart = StrafeSectorStartRadians;
+        float backStart = BackSectorStartRadians;
+        if (string.Equals(currentClip, WalkClip, StringComparison.Ordinal))
+        {
+            // Walking forward holds on a few degrees into the strafe sector.
+            strafeStart += SectorHysteresisRadians;
+        }
+        else if (string.Equals(currentClip, WalkBackClip, StringComparison.Ordinal))
+        {
+            backStart -= SectorHysteresisRadians;
+        }
+        else if (string.Equals(currentClip, delta > 0f ? StrafeRightClip : StrafeLeftClip, StringComparison.Ordinal))
+        {
+            // A strafe on this side holds both of its own boundaries. The two strafes cannot fight
+            // over the sign: swapping sides means passing through the forward sector.
+            strafeStart -= SectorHysteresisRadians;
+            backStart += SectorHysteresisRadians;
+        }
+
+        if (magnitude <= strafeStart)
         {
             residualRadians = delta;
             return WalkClip;
         }
 
-        if (magnitude <= BackSectorStartRadians)
+        if (magnitude <= backStart)
         {
             residualRadians = delta - MathF.CopySign(MathF.PI / 2f, delta);
             return delta > 0f ? StrafeRightClip : StrafeLeftClip;
@@ -228,10 +272,11 @@ public sealed class PlayerAnimationStateMachine
         _offArm += ((inputs.HoldsOffHand ? 1f : 0f) - _offArm) * blend;
 
         // Only a moving body twists its hips; a stationary one (or an attacking one standing still)
-        // keeps them square. Outside the directional walk this is the raw delta under the clamp, as
-        // before; the walk branch below replaces it with its sector's residual.
+        // keeps them square. Outside the directional walk this is the raw delta under the WIDER
+        // sprint clamp, as the whole state machine did before C2; the walk branch below replaces it
+        // with its sector's residual under the narrow one.
         float rawTwist = _moving ? inputs.LegTwistRadians : 0f;
-        float legTwist = Math.Clamp(rawTwist, -MaxLegTwistRadians, MaxLegTwistRadians);
+        float legTwist = Math.Clamp(rawTwist, -MaxSprintLegTwistRadians, MaxSprintLegTwistRadians);
 
         float flinch = _hitLeft > 0f ? MathF.Sin(MathF.PI * (1f - (_hitLeft / HitSeconds))) : 0f;
 
@@ -248,12 +293,13 @@ public sealed class PlayerAnimationStateMachine
             bool sprint = inputs.HorizontalSpeed >= SprintSpeedThreshold;
             if (sprint)
             {
-                // One sprint clip, so the twist stays the clamped raw delta.
+                // One sprint clip, so the twist stays the raw delta under the wider sprint clamp.
                 clip = SprintClip;
             }
             else
             {
-                clip = ResolveWalkClip(rawTwist, out float residual);
+                clip = ResolveWalkClip(rawTwist, _walkClip, out float residual);
+                _walkClip = clip;
                 legTwist = Math.Clamp(residual, -MaxLegTwistRadians, MaxLegTwistRadians);
             }
 

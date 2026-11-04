@@ -65,8 +65,13 @@ public static class EnemyVisualCatalog
     private static readonly EnemyVisual DireWolf = new(
         WolfAssetDefinition.ModelPath, 1.35f, new Vector3(-0.45f, -0.45f, -0.35f), WolfClips, WolfScale);
 
+    // The hound replaces the DIRE WOLF's model on GraveHowler, so it keeps the dire wolf's size and
+    // tint: spec Q4 sanctions swapping the model, not shrinking the enemy. Both models normalise to
+    // the same 0.60 world height, so without the 1.35 multiplier the level-8 top-tier enemy would
+    // draw at the plain wolf's size and untinted - the lightest of the four - while its aggro radius
+    // (14) and attack range (1.35) stayed those of the big dark wolf.
     private static readonly EnemyVisual Hound = new(
-        BeastAssetDefinition.HoundModelPath, 1f, Vector3.Zero, HoundClips, HoundScale);
+        BeastAssetDefinition.HoundModelPath, 1.35f, new Vector3(-0.45f, -0.45f, -0.35f), HoundClips, HoundScale);
 
     // What an unknown key draws, and the wolf's own look.
     public static EnemyVisual Default => Wolf;

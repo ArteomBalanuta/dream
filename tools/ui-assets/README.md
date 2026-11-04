@@ -118,8 +118,35 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
 .venv/Scripts/python tools/ui-assets/gltfwrite.py          # GLB writer self-tests, skinned and rigid
 .venv/Scripts/python tools/ui-assets/charforge.py          # rig, clip, unwrap and bake self-tests
 .venv/Scripts/python tools/ui-assets/gen_char_player.py    # writes char/player_grim.glb
+.venv/Scripts/python tools/ui-assets/gen_char_npc.py       # writes dream/animations/npcs/villager-*.glb
+.venv/Scripts/python tools/ui-assets/gen_char_beast.py     # writes dream/animations/enemies/hound.glb
 .venv/Scripts/python tools/ui-assets/gen_char_preview.py   # writes previews/char_player.png
+.venv/Scripts/python tools/ui-assets/enginelook.py         # the engine's actor transfer function, self-tests
+.venv/Scripts/python tools/ui-assets/tests/check_char.py   # gates the player
+.venv/Scripts/python tools/ui-assets/tests/check_actors.py # gates the villagers and the hound
 ```
+
+- `gen_char_npc.py` forges the three village NPCs (`vendor`, `smith`, `warden`) as rigid part
+  hierarchies with contract C1's six renderable node names and two clips (`idle`, `walk`), one GLB
+  per variant under `dream/animations/npcs/`. They share the player's silhouette language and
+  normalise to the player's 1.20 m, which is the spec's decision (Q2), not the 1.64 m of the boxes
+  they replaced. `NpcVisualCatalog` keys them `npc.vendor` / `npc.smith` / `npc.warden`.
+- `gen_char_beast.py` forges the hound, the first original SKINNED actor: one skin, under contract
+  C3's 32-joint cap, every primitive carrying `JOINTS_0`/`WEIGHTS_0` with rows summing to 1, bare
+  clip names (`idle`, `walk`, `attack`, `die`) and `inverseBindMatrices` in exported space. It
+  writes `dream/animations/enemies/hound.glb` beside the third-party wolf without touching it.
+- `enginelook.py` is the measuring instrument, not art: it states the engine's actor transfer
+  function (spec contract C4 - ambient, directional, the point-light window, the actor floor, no
+  tonemap and no gamma encode) once, with the engine's own night constants, plus the glTF forward
+  kinematics `node_worlds`. Both gate scripts shade geometry through it, so a gate and the
+  instrument cannot drift apart, and its constants are annotated with the C# symbol they copy
+  (`TORCH_INTENSITY` is `HeldLightCatalog.TorchIntensity`). Run it directly for its self-tests.
+- `tests/check_actors.py` is to the villagers and the hound what `check_char.py` is to the player:
+  determinism, the shipped bytes, a per-asset byte ceiling (R9), rigid-or-skinned structure, the
+  node names or the joint budget, the clip sets, grounding at y=0 and the normalised height, the
+  palette, M3's bimodal-lambert floor, and - for the hound - that CPU skinning agrees with a
+  glTF-space forward-kinematic evaluation of the exported skin (risk R4). Every gate is run a second
+  time on an input that must FAIL it.
 
 - `charforge.py` holds the actor side: `Joint`/`Skeleton`/`Pose`/`Key`/`Clip` with `sample`,
   `rigid_local` for part hierarchies, `bind`/`skin` for two-bone linear blend skinning (normals are
@@ -130,9 +157,11 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
   chunks. It takes both paths - a skin with `JOINTS_0`/`WEIGHTS_0` and `inverseBindMatrices`, or
   rigid node-hierarchy animation with one mesh per node and no skin. Rotation samplers are
   quaternions, bufferViews are 4-byte aligned and `POSITION` carries min/max.
-- `gen_char_player.py` is the shipped player: a gaunt hooded, cloaked, steel-armoured figure in 24
-  primitives over 7 nodes, with six clips - `idle`, `walk`, `sprint`, `die`, `attack-melee-right` and
-  `holding-right-shoot` - as node rotations. It is rigid, not skinned, which matters: the engine's
+- `gen_char_player.py` is the shipped player: a hooded, cloaked, plated figure in 38 primitives over
+  7 nodes and two materials (the baked albedo atlas plus one untextured emissive accent), with nine
+  clips - `idle`, `walk`, `sprint`, `die`, `attack-melee-right`, `holding-right-shoot` and the
+  directional `walk-back`, `walk-strafe-left`, `walk-strafe-right` of contract C2 - as node
+  rotations. It is rigid, not skinned, which matters: the engine's
   `PlayerModelAssetDefinition` measures a model's own authored height and normalises to it, so a
   rigid part hierarchy drops in with no C# change. The wolf cannot: its normalisation is a
   hard-coded 3.191 -> 0.60. It is exported in the blocky model's units (0.088 per authored unit, so
@@ -141,21 +170,30 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
 - `gen_char_preview.py` renders the same geometry through `isoforge` with a darker `GRIM_RIG` as a
   four-view turntable sheet. That sheet is a review aid for judging form and material by eye; the
   shipped asset is the `.glb`, which looks different because the engine lights it.
-- Both generators are byte-deterministic (`player_grim.glb` is 311876 bytes; `charforge.py` prints
+- Both generators are byte-deterministic (`player_grim.glb` is 425076 bytes; `charforge.py` prints
   the bake sha1 and reruns the bake to prove it). The shipped copy is
   `dream/animations/players/player-grim.glb` - original art, which replaced a third-party CC0 model.
-  `tests/check_char.py` gates it: determinism, no skin, the engine's node names, grounding at y=0,
-  every clip the state machine asks for, no clip sinking through the floor, zero cylinder triangles
-  straddling a UV seam, the albedo lift applied exactly once, and the saturated-texel budget. The
-  spec and its gate tables are in `docs/superpowers/specs/2026-11-02-grim-actor-forge/`.
+  `tests/check_char.py` gates it: determinism, **the shipped GLB's bytes being exactly what the
+  generator makes**, no skin, the engine's node names, grounding at y=0, every clip the state machine
+  asks for (all nine), no clip sinking through the floor, the fall ending lying down (span_y under
+  the tighter of 1.15 units and 45% of its own standing height, with an early die keyframe as the
+  negative control), zero cylinder triangles straddling a UV seam, the albedo lift applied exactly
+  once, **M3's bimodal-lambert floor of 0.50 shaded through `enginelook.py`** (with the loft-only
+  figure as the control), **the emissive accent being a second, untextured material under its factor
+  ceiling**, and the saturated-texel budget. The specs and their gate tables are in
+  `docs/superpowers/specs/2026-11-02-grim-actor-forge/` and
+  `docs/superpowers/specs/2026-11-04-models-and-rigs/`.
 - `charforge.unwrap_split(parts, tex_size, axis=None)` is the one to call for a textured part: it
   clips triangles that straddle a cylinder seam and gives each cap-fan apex its own vertex, so a
   texture does not smear. Plain `unwrap()` leaves 263 of 1676 triangles straddling on the demo parts;
   `unwrap_split` leaves 0. Use the meshes it returns, not the originals.
-- Known gaps, measured in-game: the figure's **internal contrast is about 0.21 against a 0.45 gate**
-  derived from the target art's own figures (0.50-0.78), so it still reads as a flat silhouette
-  rather than an armoured figure - it needs deeper recesses and brighter highlights, not a different
-  average brightness. `unwrap_split`'s planar path is unchanged and still lossy for two-sided plates.
+- Known gaps. The A3 contrast figure is **a lighting number, not an art number**: the actor path is
+  strictly linear (no tonemap, no gamma encode), so the output spread is the albedo's spread times
+  the gain, and the shipped albedo already spreads 0.479 over its covered texels. The old "0.21
+  against a 0.45 gate" was measured on a figure standing in a dim patch; in open ground at night the
+  gain is ~0.072 and no albedo reaches 0.45. A3 is therefore measured at a defined light (spec M1)
+  and merely reported in open ground (M2). `unwrap_split`'s planar path is unchanged and still lossy
+  for two-sided plates.
   `unwrap` requires UVs on every part, so the wolf's no-UV case is unsupported, and the bake's
   crevice grime has never run on concave geometry.
 

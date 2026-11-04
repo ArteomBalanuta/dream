@@ -34,14 +34,30 @@ public sealed class EnemyVisualCatalogTests
 
         Assert.Equal(BeastAssetDefinition.HoundModelPath, hound.ModelPath);
         Assert.NotEqual(WolfAssetDefinition.ModelPath, hound.ModelPath);
-        Assert.Equal(1.0f, hound.ScaleMultiplier);
-        Assert.Equal(Vector3.Zero, hound.TintOffset);
         Assert.Equal(BeastAssetDefinition.IdleClip, hound.Clips.Idle);
         Assert.Equal(BeastAssetDefinition.MoveClip, hound.Clips.Move);
         Assert.Equal(BeastAssetDefinition.AttackClip, hound.Clips.Attack);
         // The wolf pack has no death clip; the forged hound does.
         Assert.Equal(BeastAssetDefinition.DieClip, hound.Clips.Die);
         Assert.NotEqual(hound.Clips.Idle, hound.Clips.Die);
+    }
+
+    // The hound took GraveHowler's key off enemy.dire-wolf, so it must keep the dire wolf's size and
+    // tint: the model changed, the enemy did not. Both models normalise to the same world height, so
+    // a 1.0 multiplier here would quietly draw the level-8 top-tier enemy at the plain wolf's size.
+    [Fact]
+    public void TheHound_KeepsTheDireWolfsSizeAndTint_BecauseOnlyTheModelChanged()
+    {
+        EnemyVisual hound = EnemyVisualCatalog.Resolve(EnemyVisualCatalog.HoundKey);
+        EnemyVisual dire = EnemyVisualCatalog.Resolve(EnemyVisualCatalog.DireWolfKey);
+
+        Assert.Equal(dire.ScaleMultiplier, hound.ScaleMultiplier);
+        Assert.Equal(dire.TintOffset, hound.TintOffset);
+        Assert.Equal(1.35f, hound.ScaleMultiplier);
+        Assert.Equal(new Vector3(-0.45f, -0.45f, -0.35f), hound.TintOffset);
+        // And it is not the plain wolf's look, which is what the regression looked like.
+        Assert.NotEqual(EnemyVisualCatalog.Default.ScaleMultiplier, hound.ScaleMultiplier);
+        Assert.NotEqual(EnemyVisualCatalog.Default.TintOffset, hound.TintOffset);
     }
 
     [Fact]

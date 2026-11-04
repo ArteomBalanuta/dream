@@ -1,3 +1,4 @@
+using System.IO;
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
@@ -30,6 +31,34 @@ public sealed class NpcVisualCatalogTests
         Assert.Equal(NpcAssetDefinition.WardenModelPath, warden.ModelPath);
         Assert.NotEqual(smith.ModelPath, warden.ModelPath);
         Assert.NotEqual(NpcAssetDefinition.VendorModelPath, smith.ModelPath);
+    }
+
+    // The shipped content must actually reach more than one of the three forged villagers, or two
+    // assets are dark and the key-resolution path is only ever exercised for one key. The Gate
+    // Warden carries npc.warden and the Quartermaster stays on npc.vendor; the smith model is
+    // shipped but unused until a content row reads as a smith.
+    [Fact]
+    public void TheShippedNpcs_NameMoreThanOneVillagerModel()
+    {
+        string root = AppContext.BaseDirectory;
+        while (root != null && !File.Exists(Path.Combine(root, "dream", "config", "content", "npcs.json")))
+        {
+            root = Path.GetDirectoryName(root)!;
+        }
+
+        string json = File.ReadAllText(Path.Combine(root!, "dream", "config", "content", "npcs.json"));
+
+        int quartermaster = json.IndexOf("spawn-quartermaster", StringComparison.Ordinal);
+        int warden = json.IndexOf("gate-warden", StringComparison.Ordinal);
+        int vendorKey = json.IndexOf(NpcVisualCatalog.VendorKey + "\"", StringComparison.Ordinal);
+        int wardenKey = json.IndexOf(NpcVisualCatalog.WardenKey + "\"", StringComparison.Ordinal);
+
+        Assert.True(quartermaster > 0 && warden > quartermaster);
+        // Each key belongs to the row above it: the vendor key to the quartermaster, the warden key
+        // to the warden.
+        Assert.InRange(vendorKey, quartermaster, warden);
+        Assert.True(wardenKey > warden);
+        Assert.Equal(1, json.Split(NpcVisualCatalog.WardenKey + "\"", StringSplitOptions.None).Length - 1);
     }
 
     [Theory]

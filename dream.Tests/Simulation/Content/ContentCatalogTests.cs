@@ -208,6 +208,31 @@ public sealed class ContentCatalogTests
         Assert.NotEqual(first.ContentDigest, changedItem.ContentDigest);
     }
 
+    // The starter kit's equip well is simulation-visible: it decides what a brand-new character
+    // wears. The digest is a lockstep input, so two catalogs differing only in "equip" - including
+    // one that drops it altogether - must not hash alike, or two servers seed characters
+    // differently while agreeing they run the same content.
+    [Fact]
+    public void ContentDigest_ChangesWithAStarterKitEquipWell()
+    {
+        ContentCatalog first = ContentCatalog.Load(ShippedItemsJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+
+        // The torch lists both hands, so moving the well is the ONLY change: same kinds, same
+        // versions, same items.
+        string mainHandJson = ShippedItemsJson.Replace("\"equip\": \"OffHand\"", "\"equip\": \"MainHand\"");
+        Assert.NotEqual(ShippedItemsJson, mainHandJson);
+        ContentCatalog mainHand = ContentCatalog.Load(mainHandJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+        Assert.Equal(EquipmentSlot.MainHand, mainHand.StarterKit.Single(e => e.ItemKind == "tool.torch").EquipWell);
+        Assert.NotEqual(first.ContentDigest, mainHand.ContentDigest);
+
+        string noWellJson = ShippedItemsJson.Replace(", \"equip\": \"OffHand\"", string.Empty);
+        Assert.NotEqual(ShippedItemsJson, noWellJson);
+        ContentCatalog noWell = ContentCatalog.Load(noWellJson, ShippedEnemiesJson, ShippedLootJson, ShippedSpawnsJson, ShippedNpcsJson, ShippedSkillsJson, ShippedQuestsJson);
+        Assert.Null(noWell.StarterKit.Single(e => e.ItemKind == "tool.torch").EquipWell);
+        Assert.NotEqual(first.ContentDigest, noWell.ContentDigest);
+        Assert.NotEqual(mainHand.ContentDigest, noWell.ContentDigest);
+    }
+
     [Theory]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Luck\", \"op\": \"Flat\", \"value\": 8", "unknown stat 'Luck'")]
     [InlineData("\"stat\": \"Strength\", \"op\": \"Flat\", \"value\": 8", "\"stat\": \"Strength\", \"op\": \"Percent\", \"value\": 8", "unsupported modifier op")]

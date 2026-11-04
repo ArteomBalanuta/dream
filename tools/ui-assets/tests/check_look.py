@@ -125,6 +125,11 @@ def actor_from_log(log: Path, frame: str | None = None) -> tuple[int, int, int, 
     capture logs the box of the frame it is about to write immediately above that frame's `wrote
     ...<path>` line, so naming the frame picks the last box before its write - the box of exactly the
     frame being measured, with no heuristic. Without a frame name, the last box in the log wins.
+
+    Naming a frame the log does not contain RAISES. It used to fall back to the last box in the log -
+    another step's pose, silently - which is the exact failure this function exists to prevent: a
+    renamed PNG, a typo or a run that died before the write would have measured the wrong crop and
+    said nothing. A missing frame is a loud failure.
     """
     lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
     found: list[tuple[int, tuple[int, int, int, int] | str]] = []
@@ -142,6 +147,10 @@ def actor_from_log(log: Path, frame: str | None = None) -> tuple[int, int, int, 
 
     if not found:
         raise ValueError(f"{log.name}: no 'actorbox' line - the script needs a `status` step at the pose")
+    if frame and wrote < 0:
+        raise ValueError(f"{log.name}: no 'wrote ...{frame}' line, so there is no box belonging to that frame "
+                         f"(renamed PNG, a typo, or a run that died before the write). Refusing to measure "
+                         f"another step's box; drop the frame name to take the last box in the log on purpose")
     before = [e for e in found if e[0] < wrote] if wrote >= 0 else []
     picked = before[-1] if before else found[-1]
     if isinstance(picked[1], str):
@@ -286,6 +295,15 @@ def selftest() -> int:
             print("  ok  --actor-from-log picks the box of the named frame's step")
         else:
             print("  SELFTEST FAIL: --actor-from-log picked another step's box")
+            problems += 1
+        # A frame the log never wrote must RAISE, not quietly measure the last box in the log, which is
+        # another step's pose. Same log, a name that is not in it.
+        try:
+            actor_from_log(framed_log, "05-keysnap-a-121.png")
+        except ValueError as e:
+            print(f"  ok  --actor-from-log refuses a frame the log never wrote: {e}")
+        else:
+            print("  SELFTEST FAIL: --actor-from-log fell back to another step's box for an unknown frame")
             problems += 1
         for name, body in (("a refusal", "[hud-capture] actorbox none: the player is behind the camera\n"),
                            ("no actorbox at all", "[hud-capture] status x: pos 1,2,3\n")):

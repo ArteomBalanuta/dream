@@ -74,7 +74,12 @@ public sealed class PlayerPoseLayers
 
     private static Matrix4 LegOverride(AnimatedModelPose pose, int node, Matrix4 tuck, float twistRadians)
     {
-        twistRadians = Math.Clamp(twistRadians, -PlayerAnimationStateMachine.MaxLegTwistRadians, PlayerAnimationStateMachine.MaxLegTwistRadians);
+        // The OUTER guard, so it is the widest twist any frame can carry: the state machine has
+        // already narrowed a directional walk's residual to MaxLegTwistRadians, while the paths that
+        // deliberately play one clip (sprint, an attack while moving, the airborne idle) still send
+        // the raw delta under MaxSprintLegTwistRadians. Clamping those to pi/4 here would leave a
+        // backwards sprint's stride 135 degrees off its travel.
+        twistRadians = Math.Clamp(twistRadians, -PlayerAnimationStateMachine.MaxSprintLegTwistRadians, PlayerAnimationStateMachine.MaxSprintLegTwistRadians);
         if (node < 0 || MathF.Abs(twistRadians) < 1e-4f)
         {
             return tuck;

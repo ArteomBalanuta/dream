@@ -34,6 +34,24 @@ public sealed class NpcModelRendererWiringTests
         Assert.Contains("RobeSize.Y + HeadSize.Y", source, StringComparison.Ordinal);
     }
 
+    // GL cannot open in a test either, so this pins the source: the villagers must not depend on
+    // EnemyRenderer having reset the shared uActorTintOffset before they draw. The upload sits
+    // before the per-NPC loop, so it happens once a frame whatever the enemy pass did.
+    [Fact]
+    public void TheVillagers_ZeroTheSharedTint_Themselves_BeforeTheLoop()
+    {
+        string source = ReadRepoFile("dream", "Rendering", "Actors", "NpcModelRenderer.cs");
+
+        int upload = source.IndexOf("shader.SetVector3(TintUniformName, Vector3.Zero);", StringComparison.Ordinal);
+        Assert.True(upload > 0, "NpcModelRenderer no longer uploads a zero tint of its own.");
+        Assert.True(
+            upload < source.IndexOf("for (int n = 0; n < npcs.Count; n++)", StringComparison.Ordinal),
+            "The zero tint must be uploaded once before the per-NPC loop.");
+        // The MASK variant is covered too, as EnemyRenderer.ResetTint does.
+        Assert.Contains("maskProgram.SetVector3(TintUniformName, Vector3.Zero)", source, StringComparison.Ordinal);
+        Assert.Equal("uActorTintOffset", Dream.Rendering.Actors.NpcModelRenderer.TintUniformName);
+    }
+
     [Fact]
     public void TheForgedActorPaths_ArePreloaded()
     {

@@ -61,9 +61,9 @@ LUMA = (0.2126, 0.7152, 0.0722)                     # SkyModelKeyframes.Luminanc
 
 BRAZIER_COLOUR = (1.0 * 3.0, 0.72 * 3.0, 0.46 * 3.0)   # PlacedLightIndex.BrazierColor
 BRAZIER_RADIUS = 10.0                                  # PlacedLightIndex.BrazierRadius
-TORCH_COLOUR_BASE = (1.0, 0.62, 0.32)                  # HeldLightCatalog
-TORCH_INTENSITY = 1.6
-TORCH_RADIUS = 8.0
+TORCH_COLOUR_BASE = (1.0, 0.62, 0.32)                  # HeldLightCatalog.TorchColor, before the intensity
+TORCH_INTENSITY = 2.1                                  # HeldLightCatalog.TorchIntensity
+TORCH_RADIUS = 8.0                                     # HeldLightCatalog.TorchRadius
 
 METRE = 1.0           # see the module docstring: a world unit, the unit the radii above live in
 PLAYER_WORLD_HEIGHT = 1.2   # PlayerModelAssetDefinition normalises an actor to this many world units

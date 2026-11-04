@@ -3,6 +3,7 @@ using System.Linq;
 using OpenTK.Mathematics;
 using SharpGLTF.Schema2;
 using Xunit;
+using Dream.Rendering.Actors;
 using Dream.Rendering.Models;
 
 namespace Dream.Tests.Rendering.Models;
@@ -159,6 +160,66 @@ public class ForgedActorAssetTests
             Assert.Contains(name, renderable);
         }
     }
+
+    // Every clip name PlayerAnimationStateMachine can return must resolve on the SHIPPED player,
+    // the three new directional ones included. Only check_char.py's REQUIRED_CLIPS guarded them,
+    // and `dotnet test` does not run Python - so a re-forge that dropped `walk-strafe-right` would
+    // ship green, PlayerAnimationStateMachine.FallbackClip would silently substitute the plain walk
+    // cycle, and the only symptom would be the moonwalk this wave fixed coming back.
+    public static TheoryData<string> PlayerClipNames => new()
+    {
+        PlayerAnimationStateMachine.IdleClip,
+        PlayerAnimationStateMachine.WalkClip,
+        PlayerAnimationStateMachine.SprintClip,
+        PlayerAnimationStateMachine.DieClip,
+        PlayerAnimationStateMachine.MeleeClip,
+        PlayerAnimationStateMachine.ShootClip,
+        PlayerAnimationStateMachine.WalkBackClip,
+        PlayerAnimationStateMachine.StrafeLeftClip,
+        PlayerAnimationStateMachine.StrafeRightClip
+    };
+
+    [Theory]
+    [MemberData(nameof(PlayerClipNames))]
+    public void TheShippedPlayer_CarriesEveryClipTheStateMachinePlays(string clipName)
+    {
+        AnimatedModelData data = AnimatedModelData.Load(PlayerModelAssetDefinition.ModelPath);
+
+        Assert.True(
+            data.Skeleton.TryGetClip(clipName, out _),
+            $"The shipped player GLB has no '{clipName}' clip; the state machine's fallback would hide it.");
+    }
+
+    // And the directional three are really distinct clips, not three names on one animation: the
+    // fallback maps them onto `walk`, so a generator that aliased them would look like a pass above.
+    [Fact]
+    public void TheDirectionalClips_AreTheirOwnAnimations_NotAliasesOfTheWalkCycle()
+    {
+        AnimatedModelData data = AnimatedModelData.Load(PlayerModelAssetDefinition.ModelPath);
+        Node leg = data.Model.LogicalNodes.First(n => string.Equals(n.Name, "leg-left", StringComparison.Ordinal));
+        string[] directional =
+        [
+            PlayerAnimationStateMachine.WalkBackClip,
+            PlayerAnimationStateMachine.StrafeLeftClip,
+            PlayerAnimationStateMachine.StrafeRightClip
+        ];
+
+        Assert.True(data.Skeleton.TryGetClip(PlayerAnimationStateMachine.WalkClip, out Animation? walk));
+        System.Numerics.Quaternion[] walkKeys = LegRotationKeys(walk!, leg);
+        Assert.NotEmpty(walkKeys);
+
+        foreach (string name in directional)
+        {
+            Assert.Single(data.Model.LogicalAnimations.Where(a => string.Equals(a.Name, name, StringComparison.Ordinal)));
+            Assert.True(data.Skeleton.TryGetClip(name, out Animation? clip));
+            System.Numerics.Quaternion[] keys = LegRotationKeys(clip!, leg);
+            Assert.NotEmpty(keys);
+            Assert.NotEqual(walkKeys, keys);
+        }
+    }
+
+    private static System.Numerics.Quaternion[] LegRotationKeys(Animation clip, Node node) =>
+        clip.FindRotationChannel(node)?.GetRotationSampler().GetLinearKeys().Select(k => k.Value).ToArray() ?? [];
 
     // The villagers stand at the player's height, not the 1.64 m boxes they replace, and the height
     // is MEASURED from the asset rather than a hard-coded authored constant.
