@@ -161,6 +161,9 @@ public class TerrainSurfaceShaderContractTests
         Assert.Contains("uTerrainBlend > 0.5 && uTerrainLayer >= 0 && n.y > 0.5 && uTerrainMapSize.x > 0.5", albedo);
         Assert.Contains("dreamTerrainTexel(cell) == uTerrainLayer + 1", albedo);
         Assert.Contains("lessThan(abs(corner - cornerCell), vec2(0.01))", albedo);
+        // A carved sub-cell top (non-integer height) never blends; the test is plain arithmetic.
+        Assert.Contains("bool integerTop = abs(worldPos.y - floor(worldPos.y + 0.5)) < 0.01;", albedo);
+        Assert.Contains("if (integerTop && all(lessThan(abs(corner - cornerCell), vec2(0.01))) && dreamTerrainTexel(cell) == uTerrainLayer + 1)", albedo);
         // The macro variation is keyed on x/z with a small y term on every face.
         Assert.Contains("worldPos.xz + worldPos.y *", albedo);
     }

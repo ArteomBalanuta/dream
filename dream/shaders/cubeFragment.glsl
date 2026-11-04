@@ -248,7 +248,10 @@ vec3 dreamTerrainAlbedo(vec2 uv, vec2 dx, vec2 dy, vec3 n, vec3 worldPos, out fl
         vec2 cornerCell = floor(corner + 0.5);
         vec2 l = clamp(uv, 0.0, 1.0);
         ivec3 cell = ivec3(int(cornerCell.x), int(floor(worldPos.y + 0.5)) - 1, int(cornerCell.y));
-        if (all(lessThan(abs(corner - cornerCell), vec2(0.01))) && dreamTerrainTexel(cell) == uTerrainLayer + 1) {
+        // The top height must be an integer too: a carved sub-cell top (or any partial height) sits
+        // between map layers and never blends. Plain arithmetic, no derivative in this condition.
+        bool integerTop = abs(worldPos.y - floor(worldPos.y + 0.5)) < 0.01;
+        if (integerTop && all(lessThan(abs(corner - cornerCell), vec2(0.01))) && dreamTerrainTexel(cell) == uTerrainLayer + 1) {
             float depth = max(uTerrainBlendDepth, 0.01);
             vec2 e = min(l, 1.0 - l);
             vec2 a = 0.5 * (1.0 - clamp(e / max(uTerrainBlendBand, 0.001), 0.0, 1.0));

@@ -189,9 +189,11 @@ public class TerrainBlendCornerWeightTests
             Assert.Equal([1f, 0f, 0f, 0f], w);
         }
 
-        // Only the X band active, the Z neighbour missing: nothing leaks to the diagonal.
-        float[] edge = CornerWeights(0f, 0.3f, true, false, true);
+        // Only the Z band active (ax = 0, so the shader never fetches the X and diagonal cells and
+        // they are missing), the Z neighbour missing too: all weight stays on own.
+        float[] edge = CornerWeights(0f, 0.3f, false, false, false);
         Assert.Equal(0f, edge[1]);
+        Assert.Equal(0f, edge[2]);
         Assert.Equal(0f, edge[3]);
         Assert.Equal(1f, edge[0], 5);
     }
