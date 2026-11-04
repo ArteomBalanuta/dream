@@ -3,3 +3,11 @@ tools/ui-assets/iso/**/*.json text eol=lf
 tools/ui-assets/iso/*.json text eol=lf
 tools/ui-assets/iso/**/*.png binary
 tools/ui-assets/iso/*.png binary
+
+# check_terrain compares the committed terrain output with a fresh render byte for byte: keep LF
+tools/ui-assets/terrain/*.json text eol=lf
+tools/ui-assets/terrain/*.png binary
+
+# The actor and prop GLBs are compared byte for byte against their generators (check_char, check_actors,
+# check_props). Git auto-detects them as binary today; pin it, because an eol filter on these would be silent.
+dream/animations/**/*.glb binary

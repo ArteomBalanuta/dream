@@ -393,8 +393,14 @@ def metric_errors(name: str, m: dict) -> list[str]:
         errs.append(f"{name}: p99 V {m['v_p99']:.3f} < {c['v_p99_min']} (a black hole)")
     if m["mean_v"] > c["mean_v_max"]:
         errs.append(f"{name}: mean V {m['mean_v']:.3f} > {c['mean_v_max']}")
-    if m["tris"] > c["tris_max"] or m["verts"] > c["verts_max"] or m["bytes"] > c["bytes_max"]:
-        errs.append(f"{name}: budget exceeded: {m['tris']} tris / {m['verts']} verts / {m['bytes']} bytes")
+    # One branch per ceiling, not one or-ed condition: with the three sharing a condition the self-test only
+    # mutated tris, so the verts and bytes ceilings could have stopped measuring without anything going red.
+    if m["tris"] > c["tris_max"]:
+        errs.append(f"{name}: {m['tris']} triangles over the {c['tris_max']} budget")
+    if m["verts"] > c["verts_max"]:
+        errs.append(f"{name}: {m['verts']} vertices over the {c['verts_max']} budget")
+    if m["bytes"] > c["bytes_max"]:
+        errs.append(f"{name}: {m['bytes']} bytes over the {c['bytes_max']} budget")
     return errs
 
 
@@ -408,7 +414,7 @@ def self_test() -> list[str]:
     if metric_errors("selftest", base):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95,
-             "mean_v": 0.7, "tris": 10 ** 6}
+             "mean_v": 0.7, "tris": 10 ** 6, "verts": 10 ** 6, "bytes": 10 ** 9}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}):
             errs.append(f"self-test: gate {k} did not fail its negative")

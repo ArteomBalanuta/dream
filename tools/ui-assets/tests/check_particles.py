@@ -142,6 +142,7 @@ def main() -> int:
     if not (TOOLS / "previews" / "particles.png").exists():
         errs.append("missing preview particles.png")
     errs += uiart.determinism_errors(gen_particles.main, ["particles"])
+    errs += uiart.shipped_errors(gen_particles.main, "particles", PARTICLES)
     for e in errs:
         print("FAIL", e)
     print(f"check_particles: {len(indices)} frames, {len(errs)} errors")

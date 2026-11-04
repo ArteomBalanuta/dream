@@ -225,13 +225,18 @@ def self_test() -> list[str]:
                  "form": "form ratio", "sat": "saturation", "chrome": "chrome", "p5": "p5 V", "p99": "p99 V", "mean": "mean V"}[label]
         if not any(keyed in e for e in gate_errors("selftest." + label, m)):
             errs.append(f"self-test: gate {label} did not fail its negative (metric {key} = {m.get(key, m.get('form_ratio'))})")
-    # format negatives
-    if not format_errors("selftest.npot", np.zeros((100, 100, 4), np.uint8), [100, 100]):
-        errs.append("self-test: a non power-of-two tile passed the format gate")
-    if not format_errors("selftest.alpha", np.zeros((64, 64, 4), np.uint8), [64, 64]):
-        errs.append("self-test: a transparent tile passed the format gate")
-    if not format_errors("selftest.size", np.full((64, 64, 4), 255, np.uint8), [128, 128]):
-        errs.append("self-test: a size that disagrees with the manifest passed the format gate")
+    # Format negatives, one per branch of format_errors, and each input may trip only the error it is built for:
+    # the non power-of-two case was np.zeros, whose alpha 0 ALSO tripped "alpha is not fully opaque", so deleting
+    # the power-of-two branch outright would have left this control green. Opaque white isolates the size error.
+    for label, im, size, want in (
+            ("npot", np.full((100, 100, 4), 255, np.uint8), [100, 100], "is not a power of two"),
+            ("alpha", np.zeros((64, 64, 4), np.uint8), [64, 64], "alpha is not fully opaque"),
+            ("size", np.full((64, 64, 4), 255, np.uint8), [128, 128], "but the manifest says")):
+        got = format_errors("selftest." + label, im, size)
+        if len(got) != 1 or want not in got[0]:
+            errs.append(f"self-test: the format {label} negative reported {got}, expected exactly one {want!r}")
+    if format_errors("selftest.clean", np.full((64, 64, 4), 255, np.uint8), [64, 64]):
+        errs.append("self-test: a clean 64x64 opaque tile fails the format gate, so no negative above is specific")
     return errs
 
 
@@ -272,14 +277,13 @@ def main() -> int:
         errs += gate_errors(n, m)
     if not fast:
         errs += uiart.determinism_errors(gen_terrain.main, ["terrain"])
-        # the third render is the committed output: regenerate into a temp dir and compare byte for byte
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            gen_terrain.main(Path(d))
-            for p in sorted((Path(d) / "terrain").glob("*")):
-                c = TERRAIN / p.name
-                if not c.exists() or c.read_bytes() != p.read_bytes():
-                    errs.append(f"{p.name}: committed file differs from a fresh render (regenerate and commit)")
+        # The third render is the committed output: regenerate into a temp dir and compare byte for byte. This
+        # comparison was red on EVERY core.autocrlf=true checkout and green on Linux CI: terrain_manifest.json is
+        # LF in the index, git handed it back CRLF, and the render writes LF, so the only difference was one CR per
+        # line and "regenerate and commit" could not fix it. .gitattributes now pins eol=lf for
+        # tools/ui-assets/terrain/*.json; uiart.shipped_errors compares .json with line endings normalised (and
+        # PNGs untouched) as the belt behind that brace. See uiart._canon_shipped.
+        errs += uiart.shipped_errors(gen_terrain.main, "terrain", TERRAIN)
     for e in errs:
         print("FAIL", e)
     print(f"terrain: {len(errs)} problems, {len(tiles)} tiles checked")

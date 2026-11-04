@@ -1,6 +1,7 @@
 """Checks for dream/ui/menu: the front-end atlas (title, backdrop, buttons, panel, slider, divider).
 
-Exits nonzero on failure. `--determinism` also regenerates the page twice (about three minutes).
+Exits nonzero on failure. One build of the page (about 90 s) checks the committed atlas against the generator's bytes; `--fast` skips that. `--determinism` also regenerates the page twice (about three
+minutes).
 """
 from __future__ import annotations
 
@@ -192,6 +193,14 @@ def check_determinism() -> None:
         fail(e)
 
 
+def check_shipped() -> None:
+    """The committed menu atlas must BE what the generator makes; determinism alone never looks at it."""
+    import gen_menu
+
+    for e in ua.shipped_errors(gen_menu.main, "menu", ROOT / "menu"):
+        fail(e)
+
+
 def main() -> int:
     if not JSON.exists() or not PNG.exists():
         print("FAIL dream/ui/menu/menu.json or menu.png missing; run tools/ui-assets/gen_menu.py")
@@ -203,6 +212,8 @@ def main() -> int:
     check_source()
     if "--determinism" in sys.argv:
         check_determinism()
+    if "--fast" not in sys.argv:
+        check_shipped()
     for e in errors:
         print("FAIL", e)
     print(f"menu: {len(errors)} problems; menu.png {PNG.stat().st_size / 1e6:.2f} MB, {len(doc['sprites'])} sprites")

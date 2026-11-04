@@ -268,6 +268,7 @@ def main() -> int:
         if not (PREVIEWS / p).exists():
             errs.append(f"missing preview {p}")
     errs += uiart.determinism_errors(gen_items.main, ["items"])
+    errs += uiart.shipped_errors(gen_items.main, "items", ITEMS)
     for e in errs:
         print("FAIL", e)
     print(f"check_items: {len(doc['sprites'])} sprites, {len(errs)} errors")

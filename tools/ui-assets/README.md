@@ -86,6 +86,12 @@ The gates are constants in the file, measured on our own generated art at 2.25 p
 
 `check_sources.py` also scans `tests/check_art.py` to keep it free of file reads.
 
+`check_sources.py` enforces the one rule that would catch a read of art the project did not generate: **every file read in a generator must be a classified read of generated output or a sibling tool file**. Reads are matched against `READ_ALLOW`, keyed on `(file, the exact source of the call)` with the reason spelled out; anything else fails, and an entry no generator makes any more fails too, so the allow-list cannot grow into a blanket exemption. `uiart.py` is exempt by name (`READ_EXEMPT_FILES`): it is the shared toolkit and all of the chain's I/O lives there on purpose. This used to print a note and append nothing to `errs`, so no read in any generator could fail the gate while the comment beside it said "must".
+
+## The shipped-bytes gates
+
+`uiart.determinism_errors` renders a generator twice into temp dirs and compares the two renders **to each other**, which says nothing about the files the engine loads: editing a generator without re-running it leaves the shipped asset stale with every gate green. `uiart.shipped_errors(main, subdir, committed)` closes that, and `check_hud.py`, `check_items.py`, `check_menu.py`, `check_particles.py`, `check_fx.py` and `check_terrain.py` now all call it; `check_char.py`, `check_actors.py`, `check_props.py` and `check_iso.py` have had their own version of it for a while. `check_art.py` compares the one committed artefact of `forge.py`, `previews/forge_sample.png`, through `uiart.shipped_image_errors`, which is pixel-exact rather than byte-exact: that plate decodes identically to a fresh render and is still 157005 bytes against 154931, because it was committed through an older zlib. A byte gate on a preview would report a Pillow upgrade as stale art.
+
 ## isoforge.py: isometric props (not part of build_all)
 
 True 3D sprites at pitch 50, yaw 45, 4 px per u final, rendered 4x over. Output goes to `tools/ui-assets/iso/` (`sprites/`, `shadows/`, `iso_manifest.json`, `iso_sheet.png`), never to `dream/ui`.
@@ -105,7 +111,7 @@ Chain: `Mesh` -> z-buffered triangle G-buffer (world P, view normals, material, 
 - Each `gen_iso_*.py` exposes `OBJECTS: dict[str, ObjectSpec]`; `gen_iso.py` skips modules that do not exist yet.
 - `check_iso.py` gates are constants measured on the generated sprites: crispness, saturation (with the rust and crimson-leaf allowances), crushed shadows, upper value, 5x5 contrast, form, warm lights over a cold shadow band, chrome share, foot point, the sheet, the potion frames and the potion being the brightest thing in the set. Form is the 4 u over .5 u band energy of alpha-normalised luma blurs over the interior (opaque mask eroded 2 px), so silhouettes do not count and a flat interior with grain fails. The cold gate is the mean R - B of opaque pixels in luma 12 to 60, which must hold at least 10 percent of the object. Per-object numbers go in `OVERRIDES`, with a comment giving the reason and the measured value. Committed sprites, shadows and manifest are compared with the generators (size, pivot, frame count, durations), and files no generator makes are flagged as stale. Every gate has a self-test on a synthetic image that must fail it. `.gitattributes` keeps the manifest LF so the byte comparison holds on Windows. It sets `tempfile.tempdir` to `.iso_tmp` in the repository root so the determinism runs stay off the system drive; do not commit that folder.
 
-`gen_menu.py` writes the front-end atlas `dream/ui/menu/menu.png` and `menu.json`: backdrop, the DREAM title, button states, panel, slider and divider. Forged like the window chrome; the backdrop is painted with numpy. About 90 s. `tests/check_menu.py` gates sizes, slices, mood (dark backdrop and panel, ember hover, dull title) and the generator source; `--determinism` also rebuilds it twice. `DREAM_MENU_CAPTURE=<dir>` on the game walks the title screen and writes a PNG per screen.
+`gen_menu.py` writes the front-end atlas `dream/ui/menu/menu.png` and `menu.json`: backdrop, the DREAM title, button states, panel, slider and divider. Forged like the window chrome; the backdrop is painted with numpy. About 90 s. `tests/check_menu.py` gates sizes, slices, mood (dark backdrop and panel, ember hover, dull title), the generator source and the committed bytes against a fresh build (`--fast` skips that); `--determinism` also rebuilds it twice. `DREAM_MENU_CAPTURE=<dir>` on the game walks the title screen and writes a PNG per screen.
 
 ## charforge.py: grim actors as glTF (not part of build_all)
 
@@ -219,6 +225,7 @@ why the world stopped looking like daylit photographs of real dirt.
 - **No directional key and no cast shadow are baked**, the same rule `charforge.bake_albedo` follows:
   the engine applies its own ambient + N.L and the sun moves, so a baked key would be visibly wrong.
   `check_terrain.py` gates this directly by comparing quadrant luma and low-frequency gradient energy.
+- The committed tiles, sheet and manifest are compared with a fresh render through `uiart.shipped_errors`. `.gitattributes` pins `eol=lf` for `tools/ui-assets/terrain/*.json` the way it already did for the iso manifest: without it `terrain_manifest.json` came back CRLF on every `core.autocrlf=true` checkout and the comparison was red on Windows and green on Linux CI, with a message ("regenerate and commit") that could not fix it. `shipped_errors` also normalises line endings for `.json` as defence behind that pin; PNG and GLB stay byte for byte.
 - Terrain UVs are `0..cellSize`, i.e. **one repeat per voxel**, so the tiles must be seamless; the
   seam gate compares the wrap edges against interior neighbour pairs. `forge.py`'s `wrap="xy"` still
   seams in `bake` (its AO resize clamps at the edge), so `gen_terrain.py` bakes on an oversized canvas

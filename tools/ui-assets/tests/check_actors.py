@@ -13,6 +13,8 @@ taken away, a weight row that does not sum to 1.
 """
 from __future__ import annotations
 
+import copy
+import dataclasses
 import hashlib
 import sys
 from pathlib import Path
@@ -34,6 +36,13 @@ import gltfwrite as G  # noqa: E402
 M3_SPREAD_MIN = 0.50          # the same floor check_char.py holds the player to (spec M3)
 MAX_JOINTS = 32               # contract C3
 FK_TOLERANCE = 1e-5           # CPU skinning vs glTF forward kinematics, in world units
+WEIGHT_SUM_TOL = 1e-6         # a WEIGHTS_0 row must sum to 1 to within this
+# The share of vertices that take a second joint's influence. A rigid-only bind - every vertex welded to one
+# joint, which is what a skinning step that lost its blend would produce - reads exactly 0, and it used to be
+# printed with no comparison at all. Measured 72.8% today; the floor is set well under a third of that so
+# ordinary authoring (fewer blended seams, a stiffer tail) moves freely, while the failure the measurement was
+# written to describe collapses to 0 and cannot sit above it.
+BLENDED_MIN = 0.20
 BYTE_CEILING = {"villager-vendor": 320_000, "villager-smith": 320_000, "villager-warden": 320_000,
                 "hound": 420_000}
 # R9: dream/animations/props drifted to 13 MB with dead_oak.glb alone at 3.3 MB. These ceilings are each about
@@ -57,6 +66,30 @@ def fail(msg: str) -> None:
 
 def ok(msg: str) -> None:
     print(f"  ok   {msg}")
+
+
+# ---------------------------------------------------------------------------- shared measurements
+# Each of these is called by its gate AND by that gate's sibling. A sibling that re-implements the comparison, or
+# that derives its expected value from the thing being checked, proves nothing: the two dead controls this file
+# used to carry were both that shape.
+
+
+def weight_sums(primitives) -> np.ndarray:
+    """Every WEIGHTS_0 row's sum, over every primitive."""
+    return np.concatenate([np.asarray(p.weights, dtype=np.float64).sum(1) for p in primitives])
+
+
+def blended_share(primitives) -> float:
+    """Share of vertices whose second joint carries more than a rounding weight, averaged over primitives."""
+    return float(np.mean([(np.asarray(p.weights)[:, 1] > 0.01).mean() for p in primitives]))
+
+
+def renderable_errors(label: str, doc: dict) -> list[str]:
+    """Contract C1: the renderable nodes of an exported villager are EXACTLY N.RENDERABLE, by set equality."""
+    renderable = {n["name"] for n in doc["nodes"] if "mesh" in n}
+    if renderable != set(N.RENDERABLE):
+        return [f"{label}: renderable nodes {sorted(renderable)} are not contract C1's {sorted(N.RENDERABLE)}"]
+    return []
 
 
 # ---------------------------------------------------------------------------- shared gates
@@ -159,11 +192,11 @@ def check_villagers() -> None:
         if "skins" in doc:
             fail(f"{label}: carries a skin; a villager must stay a rigid part hierarchy or its node overrides "
                  f"all degrade to identity (finding F2)")
-        renderable = {n["name"] for n in doc["nodes"] if "mesh" in n}
-        if renderable != set(N.RENDERABLE):
-            fail(f"{label}: renderable nodes {sorted(renderable)} are not contract C1's {sorted(N.RENDERABLE)}")
-        else:
-            ok(f"{label}: rigid, renderable nodes exactly {sorted(renderable)}")
+        c1 = renderable_errors(label, doc)
+        for e in c1:
+            fail(e)
+        if not c1:
+            ok(f"{label}: rigid, renderable nodes exactly {sorted(N.RENDERABLE)}")
         clips = {x["name"] for x in doc["animations"]}
         if clips != {"idle", "walk"}:
             fail(f"{label}: clips {sorted(clips)}, expected exactly ['idle', 'walk']")
@@ -189,13 +222,27 @@ def check_villagers() -> None:
         else:
             ok(f"{label}: no clip sinks it more than {-worst:.3f} units below y = 0")
 
-    # the sibling for the node-name gate: renaming one node must be caught by the same comparison
-    a = N.build_asset("vendor")
-    renamed = {n.name for n in a["nodes"] if n.name != "head"} | {"skull"}
-    if set(N.RENDERABLE) <= renamed:
-        fail("the C1 node-name gate would accept a figure whose head node is called something else")
+    # The sibling for the node-name gate. It used to build a set by removing "head" and adding "skull" and then
+    # test `set(N.RENDERABLE) <= renamed`, which reduces to `"head" in renamed` -> False from the fixture's own
+    # constant: it asserted that the string "head" appears in a tuple in the generator, never called the gate,
+    # and used subset where the gate uses equality. This runs the real check over the real exported document
+    # with its head node renamed.
+    doc, _ = G._check_container(N.glb_bytes(N.build_asset("vendor")))
+    if renderable_errors("villager-vendor", doc):
+        fail("the C1 node-name sibling cannot measure anything: the untampered vendor document already fails")
+    renamed = copy.deepcopy(doc)
+    heads = [n for n in renamed["nodes"] if n.get("name") == "head" and "mesh" in n]
+    if not heads:
+        fail("the C1 node-name sibling found no renderable node called `head` to rename")
     else:
-        ok("the C1 node-name gate is live: renaming `head` to `skull` fails the same comparison")
+        heads[0]["name"] = "skull"
+        found = renderable_errors("villager-vendor.renamed", renamed)
+        if not found:
+            fail("the C1 node-name gate accepts a document whose head node is called `skull`; it has stopped "
+                 "measuring the export")
+        else:
+            ok(f"the C1 node-name gate is live: renaming the exported `head` node to `skull` makes the same "
+               f"comparison report - {found[0]}")
 
 
 # ---------------------------------------------------------------------------- the hound
@@ -268,24 +315,54 @@ def check_hound() -> None:
         fail(f"{label}: {len(bad)} primitives carry no JOINTS_0/WEIGHTS_0")
     else:
         ok(f"{label}: all {len(a['primitives'])} primitives carry JOINTS_0 and WEIGHTS_0")
-    sums = np.concatenate([np.asarray(p.weights, dtype=np.float64).sum(1) for p in a["primitives"]])
-    if np.abs(sums - 1.0).max() > 1e-6:
+    sums = weight_sums(a["primitives"])
+    if np.abs(sums - 1.0).max() > WEIGHT_SUM_TOL:
         fail(f"{label}: a weight row sums to {sums[np.argmax(np.abs(sums - 1.0))]:.6f}, not 1")
     else:
         ok(f"{label}: every weight row sums to 1 (worst deviation {np.abs(sums - 1.0).max():.2e})")
     idx = np.concatenate([np.asarray(p.joints, dtype=np.int64).reshape(-1) for p in a["primitives"]])
     if idx.min() < 0 or idx.max() >= len(joints):
         fail(f"{label}: a joint index is outside the skin")
-    blended = float(np.mean([(np.asarray(p.weights)[:, 1] > 0.01).mean() for p in a["primitives"]]))
-    ok(f"{label}: {blended:.1%} of vertices take a second joint's influence (a rigid-only bind would be 0)")
-
-    # the sibling for the weights gate: a tampered row must be caught by the same comparison
-    tampered = sums.copy()
-    tampered[0] = 0.5
-    if np.abs(tampered - 1.0).max() <= 1e-6:
-        fail("the weight-sum gate would accept a row summing to 0.5")
+    # The blend floor. This was an ok() with no comparison in it at all: the parenthetical named the failure mode
+    # (a rigid-only bind reads 0) and then did not test for it, so a hound bound entirely rigid printed an ok and
+    # the gate exited 0.
+    blended = blended_share(a["primitives"])
+    if blended < BLENDED_MIN:
+        fail(f"{label}: only {blended:.1%} of vertices take a second joint's influence, under the "
+             f"{BLENDED_MIN:.0%} floor; this bind is rigid, not skinned")
     else:
-        ok("the weight-sum gate is live: a row set to 0.5 fails the same comparison")
+        ok(f"{label}: {blended:.1%} of vertices take a second joint's influence, over the {BLENDED_MIN:.0%} "
+           f"floor (a rigid-only bind reads 0)")
+
+    # The sibling for the weight-sum gate. It used to ASSIGN tampered[0] = 0.5 and test `max(|t - 1|) <= 1e-6`,
+    # which reduces to `0.5 <= 1e-6` - false unconditionally - on a copy of the gate's own summary statistic.
+    # This tampers the WEIGHTS_0 array a primitive is built from, which is the mistake the gate exists to catch
+    # (a renormalisation dropped from the bind), and re-runs the same comparison over the real primitive set.
+    p0 = a["primitives"][0]
+    w = np.array(p0.weights, dtype=np.float64, copy=True)
+    w[0] *= 0.5
+    tampered = [dataclasses.replace(p0, weights=w), *a["primitives"][1:]]
+    dev = float(np.abs(weight_sums(tampered) - 1.0).max())
+    if dev <= WEIGHT_SUM_TOL:
+        fail(f"the weight-sum gate accepts a primitive whose first WEIGHTS_0 row was halved (worst deviation "
+             f"{dev:.2e}); it has stopped measuring the weights")
+    else:
+        ok(f"the weight-sum gate is live: halving one row of the first primitive's WEIGHTS_0 moves the worst "
+           f"deviation to {dev:.3f}, over the {WEIGHT_SUM_TOL:.0e} tolerance")
+
+    # The sibling for the blend floor: the rigid-only bind it names. Every vertex welded to its first joint, the
+    # same arrays otherwise, measured by the same function.
+    rigid = []
+    for prim in a["primitives"]:
+        rw = np.array(prim.weights, dtype=np.float64, copy=True)
+        rw[:, 0], rw[:, 1:] = 1.0, 0.0
+        rigid.append(dataclasses.replace(prim, weights=rw))
+    rigid_share = blended_share(rigid)
+    if rigid_share >= BLENDED_MIN:
+        fail(f"the blend floor accepts a rigid-only bind ({rigid_share:.1%}); it has stopped measuring")
+    else:
+        ok(f"the blend floor is live: welding every vertex to its first joint takes the same measurement to "
+           f"{rigid_share:.1%}, under the {BLENDED_MIN:.0%} floor")
 
     # R4: the exported matrices reproduce the authored animation
     err = _fk_error(a, a["inverse_bind"])

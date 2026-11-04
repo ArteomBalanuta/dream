@@ -141,6 +141,7 @@ def main() -> int:
     if not (TOOLS / "previews" / "fx_digits.png").exists():
         errs.append("missing preview fx_digits.png")
     errs += uiart.determinism_errors(gen_fx.main, ["fx"])
+    errs += uiart.shipped_errors(gen_fx.main, "fx", FX)
     for e in errs:
         print("FAIL", e)
     print(f"check_fx: {len(doc_s['sprites'])}+{len(doc_l['sprites'])} sprites, {len(errs)} errors")

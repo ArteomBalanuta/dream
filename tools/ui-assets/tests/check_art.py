@@ -29,6 +29,8 @@ import forge  # noqa: E402
 import uiart as U  # noqa: E402
 
 UI = TOOLS.parents[1] / "dream" / "ui"
+# The one committed artefact of forge.py: the acceptance plate `python tools/ui-assets/forge.py` writes.
+FORGE_SAMPLE = TOOLS / "previews" / "forge_sample.png"
 GATE_PPU = 2.25
 ATLAS_PPU = 4.0
 
@@ -267,6 +269,7 @@ def main() -> int:
         errs += check_art(only)
     if "--fast" not in argv:
         errs += U.determinism_errors(forge.main, ["forge"])
+        errs += U.shipped_image_errors("forge.sample", forge.sample_sprite(), FORGE_SAMPLE)
     for e in errs:
         print("FAIL", e)
     print(f"check_art: {len(errs)} errors")
