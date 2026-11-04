@@ -722,7 +722,21 @@ def _canon_shipped(data: bytes, suffix: str) -> bytes:
 
 
 def shipped_errors(main, subdir: str, committed: Path) -> list[str]:
-    """Renders main(out_root) into a temp dir and compares every file it wrote under subdir/ with `committed`."""
+    """Renders main(out_root) into a temp dir and compares every file it wrote under subdir/ with `committed`.
+
+    IF SEVERAL OF THESE GATES GO RED AT ONCE AFTER A TOOLCHAIN UPGRADE, READ THIS BEFORE REGENERATING ANY ART.
+    This comparison is byte-exact on PNG, so it is sensitive to the PNG encoder, not only to the art: the same
+    pixels re-encoded by a different Pillow or zlib are different bytes. previews/forge_sample.png is the proof
+    that this happens - it decodes identically to a fresh render of forge.sample_sprite(), 0 of 92160 pixels
+    differing, and is still 157005 bytes against the 154931 a fresh save_png writes here, because it was
+    committed through an older zlib. Every committed-vs-fresh PNG byte comparison in this repository (terrain,
+    iso, hud, items, menu, particles, fx, window, and the GLBs in check_char/check_actors/check_props) passes
+    today only because the committed files were made by the current toolchain.
+
+    So: a single gate red means stale art - re-run its generator and commit. Many gates red at once, right after
+    a Pillow or numpy bump, means the ENCODER moved, not the art. The fix for that is to compare decoded pixels
+    (shipped_image_errors already does, and says why) - NOT to regenerate the art, which would roll a toolchain
+    upgrade into every committed asset and lose the ability to tell the two causes apart ever again."""
     errs: list[str] = []
     with tempfile.TemporaryDirectory() as d:
         main(Path(d))
