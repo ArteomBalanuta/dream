@@ -85,8 +85,18 @@ DERIVED, applying the real formula with the real night constants:
 | night, brazier 1 m, half lit / half shadowed | **0.191** |
 | day noon, full sun, lambert 1.0 | **0.682** |
 
-**Correction 2026-11-04, MEASURED against the shaders:** the spread column above is **not reproducible
-from C4's own formula and constants** and should not be used as a source of absolute numbers. C4's
+**Correction 2026-11-04, MEASURED against the shaders, then again in engine: the table is wrong in
+SHAPE, not merely in scale.** The first correction below found a uniform 0.603x scale error. A real
+capture then showed worse: the table is monotonic and peaks **at** the light (0.635 at 1 m falling to
+0.573 at 2 m), while the engine peaks **away** from it (0.333 at 0.085 m rising to 0.710 at 1.5 m),
+because C4's prose has no output clamp and `FragColor` does. M1's headroom argument — "the same
+brazier at 1-2 m scores 0.635/0.573, so 0.45 allows partial coverage" — is therefore **accidentally
+true with false reasoning**: the real figure at 1.5 m scores 0.710, *more* headroom than claimed, but
+the same argument endorses a <=1 m capture that measures 0.333 and fails. **Do not reuse this table
+for absolute values anywhere.**
+
+The spread column above is **not reproducible from C4's own formula and constants** and should not be
+used as a source of absolute numbers. C4's
 constants were re-derived independently and match (moon intensity 0.0660, actor floor 0.0245), and
 the table's *ratios* between distances match the window function to three decimals — but its
 point-light term is uniformly **0.603x** what C4 gives (a brazier at 1.5 u with lambert 1.0 yields a
@@ -141,15 +151,39 @@ So:
 
 ## Acceptance criteria
 
-**M1 — A3 at a defined light. MEASURED.** One capture at 22:00 with the player within 2.0 m of the
-spawn-village brazier, cursor latched by `aim`, actor crop taken from the renderer's own logged
-screen bbox and not typed by hand: `check_look.py --actor` reports **internal spread >= 0.45**.
-DERIVED headroom: the same brazier at 1–2 m scores 0.635/0.573, so 0.45 allows partial coverage.
+**M1 — A3 at a defined light. MEASURED, and the protocol is a BAND.** One capture at 22:00 with the
+player **between 1.2 m and 2.0 m** of the spawn-village brazier, cursor latched by `aim`, actor crop
+taken from the renderer's own logged screen bbox and not typed by hand: `check_look.py --actor`
+reports **internal spread >= 0.45**.
 
-**M2 — A3 in open ground, reported with NO floor. MEASURED.** Same figure, 22:00, open ground, same
-protocol. Expect 0.06–0.20. **Recorded, not gated.** DERIVED: the night actor gain is ~0.072, so no
-albedo takes this above ~0.06 without a local light. Stating the number is the deliverable; a floor
-here would be a gate the engine cannot pass.
+**The lower bound is not cosmetic — it was a defect in this criterion as first written.** MEASURED in
+engine, A3 is strongly **non-monotonic** in distance, because `FragColor` clamps to 1.0 and within
+about a metre of a 3.0-intensity brazier much of the lit silhouette saturates to white (`p99 1.000`
+on every near frame), which compresses `p90-p10`:
+
+| distance to brazier | A3 spread |
+| --- | --- |
+| 0.085 m | **0.3333 FAIL** |
+| 0.88 m | **0.4235 FAIL** |
+| 1.48 m | **0.7098 PASS** |
+| 1.52 m | **0.7098 PASS** |
+| 4.07 m | 0.7608 |
+
+So "within 2.0 m" admitted failing frames, and standing at the brazier's foot — the most natural
+reading of "at the brazier" — fails. Without a lower bound this criterion is a coin flip on where
+the walk happens to stop.
+
+**M2 — A3 in open ground, reported with NO floor. MEASURED, and it must name the loadout.** Same
+figure, 22:00, open ground (only the diagonal midpoints of the 16 m brazier grid escape every 10 m
+radius; cell 17,32 is 11.40 m from the nearest). **Recorded, not gated.** Both numbers, since the
+shipped default now carries a lit torch:
+
+- **torch stowed: 0.0353** — confirming F3's derivation exactly, and *below* the 0.06-0.20 band this
+  criterion originally stated. The frame is a near-invisible dark smudge.
+- **torch lit, the shipped default: 0.5529.**
+
+The original "expect 0.06-0.20" band was written before Q3 put a lit torch in the starting kit and
+is incompatible with it; it applies only to the stowed case, which undershoots it.
 
 **M3 — bimodal lambert. MEASURED, offline.** A generator-side gate shades the figure's own geometry
 with the engine's exact actor formula (C4) at a brazier 1.5 m away and measures `p90-p10` over the
@@ -196,7 +230,10 @@ master's 32 distinct failing names.
 
 - **M2 is reported, not gated.** See Q1 below; the tonemap question goes to the user separately.
 - **Villagers match the player's height** (1.20 m) rather than the 1.64 m boxes they replace.
-- **The default loadout is unchanged** — no torch added. It would change the opening minute.
+- ~~The default loadout is unchanged — no torch added.~~ **STRUCK 2026-11-04. Superseded by Q3
+  below, which says the opposite and is what shipped.** This bullet was written with the pre-decision
+  safe defaults and I failed to strike it when Q3 was resolved. A verifier checking the build against
+  it would call the shipped loadout a regression. Q3 governs.
 - **`enemy.hound` goes on `GraveHowler` only.** The wolf stays for the other three as a fallback
   until the hound is proven in play.
 
@@ -299,6 +336,12 @@ check_look.py --hud-rows                      now defaults to 96
   only dim pixels that were already far below 0.60 while plates create pixels above it. Size the
   emissive accent on art grounds, not for A1. If the bright share does drop below the floor the
   answer remains more or better-placed light, not a lower gate.
+  **MEASURED in engine, the risk has moved rather than gone away.** At the M1 capture the bright
+  share is **0.072**, 3.6x the floor — not thin at all. But that is because Q3's starting torch adds
+  bright pixels: across torchless frames it reads 0.023, 0.015, 0.014 and **0.004**, i.e. it *fails*.
+  So A1's bright tail is now **load-bearing on the torch**. Anything that removes the player's light
+  by default — reverting Q3, a shield displacing the torch, an unlit spawn — takes A1 below its floor
+  with it.
 - **R7.** Raising `TorchIntensity` is world-wide — every remote player's torch brightens. Changing
   the **intensity** is safe; changing the **radius** is not, because `BrazierRadius == LampRadius ==
   10f` is what `FxSimulation.TryClassify` matches for the fire halo and the torch's `8f` deliberately
