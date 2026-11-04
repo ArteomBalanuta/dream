@@ -192,7 +192,14 @@ public sealed class InventoryWindowTests : IDisposable
 
         _scene.Frame();
 
-        Assert.True(_scene.Canvas.HasText("Ite"));
+        // A prefix of the name, cut to the WIDTH of the cell rather than to a fixed three characters:
+        // three glyphs at the size an 8 u label now takes need not fit a 20 u cell, and four often do.
+        UiRect cell = _scene.ItemRect(2);
+        CanvasCall label = Assert.Single(_scene.Canvas.Texts.Where(
+            t => t.Color == ItemTierStyle.Body && t.Text.Length > 0 && "Item 7".StartsWith(t.Text, StringComparison.Ordinal)));
+        Assert.True(label.Text.Length >= 3, label.Text);
+        Assert.InRange(label.TextPos.X, cell.X, cell.Right);
+        Assert.True(UiTextProbe.Width(_scene.Canvas, label) <= cell.W, $"'{label.Text}' overflows the cell");
     }
 
     [Fact]
@@ -384,8 +391,11 @@ public sealed class InventoryWindowTests : IDisposable
         string line = count == 1 ? "1 item held back: make room" : $"{count} items held back: make room";
         CanvasCall text = _scene.Canvas.Texts.Single(t => t.Text == line && t.Color == ItemTierStyle.Danger);
         UiRect band = _scene.Layout.FromUnits(_scene.Layout.Inventory, 15f, 364f, 160f, 8f);
+        // The line is centred in the band now rather than hung off its top edge: the glyphs follow
+        // ui_scale, so a top-aligned line of an 8 u band's text hangs out of the bottom of it.
+        var t = UiText.For(_scene.Layout, InventoryWindow.BandTextUnits, InventoryWindow.BandUnits);
         Assert.Equal(band.X, text.TextPos.X, 3);
-        Assert.Equal(band.Y, text.TextPos.Y, 3);
+        Assert.Equal(UiText.TextY(band, t), text.TextPos.Y, 3);
         Assert.True(_scene.Canvas.Texts.Any(t => t.Text == line && t.Color == ItemTierStyle.Shadow));
     }
 

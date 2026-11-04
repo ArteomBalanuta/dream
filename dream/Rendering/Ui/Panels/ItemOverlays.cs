@@ -226,7 +226,11 @@ internal sealed class TooltipContent
     public ItemRarity Rarity;
     public float WrapWidth;
 
-    public bool Matches(in InventoryItemSnapshot item, float wrapWidth) =>
+    // The glyph size the lines were wrapped at. Without it, changing ui_scale while hovering kept the
+    // lines broken for the old size: the text got bigger but the wrap points did not move.
+    public float TextPx;
+
+    public bool Matches(in InventoryItemSnapshot item, float wrapWidth, float textPx) =>
         ItemInstanceId == item.ItemInstanceId
         && ReferenceEquals(DisplayName, item.DisplayName)
         && ReferenceEquals(Description, item.Description)
@@ -234,7 +238,8 @@ internal sealed class TooltipContent
         && ReferenceEquals(Modifiers, item.Modifiers)
         && StackCount == item.StackCount
         && Rarity == item.Rarity
-        && WrapWidth == wrapWidth;
+        && WrapWidth == wrapWidth
+        && TextPx == textPx;
 }
 
 // Tooltip, context menu, destroy confirm and drag ghost. Drawn after the windows and the bar so
@@ -342,7 +347,11 @@ public static class ItemOverlays
 
         float scale = l.Scale;
         float maxWidth = 140f * scale;
-        TooltipContent content = BuildContent(c, st, item, maxWidth);
+        // The tooltip's box follows its text, so its size is the canvas's own (UiLayout.TextScale).
+        // The same size wraps, measures and draws: one of them taken elsewhere is a tooltip whose
+        // lines are broken for a glyph size it is not drawn at.
+        UiSizedText t = UiText.AtCanvasScale(c);
+        TooltipContent content = BuildContent(c, st, item, maxWidth, in t);
         if (content.Lines.Count == 0)
         {
             return;
@@ -352,7 +361,7 @@ public static class ItemOverlays
         float widest = 0f;
         for (int n = 0; n < content.Lines.Count; n++)
         {
-            widest = MathF.Max(widest, c.MeasureText(content.Lines[n].Text, UiTextStyle.Body));
+            widest = MathF.Max(widest, UiText.Measure(c, content.Lines[n].Text, in t));
         }
 
         float padX = 3.3f * scale;
@@ -381,9 +390,8 @@ public static class ItemOverlays
                 TooltipContent.LineKind.Description or TooltipContent.LineKind.Count => ItemTierStyle.Dim,
                 _ => ItemTierStyle.Body
             };
-            float x = panel.X + padX + MathF.Max(0f, (widest - c.MeasureText(text, UiTextStyle.Body)) * 0.5f);
-            c.Text(text, new Vector2(x, y + 1f), UiTextStyle.Body, ItemTierStyle.Shadow);
-            c.Text(text, new Vector2(x, y), UiTextStyle.Body, color);
+            float x = panel.X + padX + MathF.Max(0f, (widest - UiText.Measure(c, text, in t)) * 0.5f);
+            UiText.Put(c, text, new Vector2(x, y), in t, color, UiText.ShadowPx(in l));
             y += pitch;
             // The gap after the name block, which may be two lines.
             if (kind == TooltipContent.LineKind.Name
@@ -394,12 +402,15 @@ public static class ItemOverlays
         }
     }
 
-    internal static float LinePitch(IUiCanvas c, float uiScale) => MathF.Max(9f * uiScale, InventoryWindow.BodyHeight(c) + 3f);
+    // The 3 px leading was a hairline under 38 px glyphs, so it follows the scale like everything else.
+    internal static float LinePitch(IUiCanvas c, float uiScale) =>
+        MathF.Max(9f * uiScale, InventoryWindow.BodyHeight(c) + (3f * uiScale));
 
-    private static TooltipContent BuildContent(IUiCanvas c, InventoryUiState st, in InventoryItemSnapshot item, float maxWidth)
+    private static TooltipContent BuildContent(
+        IUiCanvas c, InventoryUiState st, in InventoryItemSnapshot item, float maxWidth, in UiSizedText t)
     {
         TooltipContent? cached = st.Tooltip;
-        if (cached is not null && cached.Matches(item, maxWidth))
+        if (cached is not null && cached.Matches(item, maxWidth, t.Px))
         {
             return cached;
         }
@@ -414,6 +425,7 @@ public static class ItemOverlays
         content.StackCount = item.StackCount;
         content.Rarity = item.Rarity;
         content.WrapWidth = maxWidth;
+        content.TextPx = t.Px;
         content.Lines.Clear();
 
         // The name wraps by width like the text under it (two lines at most); it is never cut mid-line.
@@ -423,10 +435,10 @@ public static class ItemOverlays
         }
         else
         {
-            Wrap(c, item.DisplayName, maxWidth, content.Lines, TooltipContent.LineKind.Name, 2);
+            Wrap(c, item.DisplayName, maxWidth, content.Lines, TooltipContent.LineKind.Name, 2, in t);
         }
 
-        Wrap(c, item.Description, maxWidth, content.Lines, TooltipContent.LineKind.Description, MaxWrappedLines);
+        Wrap(c, item.Description, maxWidth, content.Lines, TooltipContent.LineKind.Description, MaxWrappedLines, in t);
         if (item.DetailLines is not null)
         {
             int added = 0;
@@ -437,7 +449,7 @@ public static class ItemOverlays
                     break;
                 }
 
-                Wrap(c, line, maxWidth, content.Lines, TooltipContent.LineKind.Detail, 2);
+                Wrap(c, line, maxWidth, content.Lines, TooltipContent.LineKind.Detail, 2, in t);
             }
         }
 
@@ -459,7 +471,7 @@ public static class ItemOverlays
     // Hostile text is cut to MaxTextChars and a line count.
     internal static void Wrap(
         IUiCanvas c, string? text, float maxWidth, List<(string Text, TooltipContent.LineKind Kind)> output,
-        TooltipContent.LineKind kind, int maxLines)
+        TooltipContent.LineKind kind, int maxLines, in UiSizedText t)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -501,7 +513,7 @@ public static class ItemOverlays
                     lastSpace = j;
                 }
 
-                if (c.MeasureText(text.AsSpan(start, j - start + 1), UiTextStyle.Body) > maxWidth)
+                if (UiText.Measure(c, text.AsSpan(start, j - start + 1), in t) > maxWidth)
                 {
                     end = lastSpace > start ? lastSpace : (j > start ? j : j + 1);
                     break;
@@ -555,7 +567,7 @@ public static class ItemOverlays
         List<CharacterMenuEntry> entries = st.MenuEntries;
         float scale = l.Scale;
         float padX = 6f * scale;
-        float rowH = MathF.Max(12f * scale, InventoryWindow.BodyHeight(c) + 6f);
+        float rowH = MathF.Max(12f * scale, InventoryWindow.BodyHeight(c) + (6f * scale));
         float widest = 0f;
         for (int n = 0; n < entries.Count; n++)
         {

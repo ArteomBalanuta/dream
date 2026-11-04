@@ -46,6 +46,11 @@ public static class UiText
     // At and above this the pixel face uses its 26 px bake rather than stretching the 13 px one.
     public const float PixelLargeFromPx = 20f;
 
+    // The floor ForFitting is allowed to shrink to. For() never goes under the 13 px bake, but a
+    // stack count over a 20 u cell and a "-100" in a 23.7 u step button do not fit 13 px at scale 1,
+    // and those two must FIT their box rather than keep the bake's size.
+    public const float MinPx = 9f;
+
     public static float BakePixels(UiTextStyle style) => style switch
     {
         UiTextStyle.Large => UiFontSetup.LargePixels,
@@ -97,6 +102,34 @@ public static class UiText
         float shrunk = units * (cap / t.Px);
         UiSizedText capped = For(in l, shrunk, face);
         return capped.Px <= cap ? capped : new UiSizedText(capped.Style, cap / BakePixels(capped.Style), cap);
+    }
+
+    // The size the canvas is already set to, on the pixel face: what a panel whose boxes follow the
+    // text height (the tooltip, the menu, the confirm) draws at. UiLayout.TextScale put it there.
+    public static UiSizedText AtCanvasScale(IUiCanvas c) =>
+        new(UiTextStyle.Body, c.TextScale, UiFontSetup.BodyPixels * c.TextScale);
+
+    // For(units, maxUnits), then shrunk until text measures no wider than maxWidthPx. The bake is kept
+    // and only the multiplier drops, so the face does not change; the floor is MinPx, not the 13 px bake.
+    // Glyph advances are linear in the multiplier, so one measure gives the exact factor.
+    public static UiSizedText ForFitting(
+        IUiCanvas c, in UiLayout l, ReadOnlySpan<char> text, float units, float maxUnits, float maxWidthPx,
+        UiTextFace face = UiTextFace.Pixel)
+    {
+        UiSizedText t = For(in l, units, maxUnits, face);
+        if (maxWidthPx <= 0f || text.Length == 0)
+        {
+            return t;
+        }
+
+        float width = Measure(c, text, in t);
+        if (width <= maxWidthPx || width <= 0f)
+        {
+            return t;
+        }
+
+        float px = MathF.Max(MinPx, t.Px * (maxWidthPx / width));
+        return new UiSizedText(t.Style, px / BakePixels(t.Style), px);
     }
 
     // Top of a line box of t centred vertically in r.

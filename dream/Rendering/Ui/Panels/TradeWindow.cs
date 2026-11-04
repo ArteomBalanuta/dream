@@ -1,7 +1,6 @@
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Hud;
 using Dream.Simulation.Inventory;
-using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Ui.Panels;
 
@@ -32,6 +31,15 @@ public static class TradeWindow
     private const float BagTop = 206f;
     private const float ButtonTop = 316f;
     private const float PagerW = 14f;
+    private const float ButtonH = 16f;
+
+    // Text sizes in window units (1 u = Scale px); the boxes are the art's, so each is capped by its box.
+    // A gold step is only (152 - 10) / 6 = 23.7 u wide and its label is four characters, so that one is
+    // shrunk to the WIDTH of its button as well.
+    internal const float RowTextUnits = 9.5f;
+    internal const float HeadTextUnits = 8f;
+    internal const float ButtonTextUnits = 9.5f;
+    internal const float GoldStepTextUnits = 8f;
 
     // Widget ids, clear of the inventory, the character window and the vendor window (..0x643).
     internal const int IdBagRow = InventoryWindow.IdBase + 0x660;
@@ -72,28 +80,34 @@ public static class TradeWindow
 
         UiRect win = l.Character;
         bool live = !InventoryUiState.Current.ModalOpen && intents != null;
+        float shadow = UiText.ShadowPx(in l);
+        var title = InventoryWindow.TitleTextFor(in l);
+        var row = UiText.For(in l, RowTextUnits, RowH);
+        var button = UiText.For(in l, ButtonTextUnits, ButtonH);
         InventoryWindow.DrawFrame(c, s, l, win, inventoryKind: false);
-        InventoryWindow.DrawTextCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), TitleText(trade), ItemTierStyle.Title);
-        DrawGoldStrip(c, l, win, v);
+        UiText.PutCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), TitleText(trade), in title, ItemTierStyle.Title, shadow);
+        DrawGoldStrip(c, l, win, v, in title, shadow);
 
+        // The two early returns below are safe only because UiText restores the canvas's text scale:
+        // a raw SetTextScale here would resize every panel drawn after this one in these two stages.
         switch (trade.Stage)
         {
             case TradeHudStage.Requested:
-                InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, 70f, RowW, RowH), "Waiting for an answer", ItemTierStyle.Dim);
-                if (Button(c, i, s, l, win, IdCancel, RowX, 90f, RowW, 16f, "Cancel", true, live) && live)
+                UiText.PutCentered(c, l.FromUnits(win, RowX, 70f, RowW, RowH), "Waiting for an answer", in row, ItemTierStyle.Dim, shadow);
+                if (Button(c, i, s, l, win, IdCancel, RowX, 90f, RowW, ButtonH, "Cancel", true, live, in button, shadow) && live)
                 {
                     intents!.Enqueue(new TradeCancelIntent());
                 }
 
                 return;
             case TradeHudStage.Incoming:
-                InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, 70f, RowW, RowH), "asks to trade with you", ItemTierStyle.Body);
-                if (Button(c, i, s, l, win, IdAccept, RowX, 90f, RowW, 16f, "Accept", true, live) && live)
+                UiText.PutCentered(c, l.FromUnits(win, RowX, 70f, RowW, RowH), "asks to trade with you", in row, ItemTierStyle.Body, shadow);
+                if (Button(c, i, s, l, win, IdAccept, RowX, 90f, RowW, ButtonH, "Accept", true, live, in button, shadow) && live)
                 {
                     intents!.Enqueue(new TradeRespondIntent(true));
                 }
 
-                if (Button(c, i, s, l, win, IdDecline, RowX, 110f, RowW, 16f, "Decline", true, live) && live)
+                if (Button(c, i, s, l, win, IdDecline, RowX, 110f, RowW, ButtonH, "Decline", true, live, in button, shadow) && live)
                 {
                     intents!.Enqueue(new TradeRespondIntent(false));
                 }
@@ -117,12 +131,16 @@ public static class TradeWindow
         bool live)
     {
         bool editable = trade.OfferEditable && live;
+        float shadow = UiText.ShadowPx(in l);
+        var row = UiText.For(in l, RowTextUnits, RowH);
+        var head = UiText.For(in l, HeadTextUnits, RowH);
+        var button = UiText.For(in l, ButtonTextUnits, ButtonH);
 
-        InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, StatusTop, RowW, RowH), StatusText(trade), StatusColor(trade));
+        UiText.PutCentered(c, l.FromUnits(win, RowX, StatusTop, RowW, RowH), StatusText(trade), in row, StatusColor(trade), shadow);
 
         // ---- their offer ----
-        InventoryWindow.DrawText(c, "They offer", HeadPos(l, win, TheirHeadTop), ItemTierStyle.Dim);
-        DrawRightGold(c, l, win, TheirHeadTop, trade.TheirGold, trade.TheirLocked);
+        UiText.PutLeft(c, HeadRect(l, win, TheirHeadTop), 0f, "They offer", in head, ItemTierStyle.Dim, shadow);
+        DrawRightGold(c, l, win, TheirHeadTop, trade.TheirGold, trade.TheirLocked, in head, shadow);
         for (int n = 0; n < OfferRows; n++)
         {
             UiRect r = l.FromUnits(win, RowX, TheirTop + (n * RowPitch), RowW, RowH);
@@ -135,20 +153,20 @@ public static class TradeWindow
             if (n < trade.TheirCount)
             {
                 TradeHudLine line = trade.TheirsAt(n);
-                DrawFitted(c, l, r, line.Text, ItemTierStyle.ColorOf(ItemTierStyle.TierOf(line.Rarity)));
+                DrawFitted(c, l, r, line.Text, ItemTierStyle.ColorOf(ItemTierStyle.TierOf(line.Rarity)), in row, shadow);
             }
         }
 
         // ---- your offer: gold steps and a summary ----
-        InventoryWindow.DrawText(c, "You offer", HeadPos(l, win, MineHeadTop), ItemTierStyle.Dim);
-        DrawRightGold(c, l, win, MineHeadTop, trade.MyGold, trade.MyLocked);
+        UiText.PutLeft(c, HeadRect(l, win, MineHeadTop), 0f, "You offer", in head, ItemTierStyle.Dim, shadow);
+        DrawRightGold(c, l, win, MineHeadTop, trade.MyGold, trade.MyLocked, in head, shadow);
         float stepW = (RowW - (5f * 2f)) / 6f;
         long wallet = v.Inventory?.Gold ?? 0;
+        var step = UiText.ForFitting(c, in l, "-100", GoldStepTextUnits, RowH, (stepW - 2f) * l.Scale);
         for (int n = 0; n < GoldSteps.Length; n++)
         {
-            UiRect r = l.FromUnits(win, RowX + (n * (stepW + 2f)), GoldTop, stepW, RowH);
             bool enabled = editable && StepAllowed(trade.MyGold, GoldSteps[n], wallet);
-            if (Button(c, i, s, l, win, IdGoldStep + n, RowX + (n * (stepW + 2f)), GoldTop, stepW, RowH, GoldStepLabels[n], enabled, live) && enabled)
+            if (Button(c, i, s, l, win, IdGoldStep + n, RowX + (n * (stepW + 2f)), GoldTop, stepW, RowH, GoldStepLabels[n], enabled, live, in step, shadow) && enabled)
             {
                 long gold = Math.Clamp(trade.MyGold + GoldSteps[n], 0L, Math.Min(wallet, InventoryConstants.MaxGold));
                 intents!.Enqueue(new TradeOfferIntent(OfferedIds(trade, excluding: 0), gold));
@@ -159,7 +177,7 @@ public static class TradeWindow
         int bagCount = CountOfferable(v);
         int pages = Math.Max(1, (bagCount + BagRows - 1) / BagRows);
         trade.BagPage = Math.Clamp(trade.BagPage, 0, pages - 1);
-        InventoryWindow.DrawText(c, "Your goods", HeadPos(l, win, GoodsHeadTop + 1f), ItemTierStyle.Dim);
+        UiText.PutLeft(c, HeadRect(l, win, GoodsHeadTop + 1f), 0f, "Your goods", in head, ItemTierStyle.Dim, shadow);
         UiRect prev = l.FromUnits(win, RowX + RowW - (2 * PagerW) - 8f, GoodsHeadTop, PagerW, RowH);
         UiRect next = l.FromUnits(win, RowX + RowW - PagerW, GoodsHeadTop, PagerW, RowH);
         DrawRowPlate(c, s, prev);
@@ -174,8 +192,9 @@ public static class TradeWindow
             trade.BagPage++;
         }
 
-        InventoryWindow.DrawTextCentered(c, prev, "<", trade.BagPage > 0 ? ItemTierStyle.Body : ItemTierStyle.Dim);
-        InventoryWindow.DrawTextCentered(c, next, ">", trade.BagPage < pages - 1 ? ItemTierStyle.Body : ItemTierStyle.Dim);
+        var pager = UiText.ForFitting(c, in l, "<", RowTextUnits, RowH, prev.W);
+        UiText.PutCentered(c, prev, "<", in pager, trade.BagPage > 0 ? ItemTierStyle.Body : ItemTierStyle.Dim, shadow);
+        UiText.PutCentered(c, next, ">", in pager, trade.BagPage < pages - 1 ? ItemTierStyle.Body : ItemTierStyle.Dim, shadow);
 
         Span<int> anchors = stackalloc int[BagRows];
         int shown = CollectPage(v, trade.BagPage * BagRows, anchors);
@@ -206,29 +225,29 @@ public static class TradeWindow
                 }
             }
 
-            DrawFitted(c, l, r, item.Item.DisplayName ?? string.Empty, ItemTierStyle.ColorOf(item.Tier));
+            DrawFitted(c, l, r, item.Item.DisplayName ?? string.Empty, ItemTierStyle.ColorOf(item.Tier), in row, shadow);
         }
 
         if (shown == 0)
         {
-            InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, BagTop, RowW, RowH), "Nothing to offer", ItemTierStyle.Dim);
+            UiText.PutCentered(c, l.FromUnits(win, RowX, BagTop, RowW, RowH), "Nothing to offer", in row, ItemTierStyle.Dim, shadow);
         }
 
         // ---- the three buttons ----
         float third = (RowW - 4f) / 3f;
         bool canLock = trade.Stage == TradeHudStage.Open && !trade.MyLocked && live;
         bool canConfirm = trade.MyLocked && trade.TheirLocked && !trade.MyConfirmed && live;
-        if (Button(c, i, s, l, win, IdLock, RowX, ButtonTop, third, 16f, trade.MyLocked ? "Locked" : "Lock", canLock, live) && canLock)
+        if (Button(c, i, s, l, win, IdLock, RowX, ButtonTop, third, ButtonH, trade.MyLocked ? "Locked" : "Lock", canLock, live, in button, shadow) && canLock)
         {
             intents!.Enqueue(new TradeLockIntent());
         }
 
-        if (Button(c, i, s, l, win, IdConfirm, RowX + third + 2f, ButtonTop, third, 16f, trade.MyConfirmed ? "Done" : "Confirm", canConfirm, live) && canConfirm)
+        if (Button(c, i, s, l, win, IdConfirm, RowX + third + 2f, ButtonTop, third, ButtonH, trade.MyConfirmed ? "Done" : "Confirm", canConfirm, live, in button, shadow) && canConfirm)
         {
             intents!.Enqueue(new TradeConfirmIntent());
         }
 
-        if (Button(c, i, s, l, win, IdCancel, RowX + ((third + 2f) * 2f), ButtonTop, third, 16f, "Cancel", live, live) && live)
+        if (Button(c, i, s, l, win, IdCancel, RowX + ((third + 2f) * 2f), ButtonTop, third, ButtonH, "Cancel", live, live, in button, shadow) && live)
         {
             intents!.Enqueue(new TradeCancelIntent());
         }
@@ -343,33 +362,34 @@ public static class TradeWindow
         return partner.AsSpan(0, Math.Min(partner.Length, TradeHudState.MaxPartnerChars));
     }
 
-    private static void DrawGoldStrip(IUiCanvas c, in UiLayout l, UiRect win, HudView v)
+    private static void DrawGoldStrip(IUiCanvas c, in UiLayout l, UiRect win, HudView v, in UiSizedText t, float shadow)
     {
         Span<char> mem = stackalloc char[32];
         UiTextBuilder b = new(mem);
         b.Append("Gold ");
         b.Append(ClampToInt(v.Inventory?.Gold ?? 0));
-        InventoryWindow.DrawTextCentered(c, l.FromUnits(win, 35f, 20f, 119f, 8f), b.Text, GoldColor);
+        UiText.PutCentered(c, l.FromUnits(win, 35f, 20f, 119f, 8f), b.Text, in t, GoldColor, shadow);
     }
 
     // "120 gold" at the right end of a head line, with a bar of metal under it once that side locked.
-    private static void DrawRightGold(IUiCanvas c, in UiLayout l, UiRect win, float headTop, long gold, bool locked)
+    // The head label sits at the left end of the same row, so the gold is shrunk to the room it leaves.
+    private static void DrawRightGold(
+        IUiCanvas c, in UiLayout l, UiRect win, float headTop, long gold, bool locked, in UiSizedText t, float shadow)
     {
         Span<char> mem = stackalloc char[40];
         UiTextBuilder b = new(mem);
         b.Append(ClampToInt(gold));
         b.Append(locked ? " gold [locked]" : " gold");
-        UiRect r = l.FromUnits(win, RowX, headTop, RowW, RowH);
-        float w = c.MeasureText(b.Text, UiTextStyle.Body);
-        InventoryWindow.DrawText(c, b.Text, new Vector2(r.Right - w, r.Y), gold > 0 ? GoldColor : ItemTierStyle.Dim);
+        UiRect r = HeadRect(l, win, headTop);
+        float room = MathF.Max(0f, r.W - UiText.Measure(c, "They offer", in t) - (4f * l.Scale));
+        var fitted = UiText.ForFitting(c, in l, b.Text, HeadTextUnits, RowH, room);
+        UiText.PutRight(c, r, 0f, b.Text, in fitted, gold > 0 ? GoldColor : ItemTierStyle.Dim, shadow);
     }
 
-    private static void DrawFitted(IUiCanvas c, in UiLayout l, UiRect r, string text, UiColor color)
+    private static void DrawFitted(IUiCanvas c, in UiLayout l, UiRect r, string text, UiColor color, in UiSizedText t, float shadow)
     {
-        float inset = 2f * l.Scale;
         ReadOnlySpan<char> shown = text.AsSpan(0, Math.Min(text.Length, 128));
-        shown = shown[..PanelText.FitLength(c, shown, UiTextStyle.Body, r.W - (2f * inset))];
-        InventoryWindow.DrawText(c, shown, new Vector2(r.X + inset, r.Y + MathF.Floor((r.H - InventoryWindow.BodyHeight(c)) * 0.5f)), color);
+        UiText.PutLeft(c, r, 2f * l.Scale, shown, in t, color, shadow);
     }
 
     // A plate button with a centred label. Returns true on a click (the caller checks enabled and live).
@@ -386,7 +406,9 @@ public static class TradeWindow
         float h,
         string label,
         bool enabled,
-        bool live)
+        bool live,
+        in UiSizedText t,
+        float shadow)
     {
         UiRect r = l.FromUnits(win, x, y, w, h);
         DrawRowPlate(c, s, r);
@@ -396,7 +418,7 @@ public static class TradeWindow
             c.Solid(r, HoverFill);
         }
 
-        InventoryWindow.DrawTextCentered(c, r, label, enabled ? ItemTierStyle.Title : ItemTierStyle.Dim);
+        UiText.PutCentered(c, r, label, in t, enabled ? ItemTierStyle.Title : ItemTierStyle.Dim, shadow);
         return enabled && live && i.Button(id, r);
     }
 
@@ -428,11 +450,8 @@ public static class TradeWindow
         }
     }
 
-    private static Vector2 HeadPos(in UiLayout l, UiRect win, float topUnits)
-    {
-        UiRect r = l.FromUnits(win, RowX, topUnits, RowW, RowH);
-        return new Vector2(r.X, r.Y);
-    }
+    private static UiRect HeadRect(in UiLayout l, UiRect win, float topUnits) =>
+        l.FromUnits(win, RowX, topUnits, RowW, RowH);
 
     private static int ClampToInt(long value) => (int)Math.Clamp(value, 0L, int.MaxValue);
 }
