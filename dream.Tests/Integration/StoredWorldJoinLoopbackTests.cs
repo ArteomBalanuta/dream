@@ -37,11 +37,16 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // Re-pinned by the starter kit's off-hand torch (items.json "equip": "OffHand"): the player actor's
     // visualKey reads "held.tool.builder|held.tool.torch" and it now carries a held light, 29 B in all.
     // Sha-256 was c1ba86757bab6b22..., now 90a7bf84de99b7b7.... The join is 6,117 B in all.
+    // Re-pinned by the attribute ceiling (PlayerStatRules.NewCharacterAttribute 10 -> 1000, which also moved
+    // the point-count origin): a new character's attributes serialise as four digits instead of two. 8 B of
+    // the 10 B growth are the four four-digit attributes in the player's combatStats (strength, vitality,
+    // agility, energy, 2 B each); the remaining 2 B follow from the larger values elsewhere in the payload.
+    // Sha-256 was 90a7bf84de99b7b7..., now e9dfe27f584dcbcb.... The join is 6,127 B in all.
     private const int C0FrameCount = 3;
-    private const long C0TotalBytes = 6_117;
+    private const long C0TotalBytes = 6_127;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "90a7bf84de99b7b72c5cca0a84403fbd3406d725b036b7872286cdf241324e36";
+    private const string C0Sha256 = "e9dfe27f584dcbcbef375ed6204c4f44baf1ad94fd12748c9bd20f61bf04a1fb";
     private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]
