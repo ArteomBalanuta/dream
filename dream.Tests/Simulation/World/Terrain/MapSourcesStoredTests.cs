@@ -98,18 +98,36 @@ public class MapSourcesStoredTests
     public void TheStoredSourceBudget_IsPerCreateCellsCall()
     {
         WorldDescriptor generated = Generated(20);
-        IReadOnlyList<PersistedTerrainChunk> chunks = ExportOf(generated);
-        long total = TerrainChunkBudgetProbe.Total(MapDefinition.ForWorld(generated), chunks);
+        MapDefinition definition = MapDefinition.ForWorld(generated);
+        // A generated world has no subcell overrides at all, so its export spends no budget and
+        // nothing can be refused: carve one child out of one cube to give the budget something to count.
+        IReadOnlyList<PersistedTerrainChunk> chunks = WithOneCarvedCell(definition, ExportOf(generated));
+        long total = TerrainChunkBudgetProbe.Total(definition, chunks);
+        Assert.True(total > 0, "The stored chunks carry no subcell overrides, so no budget is spent.");
 
-        StoredMapSource exact = new(MapDefinition.ForWorld(generated), chunks, maxSubcellOverrides: total);
+        StoredMapSource exact = new(definition, chunks, maxSubcellOverrides: total);
         _ = exact.CreateCells();
         _ = exact.CreateCells();
 
-        if (total > 0)
-        {
-            StoredMapSource tight = new(MapDefinition.ForWorld(generated), chunks, maxSubcellOverrides: total - 1);
-            Assert.Throws<InvalidDataException>(() => tight.CreateCells());
-        }
+        StoredMapSource tight = new(definition, chunks, maxSubcellOverrides: total - 1);
+        Assert.Throws<InvalidDataException>(() => tight.CreateCells());
+    }
+
+    // Re-encodes chunk 0 with one solid cube's first child overridden to empty: one real subcell
+    // override, which is exactly what the decoder charges the budget for.
+    private static IReadOnlyList<PersistedTerrainChunk> WithOneCarvedCell(
+        MapDefinition definition,
+        IReadOnlyList<PersistedTerrainChunk> chunks)
+    {
+        PersistedTerrainChunk first = chunks[0];
+        List<GeometryCellRecord> cells = TerrainChunkCodec.Decode(definition, first.ChunkX, first.ChunkZ, first.Data);
+        GeometryCellRecord carved = cells.First(cell =>
+            cell.Definition.ShapeKind == GeometryShapeKind.SolidCube && cell.Definition.SupportsSubdivision);
+        carved.EnsureSubdivisionState().SetChildSolid(new GeometrySubcellKey(0, 0, 0), isSolid: false);
+
+        PersistedTerrainChunk[] carvedChunks = [.. chunks];
+        carvedChunks[0] = first with { Data = TerrainChunkCodec.Encode(definition, first.ChunkX, first.ChunkZ, cells) };
+        return carvedChunks;
     }
 }
 

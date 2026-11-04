@@ -345,16 +345,26 @@ public sealed class ClassicHudAdversarialTests : IDisposable
         Frame(a + new Vector2(12f, 0f), left: true);
         _width = w;
         _height = h;
+
+        // A drop that lands on a slot of the resized layout is a move between those two slots.
+        Vector2 b = Centre(Slot(5));
+        Frame(b, left: true);
+        InventoryHudAction? onSlot = Frame(b);
+        Frame(b);
+        Assert.False(_surface.Input.Dragging);
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Move, 0, 5), onSlot);
+
+        // And a drop that lands outside every target sends nothing at all.
+        Vector2 from = Centre(Slot(0));
+        Frame(from);
+        Frame(from, left: true);
+        Frame(from + new Vector2(12f, 0f), left: true);
         Frame(new Vector2(3f, 3f), left: true);
-        InventoryHudAction? dropped = Frame(new Vector2(-50f, -50f));
+        InventoryHudAction? outside = Frame(new Vector2(-50f, -50f));
         Frame(new Vector2(-50f, -50f));
 
         Assert.False(_surface.Input.Dragging);
-        // A drop that lands outside every target sends nothing; one that lands on a slot is a move.
-        if (dropped is InventoryHudAction action)
-        {
-            Assert.Equal(InventoryHudActionKind.Move, action.Kind);
-        }
+        Assert.Null(outside);
     }
 
     [Fact]

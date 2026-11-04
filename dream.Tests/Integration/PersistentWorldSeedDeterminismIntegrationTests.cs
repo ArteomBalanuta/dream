@@ -76,10 +76,11 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         SqliteConnection.ClearAllPools();
 
         // A plain restart: the stored seed comes back, and the built cube comes back as it was
-        // left: whole in its cell, or as its persisted fracture pieces. Whether it broke within
-        // the script depends on the seed's rolls (PersistentWorld_PlacedCube_KeepsItsDamageBetweenHits
-        // pins that damage accumulates between hits). Generated terrain that the
-        // secondaries' attacks fracture is not persisted, by design.
+        // left. The primary hits it every tick from CubeAttackFrom to the end of the script, which
+        // no roll of the seed lets a 100 hp cube survive (PersistentWorld_PlacedCube_KeepsItsDamageBetweenHits
+        // pins that damage accumulates between hits), so the state to check is always the persisted
+        // fracture pieces, never a whole cube. Generated terrain that the secondaries' attacks
+        // fracture is not persisted, by design.
         using (ServerPersistenceBundle reopened = database.OpenBundle())
         {
             Assert.Equal(seed, reopened.SimulationSeed);
@@ -88,18 +89,13 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             using DedicatedServerHost restarted = ServerBootstrap.CreateAuthoritativeHost(reopened);
             Assert.Equal(seed, restarted.Runtime!.SimulationSeed);
             GeometryCellKey cell = new((int)buildCell.X, (int)buildCell.Y, (int)buildCell.Z);
-            if (builtCubeBroke)
-            {
-                Assert.Equal(0, database.Count("placed_cube_instances"));
-                Assert.True(database.Count("cube_fracture_pieces") > 0, "The built cube's fracture pieces were not persisted.");
-                Assert.Null(restarted.Runtime.Map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z));
-                Assert.Contains(restarted.Runtime.Map.CaptureFracturePieces(), piece => piece.Cell == cell);
-            }
-            else
-            {
-                Assert.Equal(1, database.Count("placed_cube_instances"));
-                Assert.NotNull(restarted.Runtime.Map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z));
-            }
+            Assert.True(
+                builtCubeBroke,
+                "The built cube survived the script, so the restart never checked its fracture pieces.");
+            Assert.Equal(0, database.Count("placed_cube_instances"));
+            Assert.True(database.Count("cube_fracture_pieces") > 0, "The built cube's fracture pieces were not persisted.");
+            Assert.Null(restarted.Runtime.Map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z));
+            Assert.Contains(restarted.Runtime.Map.CaptureFracturePieces(), piece => piece.Cell == cell);
         }
 
         SqliteConnection.ClearAllPools();

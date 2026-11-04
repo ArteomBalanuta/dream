@@ -126,26 +126,42 @@ public class GridPathfinderTests
         Assert.Contains(new NavCell(5, 1, 6), path);
     }
 
+    // Two blocked cells, (5, 5) and (6, 6), leave a diagonal gap between the start (5, 6) and
+    // (6, 5). The goal sits beyond that gap in the open, so the route is made of diagonals (which
+    // is what makes the corner rule below testable) and the one diagonal it may not take is the
+    // squeeze through the gap.
     [Fact]
     public void NeverCutsACorner()
     {
         FakeWorld world = new();
         world.Wall(5, 5, 5, 1, 2);
         world.Wall(6, 6, 6, 1, 2);
-        var (_, reached, path) = Find(world, new NavCell(5, 1, 6), new NavCell(6, 1, 5));
+        var (_, reached, path) = Find(world, new NavCell(5, 1, 6), new NavCell(8, 1, 2));
 
         Assert.True(reached);
+        int diagonalSteps = 0;
         for (int i = 1; i < path.Count; i++)
         {
             int dx = path[i].X - path[i - 1].X;
             int dz = path[i].Z - path[i - 1].Z;
             if (dx != 0 && dz != 0)
             {
+                diagonalSteps++;
                 Assert.False(world.IsBlocked(path[i - 1].X + dx, 1, path[i - 1].Z));
                 Assert.False(world.IsBlocked(path[i - 1].X, 1, path[i - 1].Z + dz));
             }
         }
+
+        // The premise of the two checks above: without a diagonal step they never run.
+        Assert.True(diagonalSteps > 0, $"The route took no diagonal step: {Describe(path)}.");
+        // Named for clarity: the squeeze between the two blocked cells is never stepped.
+        Assert.DoesNotContain(
+            (new NavCell(5, 1, 6), new NavCell(6, 1, 5)),
+            path.Zip(path.Skip(1)));
     }
+
+    private static string Describe(IEnumerable<NavCell> path)
+        => string.Join(" -> ", path.Select(cell => $"({cell.X},{cell.Level},{cell.Z})"));
 
     [Fact]
     public void WalledInGoal_ReturnsNearestCellAndNotReached()

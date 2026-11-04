@@ -151,7 +151,7 @@ public class FxShadowListTests
     public void The_Probe_Reads_The_Top_Solid_Child_Of_A_Subdivided_Cell_Not_A_Full_Cube()
     {
         Map map = new(physics: null, generateStartupTerrain: true, width: 10, depth: 10, headless: true);
-        Assert.True(FindColumn(map, out int x, out int z, out int top));
+        Assert.True(FindStackedColumn(map, out int x, out int z, out int top));
         GeometrySubdivisionState state = map.TryGetGeometryCellAtCell(x, top, z)!.EnsureSubdivisionState();
         int resolution = state.Resolution;
         Assert.True(resolution >= 2);
@@ -170,15 +170,17 @@ public class FxShadowListTests
         Assert.True(FxGroundProbe.TryFindGroundY(map, standing, out float groundY));
         Assert.Equal(top + 1f / resolution, groundY, 1e-4f);
 
-        // A child top above the feet is skipped: mid-cell, the top of the lowest layer is not
-        // reached by feet half a child up, so the scan falls to the cell below (its full top is y).
-        Vector3 inside = new(x + 0.5f, top + 0.5f / resolution, z + 0.5f);
-        bool found = FxGroundProbe.TryFindGroundY(map, inside, out groundY);
-        Assert.Equal(CellBelowTop(map, x, top, z, out float below), found);
-        if (found)
-        {
-            Assert.Equal(below, groundY, 1e-4f);
-        }
+        // A child top above the feet is skipped: over the one child column whose lowest child was
+        // carved out, feet half a child up reach no child top, so the scan falls to the cell below
+        // (its full top is y). Its own lowest child is empty there, so it does not cover that top.
+        state.SetChildSolid(new GeometrySubcellKey(0, 0, 0), false);
+        state.SetChildSolid(new GeometrySubcellKey(0, 1, 0), true);
+        Vector3 inside = new(x + 0.5f / resolution, top + 0.5f / resolution, z + 0.5f / resolution);
+        Assert.True(
+            CellBelowTop(map, x, top, z, out float below),
+            "The column under the subdivided cell has no plain cube to fall through to.");
+        Assert.True(FxGroundProbe.TryFindGroundY(map, inside, out groundY));
+        Assert.Equal(below, groundY, 1e-4f);
 
         // A solid child below an above-feet child: the lower child's top is the answer.
         state.SetChildSolid(new GeometrySubcellKey(resolution / 2, 1, resolution / 2), true);
@@ -190,12 +192,9 @@ public class FxShadowListTests
         // An empty cell falls through to the cell below, not the full-cube top.
         state.SetAllChildrenEmpty();
         Vector3 above = new(x + 0.5f, top + 1f, z + 0.5f);
-        found = FxGroundProbe.TryFindGroundY(map, above, out groundY);
-        Assert.Equal(CellBelowTop(map, x, top, z, out below), found);
-        if (found)
-        {
-            Assert.Equal(below, groundY, 1e-4f);
-        }
+        Assert.True(CellBelowTop(map, x, top, z, out below));
+        Assert.True(FxGroundProbe.TryFindGroundY(map, above, out groundY));
+        Assert.Equal(below, groundY, 1e-4f);
     }
 
     // The probe's expected answer under a cell whose column below is a stack of full cubes (or nothing).
@@ -318,6 +317,21 @@ public class FxShadowListTests
             FxGroundProbe.TryFindGroundY(map, feet, out _);
             FxGroundProbe.TryFindGroundY(map, away, out _);
         });
+    }
+
+    // A column whose top cell sits on a plain solid cube, which is what the fall-through cases need:
+    // the startup terrain is one floor layer, so a cube is stacked on it and that cube's cell is
+    // the one the test subdivides.
+    private static bool FindStackedColumn(Map map, out int x, out int z, out int top)
+    {
+        top = 0;
+        if (!FindColumn(map, out x, out z, out int floorTop))
+        {
+            return false;
+        }
+
+        top = floorTop + 1;
+        return map.AddCube(new Vector3(x, top, z), withPhysics: false);
     }
 
     private static bool FindColumn(Map map, out int x, out int z, out int top)

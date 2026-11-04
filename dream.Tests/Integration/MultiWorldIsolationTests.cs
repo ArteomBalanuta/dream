@@ -102,14 +102,15 @@ public sealed class MultiWorldIsolationTests(ITestOutputHelper output)
         {
             host.Runtime!.WriteCheckpointOnDispose = false;
             Assert.Equal(AlphaSeed, host.Runtime.SimulationSeed);
-            if (WorldBundles.Count(database, "placed_cube_instances", alphaId) > 0)
-            {
-                Assert.NotNull(host.Runtime.Map.TryGetCubeAtCell(alphaBuildCell.X, alphaBuildCell.Y, alphaBuildCell.Z));
-            }
-            else
-            {
-                Assert.Contains(host.Runtime.Map.CaptureFracturePieces(), piece => piece.Cell == new GeometryCellKey(alphaBuildCell.X, alphaBuildCell.Y, alphaBuildCell.Z));
-            }
+            // The script's primary pounds the built cube from CubeAttackFrom to the last tick, and
+            // AlphaSeed is fixed, so alpha always ends as rubble: the restart has to bring back its
+            // fracture pieces and no cube in that cell.
+            Assert.Equal(0L, WorldBundles.Count(database, "placed_cube_instances", alphaId));
+            Assert.True(
+                WorldBundles.Count(database, "cube_fracture_pieces", alphaId) > 0,
+                "alpha persisted neither its built cube nor its fracture pieces");
+            Assert.Null(host.Runtime.Map.TryGetCubeAtCell(alphaBuildCell.X, alphaBuildCell.Y, alphaBuildCell.Z));
+            Assert.Contains(host.Runtime.Map.CaptureFracturePieces(), piece => piece.Cell == new GeometryCellKey(alphaBuildCell.X, alphaBuildCell.Y, alphaBuildCell.Z));
         }
 
         output.WriteLine($"alpha {alphaId}: {alphaObjects} object rows, clock {alphaTime}; beta {betaId} deleted");

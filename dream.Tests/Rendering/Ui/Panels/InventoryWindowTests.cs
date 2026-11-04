@@ -825,7 +825,10 @@ public sealed class InventoryWindowTests : IDisposable
             for (int target = 0; target < 64; target++)
             {
                 InventoryWindow.DropVerdict verdict = InventoryWindow.TryResolveDrop(v, source, target, out InventoryHudAction action);
-                if (!anchors.Contains(source) || source == target)
+                // A source that is not an item's anchor is no drag at all: the window answers None
+                // where PlanMove, asked about it directly, would answer Blocked. A drop on the
+                // item's own anchor is not skipped: that is PlanMove's Same, judged in the switch.
+                if (!anchors.Contains(source))
                 {
                     Assert.Equal(InventoryWindow.DropVerdict.None, verdict);
                     continue;
@@ -841,6 +844,7 @@ public sealed class InventoryWindowTests : IDisposable
                         break;
                     case BagMoveVerdict.Same:
                         Assert.Equal(InventoryWindow.DropVerdict.None, verdict);
+                        Assert.Equal(default, action);
                         none++;
                         break;
                     default:
@@ -853,6 +857,8 @@ public sealed class InventoryWindowTests : IDisposable
         }
 
         Assert.True(valid > 100 && invalid > 100, $"valid {valid}, invalid {invalid}, none {none}");
+        // One Same per placed item: the drop on its own anchor.
+        Assert.Equal(anchors.Length, none);
     }
 
     [Fact]

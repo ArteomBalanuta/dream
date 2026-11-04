@@ -60,7 +60,7 @@ public class ServerActorIdentityIntegrationTests
     public void PersistentWorld_LostRegistryLink_IsRepairedWithTheCubesCurrentHealth()
     {
         RecordingWorldPersistence world = new();
-        using WorldSessionRuntime runtime = CreateRuntime(world, out RuntimeAuthoritativeSessionHost host);
+        using WorldSessionRuntime runtime = CreateRuntime(world, out RuntimeAuthoritativeSessionHost host, ownerStrength: 1);
         using (host)
         {
             Build(runtime, new Vector3(7f, 1f, 5f), sequence: 1);
@@ -81,12 +81,14 @@ public class ServerActorIdentityIntegrationTests
                 second.CurrentHealth < first.CurrentHealth,
                 $"The second hit left {second.CurrentHealth} hp after the first left {first.CurrentHealth} hp.");
             WorldObjectRecord? repaired = GetWorldObjects(runtime).TryGet(cube);
-            if (!second.TargetDied)
-            {
-                Assert.NotNull(repaired);
-                Assert.Equal(placedActorId, repaired.Actor.Id);
-                Assert.Equal(placed.OwnerPlayerName, repaired.OwnerPlayerName);
-            }
+            // The premise of the repair: the second hit has to leave the cube standing, which is why
+            // the owner is weak enough that two of its hits cannot take a 100 hp cube down.
+            Assert.False(
+                second.TargetDied,
+                $"The second hit destroyed the cube ({first.CurrentHealth} hp before it), so there is no repaired record to check.");
+            Assert.NotNull(repaired);
+            Assert.Equal(placedActorId, repaired.Actor.Id);
+            Assert.Equal(placed.OwnerPlayerName, repaired.OwnerPlayerName);
         }
     }
 
@@ -315,9 +317,12 @@ public class ServerActorIdentityIntegrationTests
             PlayerSimulationTuning.AuthoritativeDefault);
     }
 
+    // ownerStrength drives the owner's melee damage ("5 + strength * 2" to "10 + strength * 4"):
+    // with the default 10, two hits always destroy a 100 hp cube; a weak owner leaves it standing.
     private static WorldSessionRuntime CreateRuntime(
         IWorldPersistenceRepository? worldPersistence,
-        out RuntimeAuthoritativeSessionHost host)
+        out RuntimeAuthoritativeSessionHost host,
+        int ownerStrength = 10)
     {
         WorldSessionRuntime runtime = worldPersistence == null
             ? new(FloorSize, SpawnPosition, new SceneEventHub())
@@ -325,7 +330,7 @@ public class ServerActorIdentityIntegrationTests
                 FloorSize,
                 SpawnPosition,
                 new SceneEventHub(),
-                playerProfiles: new RecordingPlayerProfiles(),
+                playerProfiles: new RecordingPlayerProfiles(ownerStrength),
                 worldPersistence: worldPersistence);
         host = new RuntimeAuthoritativeSessionHost(runtime);
         host.JoinSession(Session.Value, "Player A");
@@ -362,7 +367,7 @@ public class ServerActorIdentityIntegrationTests
         return (WorldObjectRegistry)field.GetValue(runtime)!;
     }
 
-    private sealed class RecordingPlayerProfiles : IPlayerProfileRepository
+    private sealed class RecordingPlayerProfiles(int strength = 10) : IPlayerProfileRepository
     {
         private readonly Dictionary<string, PersistedPlayerProfile> _profiles = new(StringComparer.OrdinalIgnoreCase);
 
@@ -374,7 +379,7 @@ public class ServerActorIdentityIntegrationTests
                     playerName,
                     playerName,
                     PlayerInteractionMode.Building,
-                    new PersistedCreatureStats(100, 100, 10, 10, 10, 10, 6f, 2f, 1),
+                    new PersistedCreatureStats(100, 100, strength, 10, 10, 10, 6f, 2f, 1),
                     DateTime.UtcNow,
                     DateTime.UtcNow);
                 _profiles[playerName] = profile;
