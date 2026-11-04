@@ -9,13 +9,15 @@ public class WeaponMeshCatalogTests
     public static readonly string[] Weapons =
     [
         "held.weapon.dagger", "held.weapon.sword", "held.weapon.greatsword", "held.weapon.axe",
-        "held.weapon.mace", "held.weapon.hammer", "held.weapon.spear", "held.weapon.bow", "held.weapon.staff"
+        "held.weapon.mace", "held.weapon.hammer", "held.weapon.spear", "held.weapon.bow", "held.weapon.staff",
+        "held.weapon.short-sword", "held.weapon.iron-blade", "held.weapon.hand-axe", "held.weapon.short-bow",
+        "held.weapon.bone-staff"
     ];
 
     public static readonly string[] Shields = ["held.shield.buckler", "held.shield.kite", "held.shield.tower"];
 
     public static readonly string[] Tools =
-        ["held.tool.builder", "held.tool.blade", "held.tool.maul", "held.tool.lantern", "held.tool.torch"];
+        ["held.tool.builder", "held.tool.blade", "held.tool.maul", "held.tool.lantern", "held.tool.torch", "held.gear.ward-lantern"];
 
     public static IEnumerable<object[]> EveryKnownId() =>
         Weapons.Concat(Shields).Concat(Tools).Select(id => new object[] { id });
@@ -45,7 +47,7 @@ public class WeaponMeshCatalogTests
     }
 
     [Fact]
-    public void ShieldsAreStrappedToTheArm_AndOnlyTheBowIsRanged()
+    public void ShieldsAreStrappedToTheArm_AndOnlyTheBowsAreRanged()
     {
         foreach (string id in Shields)
         {
@@ -56,7 +58,7 @@ public class WeaponMeshCatalogTests
         foreach (string id in Weapons.Concat(Tools))
         {
             Assert.False(WeaponMeshCatalog.IsShield(id));
-            Assert.Equal(id == "held.weapon.bow", WeaponMeshCatalog.IsRanged(id));
+            Assert.Equal(id is "held.weapon.bow" or "held.weapon.short-bow", WeaponMeshCatalog.IsRanged(id));
         }
     }
 
@@ -67,6 +69,10 @@ public class WeaponMeshCatalogTests
             - WeaponMeshCatalog.Resolve(id).Parts.Min(p => p.Center.Y - (p.Size.Y / 2f));
 
         Assert.True(Length("held.weapon.dagger") < Length("held.weapon.sword"));
+        Assert.True(Length("held.weapon.dagger") < Length("held.weapon.short-sword"));
+        Assert.True(Length("held.weapon.short-sword") < Length("held.weapon.sword"));
+        Assert.True(Length("held.weapon.hand-axe") < Length("held.weapon.axe"));
+        Assert.True(Length("held.weapon.short-bow") < Length("held.weapon.bow"));
         Assert.True(Length("held.weapon.sword") < Length("held.weapon.greatsword"));
         Assert.True(Length("held.weapon.sword") < Length("held.weapon.spear"));
         Assert.True(Length("held.weapon.axe") < Length("held.weapon.staff"));

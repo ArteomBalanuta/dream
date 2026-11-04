@@ -10,6 +10,17 @@ namespace Dream.Rendering.Actors;
 //
 // One instance per player. Update allocates nothing after the first call, and the dictionary it
 // fills is the one the model draw reads.
+// The player's nodes that worn items ride on, for TryGetNodeMatrix.
+public enum PlayerBodyNode
+{
+    Head,
+    Torso,
+    LeftArm,
+    RightArm,
+    LeftLeg,
+    RightLeg
+}
+
 public sealed class PlayerPoseLayers
 {
     public const string TorsoNode = "torso";
@@ -30,6 +41,7 @@ public sealed class PlayerPoseLayers
 
     private readonly Dictionary<string, Matrix4> _overrides = new(StringComparer.Ordinal);
     private bool _resolved;
+    private int _torso = -1;
     private int _leftArm = -1;
     private int _rightArm = -1;
     private int _head = -1;
@@ -98,17 +110,39 @@ public sealed class PlayerPoseLayers
     // item rides on. False before the first Update or when the model has no such arm.
     public bool TryGetArmMatrix(AnimatedModelInstance instance, bool offHand, out Matrix4 arm)
     {
-        int index = offHand ? _leftArm : _rightArm;
+        return TryGetNodeMatrix(instance, offHand ? PlayerBodyNode.LeftArm : PlayerBodyNode.RightArm, out arm);
+    }
+
+    // The world matrix, in model space, of one of the body nodes with its override applied
+    // (O * nodeWorld): what a worn item rides on, so a flinch, a held arm or an air tuck carries it.
+    // False before the first Update or when the model has no such node.
+    public bool TryGetNodeMatrix(AnimatedModelInstance instance, PlayerBodyNode node, out Matrix4 matrix)
+    {
+        int index;
+        string name;
+        switch (node)
+        {
+            case PlayerBodyNode.Head: index = _head; name = PlayerModelAssetDefinition.HeadNodeName; break;
+            case PlayerBodyNode.Torso: index = _torso; name = TorsoNode; break;
+            case PlayerBodyNode.LeftArm: index = _leftArm; name = LeftArmNode; break;
+            case PlayerBodyNode.RightArm: index = _rightArm; name = RightArmNode; break;
+            case PlayerBodyNode.LeftLeg: index = _leftLeg; name = LeftLegNode; break;
+            case PlayerBodyNode.RightLeg: index = _rightLeg; name = RightLegNode; break;
+            default:
+                matrix = Matrix4.Identity;
+                return false;
+        }
+
         if (!_resolved || index < 0)
         {
-            arm = Matrix4.Identity;
+            matrix = Matrix4.Identity;
             return false;
         }
 
-        arm = instance.Pose.GetNodeWorldMatrix(index).ToOpenTK();
-        if (_overrides.TryGetValue(offHand ? LeftArmNode : RightArmNode, out Matrix4 nodeOverride))
+        matrix = instance.Pose.GetNodeWorldMatrix(index).ToOpenTK();
+        if (_overrides.TryGetValue(name, out Matrix4 nodeOverride))
         {
-            arm = nodeOverride * arm;
+            matrix = nodeOverride * matrix;
         }
 
         return true;
@@ -155,6 +189,7 @@ public sealed class PlayerPoseLayers
             int logical = pose.Skeleton.GetRenderableNodeLogicalIndex(i);
             switch (name)
             {
+                case TorsoNode: _torso = logical; break;
                 case LeftArmNode: _leftArm = logical; break;
                 case RightArmNode: _rightArm = logical; break;
                 case LeftLegNode: _leftLeg = logical; break;

@@ -315,6 +315,94 @@ public class PlayerPoseLayersTests
         Assert.False(new PlayerPoseLayers().TryGetArmMatrix(instance, offHand: false, out _));
     }
 
+    private static Matrix4 NamedWorld(AnimatedModelInstance instance, string name)
+    {
+        for (int i = 0; i < instance.Pose.RenderableNodeCount; i++)
+        {
+            if (instance.Pose.GetRenderableNode(i).Name == name)
+            {
+                return instance.Pose.GetRenderableNodeWorldMatrix(i).ToOpenTK();
+            }
+        }
+
+        throw new InvalidOperationException(name);
+    }
+
+    public static IEnumerable<object[]> BodyNodes() =>
+    [
+        [PlayerBodyNode.Head, PlayerModelAssetDefinition.HeadNodeName],
+        [PlayerBodyNode.Torso, PlayerPoseLayers.TorsoNode],
+        [PlayerBodyNode.LeftArm, PlayerPoseLayers.LeftArmNode],
+        [PlayerBodyNode.RightArm, PlayerPoseLayers.RightArmNode],
+        [PlayerBodyNode.LeftLeg, PlayerPoseLayers.LeftLegNode],
+        [PlayerBodyNode.RightLeg, PlayerPoseLayers.RightLegNode]
+    ];
+
+    [Theory]
+    [MemberData(nameof(BodyNodes))]
+    public void TryGetNodeMatrix_IsTheOverrideComposedWorldMatrix_OfEachNode(PlayerBodyNode node, string name)
+    {
+        AnimatedModelInstance instance = CreateInstance("walk");
+        PlayerPoseLayers layers = new();
+        instance.Update(0.11f);
+        layers.Update(instance, Frame(flinch: 1f, tuck: 1f, main: 1f, off: 1f, twist: 0.3f));
+
+        Assert.True(layers.TryGetNodeMatrix(instance, node, out Matrix4 matrix));
+
+        Matrix4 expected = layers.Overrides[name] * NamedWorld(instance, name);
+        for (int row = 0; row < 4; row++)
+        {
+            for (int col = 0; col < 4; col++)
+            {
+                Assert.Equal(expected[row, col], matrix[row, col], 4);
+            }
+        }
+    }
+
+    [Fact]
+    public void TryGetNodeMatrix_IsFalseBeforeTheFirstUpdate_ForEveryNode()
+    {
+        AnimatedModelInstance instance = CreateInstance("idle");
+        PlayerPoseLayers layers = new();
+
+        foreach (PlayerBodyNode node in Enum.GetValues<PlayerBodyNode>())
+        {
+            Assert.False(layers.TryGetNodeMatrix(instance, node, out Matrix4 matrix));
+            Assert.Equal(Matrix4.Identity, matrix);
+        }
+    }
+
+    [Fact]
+    public void TorsoNodeMatrix_CarriesTheFlinch_SoAWornCuirassTiltsWithTheBody()
+    {
+        AnimatedModelInstance instance = CreateInstance("idle");
+        PlayerPoseLayers layers = new();
+
+        layers.Update(instance, Frame());
+        Assert.True(layers.TryGetNodeMatrix(instance, PlayerBodyNode.Torso, out Matrix4 rest));
+        layers.Update(instance, Frame(flinch: 1f));
+        Assert.True(layers.TryGetNodeMatrix(instance, PlayerBodyNode.Torso, out Matrix4 flinched));
+
+        Vector3 restTop = Vector4.TransformRow(new Vector4(0f, 1f, 0f, 1f), rest).Xyz;
+        Vector3 flinchedTop = Vector4.TransformRow(new Vector4(0f, 1f, 0f, 1f), flinched).Xyz;
+        Assert.True(flinchedTop.Z < restTop.Z - 0.05f);
+    }
+
+    [Fact]
+    public void TryGetArmMatrix_IsTheArmNodeMatrix()
+    {
+        AnimatedModelInstance instance = CreateInstance("walk");
+        PlayerPoseLayers layers = new();
+        layers.Update(instance, Frame(main: 1f, off: 0.5f));
+
+        Assert.True(layers.TryGetArmMatrix(instance, offHand: false, out Matrix4 right));
+        Assert.True(layers.TryGetNodeMatrix(instance, PlayerBodyNode.RightArm, out Matrix4 rightNode));
+        Assert.True(layers.TryGetArmMatrix(instance, offHand: true, out Matrix4 left));
+        Assert.True(layers.TryGetNodeMatrix(instance, PlayerBodyNode.LeftArm, out Matrix4 leftNode));
+        Assert.Equal(rightNode, right);
+        Assert.Equal(leftNode, left);
+    }
+
     private static Matrix4 HeadWorld(AnimatedModelInstance instance)
     {
         for (int i = 0; i < instance.Pose.RenderableNodeCount; i++)

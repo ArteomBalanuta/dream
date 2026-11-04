@@ -231,6 +231,62 @@ public static class WeaponMeshCatalog
             Box(0f, 1.86f, -0.085f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron),
             Box(0f, 1.88f, 0f, 0.13f, 0.20f, 0.13f, WeaponMaterial.Arcane, roll: 45f));
 
+        // A plain arming sword: a short broad blade, a gilt guard and a bone pommel.
+        Hand("held.weapon.short-sword", false,
+            Box(0f, 0.08f, 0f, 0.08f, 0.26f, 0.08f, WeaponMaterial.Leather),
+            Box(0f, -0.06f, 0f, 0.10f, 0.08f, 0.10f, WeaponMaterial.Bone),
+            Box(0f, 0.23f, 0f, 0.09f, 0.05f, 0.28f, WeaponMaterial.Gilt),
+            Box(0f, 0.58f, 0f, 0.05f, 0.66f, 0.17f, WeaponMaterial.Steel),
+            Box(0f, 0.54f, 0f, 0.058f, 0.48f, 0.05f, WeaponMaterial.DarkIron),
+            Box(0f, 0.94f, 0f, 0.04f, 0.10f, 0.09f, WeaponMaterial.Steel));
+
+        // A heavy, broad single-edged blade with a dark spine and a clipped, angled tip.
+        Hand("held.weapon.iron-blade", false,
+            Box(0f, 0.09f, 0f, 0.08f, 0.28f, 0.08f, WeaponMaterial.Leather),
+            Box(0f, 0.25f, 0f, 0.09f, 0.05f, 0.16f, WeaponMaterial.DarkIron),
+            Box(0f, 0.68f, 0f, 0.06f, 0.80f, 0.22f, WeaponMaterial.Steel),
+            Box(0f, 0.66f, -0.10f, 0.07f, 0.72f, 0.04f, WeaponMaterial.DarkIron),
+            Box(0f, 1.12f, 0.03f, 0.05f, 0.18f, 0.14f, WeaponMaterial.Steel, pitch: -18f));
+
+        // A short haft and a small bearded bit.
+        Hand("held.weapon.hand-axe", false,
+            Box(0f, 0.20f, 0f, 0.06f, 0.70f, 0.06f, WeaponMaterial.Wood),
+            Box(0f, -0.16f, 0f, 0.09f, 0.05f, 0.09f, WeaponMaterial.DarkIron),
+            Box(0f, 0.58f, 0.02f, 0.10f, 0.16f, 0.10f, WeaponMaterial.DarkIron),
+            Box(0f, 0.58f, 0.16f, 0.045f, 0.28f, 0.20f, WeaponMaterial.Steel),
+            Box(0f, 0.58f, 0.27f, 0.04f, 0.34f, 0.04f, WeaponMaterial.Steel));
+
+        // A small recurved bow with bone tips and a short string.
+        Hand("held.weapon.short-bow", true,
+            Box(0f, 0f, 0f, 0.08f, 0.22f, 0.08f, WeaponMaterial.Leather),
+            Box(0f, 0.24f, -0.02f, 0.05f, 0.30f, 0.05f, WeaponMaterial.Wood, pitch: -12f),
+            Box(0f, -0.24f, -0.02f, 0.05f, 0.30f, 0.05f, WeaponMaterial.Wood, pitch: 12f),
+            Box(0f, 0.46f, -0.10f, 0.05f, 0.26f, 0.05f, WeaponMaterial.Wood, pitch: -30f),
+            Box(0f, -0.46f, -0.10f, 0.05f, 0.26f, 0.05f, WeaponMaterial.Wood, pitch: 30f),
+            Box(0f, 0.60f, -0.19f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Bone),
+            Box(0f, -0.60f, -0.19f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Bone),
+            Box(0f, 0f, -0.19f, 0.015f, 1.20f, 0.015f, WeaponMaterial.Bone));
+
+        // A pale bone shaft with a skull cap and a cold arcane stone.
+        Hand("held.weapon.bone-staff", false,
+            Box(0f, 0.60f, 0f, 0.08f, 1.70f, 0.08f, WeaponMaterial.Bone),
+            Box(0f, 0.05f, 0f, 0.10f, 0.30f, 0.10f, WeaponMaterial.Leather),
+            Box(0f, -0.28f, 0f, 0.10f, 0.08f, 0.10f, WeaponMaterial.DarkIron),
+            Box(0f, 1.55f, 0f, 0.18f, 0.16f, 0.20f, WeaponMaterial.Bone),
+            Box(0f, 1.56f, 0.105f, 0.12f, 0.05f, 0.02f, WeaponMaterial.DarkIron),
+            Box(0f, 1.70f, 0f, 0.09f, 0.12f, 0.09f, WeaponMaterial.Arcane, roll: 45f));
+
+        // A gilt cage lantern with a cold arcane flame and a handle.
+        Hand("held.gear.ward-lantern", false,
+            Box(0f, 0.22f, 0f, 0.03f, 0.26f, 0.03f, WeaponMaterial.DarkIron),
+            Box(0f, 0.08f, 0f, 0.18f, 0.06f, 0.18f, WeaponMaterial.Gilt),
+            Box(0f, -0.02f, 0f, 0.12f, 0.18f, 0.12f, WeaponMaterial.Arcane),
+            Box(0.075f, -0.02f, 0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt),
+            Box(-0.075f, -0.02f, 0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt),
+            Box(0.075f, -0.02f, -0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt),
+            Box(-0.075f, -0.02f, -0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt),
+            Box(0f, -0.13f, 0f, 0.18f, 0.04f, 0.18f, WeaponMaterial.Gilt));
+
         // Small round plate with a boss.
         Shield("held.shield.buckler",
             Box(0f, 0f, 0f, 0.40f, 0.28f, 0.05f, WeaponMaterial.Wood),
