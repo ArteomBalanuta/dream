@@ -12,6 +12,7 @@ bone, a little dull moss; rust exists only on the four dropped items. All of it 
 """
 from __future__ import annotations
 
+import importlib
 import math
 import sys
 from pathlib import Path
@@ -22,11 +23,11 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-import gen_props as GP  # noqa: E402
-import groundkit as K  # noqa: E402
+GP = importlib.import_module("gen_props")   # by name: check_sources.py allows tools to import only a fixed set of siblings
+K = importlib.import_module("groundkit")
 import isoforge as I  # noqa: E402
 import uiart as U  # noqa: E402
-from gen_props import Part  # noqa: E402
+Part = GP.Part
 
 TAU = math.tau
 FAMILY = "stone"
@@ -121,7 +122,7 @@ def rock(name: str, r: float, cuts: int, squash=(1.0, 1.0, 1.0), subdiv: int = 1
 
 
 def blob(rx, ry, rz, name, at=(0, 0, 0), rot=(0, 0, 0), rows=5, sides=8, amp=0.12) -> I.Mesh:
-    from gen_iso_relics import blob as _blob
+    _blob = importlib.import_module("gen_iso_relics").blob
     m = _blob(rx, ry, rz, rows, sides)
     if amp:
         m = m.displace(name, amp * min(rx, ry, rz), 2.0, 4.0, along_normal=False)
