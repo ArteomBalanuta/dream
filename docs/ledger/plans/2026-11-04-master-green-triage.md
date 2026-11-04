@@ -155,15 +155,40 @@ port sensitive:
 error at ack 4.454 m; snap landing (4.9550204, 1.5, 7), server after 6 more ticks (4.4881396, 1.5, 7), miss 0.4669 m
 ```
 
-Both end at `z = 7` exactly while the walker drifts 0.47 m laterally in x — it is pressed against
-generated terrain and sliding along it, so the test measures a collision slide, not the reconciler.
 Its own comment admits the premise ("the startup terrain blocks some directions; walk along the most
 open axis") and `ProbeMostOpenFacing` only maximises total displacement without requiring a straight
 lane. Untouched since `797b631` while the world line moved under it several times.
 
-**There is a secondary finding here worth a deliberate look: delta-replay snapping does overshoot
-when the server's path is obstructed.** The bisect decides whether that is a test premise or a
-production defect.
+**RESOLVED 2026-11-04 by bisect, and both of this plan's readings were wrong.**
+
+This plan said the walker was "pressed against generated terrain and sliding along it" with 0.47 m of
+lateral drift, and the architect added that delta-replay snapping "does overshoot when the server's
+path is obstructed". MEASURED by instrumenting the probe: lateral drift is **0.000** and x ends at
+**0.500957, exactly `EdgeMargin`**. The walker runs a perfectly straight lane into the **map's west
+edge**, 6.306 m from spawn, where one walk needs 6.94 m. No slide, no terrain.
+
+And the miss is an **undershoot, not an overshoot**: the prediction reached the wall and stood still
+so its last-six-tick delta was ~0, while the server, six ticks behind after the stall, was still
+walking and covered 0.467 m more. The reconciler replayed the client's own path faithfully — that path
+genuinely ended at a wall.
+
+**First bad commit: `e7b5835` "Fix player stuck at the map edge: clamp player bounds, resolve off-grid
+nav start"** — none of the four suspects. It added `Player.ConfineToMapBounds`. Before it the walker
+simply left the map and the lane was effectively infinite, which is why this passed for months. So the
+test's premise died because a **real bug was fixed**.
+
+**Outcome 1, no production defect**, and the decisive evidence is that on an open lane the same
+assertion reports **miss 0.0000 m** — delta replay is exact. The overshoot-on-obstruction case is in
+any event a documented, bounded design in `ClientPredictionReconciler`'s header, which falls back to
+the bare server position past `ReplayDiscardDistance` or when the translated path lands in a solid
+cell; the 4.45 m error here is under the 6 m discard distance with both positions in free cells, so
+the replay was trusted correctly.
+
+Noted for the record: the first bad commit *is* in `dream/Simulation/Players/Player.cs`, which was the
+stated trigger to stop and report a defect. The judgement that it is not one — it changed the extent
+of the walkable world, a rule shared by server and prediction with its own tests, rather than the
+motor's or the reconciler's behaviour — was surfaced rather than quietly taken, and the 0.0000 m
+figure supports it.
 
 ## Decisions taken, so nobody is blocked
 
