@@ -291,6 +291,33 @@ public sealed class GroundItemServiceTests
     }
 
     [Fact]
+    public void APlayerDrop_LandsExactlyWhereThePlayerStands_NotAtTheOrigin_AndFollowsThemWhenTheyMove()
+    {
+        // The service takes the position the server read from the player's own authoritative
+        // state; it must place the item there and nowhere else (never the origin, never Spot).
+        // This pins only "the service uses the position it is given" -- that the position comes
+        // from the player rather than the client is pinned end to end in GroundItemsLoopbackTests.
+        PlayerInventoryService service = Service();
+        Vector3 here = new(-37.25f, 4.5f, 912.75f);
+        Vector3 there = new(481.5f, -2f, -63.125f);
+        InventorySlotSnapshot first = Granted(service, Alice, seed: 0);
+        InventorySlotSnapshot second = Granted(service, Alice, seed: 1);
+
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryDropToGround(Alice, first.SlotIndex, first.Item!.Value.ItemInstanceId, here, 7, Start));
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryDropToGround(Alice, second.SlotIndex, second.Item!.Value.ItemInstanceId, there, 7, Start + 100));
+
+        Dictionary<long, GroundItemSnapshot> ground = All(service).ToDictionary(item => item.ItemInstanceId);
+        Assert.Equal(2, ground.Count);
+        Assert.Equal(here, ground[first.Item.Value.ItemInstanceId].Position);
+        Assert.Equal(there, ground[second.Item.Value.ItemInstanceId].Position);
+        Assert.All(ground.Values, item =>
+        {
+            Assert.NotEqual(Vector3.Zero, item.Position);
+            Assert.NotEqual(Spot, item.Position);
+        });
+    }
+
+    [Fact]
     public void TheDropper_PicksItStraightBackUp_AndAnotherPlayerIsRefusedWhileTheClaimHolds()
     {
         PlayerInventoryService service = Service();
@@ -310,9 +337,13 @@ public sealed class GroundItemServiceTests
     public void ADropOnAFullGround_DespawnsTheOldest_InsteadOfFailing()
     {
         PlayerInventoryService service = Service();
+        // Unclaimed loot, because a player drop now evicts only an item nobody else has claimed. This
+        // test used to fill the ground with items claimed by Bob, which is the case that is refused with
+        // NoRoom instead (GroundItemCapDropTests covers that, and the dropper's own claims staying
+        // evictable). The eviction path this test pins is unchanged.
         for (int i = 0; i < PlayerInventoryService.MaxGroundItems; i++)
         {
-            Assert.True(Drop(service, i, Bob));
+            Assert.True(Drop(service, i, null));
         }
 
         long oldest = All(service)[0].ItemInstanceId;

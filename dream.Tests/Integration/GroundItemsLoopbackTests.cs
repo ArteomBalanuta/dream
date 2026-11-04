@@ -123,6 +123,43 @@ public sealed class GroundItemsLoopbackTests
         Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
     }
 
+    // The security property of the whole drop design, end to end: InventoryDropIntent carries no
+    // position, so the server must place the item at the position IT holds for the dropper. Pinned by
+    // moving the dropper somewhere no default could coincide with and asserting the replicated position
+    // equals the server's own view of that player exactly -- not the origin, not the shared Spot every
+    // other test here uses, and not a value any client could have chosen.
+    [Fact]
+    public async Task ADrop_LandsAtTheServersOwnPositionForTheDropper_NotTheOriginNorAnyClientSuppliedPlace()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
+        await TickAsync(server, 2);
+        IAuthoritativePlayerTarget targetA = WaveIRuntimeKit.Target(server.Runtime, SessionA);
+        Vector3 standing = new(73.5f, 1.5f, 118.25f);
+        targetA.SetWorldPosition(standing);
+        await TickAsync(server);
+        WorldSessionRuntime runtime = server.Runtime;
+
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            runtime.InventoryService.TryGrantRolled(KeyOf(SessionA), Band, ItemRarity.Common, new ItemRollSeed(9, 9, 9, 9, 0)));
+        await TickAsync(server);
+        InventorySlotSnapshot band = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.Slots.First(slot => slot.Item?.ItemKind == Band);
+        long id = band.Item!.Value.ItemInstanceId;
+
+        ActionResult dropped = await ActAsync(server, a, new InventoryDropIntent(band.SlotIndex, id));
+        Assert.True(dropped.Accepted, dropped.Reason);
+        await WaitGroundAsync(a, ground => ground.Count == 1, "the dropped item");
+
+        GroundItemSnapshot seen = Assert.Single(Ground(a.Frames).Values);
+        Assert.Equal(id, seen.ItemInstanceId);
+        Assert.Equal(standing, targetA.Position);
+        Assert.Equal(standing, seen.Position);
+        Assert.NotEqual(Vector3.Zero, seen.Position);
+        Assert.NotEqual(Spot, seen.Position);
+    }
+
     [Fact]
     public async Task ADrop_BecomesAGroundUpsert_TheStrangerIsRefused_TheDropperPicksItBackUp_AndADeadPlayerCannotDrop()
     {
