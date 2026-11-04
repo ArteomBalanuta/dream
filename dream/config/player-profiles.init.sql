@@ -15,16 +15,21 @@ CREATE TABLE IF NOT EXISTS player_profiles (
     player_name TEXT NOT NULL PRIMARY KEY,
     display_name TEXT NOT NULL,
     interaction_mode TEXT NOT NULL DEFAULT 'Building',
-    strength INTEGER NOT NULL DEFAULT 10,
-    agility INTEGER NOT NULL DEFAULT 10,
-    vitality INTEGER NOT NULL DEFAULT 10,
-    energy INTEGER NOT NULL DEFAULT 10,
+    -- Every attribute defaults to 1000, its ceiling, in step with PlayerStatRules.Start* and
+    -- PersistedPlayerProfile.CreateDefault. The health defaults follow player.max_health
+    -- ("50 + vitality * 5") at that vitality. Column defaults apply to a freshly created
+    -- database; an existing one keeps the defaults it was created with, and every row the server
+    -- writes carries explicit values anyway.
+    strength INTEGER NOT NULL DEFAULT 1000,
+    agility INTEGER NOT NULL DEFAULT 1000,
+    vitality INTEGER NOT NULL DEFAULT 1000,
+    energy INTEGER NOT NULL DEFAULT 1000,
     movement_speed REAL NOT NULL DEFAULT 6.0,
     attack_speed REAL NOT NULL DEFAULT 2.0,
     level INTEGER NOT NULL DEFAULT 1,
     experience INTEGER NOT NULL DEFAULT 0,
-    current_hp INTEGER NOT NULL DEFAULT 100,
-    max_hp INTEGER NOT NULL DEFAULT 100,
+    current_hp INTEGER NOT NULL DEFAULT 5050,
+    max_hp INTEGER NOT NULL DEFAULT 5050,
     created_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     CHECK (length(trim(player_name)) > 0),

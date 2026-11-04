@@ -86,12 +86,18 @@ public sealed class RolledItemEndToEndTests(ITestOutputHelper output)
     // live combatant, and the actor on the wire carries the base stats and the max health.
     private static void AssertClientStatsEqualTheServers(WireLoopbackServer server, PlayerInventorySnapshot inventory)
     {
+        PlayerCombatant authoritative = server.Runtime.Player.Combatant;
+        ActorSnapshot wire = server.Runtime.CaptureActorSnapshots().Single(a => a.SessionId == Session);
+
         EquipmentLoadout loadout = new();
         PlayScene.ReadEquipment(inventory, loadout);
         PlayerCombatant client = new(() => Vector3.Zero);
+        // The real client seeds its sheet from the base stats the actor snapshot carries and then
+        // layers equipment on top; seeding from PlayerCombatant's own default instead only agreed
+        // with the server while the two happened to share a number.
+        client.ApplyBaseStats(wire.CombatStats!.Value.ToCombatStats());
         client.ApplyEquipment(loadout);
 
-        PlayerCombatant authoritative = server.Runtime.Player.Combatant;
         Assert.Equal(authoritative.Stats.Strength, client.Stats.Strength);
         Assert.Equal(
             BitConverter.SingleToInt32Bits(authoritative.Stats.AttackSpeed),
@@ -100,10 +106,9 @@ public sealed class RolledItemEndToEndTests(ITestOutputHelper output)
         Assert.Equal(authoritative.EffectiveArmor, client.EffectiveArmor);
         Assert.Equal(authoritative.DerivedStats.MaxHealth, client.DerivedStats.MaxHealth);
 
-        ActorSnapshot actor = server.Runtime.CaptureActorSnapshots().Single(a => a.SessionId == Session);
-        Assert.Equal(authoritative.BaseStats.Strength, actor.CombatStats!.Value.Strength);
-        Assert.Equal(authoritative.BaseStats.Vitality, actor.CombatStats!.Value.Vitality);
-        Assert.Equal(authoritative.DerivedStats.MaxHealth, actor.MaxHealth);
+        Assert.Equal(authoritative.BaseStats.Strength, wire.CombatStats!.Value.Strength);
+        Assert.Equal(authoritative.BaseStats.Vitality, wire.CombatStats!.Value.Vitality);
+        Assert.Equal(authoritative.DerivedStats.MaxHealth, wire.MaxHealth);
     }
 
     private static string[] Worn(PlayerInventorySnapshot inventory)

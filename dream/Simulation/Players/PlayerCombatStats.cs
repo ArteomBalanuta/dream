@@ -15,11 +15,19 @@ public sealed class PlayerCombatStats
     public const int MinEnergy = 0;
     public const int MaxEnergy = 1000;
 
-    private int _strength = 10;
+    // The unseeded sheet, which is NOT what a new character gets. A player's starting stats are
+    // PlayerStatRules.Start* (1000 each), written by PersistedPlayerProfile.CreateDefault and the
+    // player_profiles column defaults; the server applies that profile to the combatant on join.
+    // These values are only what a sheet holds before any profile or equipment reaches it, so they
+    // stay at the old modest baseline: a transient combatant should not arrive at the stat ceiling,
+    // and the combat tests measure damage, armor and health against these numbers.
+    private const int UnseededAttribute = 10;
+
+    private int _strength = UnseededAttribute;
     private float _attackSpeed = 2.0f;
-    private int _vitality = 10;
-    private int _agility = PlayerStatRules.StartAgility;
-    private int _energy = PlayerStatRules.StartEnergy;
+    private int _vitality = UnseededAttribute;
+    private int _agility = UnseededAttribute;
+    private int _energy = UnseededAttribute;
 
     public int Strength
     {

@@ -9,7 +9,8 @@ using Dream.Simulation.Runtime;
 namespace Dream.Tests.Server.Persistence;
 
 // Wave G (G2): Agility, Energy and MovementSpeed are saved as stored. PersistPlayerProfile used to write the
-// constants 10, 10 and 6 on every leave, so a hand-edited row was reset the first time its player left.
+// the new-character constants on every leave, so a hand-edited row was reset the first time its
+// player left.
 public sealed class RealProfileStatsTests
 {
     private const string Player = "Stat Player";
@@ -48,7 +49,7 @@ public sealed class RealProfileStatsTests
     }
 
     [Fact]
-    public void ADefaultRow_StaysTenTenAndSix_AfterAJoinAndLeave()
+    public void ADefaultRow_KeepsTheNewCharacterValues_AfterAJoinAndLeave()
     {
         using PersistenceTestDatabase database = new();
         using DedicatedServerHost host = CreateHost(database);
@@ -57,7 +58,8 @@ public sealed class RealProfileStatsTests
         Leave(host, "conn-1");
 
         PersistedCreatureStats stats = new SqlitePlayerProfileRepository(database.Schema).TryGet(Player)!.Value.Stats;
-        Assert.Equal((10, 10, 6f), (stats.Agility, stats.Energy, stats.MovementSpeed));
+        int attribute = Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute;
+        Assert.Equal((attribute, attribute, 6f), (stats.Agility, stats.Energy, stats.MovementSpeed));
     }
 
     [Fact]
@@ -92,6 +94,9 @@ public sealed class RealProfileStatsTests
         {
             Join(first, "conn-1", "stat-1");
             Dream.Simulation.Players.PlayerCombatant combatant = first.Runtime!.Player.Combatant;
+            // A new character sits at the attribute ceiling with no headroom to spend into, so
+            // this test states the baseline it measures a spend from.
+            TestStatBaseline.PinTo(combatant);
             combatant.ApplyProgression(2, 0);
             Assert.True(Dream.Simulation.Players.PlayerStatRules.TryValidateSpend(
                 combatant.Level,
@@ -105,7 +110,7 @@ public sealed class RealProfileStatsTests
         }
 
         PersistedCreatureStats stored = profiles.TryGet(Player)!.Value.Stats;
-        Assert.Equal((12, 2), (stored.Energy, stored.Level));
+        Assert.Equal((TestStatBaseline.Attribute + 2, 2), (stored.Energy, stored.Level));
 
         using DedicatedServerHost second = CreateHost(database);
         Join(second, "conn-2", "stat-2");

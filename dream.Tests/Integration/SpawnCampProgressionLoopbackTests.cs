@@ -102,6 +102,10 @@ public sealed class SpawnCampProgressionLoopbackTests
 
             // A server-side level-up: the snapshot carries the level and the server's threshold.
             IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(server.Runtime, Session);
+            // A new character is at the attribute ceiling, where a spend has nowhere to go and
+            // PointsAvailable is 0; this test is about the HUD's spend path, so it states the
+            // baseline it spends from.
+            TestStatBaseline.PinTo(target.Combatant);
             target.Combatant.ApplyProgression(3, 10);
             await StepUntilAsync(server, client, p => p.Level == 3 && p.Experience == 10, "the level-up");
             HudStatusSnapshot panel = Panel(client);

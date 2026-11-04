@@ -51,6 +51,11 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             WorldSessionRuntime runtime = rig.Runtime;
             runtime.MaxDepartedProfiles = 1;
             Driver alpha = new(rig, await rig.JoinAsync(Alpha));
+            // The cube and enemy damage below is written for a modest character. A new one is
+            // created at the attribute ceiling and one-shots a cube however much health the test
+            // gives it, so this states the baseline the damage math assumes. It is saved with the
+            // profile on leave, so the rejoin and the restart carry it.
+            TestStatBaseline.PinTo(runtime.Player.Combatant);
             List<AuthoritativeActionResult> results = Collect(alpha.Peer);
             // A wolf in aggro range would close in; within 0.9 of a combat ray and 4 m it takes the hit
             // before a nearer cube (AuthoritativeCombatResolver checks enemies first), so the attack phases

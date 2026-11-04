@@ -15,11 +15,26 @@ public static class PlayerStatRules
 
     // The values a new character starts with (the PlayerCombatStats defaults). Spending raises a
     // stat above these; a stat below its start has no refund and counts as nothing spent.
+    //
+    // These are the ORIGIN OF THE POINT COUNT, not what a new character is handed. A new character
+    // is created at 1000 in every attribute (PersistedPlayerProfile.CreateDefault and the
+    // player_profiles column defaults), which is each attribute's ceiling; it therefore reads as
+    // far over budget and gets 0 points available, which PointsAvailable already handles without
+    // going negative. Keeping the origin here at the old modest values is what leaves the point
+    // arithmetic meaningful for a character that sits below the ceiling.
+    // What a NEW character is created with, in every attribute: the ceiling of each
+    // (PlayerCombatStats.MaxStrength and friends). PersistedPlayerProfile.CreateDefault writes it,
+    // and the player_profiles column defaults match. Deliberately separate from the Start* values
+    // below, which are only the origin the point count measures from -- a character created at the
+    // ceiling reads as far over budget and gets 0 points available, which PointsAvailable already
+    // handles without going negative. Characters stored before this keep the stats they have;
+    // this is the value for new ones, not a migration.
+    public const int NewCharacterAttribute = 1000;
+
     public const int StartStrength = 10;
     public const float StartAttackSpeed = 2.0f;
     public const int StartVitality = 10;
-    // A stored character starts at Agility 10 and Energy 10 (the player_profiles column defaults and
-    // PersistedPlayerProfile.CreateDefault), so only what sits above that was bought.
+    // The point origin for Agility and Energy, likewise.
     public const int StartAgility = 10;
     public const int StartEnergy = 10;
 

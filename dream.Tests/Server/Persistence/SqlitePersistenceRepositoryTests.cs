@@ -69,12 +69,15 @@ public sealed class SqlitePersistenceRepositoryTests
         Assert.Equal("player-two", created.PlayerName);
         Assert.Equal("player-two", created.DisplayName);
         Assert.Equal(PlayerInteractionMode.Building, created.InteractionMode);
-        Assert.Equal(100, created.Stats.CurrentHealth);
-        Assert.Equal(100, created.Stats.MaxHealth);
-        Assert.Equal(10, created.Stats.Strength);
-        Assert.Equal(10, created.Stats.Agility);
-        Assert.Equal(10, created.Stats.Vitality);
-        Assert.Equal(10, created.Stats.Energy);
+        // A new character is created at the attribute ceiling, and its health seed is what
+        // player.max_health ("50 + vitality * 5") makes of that vitality.
+        int attribute = Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute;
+        Assert.Equal(50 + (attribute * 5), created.Stats.CurrentHealth);
+        Assert.Equal(50 + (attribute * 5), created.Stats.MaxHealth);
+        Assert.Equal(attribute, created.Stats.Strength);
+        Assert.Equal(attribute, created.Stats.Agility);
+        Assert.Equal(attribute, created.Stats.Vitality);
+        Assert.Equal(attribute, created.Stats.Energy);
         Assert.Equal(6f, created.Stats.MovementSpeed);
         Assert.Equal(2f, created.Stats.AttackSpeed);
         Assert.Equal(1, created.Stats.Level);
