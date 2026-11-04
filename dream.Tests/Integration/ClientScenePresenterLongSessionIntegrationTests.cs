@@ -66,8 +66,7 @@ public class ClientScenePresenterLongSessionIntegrationTests
                     reference.BuildRemotePlayerStates(renderTick),
                     states.Select(state => state with
                     {
-                        MainHandVisual = null,
-                        OffHandVisual = null,
+                        Equipment = default,
                         AttackSerial = 0,
                         HitSerial = 0,
                         Airborne = false,

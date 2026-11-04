@@ -300,7 +300,8 @@ public partial class PlayScene
     // Equip or unequip sound when what the hands show changes (not for the first snapshot).
     private void ObserveEquipmentForAudio(EquipmentPresentation current)
     {
-        if (_audioLastEquipment is EquipmentPresentation previous && previous != current)
+        // Worn armour is not compared: only what the hands show and the held light make the sound.
+        if (_audioLastEquipment is EquipmentPresentation previous && previous with { Visuals = default } != current with { Visuals = default })
         {
             bool holding = current.MainHandVisualId != ViewModelAssets.EmptyHeldItemId || current.OffHandVisualId != null;
             CurrentGameAudio.Instance.Play(holding ? SoundId.Equip : SoundId.Unequip);
