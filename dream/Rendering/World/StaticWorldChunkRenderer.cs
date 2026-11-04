@@ -21,9 +21,18 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     private readonly Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>> _startBuildTask;
     private readonly IRenderFaultSink _faultSink;
     private readonly IStaticWorldChunkMeshStore _meshStore;
-    private readonly TerrainMaterialMap _materialMap = new();
-    // The map version the store last saw; -1 until the first sync.
-    private int _syncedMaterialMapVersion = -1;
+    // Two reusable maps. _materialMap is the one the store draws with and matches the applied
+    // meshes; _pendingMaterialMap is built when a build is scheduled and swapped in when a batch
+    // finishes applying, so the blend never runs ahead of the meshes. A newer request overwrites
+    // the pending map (latest wins).
+    private TerrainMaterialMap _materialMap = new();
+    private TerrainMaterialMap _pendingMaterialMap = new();
+    private bool _hasPendingMaterialMap;
+    // Counts every change of the active map (swap or reset); the store syncs when it moves. Not the
+    // maps' own Version, which is per instance.
+    private int _materialMapGeneration;
+    // The generation the store last saw; -1 until the first sync.
+    private int _syncedMaterialMapGeneration = -1;
     // Distinct chunks drawn this frame; cleared each Draw, so the visible-chunk stat counts chunks
     // rather than (chunk, material) meshes without allocating.
     private readonly HashSet<StaticWorldChunkKey> _drawnChunks = new();
@@ -68,9 +77,16 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     // Runs on the build worker: plans from the request's cell snapshot and signature copy, then
     // builds the meshes. Touches no Cube and no renderer state.
-    // The material map of the full cells in the last extracted export. The terrain shader blends
-    // top faces with it; it is rebuilt with each scheduled build and cleared with the buffers.
+    // The material map of the full cells of the last applied build. The terrain shader blends top
+    // faces with it; it is built when a build is scheduled but becomes active only when that build's
+    // batch has been applied, and is cleared with the buffers.
     internal TerrainMaterialMap TerrainMaterialMap => _materialMap;
+
+    // Increments whenever the active map changes (a batch applied, or a reset).
+    internal int TerrainMaterialMapGeneration => _materialMapGeneration;
+
+    // True while a map built for a scheduled build waits for its batch to apply.
+    internal bool HasPendingTerrainMaterialMap => _hasPendingMaterialMap;
 
     public static StaticWorldChunkBuildBatch BuildBatch(StaticWorldChunkBuildRequest request)
     {
@@ -189,7 +205,8 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             // ExtractCells reads the mutable Cube positions, so it stays on the render thread; the
             // worker gets plain cell values. StartBuild adds the signature snapshot.
             IReadOnlyList<StaticVoxelRenderCell> cells = StaticWorldChunkExtractor.ExtractCells(export);
-            _materialMap.Rebuild(cells);
+            _pendingMaterialMap.Rebuild(cells);
+            _hasPendingMaterialMap = true;
             extractMilliseconds = ElapsedMilliseconds(ref timestamp);
             ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks!, cells));
         }
@@ -290,10 +307,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         int materialBinds = 0;
         int boundSlot = -1;
-        if (_materialMap.Version != _syncedMaterialMapVersion)
+        if (_materialMapGeneration != _syncedMaterialMapGeneration)
         {
             _meshStore.SyncMaterialMap(_materialMap);
-            _syncedMaterialMapVersion = _materialMap.Version;
+            _syncedMaterialMapGeneration = _materialMapGeneration;
         }
 
         _meshStore.BeginPass(render, camera);
@@ -358,6 +375,9 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     {
         _meshStore.Clear();
         _materialMap.Reset();
+        _pendingMaterialMap.Reset();
+        _hasPendingMaterialMap = false;
+        _materialMapGeneration++;
         _meshes.Clear();
         _signatures.Clear();
         _lastAppliedExportSignature = 0;
@@ -543,6 +563,14 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
             _lastAppliedExportSignature = _activeUploadBatch.ExportSignature;
             _hasAppliedExport = true;
+            if (_hasPendingMaterialMap)
+            {
+                // The meshes of this batch are in: the blend may now see the map built for them.
+                (_materialMap, _pendingMaterialMap) = (_pendingMaterialMap, _materialMap);
+                _hasPendingMaterialMap = false;
+                _materialMapGeneration++;
+            }
+
             reusedMeshes = _meshes.Count - rebuiltMeshes;
             _activeUploadBatch = null;
         }
