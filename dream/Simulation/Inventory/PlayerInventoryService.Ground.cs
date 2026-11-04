@@ -262,7 +262,7 @@ internal sealed partial class PlayerInventoryService
     // Drops the item anchored at a bag cell onto the ground at the position (the player's own, resolved
     // by the caller). The request names the item (like TryDestroy), so a queued drop cannot hit whatever
     // moved there. A worn item is never dropped. The dropper holds the claim like a loot drop, so a
-    // mis-drop cannot be sniped at once. A full ground despawns its oldest item rather than refusing.
+    // mis-drop cannot be sniped at once. A full ground despawns its oldest unclaimed item, or refuses with NoRoom.
     // WriteFailed like a sale, because a drop writes the item row and the slot rows. Checks come first,
     // so a rejection changes and queues nothing.
     internal InventoryEquipOutcome TryDropToGround(
@@ -309,14 +309,30 @@ internal sealed partial class PlayerInventoryService
             return InventoryEquipOutcome.TooFar;
         }
 
+        // Decision (drop wave): a drop is a client action, so at the cap it must not let a player evict
+        // other players' ground items by drop and pick-up cycling. Evict only the oldest item nobody else
+        // holds a claim on (the dropper's own claimed items count as unclaimed here); if every item is
+        // claimed by someone else, refuse the drop rather than destroy another player's property. Loot
+        // drops (TryDropRolled) keep evicting the globally oldest. NoRoom is the closest honest outcome:
+        // the world has nowhere to put the item.
+        GroundItem? victim = null;
+        if (_groundItems.Count >= MaxGroundItems)
+        {
+            victim = FindOldestEvictableGroundItem(playerName);
+            if (victim == null)
+            {
+                return InventoryEquipOutcome.NoRoom;
+            }
+        }
+
         if (!TrySpendAction())
         {
             return InventoryEquipOutcome.Throttled;
         }
 
-        if (_groundItems.Count >= MaxGroundItems)
+        if (victim != null)
         {
-            DespawnOldestGroundItem();
+            Despawn(victim);
         }
 
         List<int> rows = [];
@@ -358,6 +374,8 @@ internal sealed partial class PlayerInventoryService
         DrainHeldBack(slots, changes);
         // The row is saved first, inside the same savepoint as the guarded slot deletes, so it is never
         // both slotted and Ground on disk.
+        // An unguarded SaveItemInstance is safe here, unlike TrySell's throwing DestroyHeldInventoryItem:
+        // the HasSeenFailedWrite gate above refuses once a write has failed, and the upsert is idempotent.
         QueueChanges(playerName, changes, world => world.SaveItemInstance(groundRow));
         RefreshEquippedSummary(playerName);
         return InventoryEquipOutcome.Equipped;
@@ -411,6 +429,25 @@ internal sealed partial class PlayerInventoryService
         _nextGroundEventTick = next;
     }
 
+    private GroundItem? FindOldestEvictableGroundItem(string playerName)
+    {
+        GroundItem? oldest = null;
+        foreach (GroundItem ground in _groundItems.Values)
+        {
+            if (ground.ClaimantKey != null && ground.ClaimantKey != playerName)
+            {
+                continue;
+            }
+
+            if (oldest == null || ground.DropOrder < oldest.DropOrder)
+            {
+                oldest = ground;
+            }
+        }
+
+        return oldest;
+    }
+
     private void DespawnOldestGroundItem()
     {
         GroundItem? oldest = null;
@@ -441,6 +478,9 @@ internal sealed partial class PlayerInventoryService
     {
         long id = ground.Item.ItemInstanceId;
         _groundItems[id] = ground;
+        // A dropped item re-adds an id that a pickup in the same tick may have queued for removal; the
+        // client applies upserts before removals, so leaving it listed would delete a live item.
+        _groundRemoved.Remove(id);
         _groundUpserted.Add(id);
         ulong due = ground.DespawnTick;
         if (ground.ClaimantKey != null)

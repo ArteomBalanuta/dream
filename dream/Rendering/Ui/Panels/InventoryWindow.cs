@@ -326,7 +326,22 @@ public static class InventoryWindow
             return DropVerdict.None;
         }
 
-        action = new InventoryHudAction(InventoryHudActionKind.Drop, source, 0, v.Backpack[source].Item.ItemInstanceId);
+        // An item can hold a bag anchor and a worn row at once; the server refuses to drop it (ItemEquipped),
+        // so no Drop is offered, as in CharacterPanelModel.BackpackMenu. The bag copy's Equipped flag is
+        // false (it means "this row is an equipment slot"), so the worn rows are scanned for the id.
+        long itemId = v.Backpack[source].Item.ItemInstanceId;
+        if (v.Worn is { } worn)
+        {
+            for (int slot = 0; slot < worn.Length; slot++)
+            {
+                if (TryItem(worn, slot, out InventoryItemSnapshot held) && held.ItemInstanceId == itemId)
+                {
+                    return DropVerdict.Invalid;
+                }
+            }
+        }
+
+        action = new InventoryHudAction(InventoryHudActionKind.Drop, source, 0, itemId);
         return DropVerdict.Valid;
     }
 
@@ -542,11 +557,19 @@ public static class InventoryWindow
             return none;
         }
 
+        // The same decision a release makes, so the cue never disagrees with it. Over the world (no
+        // in-window target) the dragged item's own cell or well carries the cue: hover overlay when
+        // releasing would drop it on the ground (there is no confirm), invalid overlay when it is refused.
         int target = ResolveTarget(l, win, v, st.DragSource, i.Pointer.Position);
-        DropVerdict verdict = TryResolveDrop(v, st.DragSource, target, out _);
+        DropVerdict verdict = TryResolveRelease(l, win, v, st.DragSource, i.Pointer.Position, out _);
         if (verdict == DropVerdict.None)
         {
             return none;
+        }
+
+        if (target < 0)
+        {
+            target = st.DragSource;
         }
 
         ulong cells = 0;

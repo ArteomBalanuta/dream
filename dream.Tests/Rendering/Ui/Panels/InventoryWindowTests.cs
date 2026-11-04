@@ -1487,6 +1487,44 @@ public sealed class InventoryWindowTests : IDisposable
     }
 
     [Fact]
+    public void TryResolveRelease_ABagItemThatIsAlsoWorn_IsInvalidAndEmitsNothing()
+    {
+        // The same instance holds a bag anchor and a worn row: the server answers ItemEquipped to a drop.
+        _scene.Items[9] = InventoryScene.Item(5, "helm.gilded", HeadMask);
+        _scene.Worn[2] = InventoryScene.Item(5, "helm.gilded", HeadMask);
+        _scene.Refresh();
+
+        Assert.Equal(InventoryWindow.DropVerdict.Invalid, Release(9, WorldPoint, out InventoryHudAction action));
+        Assert.Equal(default, action);
+        Drag(InventoryScene.Centre(_scene.Slot(9)), WorldPoint);
+        Assert.Empty(_scene.Actions.Picked);
+    }
+
+    [Fact]
+    public void Drag_OverTheWorld_ShowsTheDropCueOnTheSourceCell()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+
+        Hold(InventoryScene.Centre(_scene.Slot(9)), WorldPoint);
+
+        Assert.Equal(CellRects([9]), RectsOf("cell.overlay.hover"));
+        Assert.Empty(_scene.Canvas.Named("cell.overlay.invalid"));
+    }
+
+    [Fact]
+    public void Drag_OfAWornItemOverTheWorld_ShowsTheInvalidCueOnItsWell()
+    {
+        _scene.Worn[2] = InventoryScene.Item(5, "helm.gilded", HeadMask);
+        _scene.Refresh();
+
+        Hold(InventoryScene.Centre(_scene.Well(2)), WorldPoint);
+
+        Assert.Single(_scene.Canvas.Named("cell.overlay.invalid"));
+        Assert.Empty(_scene.Canvas.Named("cell.overlay.hover"));
+    }
+
+    [Fact]
     public void TryResolveRelease_AnEmptySource_IsNone()
     {
         Assert.Equal(InventoryWindow.DropVerdict.None, Release(9, WorldPoint, out _));

@@ -52,8 +52,9 @@ public sealed class GroundItemsLoopbackTests
         return target;
     }
 
-    // The client's ground list as ClientGroundItemCache will keep it: replayed from every ground message
-    // received, in order (Reset replaces, upserts and removals are idempotent).
+    // The client's ground list as ClientGroundItemCache keeps it: replayed from every ground message
+    // received, in order. Within one message Reset replaces, then upserts apply, then removals apply (the
+    // production order, so an id listed in both is removed).
     private static Dictionary<long, GroundItemSnapshot> Ground(IReadOnlyList<WireFrame> frames)
     {
         Dictionary<long, GroundItemSnapshot> list = [];
@@ -65,14 +66,14 @@ public sealed class GroundItemsLoopbackTests
                 list.Clear();
             }
 
-            foreach (long id in message.RemovedIds)
-            {
-                list.Remove(id);
-            }
-
             foreach (GroundItemSnapshot item in message.Upserts)
             {
                 list[item.ItemInstanceId] = item;
+            }
+
+            foreach (long id in message.RemovedIds)
+            {
+                list.Remove(id);
             }
         }
 
@@ -199,6 +200,54 @@ public sealed class GroundItemsLoopbackTests
 
         await server.DisconnectAsync(a);
         await server.DisconnectAsync(b);
+        await TickAsync(server, 2);
+        Flush(server);
+    }
+
+    [Fact]
+    public async Task APickupThenADropOfTheSameItemInOneTick_StaysVisibleToAClientApplyingDeltasInProductionOrder()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
+        await TickAsync(server, 2);
+        Place(server, SessionA);
+        await TickAsync(server);
+        WorldSessionRuntime runtime = server.Runtime;
+
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            runtime.InventoryService.TryGrantRolled(KeyOf(SessionA), Band, ItemRarity.Common, new ItemRollSeed(7, 7, 7, 7, 0)));
+        await TickAsync(server);
+        InventorySlotSnapshot band = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.Slots.First(slot => slot.Item?.ItemKind == Band);
+        long id = band.Item!.Value.ItemInstanceId;
+
+        ActionResult first = await ActAsync(server, a, new InventoryDropIntent(band.SlotIndex, id));
+        Assert.True(first.Accepted, first.Reason);
+        await WaitGroundAsync(a, ground => ground.ContainsKey(id), "the first drop");
+        int messagesBefore = a.Frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().Count();
+
+        // Pick up and drop again: both actions are queued before the one tick that runs them.
+        InventorySlotSnapshot cell = band;
+        await a.SendActionAsync(new GroundPickupIntent(id));
+        ulong pickupSequence = a.SentActionSequence;
+        await a.SendActionAsync(new InventoryDropIntent(cell.SlotIndex, id));
+        ulong dropSequence = a.SentActionSequence;
+        await TickAsync(server);
+        Assert.True((await ResultAsync(a, pickupSequence)).Accepted);
+        ActionResult second = await ResultAsync(a, dropSequence);
+        Assert.True(second.Accepted, second.Reason);
+
+        Assert.Equal(1, runtime.GroundItemCount);
+        await a.WaitForAsync(
+            frames => frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().Count() > messagesBefore,
+            "the second ground message");
+        List<ServerGroundItems> later = a.Frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().Skip(messagesBefore).ToList();
+        Assert.Contains(later.SelectMany(m => m.Upserts), u => u.ItemInstanceId == id);
+        Assert.DoesNotContain(later.SelectMany(m => m.RemovedIds), removed => removed == id);
+        Assert.True(Ground(a.Frames).ContainsKey(id));
+
+        await server.DisconnectAsync(a);
         await TickAsync(server, 2);
         Flush(server);
     }
