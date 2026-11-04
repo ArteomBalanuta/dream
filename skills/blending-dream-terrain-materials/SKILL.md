@@ -45,9 +45,10 @@ obvious repeating tile grid, are layer B.
   middle half across most of 0..1 first; the measured raw range on a 56x56 world is about
   0.25..0.73 with the middle half inside 0.47..0.59.
 - Each terrain material ships exactly one file:
-  `dream/animations/library/forge/<name>/<name>.albedo.png`, RGBA with **alpha = 255
-  everywhere**. No height, normal or roughness map is shipped. The alpha channel is a
-  free slot for a height map.
+  `dream/animations/library/forge/<name>/<name>.albedo.png`, RGBA where **alpha is the
+  relief height** (255 crest, 0 crevice or puddle floor, stretched per tile p1 to p99,
+  seamless). No normal or roughness map is shipped. `tools/ui-assets/regen_terrain.py`
+  rebuilds and ships the tiles.
 - One chunk mesh per (chunk, material id, role) — see `StaticWorldChunkMeshKey`. A draw
   binds one terrain texture, so a cell knows nothing about its neighbour's material at
   fragment time.

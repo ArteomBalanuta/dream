@@ -3,6 +3,7 @@
  "tileSizePx": 256,
  "periodU": 64.0,
  "straightAlpha": true,
+ "alpha": "height",
  "wrap": "xy",
  "colorSpace": "srgb-encoded-sampled-as-linear",
  "sheet": "terrain_sheet.png",
