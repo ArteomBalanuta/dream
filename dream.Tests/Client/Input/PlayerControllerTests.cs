@@ -1,3 +1,4 @@
+using OpenTK.Mathematics;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using Xunit;
 using Dream.Client.Input;
@@ -74,17 +75,121 @@ public class PlayerControllerTests
     private static PlayerCommandFrame Held(params Keys[] keys) =>
         PlayerController.CaptureCommandFrame(new PlayerSessionId("local-player-1"), 1, key => Array.IndexOf(keys, key) >= 0, allowGameplayInput: true);
 
-    [Fact]
-    public void CaptureCommandFrame_WasdMoveNothing()
+    private static (PlayerCommandFrame Frame, Vector2 Axes) HeldWithAxes(bool primary, params Keys[] keys)
     {
-        PlayerCommandFrame frame = Held(Keys.W, Keys.A, Keys.S, Keys.D);
+        PlayerCommandFrame frame = PlayerController.CaptureCommandFrame(
+            new PlayerSessionId("local-player-1"), 1, key => Array.IndexOf(keys, key) >= 0, true, primary, out Vector2 axes);
+        return (frame, axes);
+    }
+
+    private static Vector3 Flat(float degrees) =>
+        new(MathF.Cos(MathHelper.DegreesToRadians(degrees)), 0f, MathF.Sin(MathHelper.DegreesToRadians(degrees)));
+
+    [Fact]
+    public void CaptureCommandFrame_WasdStayOutOfTheFrameAxes_AndComeBackAsCameraSpace()
+    {
+        (PlayerCommandFrame frame, Vector2 axes) = HeldWithAxes(false, Keys.W, Keys.D);
 
         Assert.Equal(0f, frame.MoveIntent.ForwardAxis);
         Assert.Equal(0f, frame.MoveIntent.StrafeAxis);
-        Assert.Equal(0f, frame.MoveIntent.VerticalAxis);
-        Assert.False(frame.MoveIntent.JumpPressed);
-        Assert.Equal(0f, frame.LookIntent.YawDelta);
-        Assert.False(frame.PrimaryUsePressed);
+        Assert.Equal(new Vector2(1f, 1f), axes);
+        Assert.Equal(new Vector2(-1f, 0f), HeldWithAxes(false, Keys.A).Axes);
+        Assert.Equal(new Vector2(0f, -1f), HeldWithAxes(false, Keys.S).Axes);
+        Assert.Equal(Vector2.Zero, HeldWithAxes(false, Keys.W, Keys.S).Axes);
+        // The legacy overload never reads them.
+        Assert.Equal(0f, Held(Keys.W, Keys.A).MoveIntent.ForwardAxis);
+    }
+
+    [Fact]
+    public void CaptureCommandFrame_PrimaryRidesTheRawFrame_ButNotWhenGameplayInputIsBlocked()
+    {
+        Assert.True(HeldWithAxes(true).Frame.PrimaryUsePressed);
+        Assert.False(HeldWithAxes(false).Frame.PrimaryUsePressed);
+
+        PlayerCommandFrame blocked = PlayerController.CaptureCommandFrame(
+            new PlayerSessionId("local-player-1"), 1, _ => true, false, true, out Vector2 axes);
+        Assert.False(blocked.PrimaryUsePressed);
+        Assert.Equal(Vector2.Zero, axes);
+    }
+
+    [Fact]
+    public void Project_WIsUpScreen_WhateverTheFacing()
+    {
+        // Screen-up is the camera's ground-plane forward, (-1, 0, -1) normalised.
+        Vector3 screenUp = new(-0.70710677f, 0f, -0.70710677f);
+        foreach (float degrees in new[] { 0f, 37f, 90f, 180f, 250f })
+        {
+            Vector3 facing = Flat(degrees);
+            (float forward, float strafe) = PlayerController.Project(new Vector2(0f, 1f), facing);
+            Vector3 right = Vector3.Cross(facing, Vector3.UnitY);
+            Vector3 moved = (facing * forward) + (right * strafe);
+            Assert.Equal(screenUp.X, moved.X, 4);
+            Assert.Equal(screenUp.Z, moved.Z, 4);
+        }
+    }
+
+    [Fact]
+    public void Project_DDirectionIsScreenRight()
+    {
+        Vector3 screenRight = new(0.70710677f, 0f, -0.70710677f);
+        (float forward, float strafe) = PlayerController.Project(new Vector2(1f, 0f), Flat(123f));
+        Vector3 facing = Flat(123f);
+        Vector3 moved = (facing * forward) + (Vector3.Cross(facing, Vector3.UnitY) * strafe);
+
+        Assert.Equal(screenRight.X, moved.X, 4);
+        Assert.Equal(screenRight.Z, moved.Z, 4);
+    }
+
+    [Fact]
+    public void Project_Diagonal_IsUnitLength_AtEveryFacing()
+    {
+        foreach (float degrees in new[] { 0f, 45f, 90f, 135f, 200f, 300f })
+        {
+            (float forward, float strafe) = PlayerController.Project(new Vector2(-1f, 1f), Flat(degrees));
+            Assert.Equal(1f, MathF.Sqrt((forward * forward) + (strafe * strafe)), 4);
+        }
+    }
+
+    [Fact]
+    public void Project_AWithTheFacing90DegreesOff_IsAPureStrafe()
+    {
+        // A is screen-left (-0.707, 0, 0.707). Facing it rotated 90 degrees puts that along the strafe axis.
+        Vector3 screenLeft = new(-0.70710677f, 0f, 0.70710677f);
+        Vector3 facing = Vector3.Cross(Vector3.UnitY, screenLeft); // 90 degrees from screen-left, on the ground
+        (float forward, float strafe) = PlayerController.Project(new Vector2(-1f, 0f), facing);
+
+        Assert.Equal(0f, forward, 4);
+        Assert.Equal(1f, MathF.Abs(strafe), 4);
+    }
+
+    [Fact]
+    public void Project_AWithTheFacingToTheRight_MovesLeftAwayFromTheFacing()
+    {
+        // Facing screen-right, press A: the body travels screen-left, i.e. straight backwards.
+        Vector3 screenRight = new(0.70710677f, 0f, -0.70710677f);
+        (float forward, float strafe) = PlayerController.Project(new Vector2(-1f, 0f), screenRight);
+
+        Assert.Equal(-1f, forward, 4);
+        Assert.Equal(0f, strafe, 4);
+    }
+
+    [Fact]
+    public void Project_IgnoresThePitchOfTheFacing()
+    {
+        Vector3 flat = Flat(70f);
+        Vector3 pitched = Vector3.Normalize(new Vector3(flat.X, -0.8f, flat.Z));
+
+        (float f1, float s1) = PlayerController.Project(new Vector2(1f, 1f), flat);
+        (float f2, float s2) = PlayerController.Project(new Vector2(1f, 1f), pitched);
+
+        Assert.Equal(f1, f2, 4);
+        Assert.Equal(s1, s2, 4);
+    }
+
+    [Fact]
+    public void Project_NoInput_IsZero()
+    {
+        Assert.Equal((0f, 0f), PlayerController.Project(Vector2.Zero, Flat(10f)));
     }
 
     [Fact]

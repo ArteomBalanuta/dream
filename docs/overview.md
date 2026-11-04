@@ -47,7 +47,7 @@ The current repository includes:
 - GLSL shaders for world rendering and HUD rendering
 - A glTF cube model and related texture images under `dream/animations/`
 - An animated wolf asset under `dream/animations/enemies/`
-- An `Arial.ttf` font file under `dream/fonts/`
+- Cinzel and EB Garamond (SIL OFL, third-party) under `dream/fonts/`, with their licences and `README.md` provenance
 - A crosshair rendered from line primitives
 - A small ImGui HUD and settings overlay that displays HP, mode, and damage range
 

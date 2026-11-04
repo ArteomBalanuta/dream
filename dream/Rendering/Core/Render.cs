@@ -80,6 +80,7 @@ public partial class Render : IDisposable
     private Vector2i _crosshairViewportSize;
     private readonly WorldRenderer _worldRenderer;
     private readonly EnemyRenderer _enemyRenderer;
+    private readonly Dream.Rendering.Props.PropRenderer _propRenderer;
     private readonly LocalPlayerRenderer _localPlayerRenderer;
     private readonly RemotePlayerRenderer _remotePlayerRenderer;
     private readonly DebugRenderer _debugRenderer;
@@ -120,6 +121,9 @@ public partial class Render : IDisposable
     public WorldRenderer World => _worldRenderer;
 
     public EnemyRenderer Enemies => _enemyRenderer;
+
+    // Scenery: the placed props (houses, well, braziers, graves). Client-visual only; see PropLayout.
+    public Dream.Rendering.Props.PropRenderer Props => _propRenderer;
 
     public DebugRenderer Debug => _debugRenderer;
 

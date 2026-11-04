@@ -198,7 +198,18 @@ def build_glb(nodes, primitives, skin_joints, inverse_bind, animations, material
             images.append({"bufferView": view, "mimeType": "image/png"})
             textures.append({"source": len(images) - 1})
             pbr["baseColorTexture"] = {"index": len(textures) - 1}
-        gmats.append({"name": m.get("name", "material"), "pbrMetallicRoughness": pbr})
+        gm = {"name": m.get("name", "material"), "pbrMetallicRoughness": pbr}
+        # Optional, absent from every existing asset (so their bytes do not change): a cutout material and an
+        # emissive colour (linear, added after exposure by the engine's actor shader).
+        if m.get("alpha_mode") in ("MASK", "BLEND"):
+            gm["alphaMode"] = m["alpha_mode"]
+            if m["alpha_mode"] == "MASK":
+                gm["alphaCutoff"] = float(m.get("alpha_cutoff", 0.5))
+        if m.get("emissive_factor") is not None:
+            gm["emissiveFactor"] = [float(x) for x in m["emissive_factor"]]
+        if m.get("double_sided"):
+            gm["doubleSided"] = True
+        gmats.append(gm)
 
     # Animations
     ganims = []

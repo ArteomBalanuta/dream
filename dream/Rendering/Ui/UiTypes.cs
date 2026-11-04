@@ -69,5 +69,7 @@ public readonly record struct UiSprite(
 public enum UiTextStyle : byte
 {
     Body,
-    Large
+    Large,
+    // EB Garamond baked at 24 px: the stats window's text face (see UiFontSetup).
+    Serif
 }

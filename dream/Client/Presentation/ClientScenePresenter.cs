@@ -36,6 +36,9 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
     public const float InferredAttackMinForwardDot = 0.25f;
     public const float AirborneVerticalSpeed = 0.8f;
 
+    // Below this ground speed a snapshot step has no usable direction.
+    public const float TravelDirectionMinSpeed = 0.5f;
+
     private string? _localSessionId;
     private string _applyLogKey = null!;
     private readonly Dictionary<int, RemotePlayerEntry> _remotePlayers = [];
@@ -309,7 +312,8 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 entry.IsMoving ? entry.HorizontalSpeed : 0f,
                 entry.DiedAtTimestamp == 0L
                     ? float.PositiveInfinity
-                    : (float)Stopwatch.GetElapsedTime(entry.DiedAtTimestamp).TotalSeconds));
+                    : (float)Stopwatch.GetElapsedTime(entry.DiedAtTimestamp).TotalSeconds,
+                entry.IsMoving ? entry.TravelDirection() : Vector3.Zero));
         }
 
         return _remotePlayerStates;
@@ -380,6 +384,14 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             // Smoothed, so a late snapshot (a long gap, then a long step) does not jerk the playback speed.
             entry.HorizontalSpeed += (horizontal - entry.HorizontalSpeed) * 0.5f;
             entry.Airborne = MathF.Abs(delta.Y / seconds) > AirborneVerticalSpeed;
+            // The travel direction blends like the speed (a vector blend, so it needs no angle
+            // wrap); a step too small to have a direction keeps the last one.
+            if (horizontal > TravelDirectionMinSpeed)
+            {
+                float inverse = 1f / (horizontal * seconds);
+                entry.TravelX += ((delta.X * inverse) - entry.TravelX) * 0.5f;
+                entry.TravelZ += ((delta.Z * inverse) - entry.TravelZ) * 0.5f;
+            }
         }
 
         if (actor.IsAlive &&
@@ -630,6 +642,17 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
         public bool Airborne { get; set; }
 
         public float HorizontalSpeed { get; set; }
+
+        // Smoothed ground-plane travel vector from the snapshot steps; TravelDirection normalises it.
+        public float TravelX { get; set; }
+
+        public float TravelZ { get; set; }
+
+        public Vector3 TravelDirection()
+        {
+            float length = MathF.Sqrt((TravelX * TravelX) + (TravelZ * TravelZ));
+            return length > 0.05f ? new Vector3(TravelX / length, 0f, TravelZ / length) : Vector3.Zero;
+        }
 
         // Stopwatch timestamp of the death seen; 0 when alive or already dead when first seen.
         public long DiedAtTimestamp { get; set; }

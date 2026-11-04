@@ -119,6 +119,8 @@ public sealed class UiBatch : IUiCanvas
     // from UiLayout.TextScale each frame.
     public float TextScale { get; set; } = 1f;
 
+    void IUiCanvas.SetTextScale(float scale) => TextScale = scale;
+
     public int QuadCount => _quadCount;
 
     public int QuadHeadroom => MaxQuads - _quadCount;

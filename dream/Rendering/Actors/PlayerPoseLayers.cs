@@ -33,6 +33,8 @@ public sealed class PlayerPoseLayers
     private int _leftArm = -1;
     private int _rightArm = -1;
     private int _head = -1;
+    private int _leftLeg = -1;
+    private int _rightLeg = -1;
 
     public IReadOnlyDictionary<string, Matrix4> Overrides => _overrides;
 
@@ -58,16 +60,33 @@ public sealed class PlayerPoseLayers
         _overrides[LeftArmNode] = CarriedOverride(pose, _leftArm, flinch, frame.OffArmHold, OffArmHoldRadians);
         _overrides[RightArmNode] = CarriedOverride(pose, _rightArm, flinch, frame.MainArmHold, MainArmHoldRadians);
 
-        if (frame.AirTuck > 0.001f)
+        // Legs: the air tuck, then the travel twist. The twist is a yaw about the model's central
+        // vertical axis (the hip line), in model space after the clip's own leg pose, so it turns the
+        // whole stride toward the travel direction. As O * W (W the leg's animated world), that is
+        // O = Tuck * W * RotY(twist) * W^-1; with no twist this is exactly the plain tuck.
+        // Straight backwards the twist sits at its +-90 degree clamp, so the stride stays 90 degrees
+        // off the travel there (not 180): a known, accepted residual, not hidden.
+        Matrix4 tuckLeft = frame.AirTuck > 0.001f ? Matrix4.CreateRotationX(TuckForwardRadians * frame.AirTuck) : Matrix4.Identity;
+        Matrix4 tuckRight = frame.AirTuck > 0.001f ? Matrix4.CreateRotationX(TuckBackRadians * frame.AirTuck) : Matrix4.Identity;
+        _overrides[LeftLegNode] = LegOverride(pose, _leftLeg, tuckLeft, frame.LegTwistRadians);
+        _overrides[RightLegNode] = LegOverride(pose, _rightLeg, tuckRight, frame.LegTwistRadians);
+    }
+
+    private static Matrix4 LegOverride(AnimatedModelPose pose, int node, Matrix4 tuck, float twistRadians)
+    {
+        twistRadians = Math.Clamp(twistRadians, -PlayerAnimationStateMachine.MaxLegTwistRadians, PlayerAnimationStateMachine.MaxLegTwistRadians);
+        if (node < 0 || MathF.Abs(twistRadians) < 1e-4f)
         {
-            _overrides[LeftLegNode] = Matrix4.CreateRotationX(TuckForwardRadians * frame.AirTuck);
-            _overrides[RightLegNode] = Matrix4.CreateRotationX(TuckBackRadians * frame.AirTuck);
+            return tuck;
         }
-        else
+
+        Matrix4 world = pose.GetNodeWorldMatrix(node).ToOpenTK();
+        if (MathF.Abs(world.Determinant) < 1e-9f)
         {
-            _overrides[LeftLegNode] = Matrix4.Identity;
-            _overrides[RightLegNode] = Matrix4.Identity;
+            return tuck;
         }
+
+        return tuck * world * Matrix4.CreateRotationY(twistRadians) * Matrix4.Invert(world);
     }
 
     // The world matrix, in model space, of the hand's arm with its override applied: what a held
@@ -133,6 +152,8 @@ public sealed class PlayerPoseLayers
             {
                 case LeftArmNode: _leftArm = logical; break;
                 case RightArmNode: _rightArm = logical; break;
+                case LeftLegNode: _leftLeg = logical; break;
+                case RightLegNode: _rightLeg = logical; break;
                 case PlayerModelAssetDefinition.HeadNodeName: _head = logical; break;
             }
         }

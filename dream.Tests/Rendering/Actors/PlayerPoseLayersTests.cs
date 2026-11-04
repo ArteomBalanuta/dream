@@ -19,8 +19,8 @@ public class PlayerPoseLayersTests
         return instance;
     }
 
-    private static PlayerAnimationFrame Frame(float flinch = 0f, float tuck = 0f, float main = 0f, float off = 0f) =>
-        new("idle", PlayerClipMode.Loop, 0, 1f, flinch, tuck, main, off, false);
+    private static PlayerAnimationFrame Frame(float flinch = 0f, float tuck = 0f, float main = 0f, float off = 0f, float twist = 0f) =>
+        new("idle", PlayerClipMode.Loop, 0, 1f, flinch, tuck, main, off, false, twist);
 
     private static Vector3 Down(Matrix4 arm) => Vector4.TransformRow(new Vector4(0f, -1f, 0f, 0f), arm).Xyz;
 
@@ -139,6 +139,129 @@ public class PlayerPoseLayersTests
         Vector3 rightFoot = Vector4.TransformRow(new Vector4(0f, -1f, 0f, 1f), layers.Overrides[PlayerPoseLayers.RightLegNode]).Xyz;
         Assert.True(leftFoot.Z > 0.3f);
         Assert.True(rightFoot.Z < -0.2f);
+    }
+
+    // The leg's model-space foot: override applied over the animated world, as the model draw does.
+    private static Vector3 Foot(AnimatedModelInstance instance, PlayerPoseLayers layers, string node)
+    {
+        for (int i = 0; i < instance.Pose.RenderableNodeCount; i++)
+        {
+            if (instance.Pose.GetRenderableNode(i).Name == node)
+            {
+                Matrix4 world = instance.Pose.GetRenderableNodeWorldMatrix(i).ToOpenTK();
+                return Vector4.TransformRow(new Vector4(0f, -0.3f, 0f, 1f), layers.Overrides[node] * world).Xyz;
+            }
+        }
+
+        throw new InvalidOperationException(node);
+    }
+
+    [Fact]
+    public void LegTwist_Zero_LeavesTheLegsExactlyAsTheClipDrawsThem()
+    {
+        AnimatedModelInstance instance = CreateInstance("walk");
+        PlayerPoseLayers layers = new();
+
+        layers.Update(instance, Frame(twist: 0f));
+
+        Assert.Equal(Matrix4.Identity, layers.Overrides[PlayerPoseLayers.LeftLegNode]);
+        Assert.Equal(Matrix4.Identity, layers.Overrides[PlayerPoseLayers.RightLegNode]);
+    }
+
+    [Theory]
+    [InlineData(PlayerPoseLayers.LeftLegNode)]
+    [InlineData(PlayerPoseLayers.RightLegNode)]
+    public void LegTwist_YawsTheFootAboutTheModelsVerticalAxis(string leg)
+    {
+        AnimatedModelInstance instance = CreateInstance("walk");
+        PlayerPoseLayers layers = new();
+        instance.Update(0.11f);
+        layers.Update(instance, Frame());
+        Vector3 rest = Foot(instance, layers, leg);
+
+        const float twist = MathF.PI / 2f;
+        layers.Update(instance, Frame(twist: twist));
+        Vector3 twisted = Foot(instance, layers, leg);
+
+        Vector3 expected = Vector4.TransformRow(new Vector4(rest, 1f), Matrix4.CreateRotationY(twist)).Xyz;
+        Assert.True((twisted - expected).Length < 1e-3f, $"rest {rest} twisted {twisted} expected {expected}");
+        Assert.Equal(rest.Y, twisted.Y, 3);
+    }
+
+    [Fact]
+    public void LegTwist_PositiveTurnsTheStrideFromForwardTowardPlusX()
+    {
+        // Facing +Z and travelling +X (yaw +90 degrees): the stride that swings along Z must swing along X.
+        float twist = PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, 0f);
+        Assert.Equal(MathF.PI / 2f, twist, 4);
+
+        Vector3 plain = StrideTravel(0f);
+        Vector3 twisted = StrideTravel(twist);
+
+        // Authored stride is along Z (X is only the hip offset's drift); the twist turns it onto X.
+        Assert.True(MathF.Abs(plain.Z) > 0.05f && MathF.Abs(plain.X) < 0.005f, $"untwisted stride {plain}");
+        Assert.True((twisted - new Vector3(plain.Z, plain.Y, -plain.X)).Length < 1e-3f, $"twisted stride {twisted}, untwisted {plain}");
+        Assert.True(twisted.X * plain.Z > 0f, "a +Z stride turns to +X for a positive twist");
+    }
+
+    // The left foot's model-space displacement between two walk poses.
+    private static Vector3 StrideTravel(float twist)
+    {
+        AnimatedModelInstance instance = CreateInstance("walk");
+        PlayerPoseLayers layers = new();
+        layers.Update(instance, Frame(twist: twist));
+        Vector3 a = Foot(instance, layers, PlayerPoseLayers.LeftLegNode);
+        instance.Update(0.15f);
+        layers.Update(instance, Frame(twist: twist));
+        Vector3 b = Foot(instance, layers, PlayerPoseLayers.LeftLegNode);
+        return b - a;
+    }
+
+    [Fact]
+    public void LegTwist_KeepsTheAirTuck()
+    {
+        AnimatedModelInstance instance = CreateInstance("idle");
+        PlayerPoseLayers layers = new();
+
+        layers.Update(instance, Frame(tuck: 1f));
+        Vector3 tucked = Foot(instance, layers, PlayerPoseLayers.LeftLegNode);
+        layers.Update(instance, Frame(tuck: 1f, twist: MathF.PI / 2f));
+        Vector3 both = Foot(instance, layers, PlayerPoseLayers.LeftLegNode);
+        Vector3 expected = Vector4.TransformRow(new Vector4(tucked, 1f), Matrix4.CreateRotationY(MathF.PI / 2f)).Xyz;
+
+        Assert.True((both - expected).Length < 1e-3f, $"tucked {tucked} both {both} expected {expected}");
+        Assert.NotEqual(Matrix4.Identity, layers.Overrides[PlayerPoseLayers.LeftLegNode]);
+    }
+
+    [Fact]
+    public void LegTwist_DoesNotDisturbTheArmChainOrTheTorso()
+    {
+        AnimatedModelInstance instance = CreateInstance("walk");
+        PlayerPoseLayers layers = new();
+        layers.Update(instance, Frame(main: 1f, off: 1f));
+        Assert.True(layers.TryGetArmMatrix(instance, offHand: false, out Matrix4 mainBefore));
+        Assert.True(layers.TryGetArmMatrix(instance, offHand: true, out Matrix4 offBefore));
+
+        layers.Update(instance, Frame(main: 1f, off: 1f, twist: 1.2f));
+        Assert.True(layers.TryGetArmMatrix(instance, offHand: false, out Matrix4 mainAfter));
+        Assert.True(layers.TryGetArmMatrix(instance, offHand: true, out Matrix4 offAfter));
+
+        Assert.Equal(mainBefore, mainAfter);
+        Assert.Equal(offBefore, offAfter);
+        Assert.Equal(Matrix4.Identity, layers.Overrides[PlayerPoseLayers.TorsoNode]);
+    }
+
+    [Fact]
+    public void LegTwist_BeyondTheClamp_IsClamped()
+    {
+        AnimatedModelInstance instance = CreateInstance("walk");
+        PlayerPoseLayers layers = new();
+
+        layers.Update(instance, Frame(twist: MathF.PI / 2f));
+        Matrix4 atClamp = layers.Overrides[PlayerPoseLayers.LeftLegNode];
+        layers.Update(instance, Frame(twist: MathF.PI));
+
+        Assert.Equal(atClamp, layers.Overrides[PlayerPoseLayers.LeftLegNode]);
     }
 
     [Fact]
