@@ -130,8 +130,18 @@ internal static class M4AKit
         await PlaceAsync(server, who, back, all);
     }
 
-    public static InventorySlotSnapshot[] BagKind(HeadlessPlayScene client, string kind) =>
-        [.. client.Inventory!.Value.BagItems().Where(slot => slot.Item!.Value.ItemKind == kind).OrderBy(slot => slot.SlotIndex)];
+    // The bag rows of the kind, in anchor order. The starter kit stocks a health and a mana potion
+    // (StarterKitEntry v4, 80483b0), so a test that counts what it *bought* passes the ids it was
+    // handed at join in except; with no exclusion set this is every row of the kind.
+    public static InventorySlotSnapshot[] BagKind(HeadlessPlayScene client, string kind, HashSet<long>? except = null) =>
+        [.. client.Inventory!.Value.BagItems()
+            .Where(slot => slot.Item!.Value.ItemKind == kind && except?.Contains(slot.Item!.Value.ItemInstanceId) != true)
+            .OrderBy(slot => slot.SlotIndex)];
+
+    // Every item the character already owns, by instance id: the starter kit as it stands right now.
+    // Captured after the join has been applied, before anything is bought.
+    public static HashSet<long> StarterIds(HeadlessPlayScene client) =>
+        [.. client.Inventory!.Value.AllItems().Select(item => item.ItemInstanceId)];
 
     public static long Count(MigrationTestDatabase db, string sql) => Convert.ToInt64(db.Scalar(sql));
 
@@ -162,10 +172,11 @@ public sealed class ConsumableLoopbackTests
         await using HeadlessPlayScene b = await M4AKit.JoinAsync(server, SessionB);
         await M4AKit.PlaceAsync(server, a, M4AKit.Away, a, b);
         await M4AKit.PlaceAsync(server, b, M4AKit.Away + new Vector3(3f, 0f, 0f), a, b);
+        HashSet<long> starter = M4AKit.StarterIds(a);
 
         await M4AKit.BuyAsync(server, a, HealthPotion, a, b);
         await M4AKit.BuyAsync(server, a, HealthPotion, a, b);
-        InventorySlotSnapshot[] potions = M4AKit.BagKind(a, HealthPotion);
+        InventorySlotSnapshot[] potions = M4AKit.BagKind(a, HealthPotion, starter);
         Assert.Equal(2, potions.Length);
 
         PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
@@ -176,22 +187,22 @@ public sealed class ConsumableLoopbackTests
         ServerActionMessage mismatch = await M4AKit.ActAsync(server, a, new ItemUseIntent(potions[0].SlotIndex, potions[0].Item!.Value.ItemInstanceId + 1000), a, b);
         Assert.False(mismatch.Result.Accepted);
         Assert.Equal(max - 80, combatant.Health.CurrentHealth);
-        Assert.Equal(2, M4AKit.BagKind(a, HealthPotion).Length);
+        Assert.Equal(2, M4AKit.BagKind(a, HealthPotion, starter).Length);
 
         ServerActionMessage used = await M4AKit.ActAsync(server, a, new ItemUseIntent(potions[0].SlotIndex, potions[0].Item!.Value.ItemInstanceId), a, b);
         Assert.True(used.Result.Accepted, used.Result.Rejection?.Reason);
         Assert.IsType<InventoryChangedResult>(used.Result.Payload);
         Assert.Equal(max - 30, combatant.Health.CurrentHealth);
-        Assert.Single(M4AKit.BagKind(a, HealthPotion));
+        Assert.Single(M4AKit.BagKind(a, HealthPotion, starter));
         Assert.DoesNotContain(a.Inventory!.Value.AllItems(), item => item.ItemInstanceId == potions[0].Item!.Value.ItemInstanceId);
 
         // The second potion, still hurt, but the kind is cooling down: refused, nothing spent.
-        InventorySlotSnapshot second = M4AKit.BagKind(a, HealthPotion)[0];
+        InventorySlotSnapshot second = M4AKit.BagKind(a, HealthPotion, starter)[0];
         ServerActionMessage refused = await M4AKit.ActAsync(server, a, new ItemUseIntent(second.SlotIndex, second.Item!.Value.ItemInstanceId), a, b);
         Assert.False(refused.Result.Accepted);
         Assert.Contains("cooldown", refused.Result.Rejection!.Reason, StringComparison.Ordinal);
         Assert.Equal(max - 30, combatant.Health.CurrentHealth);
-        Assert.Single(M4AKit.BagKind(a, HealthPotion));
+        Assert.Single(M4AKit.BagKind(a, HealthPotion, starter));
 
         // The vitals say the kind is cooling down, to its owner only.
         await M4AKit.StepThroughVitalsDrainAsync(server, a, b);
@@ -204,7 +215,7 @@ public sealed class ConsumableLoopbackTests
         ServerActionMessage again = await M4AKit.ActAsync(server, a, new ItemUseIntent(second.SlotIndex, second.Item!.Value.ItemInstanceId), a, b);
         Assert.True(again.Result.Accepted, again.Result.Rejection?.Reason);
         Assert.Equal(max, combatant.Health.CurrentHealth);
-        Assert.Empty(M4AKit.BagKind(a, HealthPotion));
+        Assert.Empty(M4AKit.BagKind(a, HealthPotion, starter));
     }
 
     [Fact]
@@ -214,8 +225,9 @@ public sealed class ConsumableLoopbackTests
         await using WireLoopbackServer server = await M4AKit.StartAsync(db);
         await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
         await M4AKit.PlaceAsync(server, a, M4AKit.Away, a);
+        HashSet<long> starter = M4AKit.StarterIds(a);
         await M4AKit.BuyAsync(server, a, HealthPotion, a);
-        InventorySlotSnapshot potion = M4AKit.BagKind(a, HealthPotion).Single();
+        InventorySlotSnapshot potion = M4AKit.BagKind(a, HealthPotion, starter).Single();
         M4AKit.Flush(server);
 
         PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
@@ -234,7 +246,7 @@ public sealed class ConsumableLoopbackTests
         Assert.False(used.Result.Accepted);
         Assert.Contains("save failed", used.Result.Rejection!.Reason, StringComparison.Ordinal);
         Assert.Equal(max - 80, combatant.Health.CurrentHealth);
-        Assert.Single(M4AKit.BagKind(a, HealthPotion));
+        Assert.Single(M4AKit.BagKind(a, HealthPotion, starter));
         Assert.True(server.Runtime.Sessions.TryGet(new PlayerSessionId(SessionA), out ConnectedPlayer? player));
         Assert.True(player!.Cooldowns.IsReady(HealthPotion, server.Runtime.CurrentServerTick));
         db.ExecuteScript("DROP TRIGGER fail_wallet;");
@@ -249,22 +261,23 @@ public sealed class ConsumableLoopbackTests
         await using HeadlessPlayScene b = await M4AKit.JoinAsync(server, SessionB);
         await M4AKit.PlaceAsync(server, a, M4AKit.Away, a, b);
         await M4AKit.PlaceAsync(server, b, M4AKit.Away + new Vector3(3f, 0f, 0f), a, b);
+        HashSet<long> starter = M4AKit.StarterIds(a);
 
         await M4AKit.BuyAsync(server, a, ManaPotion, a, b);
-        InventorySlotSnapshot potion = M4AKit.BagKind(a, ManaPotion).Single();
+        InventorySlotSnapshot potion = M4AKit.BagKind(a, ManaPotion, starter).Single();
         PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
         Assert.Equal(combatant.MaxMana, combatant.CurrentMana);
 
         ServerActionMessage nothing = await M4AKit.ActAsync(server, a, new ItemUseIntent(potion.SlotIndex, potion.Item!.Value.ItemInstanceId), a, b);
         Assert.False(nothing.Result.Accepted);
         Assert.Contains("nothing to restore", nothing.Result.Rejection!.Reason, StringComparison.Ordinal);
-        Assert.Single(M4AKit.BagKind(a, ManaPotion));
+        Assert.Single(M4AKit.BagKind(a, ManaPotion, starter));
 
         Assert.True(combatant.TrySpendMana(30));
         Assert.Equal(combatant.MaxMana - 30, combatant.CurrentMana);
         ServerActionMessage used = await M4AKit.ActAsync(server, a, new ItemUseIntent(potion.SlotIndex, potion.Item!.Value.ItemInstanceId), a, b);
         Assert.True(used.Result.Accepted, used.Result.Rejection?.Reason);
-        Assert.Empty(M4AKit.BagKind(a, ManaPotion));
+        Assert.Empty(M4AKit.BagKind(a, ManaPotion, starter));
         Assert.Equal(combatant.MaxMana, combatant.CurrentMana);
 
         // Owner only: A's vitals show A's mana, B's only ever show B's full mana.

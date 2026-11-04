@@ -49,6 +49,36 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
                 .Append($"worn100={snapshot.EquippedSlot?.Item?.ItemInstanceId}")
                 .Concat((snapshot.Equipment ?? []).Select(slot => $"worn{slot.SlotIndex}={slot.Item?.ItemInstanceId}")));
 
+    // Where the item anchored at from can legitimately go: the lowest other bag anchor whose cells are
+    // all free, on the board exactly as the snapshot shows it. The control actions below derive their
+    // target this way instead of naming a cell, because the starter kit keeps growing into the board
+    // (v4, 80483b0, took cells 24 and 25 for its two potions) and a literal goes stale with it.
+    private static int FreeAnchorFor(PlayerInventorySnapshot snapshot, int from)
+    {
+        ItemFootprint moving = BagGrid.FootprintOf(
+            snapshot.ItemAt(from)?.ItemKind
+            ?? throw new Xunit.Sdk.XunitException($"No item is anchored at bag cell {from}."));
+
+        ulong occupied = 0;
+        foreach (InventorySlotSnapshot slot in snapshot.BagItems())
+        {
+            if (slot.SlotIndex != from && BagGrid.TryMask(slot.SlotIndex, BagGrid.FootprintOf(slot.Item!.Value.ItemKind), out ulong mask))
+            {
+                occupied |= mask;
+            }
+        }
+
+        for (int anchor = 0; anchor < BagGrid.CellCount; anchor++)
+        {
+            if (anchor != from && BagGrid.TryMask(anchor, moving, out ulong mask) && (mask & occupied) == 0)
+            {
+                return anchor;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"The board has no free {moving.Cols}x{moving.Rows} place for the item at {from}: {Layout(snapshot)}.");
+    }
+
     [Fact]
     public void EveryHostileIntent_IsRejected_WithNoRowOrWriteChange()
     {
@@ -65,6 +95,7 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         string aliceLayout = Layout(runtime.TryCaptureInventorySnapshot(new PlayerSessionId("a"))!.Value);
         int writesBefore = world.SlotWrites;
         long itemsBefore = world.LoadItemInstances().Count;
+        int freeAnchor = FreeAnchorFor(runtime.TryCaptureInventorySnapshot(new PlayerSessionId("a"))!.Value, 2);
 
         List<IPlayerActionPayload> hostile = [];
         foreach (int bad in NeverABagCell)
@@ -140,7 +171,7 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         Assert.Equal(writesBefore, world.SlotWrites);
         Assert.Equal(itemsBefore, world.LoadItemInstances().Count);
         // Rejections spent none of the budget: a legitimate action still goes through.
-        Assert.True(Act(runtime, "a", ref sequence, new InventoryMoveIntent(2, 24)).Accepted);
+        Assert.True(Act(runtime, "a", ref sequence, new InventoryMoveIntent(2, freeAnchor)).Accepted);
     }
 
     [Fact]
@@ -155,13 +186,14 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         ulong sequence = 0;
 
         Assert.True(Act(runtime, "a", ref sequence, new InventoryEquipIntent(4)).Accepted);
-        Assert.True(Act(runtime, "a", ref sequence, new InventoryMoveIntent(2, 24)).Accepted);
+        int freeAnchor = FreeAnchorFor(runtime.TryCaptureInventorySnapshot(new PlayerSessionId("a"))!.Value, 2);
+        Assert.True(Act(runtime, "a", ref sequence, new InventoryMoveIntent(2, freeAnchor)).Accepted);
         Assert.True(Act(runtime, "a", ref sequence, new InventoryUnequipIntent(100)).Accepted);
 
         Assert.Equal(bobBefore, world.SlotsOf(Bob));
         Assert.NotEqual(bobBefore, world.SlotsOf(Alice));
         // An unknown session is rejected outright.
-        Assert.False(Act(runtime, "nobody", ref sequence, new InventoryMoveIntent(2, 24)).Accepted);
+        Assert.False(Act(runtime, "nobody", ref sequence, new InventoryMoveIntent(2, freeAnchor)).Accepted);
     }
 
     [Fact]
@@ -268,7 +300,9 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         await using Wave12DeltaActorLoopbackTests.Rig rig = await Wave12DeltaActorLoopbackTests.Rig.StartAsync(output);
         Wave12DeltaActorLoopbackTests.Peer peer = await rig.JoinAsync("h1-bag");
         PlayerSessionId session = new(peer.SessionId);
-        string before = Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value);
+        PlayerInventorySnapshot joined = rig.Runtime.TryCaptureInventorySnapshot(session)!.Value;
+        string before = Layout(joined);
+        int freeAnchor = FreeAnchorFor(joined, 2);
         IPlayerActionPayload[] hostile =
         [
             new InventoryMoveIntent(2, 5),                    // over two items
@@ -313,12 +347,12 @@ public sealed class InventoryHostileIntentTests(ITestOutputHelper output)
         Assert.Equal(before, Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value));
 
         // A real move goes through: no hostile intent above spent the action budget.
-        peer.Session.QueuePlayerAction(new PlayerActionMessage(session, ++sequence, new InventoryMoveIntent(2, 24)));
+        peer.Session.QueuePlayerAction(new PlayerActionMessage(session, ++sequence, new InventoryMoveIntent(2, freeAnchor)));
         await rig.WaitUntilAsync(
             () => rig.Host.TryGetConnectionContext(peer.Connection.ConnectionId, out ServerRoutingContext? context) && context?.LastActionMessage?.ActionSequence >= sequence,
             $"the server to read action {sequence}");
         await rig.StepAsync();
         Assert.NotEqual(before, Layout(rig.Runtime.TryCaptureInventorySnapshot(session)!.Value));
-        Assert.NotEqual(0, rig.Runtime.TryCaptureInventorySnapshot(session)!.Value.IdAt(24));
+        Assert.NotEqual(0, rig.Runtime.TryCaptureInventorySnapshot(session)!.Value.IdAt(freeAnchor));
     }
 }
