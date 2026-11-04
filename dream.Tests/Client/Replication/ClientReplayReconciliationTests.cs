@@ -24,6 +24,17 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
     private const int StallTicks = 64;
     private const int UnacknowledgedTicks = 6;
 
+    private const int FloorSize = 48;
+    // Far enough from every map edge that a full walk cannot reach the bounds clamp (Player's
+    // EdgeMargin keeps the body centre in [0.5, Width-0.5]). The old (5, 1.5, 5) resolved to a
+    // spawn 6.3 m from the west edge, which is shorter than one walk, so the walker ran into the
+    // edge and the measurement became a wall slide instead of a reconciliation.
+    private static readonly Vector3 WalkerStart = new(36f, 1.5f, 36f);
+    // The motor accelerates over the first ticks, so a free walk falls a little short of
+    // ticks x MoveSpeed x dt (0.43 m over a 72-tick walk, independent of the tick count).
+    private const float AccelerationRampMeters = 0.5f;
+    private const float StraightLaneDriftMeters = 0.01f;
+
     private static readonly PlayerSimulationTuning Tuning = PlayerSimulationTuning.AuthoritativeDefault;
 
     // The server loses most of a one-second stall (NETR-3 idles the seat after 16 ticks), so the
@@ -153,7 +164,7 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
 
     private static float MeasureSendStallCorrection(Vector3 facing, int ringCapacity)
     {
-        WorldSessionRuntime runtime = new(48, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        WorldSessionRuntime runtime = new(FloorSize, WalkerStart, new SceneEventHub());
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession(Steady, Steady);
         host.JoinSession(Walker, Walker);
@@ -238,7 +249,7 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
 
     private static List<Vector3> RunWalker(int totalTicks, Vector3 facing, ServerFeed feed)
     {
-        WorldSessionRuntime runtime = new(48, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
+        WorldSessionRuntime runtime = new(FloorSize, WalkerStart, new SceneEventHub());
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         host.JoinSession(Steady, Steady);
         host.JoinSession(Walker, Walker);
@@ -260,21 +271,52 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
         return positions;
     }
 
-    // The startup terrain blocks some directions; walk along the most open axis. Probed once per
-    // walk length for the class (ARCH-1c): the probe is deterministic set-up.
-    private static readonly ProbeCache<int, Vector3> OpenFacings = new(ProbeMostOpenFacing);
+    // The startup terrain blocks some directions; walk along an axis that is a straight, open lane
+    // for the whole walk. Total displacement alone is not enough: a walker pressed against terrain
+    // or against the map-bounds clamp still covers ground while sliding sideways, and then the
+    // measurement is that slide rather than the reconciliation. So a lane qualifies only when it
+    // drifts under a centimetre sideways and covers what a free walk covers. Probed once per walk
+    // length for the class (ARCH-1c): the probe is deterministic set-up.
+    private static readonly ProbeCache<int, Vector3> OpenFacings = new(ProbeStraightLaneFacing);
 
     private static Vector3 MostOpenFacing(int ticks) => OpenFacings.Get(ticks);
 
-    private static Vector3 ProbeMostOpenFacing(int ticks)
+    private static Vector3 ProbeStraightLaneFacing(int ticks)
     {
-        return new[] { Vector3.UnitZ, -Vector3.UnitZ, Vector3.UnitX, -Vector3.UnitX }
-            .OrderByDescending(direction =>
+        float freeWalkMeters = ticks * Tuning.MoveSpeed * SimulationClock.FixedDeltaSeconds;
+        float minimumAlong = freeWalkMeters - AccelerationRampMeters;
+        List<string> rejected = [];
+        Vector3 best = Vector3.Zero;
+        float bestAlong = 0f;
+        foreach (Vector3 direction in new[] { Vector3.UnitZ, -Vector3.UnitZ, Vector3.UnitX, -Vector3.UnitX })
+        {
+            List<Vector3> probe = RunWalker(ticks, direction, ServerFeed.AllCommands);
+            Vector3 travelled = probe[^1] - probe[0];
+            float along = Vector3.Dot(travelled, direction);
+            float lateral = (travelled - (along * direction)).Xz.Length;
+            if (lateral < StraightLaneDriftMeters && along >= minimumAlong)
             {
-                List<Vector3> probe = RunWalker(ticks, direction, ServerFeed.AllCommands);
-                return (probe[^1] - probe[0]).Xz.Length;
-            })
-            .First();
+                if (along > bestAlong)
+                {
+                    best = direction;
+                    bestAlong = along;
+                }
+
+                continue;
+            }
+
+            rejected.Add($"{direction}: {along:F3} m along (needs {minimumAlong:F3}), {lateral:F3} m sideways");
+        }
+
+        if (bestAlong <= 0f)
+        {
+            throw new InvalidOperationException(
+                $"No straight {freeWalkMeters:F2} m lane from {WalkerStart} in a {FloorSize}-cell world: "
+                + string.Join("; ", rejected)
+                + ". The world generation moved under this test; pick a start with an open lane.");
+        }
+
+        return best;
     }
 
     private static PlayerCommandFrame Command(string session, ulong sequence, float forward, Vector3 facing)
