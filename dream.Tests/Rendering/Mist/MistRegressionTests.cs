@@ -67,6 +67,10 @@ public class MistRegressionTests
         int draw = pass.IndexOf("_warMistRenderer.Draw(", StringComparison.Ordinal);
         Assert.True(reveal < toggle && toggle < draw);
         Assert.Matches(@"if \(!_settings\.WarMistEnabled\)\s*\{\s*return;", pass);
+
+        // The runtime setting is the only gate (it starts from DREAM_WAR_MIST), so the Settings
+        // checkbox still works when the env var says 0.
+        Assert.DoesNotContain("settings.Enabled", pass);
     }
 
     [Theory]

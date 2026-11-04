@@ -21,11 +21,13 @@ public partial class PlayScene
     private double _warMistSeconds;
 
     // Runs at the top of the effects pass, in the Actors GPU section: the opaque world and the
-    // actors are drawn, and the effects section has not started.
+    // actors are drawn, and the effects section has not started. The only on/off gate is
+    // _settings.WarMistEnabled (initialised from DREAM_WAR_MIST), so the Settings checkbox works
+    // whatever the environment said; exploration keeps accumulating while the veil is off.
     private void DrawWarMistPass(in WorldSessionPresentationState presentation, float deltaSeconds)
     {
         WarMistSettings settings = WarMistSettings.Current;
-        if (!settings.Enabled || _warMistFailed || _settings.CameraViewMode != CameraViewMode.Isometric)
+        if (_warMistFailed || _settings.CameraViewMode != CameraViewMode.Isometric)
         {
             return;
         }
