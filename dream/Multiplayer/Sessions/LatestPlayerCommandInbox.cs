@@ -91,7 +91,8 @@ public sealed class LatestPlayerCommandInbox : IPlayerCommandInbox
             incoming.MoveIntent.VerticalAxis,
             JumpPressed: existing.MoveIntent.JumpPressed || incoming.MoveIntent.JumpPressed,
             FreezePressed: existing.MoveIntent.FreezePressed || incoming.MoveIntent.FreezePressed,
-            ToggleNoclipPressed: existing.MoveIntent.ToggleNoclipPressed || incoming.MoveIntent.ToggleNoclipPressed);
+            ToggleNoclipPressed: existing.MoveIntent.ToggleNoclipPressed || incoming.MoveIntent.ToggleNoclipPressed,
+            SprintHeld: existing.MoveIntent.SprintHeld || incoming.MoveIntent.SprintHeld);
         PlayerLookIntent lookIntent = new(
             existing.LookIntent.YawDelta + incoming.LookIntent.YawDelta,
             existing.LookIntent.PitchDelta + incoming.LookIntent.PitchDelta,

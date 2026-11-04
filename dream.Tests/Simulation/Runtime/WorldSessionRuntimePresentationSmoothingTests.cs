@@ -19,7 +19,7 @@ public class WorldSessionRuntimePresentationSmoothingTests
         PlayerSimulationTuning tuning = new(
             EyeHeightOffset: 0.35f,
             MouseSensitivity: 2.5f,
-            MoveSpeed: 6f,
+            MoveSpeed: PlayerSimulationTuning.DefaultRunSpeed,
             NoclipSpeed: 18f,
             JumpVelocity: 5f);
         Vector3 before = runtime.Player.GetWorldPosition();
@@ -40,7 +40,12 @@ public class WorldSessionRuntimePresentationSmoothingTests
         Vector3 after = runtime.Player.GetWorldPosition();
         Vector3 cameraPosition = runtime.Player.Camera.Position;
 
-        Assert.True(after.Z < before.Z - 0.01f, $"Expected same-tick forward movement, but before Z was {before.Z} and after Z was {after.Z}.");
+        // What this pins is the ordering -- movement is applied before the physics step, so the
+        // tick that receives the command already shows displacement, and the camera is resynced
+        // after the step. The size of that displacement is not the point: the motor ramps, so the
+        // first tick covers one tick of acceleration (18 / 64 = 0.28 m/s, about 3 mm) instead of
+        // the instant motor's full 6 m/s stride.
+        Assert.True(after.Z < before.Z - 0.001f, $"Expected same-tick forward movement, but before Z was {before.Z} and after Z was {after.Z}.");
         Assert.Equal(after.X, cameraPosition.X, precision: 4);
         Assert.Equal(after.Y + tuning.EyeHeightOffset, cameraPosition.Y, precision: 4);
         Assert.Equal(after.Z, cameraPosition.Z, precision: 4);

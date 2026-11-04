@@ -238,7 +238,11 @@ public class ClientPredictionReconcilerTests
             MouseSensitivity: 4f,
             MoveSpeed: 12f,
             NoclipSpeed: 150f,
-            JumpVelocity: 9f);
+            JumpVelocity: 9f,
+            WalkSpeed: 3f,
+            SprintSpeed: 20f,
+            GroundAcceleration: 100f,
+            GroundDeceleration: 200f);
 
         PlayerSimulationTuning predicted = local.WithAuthoritativeMovement();
 
@@ -247,6 +251,16 @@ public class ClientPredictionReconcilerTests
         Assert.Equal(PlayerSimulationTuning.AuthoritativeDefault.MoveSpeed, predicted.MoveSpeed);
         Assert.Equal(PlayerSimulationTuning.AuthoritativeDefault.NoclipSpeed, predicted.NoclipSpeed);
         Assert.Equal(PlayerSimulationTuning.AuthoritativeDefault.JumpVelocity, predicted.JumpVelocity);
+        // The other two tiers and both ramp rates are movement too: predicting a sprint, a walk or
+        // an acceleration the server does not simulate drifts and gets pulled back on every snapshot.
+        Assert.Equal(PlayerSimulationTuning.AuthoritativeDefault.WalkSpeed, predicted.WalkSpeed);
+        Assert.Equal(PlayerSimulationTuning.AuthoritativeDefault.SprintSpeed, predicted.SprintSpeed);
+        Assert.Equal(
+            PlayerSimulationTuning.AuthoritativeDefault.GroundAcceleration,
+            predicted.GroundAcceleration);
+        Assert.Equal(
+            PlayerSimulationTuning.AuthoritativeDefault.GroundDeceleration,
+            predicted.GroundDeceleration);
     }
 
     // Reviewer S11: a snap replays the unacknowledged ticks as a translation of the client's path.

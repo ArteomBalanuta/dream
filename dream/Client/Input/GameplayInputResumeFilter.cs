@@ -47,7 +47,8 @@ public sealed class GameplayInputResumeFilter
                 move.VerticalAxis,
                 JumpPressed: false,
                 FreezePressed: false,
-                ToggleNoclipPressed: false),
+                ToggleNoclipPressed: false,
+                SprintHeld: move.SprintHeld),
             PrimaryUsePressed = false
         };
     }

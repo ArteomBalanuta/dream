@@ -61,7 +61,9 @@ internal enum HudCaptureKeys : int
     Building = 128,
     Combat = 256,
     Q = 512,
-    R = 1024
+    R = 1024,
+    // Held sprint, so a capture can photograph the sprint pose (keysnap:w+shift:N).
+    Shift = 2048
 }
 
 // A parsed capture step: the verb and up to two numbers (slots, a menu row, frames).
@@ -100,7 +102,8 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
         return (slot >= 0 && slot < BagGrid.CellCount) || (slot >= EquipmentSlots.FirstSlotIndex && slot <= EquipmentSlots.LastSlotIndex);
     }
 
-    // w+a, space, noclip (the 0 key), b or building (B), g or combat (G), q and r (the potion hotkeys), ctrl: unknown names fail the whole token.
+    // w+a, space, noclip (the 0 key), b or building (B), g or combat (G), q and r (the potion hotkeys), ctrl,
+    // shift or sprint (held sprint): unknown names fail the whole token.
     public static bool TryParseKeys(string text, out HudCaptureKeys keys)
     {
         keys = HudCaptureKeys.None;
@@ -119,6 +122,7 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 "g" or "combat" => HudCaptureKeys.Combat,
                 "q" => HudCaptureKeys.Q,
                 "r" => HudCaptureKeys.R,
+                "shift" or "sprint" => HudCaptureKeys.Shift,
                 _ => HudCaptureKeys.None
             };
             if (one == HudCaptureKeys.None)

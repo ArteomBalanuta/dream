@@ -1,4 +1,6 @@
 using OpenTK.Mathematics;
+using Dream.Simulation.Players;
+using Dream.Simulation.Runtime;
 
 namespace Dream.Client.Navigation;
 
@@ -11,7 +13,16 @@ public sealed class PathFollower
     public const float JumpTriggerDistance = 3.1f;
     public const int JumpLookAheadWaypoints = 4;
     public const float LineGain = 9f;
-    public const int PinnedTicksBeforeNudge = 3;
+    // A body starting from rest, or turning, genuinely covers almost nothing for the first few
+    // ticks now that the motor ramps instead of snapping to full speed. One tick only clears
+    // PinnedStepMetres once the body passes PinnedStepMetres x tick rate = 1.28 m/s, which takes
+    // RampTicksToClearPinnedStep ticks at GroundAcceleration. The old flat 3-tick window was
+    // calibrated to the instant-velocity motor, so with a ramp every single start looked pinned
+    // and fired the nudge; the soak lost a fifth of its clicks to the resulting fight.
+    private const float PinnedStepSpeed = PinnedStepMetres * SimulationClock.AuthoritativeTicksPerSecond;
+    private const int RampTicksToClearPinnedStep = (int)(PinnedStepSpeed
+        / (PlayerSimulationTuning.DefaultGroundAcceleration / SimulationClock.AuthoritativeTicksPerSecond)) + 1;
+    public const int PinnedTicksBeforeNudge = RampTicksToClearPinnedStep + 3;
     public const float MinNudgeCorrection = 0.02f;
     public const float PinnedStepMetres = 0.02f;
     public const float MaxLineCorrection = 1f;
@@ -28,7 +39,12 @@ public sealed class PathFollower
     public const int MaxHopsWithoutGain = 3;
     public const int DropTicks = 12;
     public const int BackOffTicks = 6;
-    private const float PinnedStepLimit = LineGain * 0.094f;
+    // How far the player travels in one authoritative tick at the run cruise. The pinned check
+    // compares a line correction against one tick of travel, so this has to follow the cruise
+    // speed rather than stay the hand-calibrated 0.094 (which was 6 m/s / 64 Hz).
+    public const float CruiseTickMetres =
+        PlayerSimulationTuning.DefaultRunSpeed / SimulationClock.AuthoritativeTicksPerSecond;
+    private const float PinnedStepLimit = LineGain * CruiseTickMetres;
     public const float DropNeedMetres = 0.15f;
     private const float BodyHalfHeight = 0.5f;
 
@@ -120,7 +136,9 @@ public sealed class PathFollower
             return new NavStep(Vector3.Zero, false, false, true);
         }
 
-        // Moving at full speed covers 0.094 m a tick, so almost none means something is in the way.
+        // Moving at the run cruise covers CruiseTickMetres a tick, so almost none means something is
+        // in the way -- or that the ramp has not built up yet, which is why the nudge waits for
+        // PinnedTicksBeforeNudge of them rather than acting on the first.
         _pinnedTicks = _hasLastBody && HorizontalDistance(bodyCentre, _lastBody) < PinnedStepMetres ? _pinnedTicks + 1 : 0;
         _lastBody = bodyCentre;
         _hasLastBody = true;

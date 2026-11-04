@@ -8,7 +8,12 @@ public readonly record struct MovementCommand(
     float VerticalDirection = 0f,
     bool JumpPressed = false,
     bool FreezePressed = false,
-    bool ToggleNoclipPressed = false);
+    bool ToggleNoclipPressed = false,
+    // Magnitude of the analog move axes, clamped to 0..1 and captured before the direction is
+    // normalized. A partial throttle is how the walk tier reaches the motor: the client scales
+    // the axes it emits and the magnitude replicates on its own.
+    float Throttle = 1f,
+    bool Sprint = false);
 
 public readonly record struct PlayerInteractionCommand(
     bool PrimaryUsePressed,

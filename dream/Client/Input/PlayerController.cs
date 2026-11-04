@@ -23,7 +23,8 @@ public static class PlayerController
         float pitchDelta,
         bool primaryUsePressed,
         bool selectBuildingModePressed,
-        bool selectCombatModePressed)
+        bool selectCombatModePressed,
+        bool sprintHeld = false)
     {
         if (!allowGameplayInput)
         {
@@ -56,7 +57,8 @@ public static class PlayerController
                 verticalAxis,
                 jumpPressed,
                 freezePressed,
-                toggleNoclipPressed),
+                toggleNoclipPressed,
+                sprintHeld),
             new PlayerLookIntent(yawDelta, pitchDelta),
             primaryUsePressed);
     }
@@ -121,7 +123,10 @@ public static class PlayerController
             pitchDelta: 0f,
             primaryUsePressed,
             selectBuildingModePressed: isKeyDown(Keys.D1),
-            selectCombatModePressed: isKeyDown(Keys.D2));
+            selectCombatModePressed: isKeyDown(Keys.D2),
+            // Held sprint. LeftShift is free in gameplay: movement is W/A/S/D, Space, F, D0/D1/D2
+            // and LeftControl.
+            sprintHeld: isKeyDown(Keys.LeftShift));
     }
 
     // Camera-space axes (X right, Y up-screen) to the command's forward/strafe for a given facing. The

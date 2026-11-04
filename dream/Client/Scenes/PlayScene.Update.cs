@@ -20,6 +20,15 @@ public partial class PlayScene
     // neither aims nor attacks.
     internal bool SuppressCursorAim { get; set; }
 
+    // Z toggles walking. Client-side only: it scales the analog axes the tick emits, and the motor
+    // reads the magnitude that already replicates, so no wire field is needed. 0.35 of the run
+    // cruise lands under the 1.6 m/s walk floor, which is what the motor then holds.
+    private const float WalkAxisScale = 0.35f;
+    private bool _walkToggleEnabled;
+    private bool _wasWalkTogglePressed;
+
+    internal bool WalkToggleEnabled => _walkToggleEnabled;
+
     public void Update(FrameEventArgs args, KeyboardState keyboardState, MouseState mouseState)
     {
         float delta = (float)args.Time;
@@ -38,6 +47,7 @@ public partial class PlayScene
             _settings.CurrentRuntimeState.AllowGameplayInput && !_chatInput.IsTyping,
             _runtime.Player.Combatant.Health.IsAlive);
         HandleConsumableHotkeys(keyboardState, allowGameplayInput);
+        HandleWalkToggle(keyboardState, allowGameplayInput);
         // The pointer is last Render's hover state, read once per Update. The left button is the
         // cursor aim's (facing and the held attack), the right button sets click-to-move goals.
         WorldPointerState pointer = _render.SampleWorldPointer(mouseState, _settings, _windowFocused);
@@ -129,6 +139,7 @@ public partial class PlayScene
 
         command = _clickMove.SteerTick(command);
         command = ProjectKeyboardAxes(command);
+        command = ApplyWalkThrottle(command);
         ulong tick = command.Sequence;
         _actionSequences.ObserveCommandSequence(tick);
         QueueRemoteCommandFrame(command);
@@ -162,6 +173,45 @@ public partial class PlayScene
 
         (float forward, float strafe) = PlayerController.Project(_tickCameraAxes, _runtime.Player.Camera.Front);
         return command with { MoveIntent = command.MoveIntent with { ForwardAxis = forward, StrafeAxis = strafe } };
+    }
+
+    // Edge-detected like the other toggles. The held-state is tracked even when gameplay input is
+    // off (dead, typing, menus) so a key still down when input resumes is not read as a new press.
+    private void HandleWalkToggle(KeyboardState keyboardState, bool allowGameplayInput)
+    {
+        bool pressed = keyboardState.IsKeyDown(Keys.Z) || CaptureKeyHeld(Keys.Z);
+        if (pressed && !_wasWalkTogglePressed && allowGameplayInput)
+        {
+            _walkToggleEnabled = !_walkToggleEnabled;
+        }
+
+        _wasWalkTogglePressed = pressed;
+    }
+
+    // Last step of a tick's command assembly, after the click steering and the keyboard projection
+    // have both read the axes. Scaling must never land on exactly zero: a zero ForwardAxis is the
+    // "not walking / send stalled" mark that ProjectKeyboardAxes and ClickMoveController test.
+    private PlayerCommandFrame ApplyWalkThrottle(PlayerCommandFrame command)
+    {
+        if (!_walkToggleEnabled)
+        {
+            return command;
+        }
+
+        PlayerMoveIntent move = command.MoveIntent;
+        if (move.ForwardAxis == 0f && move.StrafeAxis == 0f)
+        {
+            return command;
+        }
+
+        return command with
+        {
+            MoveIntent = move with
+            {
+                ForwardAxis = move.ForwardAxis == 0f ? 0f : move.ForwardAxis * WalkAxisScale,
+                StrafeAxis = move.StrafeAxis == 0f ? 0f : move.StrafeAxis * WalkAxisScale
+            }
+        };
     }
 
     private void HandleGlobalInput(KeyboardState keyboardState)

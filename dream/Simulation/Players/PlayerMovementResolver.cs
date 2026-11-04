@@ -62,7 +62,18 @@ public static class PlayerMovementResolver
             verticalDirection,
             intent.JumpPressed,
             intent.FreezePressed,
-            intent.ToggleNoclipPressed);
+            intent.ToggleNoclipPressed,
+            ResolveThrottle(intent),
+            intent.SprintHeld);
+    }
+
+    // How far the analog axes are pushed, measured before the move direction is normalized and
+    // the magnitude is thrown away. Diagonals can exceed 1, so clamp.
+    private static float ResolveThrottle(PlayerMoveIntent intent)
+    {
+        float magnitude = MathF.Sqrt(
+            (intent.ForwardAxis * intent.ForwardAxis) + (intent.StrafeAxis * intent.StrafeAxis));
+        return MathF.Min(1f, magnitude);
     }
 
     internal static Vector3 FlattenToWorldPlane(Vector3 direction)

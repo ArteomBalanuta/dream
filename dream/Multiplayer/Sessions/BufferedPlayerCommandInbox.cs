@@ -290,12 +290,15 @@ public sealed class BufferedPlayerCommandInbox : IPlayerCommandInbox
         }
     }
 
-    // Same movement axes; facing, presses, look deltas and primary use are not compared.
+    // Same movement axes and the same speed tier; facing, presses, look deltas and primary use are
+    // not compared. Sprint belongs here and not in HasOneShotInput: it is held state that changes
+    // how far every tick of it travels, so starting or stopping a sprint is a movement change.
     public static bool HasSameMovement(PlayerMoveIntent first, PlayerMoveIntent second)
     {
         return first.ForwardAxis == second.ForwardAxis
             && first.StrafeAxis == second.StrafeAxis
-            && first.VerticalAxis == second.VerticalAxis;
+            && first.VerticalAxis == second.VerticalAxis
+            && first.SprintHeld == second.SprintHeld;
     }
 
     // Jump, freeze or noclip toggle: presses a tick consumes once, whose timing moves the player.
