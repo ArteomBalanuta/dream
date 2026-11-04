@@ -312,6 +312,7 @@ def main() -> int:
         total += len(glb)
         counts[e["class"]] = counts.get(e["class"], 0) + 1
         size = K.BUDGETS[e["class"]]["atlas"]
+        errs += K.glb_errors(stem, glb, e["layer"])   # the shared container gate (validate_manifest no longer opens GLBs)
         errs += container_errors(stem, g, size) + flat_errors(stem, g) + budget_errors(stem, e["class"], g, len(glb))
         errs += bounds_errors(stem, e, g) + size_errors(stem, e) + texture_errors(stem, g["rgba"])
         errs += brightness_errors(stem, e, g["rgba"], tiles) + key_errors(stem, g["rgba"])

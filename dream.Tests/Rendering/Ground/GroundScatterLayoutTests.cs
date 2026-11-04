@@ -348,4 +348,29 @@ public class GroundScatterLayoutTests
         Assert.Equal(a.Count, b.Count);
         Assert.True(a.SequenceEqual(b));
     }
+
+    // The shipped set (flora, stone, decals manifests) on the real hundred world: every placement stands on a
+    // material its own manifest allows, and each layer lands in the plan's band. Measured at integration: decal 494,
+    // cover 5052, accent 185, landmark 49 (the default terrain is all grass, so grass-free assets are not placed here).
+    [Fact]
+    public void TheShippedSet_OnTheHundredWorld_StandsOnAllowedMaterials_InMeasuredBands()
+    {
+        GroundAssetSet assets = GroundAssetSet.LoadShipped();
+        Assert.Equal(100, assets.Assets.Count);
+        (PropIndex props, StaticGround ground) = GroundTestSets.World(WorldDefaults.ServerNewWorldSize);
+        List<GroundPlacement> placed = GroundTestSets.Layout(ground, props.Placements, assets);
+        int[] counts = new int[4];
+        foreach (GroundPlacement p in placed)
+        {
+            GroundAsset asset = AssetOf(assets, p);
+            Assert.Contains(ColumnAt(ground, p).Material, asset.Ground);
+            counts[(int)asset.Layer]++;
+        }
+
+        _output.WriteLine($"shipped: decal {counts[0]} cover {counts[1]} accent {counts[2]} landmark {counts[3]}");
+        Assert.InRange(counts[(int)GroundLayer.Decal], 400, 1100);
+        Assert.InRange(counts[(int)GroundLayer.Cover], 1500, 6000);
+        Assert.InRange(counts[(int)GroundLayer.Accent], 120, 500);
+        Assert.InRange(counts[(int)GroundLayer.Landmark], 25, 120);
+    }
 }

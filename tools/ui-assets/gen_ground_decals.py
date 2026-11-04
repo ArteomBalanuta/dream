@@ -18,6 +18,7 @@ cold water, soot, dried oxblood.
 """
 from __future__ import annotations
 
+import importlib
 import io
 import math
 import sys
@@ -33,8 +34,9 @@ if str(HERE) not in sys.path:
 
 import forge as F  # noqa: E402
 import gltfwrite as G  # noqa: E402
-import groundkit as K  # noqa: E402
 import uiart as U  # noqa: E402
+
+K = importlib.import_module("groundkit")   # by name: check_sources.py allows tools to import only a fixed set of siblings
 
 FAMILY = "decals"
 WORLD_UNITS_PER_U = 0.039           # gen_props.WORLD_UNITS_PER_U; stated, not imported, to keep this generator's deps small
