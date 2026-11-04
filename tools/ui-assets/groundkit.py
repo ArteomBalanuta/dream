@@ -1,0 +1,347 @@
+"""Shared kit for the ground assets (flora, stone, decals): specs, the bake, the manifest and its gates.
+
+    python tools/ui-assets/groundkit.py        # self-tests
+
+A family generator (gen_ground_<family>.py) declares ASSETS: dict[stem, GroundSpec] and a main(out_root, only) that
+calls build_ground_asset / glb_bytes / manifest_entry per stem and write_family once. Output:
+
+    <out_root>/<family>.json            the manifest (schema dream.ground/1), LF, indent 2, floats to 3 decimals
+    <out_root>/<family>/<stem>.glb      one rigid, one-node GLB per asset
+
+A GLB is authored in u (16 u = 1 m, z up, front +y) like gen_props, exported at WORLD_UNITS_PER_U, Y up, +Z front,
+centred on the origin and standing on y = 0. Materials: "ground.baked" (the atlas, double sided) and, for accent and
+landmark assets with a disc, "ground.contact" (alpha-MASK disc). Nothing is emissive. Generators read no files.
+"""
+from __future__ import annotations
+
+import json
+import re
+import struct
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import charforge as C  # noqa: E402
+import gen_char_player as P  # noqa: E402
+import gen_props as GP  # noqa: E402
+import gltfwrite as G  # noqa: E402
+
+GROUND_ROOT = HERE.parents[1] / "dream" / "animations" / "ground"
+SCHEMA = "dream.ground/1"
+LAYERS = ("decal", "cover", "accent", "landmark")
+_CLASS_LAYERS: dict[str, tuple[str, ...]] = {
+    "tree": ("landmark",), "sapling": ("accent",), "bush": ("accent",), "grass": ("cover",), "flower": ("cover",),
+    "mushroom": ("cover",), "root": ("cover",), "rock": ("accent", "cover"), "pebbles": ("cover",), "stump": ("accent",),
+    "log": ("accent",), "twigs": ("cover",), "leaves": ("cover",), "bones": ("cover",), "item": ("cover",),
+}
+CLASSES: dict[str, set[str]] = {k: set(v) for k, v in _CLASS_LAYERS.items()}
+for _d in ("dirt", "moss", "puddle", "crack", "path", "litter", "scorch", "stain"):
+    CLASSES["decal." + _d] = {"decal"}
+# lower-case GeometryMaterialId names (Lamp is player-placed and never a ground)
+MATERIALS: tuple[str, ...] = ("grass", "dirt", "stone", "sand", "mud", "snow", "rock", "grass_path")
+FAMILIES = ("flora", "stone", "decals")
+BAKED_MATERIAL = "ground.baked"
+CONTACT_MATERIAL = "ground.contact"
+FAMILY_BYTES_MAX = {"flora": 5_000_000, "stone": 2_500_000, "decals": 1_200_000}
+
+
+def _b(tris: int, nbytes: int, atlas: int) -> dict:
+    return dict(tris_max=tris, bytes_max=nbytes, atlas=atlas)
+
+
+def _cover(t: int) -> dict:
+    return _b(t, 40_000, 128)
+
+
+def _accent(t: int) -> dict:
+    return _b(t, 140_000, 256)
+
+
+BUDGETS: dict[str, dict] = {
+    "grass": _cover(400), "pebbles": _cover(400), "twigs": _cover(400), "leaves": _cover(400), "bones": _cover(400),
+    "flower": _cover(600), "item": _cover(600), "mushroom": _cover(1200),
+    "root": _cover(3000),                       # a cover-layer asset with the 3000-triangle root budget
+    "bush": _accent(4000), "sapling": _accent(4000), "stump": _accent(3000), "log": _accent(3000), "rock": _accent(2500),
+    "tree": _b(12000, 450_000, 512),
+}
+for _k in CLASSES:
+    if _k.startswith("decal."):
+        BUDGETS[_k] = _b(64, 96_000 if _k == "decal.path" else 48_000, 256 if _k == "decal.path" else 128)
+# a rock may be cover (scree): the cover bytes and atlas apply, the triangle budget stays the rock's
+LAYER_BUDGET_OVERRIDES = {("rock", "cover"): _b(2500, 40_000, 128)}
+
+
+def budget_for(cls: str, layer: str) -> dict:
+    return LAYER_BUDGET_OVERRIDES.get((cls, layer), BUDGETS[cls])
+
+
+@dataclass(frozen=True)
+class GroundSpec:
+    build: Callable[[], list]            # () -> list[gen_props.Part], in u, z up, standing on z = 0, centred
+    cls: str
+    layer: str
+    atlas: int = 128
+    disc: tuple = (0.0, 0.0)             # contact disc half-extents in u; (0, 0) = none (accent / landmark only)
+    weld: bool = False
+    age: tuple = (0.40, 0.60, 0.0, 0.12)  # wear, grime, rust, dust
+    ground: tuple = ("grass", "dirt", "mud")
+    weight: float = 1.0
+    scale: tuple = (0.9, 1.1)
+
+
+# ---------------------------------------------------------------------------------------------- build
+def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
+    """gen_props.build_asset for a GroundSpec. Pure: no clock, environment or filesystem."""
+    parts = [p for p in spec.build() if p.mesh is not None]
+    meshes = [(GP._weld(p.mesh) if spec.weld else p.mesh) for p in parts]
+    split, uvs, rects = C.unwrap_split(meshes, spec.atlas)
+    wear, grime, rust, dust = spec.age
+    seed = f"ground.{family}.{stem}"
+    atlas = C.bake_albedo(split, None, None, uvs, rects, spec.atlas, materials=[p.mat for p in parts], seed=seed,
+                          wear=wear, grime=grime, rust=rust, dust=dust)
+    png, scale, enc = P.encode_atlas(atlas, GP.ALBEDO_LIFT)
+    k = GP.WORLD_UNITS_PER_U / GP.UNITS_PER_U
+    arrays = []
+    for m, uv in zip(split, uvs):
+        pos, nrm, uvo, idx = P._render_arrays(m, uv)
+        arrays.append((pos * k, nrm, uvo, idx))
+    pos, nrm, uvo, idx = GP._merge_arrays(arrays)
+    prims = [G.GltfPrimitive(pos, nrm, uvo, idx, None, None, material=0, node=0)]
+    mats = [{"name": BAKED_MATERIAL, "base_color_factor": (scale, scale, scale, 1.0), "base_color_png": png, "metallic": 0.0,
+             "roughness": 0.9, "double_sided": True}]
+    disc = None
+    if spec.disc[0] > 0:
+        dpng, disc = GP.contact_texture(seed)
+        mats.append({"name": CONTACT_MATERIAL, "base_color_factor": (GP.DISC_LIFT,) * 3 + (1.0,), "base_color_png": dpng,
+                     "metallic": 0.0, "roughness": 1.0, "alpha_mode": "MASK", "alpha_cutoff": 0.5})
+        dp, dn, du, di = GP.disc_arrays(spec.disc[0], spec.disc[1], 1.0)
+        prims.append(G.GltfPrimitive(dp, dn, du, di, None, None, material=1, node=0))
+    p64 = pos.astype(np.float64)
+    horiz = np.hypot(p64[:, 0], p64[:, 2])
+    low = p64[:, 1] < 0.15
+    footprint = float(np.abs(p64[low][:, [0, 2]]).max()) if low.any() else 0.0
+    bounds = (float(horiz.max()), footprint, float(p64[:, 1].max()))
+    nodes = [G.GltfNode(name=stem, parent=None)]
+    return dict(name=stem, family=family, nodes=nodes, primitives=prims, materials=mats, atlas=atlas, encoded=enc, scale=scale,
+                rects=rects, parts=parts, meshes=split, uvs=uvs, disc=disc, spec=spec, bounds=bounds)
+
+
+def glb_bytes(asset: dict) -> bytes:
+    return G.build_glb(asset["nodes"], asset["primitives"], None, None, [], asset["materials"])
+
+
+def _r3(x) -> float:
+    return round(float(x), 3)
+
+
+def manifest_entry(family: str, stem: str, spec_or_fields, bounds) -> dict:
+    """spec_or_fields: a GroundSpec, or a dict with cls, layer and optionally ground, weight, scale."""
+    f = spec_or_fields if isinstance(spec_or_fields, dict) else dict(
+        cls=spec_or_fields.cls, layer=spec_or_fields.layer, ground=spec_or_fields.ground, weight=spec_or_fields.weight,
+        scale=spec_or_fields.scale)
+    radius, footprint, height = bounds
+    return {"id": f"{family}.{stem}", "file": f"{family}/{stem}.glb", "class": f["cls"], "layer": f["layer"],
+            "radius": _r3(radius), "footprint": _r3(footprint), "height": _r3(height),
+            "ground": list(f.get("ground", ("grass", "dirt", "mud"))), "weight": _r3(f.get("weight", 1.0)),
+            "scale": [_r3(v) for v in f.get("scale", (0.9, 1.1))]}
+
+
+def manifest_text(family: str, generator: str, entries: list[dict]) -> str:
+    doc = {"schema": SCHEMA, "family": family, "generator": generator, "assets": entries}
+    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+
+
+def write_family(out_root: Path, family: str, entries: list[dict], files: dict[str, bytes],
+                 generator: str | None = None) -> None:
+    """files: stem -> GLB bytes. Writes <out_root>/<family>/<stem>.glb and <out_root>/<family>.json (LF)."""
+    out_root = Path(out_root)
+    d = out_root / family
+    d.mkdir(parents=True, exist_ok=True)
+    for stem, data in files.items():
+        (d / f"{stem}.glb").write_bytes(data)
+    gen = generator or f"tools/ui-assets/gen_ground_{family}.py"
+    (out_root / f"{family}.json").write_bytes(manifest_text(family, gen, entries).encode("utf-8"))
+
+
+# ---------------------------------------------------------------------------------------------- validation
+def glb_material_names(data: bytes) -> list[str] | None:
+    if len(data) < 20 or data[:4] != b"glTF":
+        return None
+    n, kind = struct.unpack_from("<II", data, 12)
+    if kind != 0x4E4F534A:
+        return None
+    doc = json.loads(data[20:20 + n].decode("utf-8"))
+    return [m.get("name", "") for m in doc.get("materials", [])]
+
+
+def validate_manifest(doc: dict, root: Path | None = None) -> list[str]:
+    root = Path(root) if root else GROUND_ROOT
+    errs: list[str] = []
+    if doc.get("schema") != SCHEMA:
+        errs.append(f"schema is {doc.get('schema')!r}, expected {SCHEMA!r}")
+    family = doc.get("family")
+    if family not in FAMILIES:
+        errs.append(f"family {family!r} is not one of {FAMILIES}")
+    assets = doc.get("assets")
+    if not isinstance(assets, list) or not assets:
+        return errs + ["assets is missing or empty"]
+    seen, files = set(), set()
+    for a in assets:
+        aid = str(a.get("id", "?"))
+        stem = aid.split(".", 1)[1] if "." in aid else aid
+        if not aid.startswith(f"{family}.") or not re.fullmatch(r"[a-z0-9_]+", stem):
+            errs.append(f"{aid}: id must be '{family}.<[a-z0-9_]+>'")
+        if aid in seen:
+            errs.append(f"{aid}: duplicate id")
+        seen.add(aid)
+        if a.get("file") != f"{family}/{stem}.glb":
+            errs.append(f"{aid}: file {a.get('file')!r} is not '{family}/{stem}.glb'")
+        cls, layer = a.get("class"), a.get("layer")
+        if cls not in CLASSES:
+            errs.append(f"{aid}: unknown class {cls!r}")
+        elif layer not in CLASSES[cls]:
+            errs.append(f"{aid}: layer {layer!r} not allowed for class {cls!r} (allowed {sorted(CLASSES[cls])})")
+        if layer not in LAYERS:
+            errs.append(f"{aid}: unknown layer {layer!r}")
+        if (layer == "decal") != str(cls).startswith("decal."):
+            errs.append(f"{aid}: only decal.* classes may use the decal layer, and they always do")
+        for key in ("radius", "footprint", "height", "weight"):
+            v = a.get(key)
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or not np.isfinite(v) or v < 0 or (key in ("radius", "weight") and v <= 0):
+                errs.append(f"{aid}: {key} {v!r} is not a valid number")
+        gl = a.get("ground")
+        if not gl or any(g not in MATERIALS for g in gl):
+            errs.append(f"{aid}: ground {gl!r} must be a non-empty list of {MATERIALS}")
+        sc = a.get("scale")
+        if not (isinstance(sc, list) and len(sc) == 2 and 0 < sc[0] <= sc[1]):
+            errs.append(f"{aid}: scale {sc!r} must be [min, max] with 0 < min <= max")
+        p = root / str(a.get("file", ""))
+        files.add(p.resolve())
+        if not p.is_file():
+            errs.append(f"{aid}: {a.get('file')} does not exist under {root}")
+            continue
+        names = glb_material_names(p.read_bytes())
+        if names is None:
+            errs.append(f"{aid}: {a.get('file')} is not a GLB")
+        else:
+            bad = [n for n in names if n not in (BAKED_MATERIAL, CONTACT_MATERIAL)]
+            if bad or BAKED_MATERIAL not in names:
+                errs.append(f"{aid}: materials {names} must be {BAKED_MATERIAL} and optionally {CONTACT_MATERIAL}")
+    fam_dir = root / str(family)
+    if fam_dir.is_dir():
+        for g in sorted(fam_dir.glob("*.glb")):
+            if g.resolve() not in files:
+                errs.append(f"stale: {family}/{g.name} is not in the manifest")
+    return errs
+
+
+def _tmp_parent() -> str | None:
+    """Temp files stay on the repo's drive (the system drive may be full)."""
+    d = HERE.parents[1] / "artifacts" / "tmp"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        return str(d)
+    except OSError:
+        return None
+
+
+def family_errors(main, family: str) -> list[str]:
+    """Shipped-bytes gate: main(tmp) must write exactly what is committed under GROUND_ROOT (json LF-normalised)."""
+    import uiart as U
+    errs: list[str] = []
+    with tempfile.TemporaryDirectory(dir=_tmp_parent()) as d:
+        main(Path(d))
+        fresh_json = Path(d) / f"{family}.json"
+        fresh_dir = Path(d) / family
+        if not fresh_json.is_file() or not fresh_dir.is_dir():
+            return [f"shipped: the generator wrote no {family}.json / {family}/ to compare with {GROUND_ROOT}"]
+        pairs = [(fresh_json, GROUND_ROOT / f"{family}.json")] + [(p, GROUND_ROOT / family / p.name) for p in sorted(fresh_dir.glob("*.glb"))]
+        for fresh_p, c in pairs:
+            rel = c.relative_to(GROUND_ROOT).as_posix()
+            if not c.exists():
+                errs.append(f"{rel} is generated but not committed")
+                continue
+            a, b = U._canon_shipped(c.read_bytes(), c.suffix), U._canon_shipped(fresh_p.read_bytes(), fresh_p.suffix)
+            if a != b:
+                errs.append(f"{rel}: the committed file ({len(a)} bytes) differs from what the generator makes ({len(b)} bytes) - "
+                            "re-run the generator and commit")
+        gen_names = {p.name for p in fresh_dir.glob("*.glb")}
+        if (GROUND_ROOT / family).is_dir():
+            for g in sorted((GROUND_ROOT / family).glob("*.glb")):
+                if g.name not in gen_names:
+                    errs.append(f"{family}/{g.name} is committed but the generator no longer makes it")
+    return errs
+
+
+# ---------------------------------------------------------------------------------------------- self-test
+def _demo_spec(layer="cover", cls="pebbles", disc=(0.0, 0.0), atlas=128) -> GroundSpec:
+    import isoforge as I
+
+    def build():
+        return [GP.Part(I.box(8.0, 6.0, 4.0, 0.3), GP.STONE)]
+    return GroundSpec(build, cls, layer, atlas, disc)
+
+
+def self_test() -> list[str]:
+    import copy
+    fails: list[str] = []
+
+    def expect(cond, msg):
+        if not cond:
+            fails.append(msg)
+
+    spec = _demo_spec()
+    a = build_ground_asset("flora", "demo_stone", spec)
+    data = glb_bytes(a)
+    expect(a["bounds"][2] > 0 and abs(min(float(p.positions[:, 1].min()) for p in a["primitives"])) < 0.01, "demo asset not grounded")
+    expect(glb_bytes(build_ground_asset("flora", "demo_stone", spec)) == data, "build is not deterministic")
+    disc = build_ground_asset("flora", "demo_disc", _demo_spec("accent", "rock", (6.0, 6.0), 256))
+    expect(glb_material_names(glb_bytes(disc)) == [BAKED_MATERIAL, CONTACT_MATERIAL], "disc materials wrong")
+    expect(budget_for("rock", "cover")["atlas"] == 128 and budget_for("rock", "accent")["atlas"] == 256, "rock budgets")
+
+    with tempfile.TemporaryDirectory(dir=_tmp_parent()) as d:
+        root = Path(d)
+        entry = manifest_entry("flora", "demo_stone", spec, a["bounds"])
+        write_family(root, "flora", [entry], {"demo_stone": data})
+        doc = json.loads((root / "flora.json").read_text(encoding="utf-8"))
+        expect(validate_manifest(doc, root) == [], f"valid manifest rejected: {validate_manifest(doc, root)}")
+        text = (root / "flora.json").read_bytes()
+        expect(text.endswith(b"\n") and b"\r" not in text, "manifest must be LF with a trailing newline")
+
+        def bad(mut, needle):
+            dd = copy.deepcopy(doc)
+            mut(dd)
+            e = validate_manifest(dd, root)
+            expect(any(needle in x for x in e), f"negative '{needle}' not caught: {e}")
+        bad(lambda x: x.__setitem__("schema", "x"), "schema")
+        bad(lambda x: x["assets"][0].__setitem__("class", "dragon"), "unknown class")
+        bad(lambda x: x["assets"][0].__setitem__("layer", "landmark"), "not allowed")
+        bad(lambda x: x["assets"][0].__setitem__("layer", "decal"), "decal")
+        bad(lambda x: x["assets"][0].__setitem__("ground", ["lava"]), "ground")
+        bad(lambda x: x["assets"][0].__setitem__("id", "flora.Bad Name"), "id must be")
+        bad(lambda x: x["assets"].append(copy.deepcopy(x["assets"][0])), "duplicate")
+        bad(lambda x: x["assets"][0].__setitem__("file", "flora/missing.glb"), "file")
+        (root / "flora" / "stale.glb").write_bytes(data)
+        expect(any("stale" in x for x in validate_manifest(doc, root)), "stale glb not caught")
+        (root / "flora" / "stale.glb").unlink()
+        (root / "flora" / "demo_stone.glb").write_bytes(b"junk")
+        expect(any("not a GLB" in x for x in validate_manifest(doc, root)), "non-GLB not caught")
+        e2 = manifest_entry("flora", "x", {"cls": "grass", "layer": "cover", "weight": 1.23456, "scale": (0.91234, 1.1)}, (1.23456, 0.5, 2.0))
+        expect(e2["radius"] == 1.235 and e2["weight"] == 1.235 and e2["scale"] == [0.912, 1.1], "rounding")
+    return fails
+
+
+if __name__ == "__main__":
+    f = self_test()
+    for m in f:
+        print("FAIL", m)
+    print("groundkit self-test:", "FAILED" if f else "ok")
+    sys.exit(1 if f else 0)
