@@ -58,6 +58,11 @@ public static class StatusBarPanel
     private const float NumeralTracking = 0.5f;
     private const float MinNumeralScale = 0.5f;
 
+    // The gem numbers when the art has no hudnum glyph for them: a size in units, not a face chosen
+    // from the scale. "l.Scale >= 3 ? Large : Body" made the face jump between 1440p and 4K and left
+    // the number at 13 px in a 100 px gem below that; the gem is 50 u, so 14 u of engraved capitals.
+    public const float GemNumberUnits = 14f;
+
     private static readonly UiColor NumberColor = new(0xF8, 0xF4, 0xE8, 255);
     private static readonly UiColor CoordsColor = new(0xA9, 0xA9, 0xA9, 255);
     private static readonly float[] NotchX = [216f, 247f, 279f];
@@ -132,12 +137,13 @@ public static class StatusBarPanel
         UiRect coords = l.FromUnits(g, 5f, 24f, 56f, 22f);
         UiRect gem = l.FromUnits(g, GemX, GemY, GemSize, GemSize);
         HudStatusSnapshot st = v.Status;
-        UiTextStyle big = l.Scale >= 3f ? UiTextStyle.Large : UiTextStyle.Body;
+        UiSizedText big = GemNumber(in l);
+        float halo = UiText.ShadowPx(in l);
         Span<char> buf = stackalloc char[48];
         int n;
         if (!hpNumeralsDrawn && PanelText.TryWritePair(buf, st.CurrentHealth, '/', st.MaxHealth, out n))
         {
-            PanelText.HaloCentred(c, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - PanelText.Height(c, big) - 4f * l.Scale, big, NumberColor);
+            UiText.PutHaloCentred(c, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - big.Px - 4f * l.Scale, in big, NumberColor, halo);
         }
 
         // Coordinates: map X and Z, truncated, in two groups.
@@ -146,9 +152,12 @@ public static class StatusBarPanel
         {
             int px = (int)MathF.Floor(Math.Clamp(p.X, -1e9f, 1e9f));
             int pz = (int)MathF.Floor(Math.Clamp(p.Z, -1e9f, 1e9f));
+            // The 22 u plate takes the default body size, which already follows the scale; it used to
+            // take the gem's face, so the coordinates jumped to the engraved capitals at 1440p.
+            float bodyH = PanelText.Height(c, UiTextStyle.Body);
             if (PanelText.TryWritePair(buf, px, ' ', pz, out n))
             {
-                PanelText.Centred(c, buf[..n], coords.X + coords.W * 0.5f, coords.Y + (coords.H - PanelText.Height(c, big)) * 0.5f, big, CoordsColor);
+                PanelText.Centred(c, buf[..n], coords.X + coords.W * 0.5f, coords.Y + (coords.H - bodyH) * 0.5f, UiTextStyle.Body, CoordsColor);
             }
         }
     }
@@ -255,20 +264,24 @@ public static class StatusBarPanel
         UiRect bracket = l.FromUnits(g, 304f - CentreStart, 11f, 32f, 36f);
         Span<char> buf = stackalloc char[32];
         float bodyH = PanelText.Height(c, UiTextStyle.Body);
+        float halo = UiText.ShadowPx(in l);
         int n;
         if (!levelNumeralsDrawn && PanelText.TryWriteInt(buf, st.Level, out n))
         {
-            PanelText.HaloCentred(c, buf[..n], cup.X + cup.W * 0.5f, cup.Y + (cup.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor);
+            PanelText.HaloCentred(c, buf[..n], cup.X + cup.W * 0.5f, cup.Y + (cup.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor, halo);
         }
 
+        // Dead by geometry: the trough is 6 u and the default text is at least 9.5 u, so this has
+        // never drawn. Kept because art with a taller trough would want it; the text is not shrunk
+        // into a 6 u slot to force it out.
         if (trough.H >= bodyH && PanelText.TryWritePercent(buf, st.ExperiencePercent, out n))
         {
-            PanelText.HaloCentred(c, buf[..n], trough.X + trough.W * 0.5f, trough.Y + (trough.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor);
+            PanelText.HaloCentred(c, buf[..n], trough.X + trough.W * 0.5f, trough.Y + (trough.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor, halo);
         }
 
         // The mode label stands on top of the bar, centred over the skill tile: the EXP trough runs
         // across the space just above the tile, and the label used to sit on it.
-        PanelText.HaloCentred(c, st.InteractionMode.ToHudLabel(), bracket.X + bracket.W * 0.5f, ModeLabelY(c, g, l), UiTextStyle.Body, NumberColor);
+        PanelText.HaloCentred(c, st.InteractionMode.ToHudLabel(), bracket.X + bracket.W * 0.5f, ModeLabelY(c, g, l), UiTextStyle.Body, NumberColor, halo);
 
         QuickbarPanel.BuildText(c, v, l, s);
     }
@@ -283,13 +296,17 @@ public static class StatusBarPanel
         }
 
         UiRect gem = ManaGemRect(l);
-        UiTextStyle big = l.Scale >= 3f ? UiTextStyle.Large : UiTextStyle.Body;
+        UiSizedText big = GemNumber(in l);
         Span<char> buf = stackalloc char[48];
         if (PanelText.TryWritePair(buf, st.CurrentMana, '/', st.MaxMana, out int n))
         {
-            PanelText.HaloCentred(c, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - PanelText.Height(c, big) - 4f * l.Scale, big, NumberColor);
+            UiText.PutHaloCentred(c, buf[..n], gem.X + gem.W * 0.5f, gem.Bottom - big.Px - 4f * l.Scale, in big, NumberColor, UiText.ShadowPx(in l));
         }
     }
+
+    // The size of the gem numbers: engraved capitals that grow with the scale instead of a face
+    // that flips at one. Capped so they stay inside the 50 u stone.
+    internal static UiSizedText GemNumber(in UiLayout l) => UiText.For(in l, GemNumberUnits, 18f, UiTextFace.Title);
 
     private static UiRect ManaGemRect(in UiLayout l) =>
         l.FromUnits(l.RightGroup, UiLayout.BarWidthUnits - GemX - GemSize - RightStart, GemY, GemSize, GemSize);

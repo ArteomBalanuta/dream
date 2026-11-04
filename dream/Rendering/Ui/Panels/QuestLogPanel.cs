@@ -28,7 +28,12 @@ public static class QuestLogPanel
 
         UiTextStyle style = UiTextStyle.Body;
         float pad = MathF.Max(2f, MathF.Round(2.5f * l.Scale));
-        float rowH = PanelText.Height(c, style) + 2f;
+        // Leading, rim and shadow were a baked 1 to 2 px, so they stayed hairlines while the rows grew.
+        float hair = UiText.ShadowPx(in l);
+        // The objective lines are drawn by the dialogue window; it has to be given the same size the
+        // rows were counted at, or the plate and its text disagree.
+        UiSizedText t = UiText.For(in l, UiText.DefaultTextUnits);
+        float rowH = PanelText.Height(c, style) + hair;
         float width = MathF.Max(MathF.Min(l.ViewportWidth * 0.3f, 150f * l.Scale), MathF.Min(l.ViewportWidth, 180f));
 
         int shown = 0;
@@ -52,14 +57,15 @@ public static class QuestLogPanel
         float x = MathF.Round(6f * l.Scale);
         float height = (rows * rowH) + (2f * pad);
         float top = MathF.Round(l.ViewportHeight * 0.3f);
-        top = MathF.Min(top, MathF.Max(0f, l.Bar.Y - height - 2f));
+        top = MathF.Min(top, MathF.Max(0f, l.Bar.Y - height - hair));
 
-        // The party plate shares this edge and can reach past 30 percent on a short viewport.
-        top = MathF.Max(top, PartyPanel.BottomOf(c, l, party) + 2f);
-        Frame(c, new UiRect(x, top, width, height));
+        // The party plate shares this edge and can reach past 30 percent on a short viewport. It
+        // measures its rows the same way this panel does, so the two plates never overlap.
+        top = MathF.Max(top, PartyPanel.BottomOf(c, l, party) + hair);
+        Frame(c, new UiRect(x, top, width, height), hair);
 
         float y = top + pad;
-        DrawLine(c, "Quests", x + pad, y, width - (2f * pad), style, Heading);
+        DrawLine(c, "Quests", x + pad, y, width - (2f * pad), style, Heading, hair);
         y += rowH;
         int drawn = 0;
         foreach (QuestHudEntry entry in quests.Entries)
@@ -70,7 +76,7 @@ public static class QuestLogPanel
             }
 
             drawn++;
-            DrawLine(c, entry.Title, x + pad, y, width - (2f * pad), style, Title);
+            DrawLine(c, entry.Title, x + pad, y, width - (2f * pad), style, Title, hair);
             y += rowH;
             foreach (QuestHudObjective objective in entry.Objectives)
             {
@@ -78,32 +84,33 @@ public static class QuestLogPanel
                     c,
                     new UiRect(x + (2f * pad), y, width - (3f * pad), rowH),
                     objective,
-                    objective.Have >= objective.Need ? Met : Body);
+                    objective.Have >= objective.Need ? Met : Body,
+                    in t);
                 y += rowH;
             }
 
             if (entry.Ready)
             {
-                DrawLine(c, "Return to the quest giver", x + (2f * pad), y, width - (3f * pad), style, Met);
+                DrawLine(c, "Return to the quest giver", x + (2f * pad), y, width - (3f * pad), style, Met, hair);
                 y += rowH;
             }
         }
     }
 
-    private static void DrawLine(IUiCanvas c, ReadOnlySpan<char> text, float x, float y, float maxWidth, UiTextStyle style, UiColor color)
+    private static void DrawLine(IUiCanvas c, ReadOnlySpan<char> text, float x, float y, float maxWidth, UiTextStyle style, UiColor color, float shadow)
     {
         text = text[..PanelText.FitLength(c, text, style, maxWidth)];
         float ty = MathF.Round(y);
-        c.Text(text, new Vector2(x + 1f, ty + 1f), style, Shadow);
+        c.Text(text, new Vector2(x + shadow, ty + shadow), style, Shadow);
         c.Text(text, new Vector2(x, ty), style, color);
     }
 
-    private static void Frame(IUiCanvas c, UiRect r)
+    private static void Frame(IUiCanvas c, UiRect r, float t)
     {
         c.Solid(r, Panel);
-        c.Solid(new UiRect(r.X, r.Y, r.W, 1f), Rim);
-        c.Solid(new UiRect(r.X, r.Bottom - 1f, r.W, 1f), Rim);
-        c.Solid(new UiRect(r.X, r.Y, 1f, r.H), Rim);
-        c.Solid(new UiRect(r.Right - 1f, r.Y, 1f, r.H), Rim);
+        c.Solid(new UiRect(r.X, r.Y, r.W, t), Rim);
+        c.Solid(new UiRect(r.X, r.Bottom - t, r.W, t), Rim);
+        c.Solid(new UiRect(r.X, r.Y, t, r.H), Rim);
+        c.Solid(new UiRect(r.Right - t, r.Y, t, r.H), Rim);
     }
 }

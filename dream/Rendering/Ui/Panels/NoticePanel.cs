@@ -135,8 +135,10 @@ public static class NoticePanel
         }
 
         float y = l.ViewportHeight * 0.38f;
-        PanelText.HaloCentred(c, HudStatusSnapshot.DeathTitle, centreX, y, UiTextStyle.Large, Error);
-        PanelText.HaloCentred(c, v.Status.RespawnLabel, centreX, y + PanelText.Height(c, UiTextStyle.Large) + 8f * l.Scale, UiTextStyle.Body, Gold);
+        // The halo keeps up with the glyphs: a 1 px outline around a 76 px title is not an outline.
+        float halo = UiText.ShadowPx(in l);
+        PanelText.HaloCentred(c, HudStatusSnapshot.DeathTitle, centreX, y, UiTextStyle.Large, Error, halo);
+        PanelText.HaloCentred(c, v.Status.RespawnLabel, centreX, y + PanelText.Height(c, UiTextStyle.Large) + 8f * l.Scale, UiTextStyle.Body, Gold, halo);
     }
 
     private static void Line(IUiCanvas c, ReadOnlySpan<char> text, float centreX, float y, float pad, float maxWidth, UiColor color)

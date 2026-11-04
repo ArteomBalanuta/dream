@@ -43,6 +43,9 @@ public static class WorldLabelsPanel
         IReadOnlyList<HudWorldLabel> labels = v.Labels;
         float maxWidth = MaxWidthUnits * l.Scale;
         float lineH = PanelText.Height(c, UiTextStyle.Body);
+        // The leading between the two lines, the halo and the hit box padding were a baked 1 or 2 px:
+        // at ui_scale 4 the halo under 38 px glyphs read as a scratch and the lines sat on each other.
+        float hair = UiText.ShadowPx(in l);
         Span<UiRect> placed = stackalloc UiRect[MaxLabels];
         int placedCount = 0;
         for (int k = 0; k < labels.Count && placedCount < MaxLabels; k++)
@@ -66,7 +69,7 @@ public static class WorldLabelsPanel
             ReadOnlySpan<char> health = string.IsNullOrEmpty(label.Health) ? default : label.Health.AsSpan();
             health = health[..PanelText.FitLength(c, health, UiTextStyle.Body, maxWidth)];
             float width = MathF.Max(c.MeasureText(name, UiTextStyle.Body), c.MeasureText(health, UiTextStyle.Body));
-            float height = (name.IsEmpty ? 0f : lineH + 1f) + (health.IsEmpty ? 0f : lineH);
+            float height = (name.IsEmpty ? 0f : lineH + hair) + (health.IsEmpty ? 0f : lineH);
             if (height <= 0f)
             {
                 continue;
@@ -83,7 +86,7 @@ public static class WorldLabelsPanel
                     UiRect o = placed[p];
                     if (box.X < o.Right && o.X < box.Right && box.Y < o.Bottom && o.Y < box.Bottom)
                     {
-                        box = box with { Y = o.Bottom + 1f };
+                        box = box with { Y = o.Bottom + hair };
                         moved = true;
                     }
                 }
@@ -104,7 +107,7 @@ public static class WorldLabelsPanel
                     : label.Click.Kind == HudLabelClickKind.PickUpGround ? ItemTierStyle.ColorOf(label.Tier) : NameColor;
                 if (live)
                 {
-                    UiRect hit = new(box.X - 2f, box.Y - 1f, box.W + 4f, box.H + 2f);
+                    UiRect hit = new(box.X - (2f * hair), box.Y - hair, box.W + (4f * hair), box.H + (2f * hair));
                     int id = IdLabel + placedCount;
                     if (i!.Hovered(id, hit))
                     {
@@ -127,13 +130,13 @@ public static class WorldLabelsPanel
 
             if (!name.IsEmpty)
             {
-                PanelText.HaloCentred(c, name, x, y, UiTextStyle.Body, nameColor);
-                y += lineH + 1f;
+                PanelText.HaloCentred(c, name, x, y, UiTextStyle.Body, nameColor, hair);
+                y += lineH + hair;
             }
 
             if (!health.IsEmpty)
             {
-                PanelText.HaloCentred(c, health, x, y, UiTextStyle.Body, HealthColor);
+                PanelText.HaloCentred(c, health, x, y, UiTextStyle.Body, HealthColor, hair);
             }
         }
     }

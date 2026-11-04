@@ -189,7 +189,10 @@ public static class ChatPanel
 
         UiTextStyle style = UiTextStyle.Body;
         float pad = MathF.Max(2f, MathF.Round(2.5f * l.Scale));
-        float rowH = PanelText.Height(c, style) + 2f;
+        // The leading between rows, the rim thickness and the caret all used to be a baked 1 or 2 px,
+        // so they stayed hairlines while the glyphs tripled with ui_scale. One scaled hairline now.
+        float hair = UiText.ShadowPx(in l);
+        float rowH = PanelText.Height(c, style) + hair;
         float width = MathF.Max(MathF.Min(l.ViewportWidth * 0.45f, 150f * l.Scale), MathF.Min(l.ViewportWidth, 200f));
         float x = MathF.Round(6f * l.Scale);
         float bottom = l.Bar.Y - MathF.Round(6f * l.Scale);
@@ -197,9 +200,9 @@ public static class ChatPanel
         if (chat.Typing)
         {
             float y = bottom - rowH - 2f * pad;
-            Frame(c, new UiRect(x, y, width, rowH + 2f * pad), Prompt);
-            DrawInput(c, chat, v, x + pad, y + pad, width - 2f * pad, style);
-            bottom = y - 2f;
+            Frame(c, new UiRect(x, y, width, rowH + 2f * pad), Prompt, hair);
+            DrawInput(c, chat, v, x + pad, y + pad, width - 2f * pad, style, hair, pad);
+            bottom = y - hair;
         }
 
         int count = Math.Min(chat.LineCount, ChatHudState.VisibleLines);
@@ -207,7 +210,7 @@ public static class ChatPanel
         {
             float h = count * rowH + 2f * pad;
             float top = bottom - h;
-            Frame(c, new UiRect(x, top, width, h), Panel);
+            Frame(c, new UiRect(x, top, width, h), Panel, hair);
             int first = chat.LineCount - count;
             for (int k = 0; k < count; k++)
             {
@@ -215,25 +218,27 @@ public static class ChatPanel
                 ReadOnlySpan<char> text = line.Text;
                 text = text[..PanelText.FitLength(c, text, style, width - 2f * pad)];
                 float ty = MathF.Round(top + pad + k * rowH);
-                c.Text(text, new Vector2(x + pad + 1f, ty + 1f), style, Shadow);
+                c.Text(text, new Vector2(x + pad + hair, ty + hair), style, Shadow);
                 c.Text(text, new Vector2(x + pad, ty), style, ChannelColor(line.Channel));
             }
         }
 
         if (chat.OnlineVisible)
         {
-            BuildOnline(c, chat, l, style, pad, rowH);
+            BuildOnline(c, chat, l, style, pad, rowH, hair);
         }
     }
 
-    private static void DrawInput(IUiCanvas c, ChatHudState chat, HudView v, float x, float y, float maxWidth, UiTextStyle style)
+    private static void DrawInput(IUiCanvas c, ChatHudState chat, HudView v, float x, float y, float maxWidth, UiTextStyle style, float hair, float pad)
     {
         ReadOnlySpan<char> input = chat.Input;
         const string Caret = ">";
-        float caretW = c.MeasureText(Caret, style) + 4f;
+        // MeasureText goes through the canvas's text scale, so the prompt gap and the scroll below
+        // are both in the size the line is actually drawn at.
+        float caretW = c.MeasureText(Caret, style) + pad;
         // Show the tail so the end being typed stays in view.
         int start = 0;
-        while (start < input.Length && c.MeasureText(input[start..], style) > maxWidth - caretW - 6f)
+        while (start < input.Length && c.MeasureText(input[start..], style) > maxWidth - caretW - pad)
         {
             start++;
         }
@@ -243,18 +248,19 @@ public static class ChatPanel
         float w = c.Text(input[start..], new Vector2(tx, y), style, World);
         if (((int)(v.AnimationSeconds * 2f) & 1) == 0)
         {
-            c.Solid(new UiRect(MathF.Round(tx + w + 1f), y, 1f, PanelText.Height(c, style)), World);
+            // The caret is as thick as the hairline: a 1 px bar beside 38 px glyphs reads as a scratch.
+            c.Solid(new UiRect(MathF.Round(tx + w + hair), y, hair, PanelText.Height(c, style)), World);
         }
     }
 
-    private static void BuildOnline(IUiCanvas c, ChatHudState chat, in UiLayout l, UiTextStyle style, float pad, float rowH)
+    private static void BuildOnline(IUiCanvas c, ChatHudState chat, in UiLayout l, UiTextStyle style, float pad, float rowH, float hair)
     {
         int names = Math.Min(chat.Online.Count, ChatHudState.MaxOnlineNames);
         float width = MathF.Max(MathF.Min(l.ViewportWidth * 0.4f, 110f * l.Scale), MathF.Min(l.ViewportWidth, 180f));
         float h = (names + 1) * rowH + 2f * pad;
         float x = MathF.Round((l.ViewportWidth - width) * 0.5f);
         float y = MathF.Round(l.ViewportHeight * 0.18f);
-        Frame(c, new UiRect(x, y, width, h), Panel);
+        Frame(c, new UiRect(x, y, width, h), Panel, hair);
 
         Span<char> header = stackalloc char[24];
         "Online: ".CopyTo(header);
@@ -273,12 +279,12 @@ public static class ChatPanel
         }
     }
 
-    private static void Frame(IUiCanvas c, UiRect r, UiColor fill)
+    private static void Frame(IUiCanvas c, UiRect r, UiColor fill, float t)
     {
         c.Solid(r, fill);
-        c.Solid(new UiRect(r.X, r.Y, r.W, 1f), Rim);
-        c.Solid(new UiRect(r.X, r.Bottom - 1f, r.W, 1f), Rim);
-        c.Solid(new UiRect(r.X, r.Y, 1f, r.H), Rim);
-        c.Solid(new UiRect(r.Right - 1f, r.Y, 1f, r.H), Rim);
+        c.Solid(new UiRect(r.X, r.Y, r.W, t), Rim);
+        c.Solid(new UiRect(r.X, r.Bottom - t, r.W, t), Rim);
+        c.Solid(new UiRect(r.X, r.Y, t, r.H), Rim);
+        c.Solid(new UiRect(r.Right - t, r.Y, t, r.H), Rim);
     }
 }

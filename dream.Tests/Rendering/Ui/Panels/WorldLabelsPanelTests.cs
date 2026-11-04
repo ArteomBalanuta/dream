@@ -17,9 +17,15 @@ public class WorldLabelsPanelTests
         return v;
     }
 
+    // 13 px times the layout's text scale: the line height the panel stacks its boxes by. The fake
+    // canvas ignored the scale until the typography pass, so these were all measured at scale 1.
+    private static float LineHeight() => UiFontSetup.BodyPixels * Layout().TextScale;
+
+    private static float CharWidth() => 7f * Layout().TextScale;
+
     private static StatusBarRecordingCanvas Run(HudView v, bool recording = true)
     {
-        StatusBarRecordingCanvas c = new(StatusBarTestData.Table, recording);
+        StatusBarRecordingCanvas c = new(StatusBarTestData.Table, recording) { TextScale = Layout().TextScale };
         WorldLabelsPanel.Build(c, v, Layout());
         return c;
     }
@@ -33,7 +39,7 @@ public class WorldLabelsPanelTests
         StatusBarCall health = c.Texts.Last(t => t.Text == "HP 4/10");
         Assert.Equal(300f, name.TextPos.Y);
         Assert.True(health.TextPos.Y > name.TextPos.Y);
-        Assert.Equal(500f, name.TextPos.X + "Slime Lv 3".Length * 7f * 0.5f, 0);
+        Assert.Equal(500f, name.TextPos.X + ("Slime Lv 3".Length * CharWidth() * 0.5f), 0);
         Assert.Empty(c.Sprites("hud.slab.normal"));
         Assert.DoesNotContain(c.Calls, x => x.Kind != StatusBarCallKind.Text);
     }
@@ -46,7 +52,7 @@ public class WorldLabelsPanelTests
 
         string drawn = c.Texts.Last().Text!;
         Assert.StartsWith("%s{0}xxx", drawn);
-        Assert.True(drawn.Length * 7f <= WorldLabelsPanel.MaxWidthUnits * 2.25f);
+        Assert.True(drawn.Length * CharWidth() <= WorldLabelsPanel.MaxWidthUnits * 2.25f);
         Assert.True(drawn.Length < hostile.Length);
         Assert.All(c.Texts, t => Assert.Equal(drawn, t.Text));
     }
@@ -71,7 +77,7 @@ public class WorldLabelsPanelTests
 
         StatusBarCall wolfHealth = c.Texts.Last(t => t.Text == "10/10");
         StatusBarCall dire = c.Texts.Last(t => t.Text == "Dire Wolf");
-        Assert.True(dire.TextPos.Y >= wolfHealth.TextPos.Y + 13f, $"second label at {dire.TextPos.Y}, first ends {wolfHealth.TextPos.Y + 13f}");
+        Assert.True(dire.TextPos.Y >= wolfHealth.TextPos.Y + LineHeight(), $"second label at {dire.TextPos.Y}, first ends {wolfHealth.TextPos.Y + LineHeight()}");
     }
 
     [Fact]

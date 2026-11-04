@@ -20,6 +20,12 @@ public static class QuickbarPanel
 
     private const float CentreStart = UiLayout.LeftGroupUnits;
 
+    // The tile text: the key digit sits at the top of the tile and the bag count at its bottom, so two
+    // line boxes have to fit a tile that is 20 u (17 u for the skill bracket). At the default 9.5 u the
+    // two met on the skill tile at ui_scale 4; 8 u capped at 9 u keeps them clear and still grows.
+    public const float TileTextUnits = 8f;
+    public const float TileTextMaxUnits = 9f;
+
     // Where each tile's icon sits, in bar units: its centre and edge. The first three are the Q, W and E
     // sockets, then the skill tile, the banner and the lens.
     private static readonly float[] CentreX = [215.5f, 249.5f, 280f, 320f, 360f, 391f];
@@ -115,7 +121,9 @@ public static class QuickbarPanel
             return;
         }
 
-        float bodyH = PanelText.Height(c, UiTextStyle.Body);
+        UiSizedText t = TileText(in l);
+        float halo = UiText.ShadowPx(in l);
+        float bodyH = t.Px;
         Span<char> buf = stackalloc char[16];
         for (int slot = 0; slot < QuickbarHudState.SlotCount; slot++)
         {
@@ -123,7 +131,7 @@ public static class QuickbarPanel
             bool empty = bar.IsEmpty(slot);
 
             buf[0] = (char)('1' + slot);
-            PanelText.HaloCentred(c, buf[..1], r.X + 4f * l.Scale, r.Y + 1f, UiTextStyle.Body, DigitColor);
+            UiText.PutHaloCentred(c, buf[..1], r.X + 4f * l.Scale, r.Y + halo, in t, DigitColor, halo);
             if (empty)
             {
                 continue;
@@ -137,12 +145,12 @@ public static class QuickbarPanel
                 ulong seconds = (remaining + SimulationClock.AuthoritativeTicksPerSecond - 1) / SimulationClock.AuthoritativeTicksPerSecond;
                 if (PanelText.TryWriteInt(buf, (int)Math.Min(seconds, 9999UL), out n))
                 {
-                    PanelText.HaloCentred(c, buf[..n], r.X + r.W * 0.5f, r.Y + (r.H - bodyH) * 0.5f, UiTextStyle.Body, SecondsColor);
+                    UiText.PutHaloCentred(c, buf[..n], r.X + r.W * 0.5f, r.Y + (r.H - bodyH) * 0.5f, in t, SecondsColor, halo);
                 }
             }
             else if (!HasIcon(bar, s, slot) && (n = WriteInitials(buf, bar.LabelOf(slot))) > 0)
             {
-                PanelText.HaloCentred(c, buf[..n], r.X + r.W * 0.5f, r.Y + (r.H - bodyH) * 0.5f, UiTextStyle.Body, GlyphColor);
+                UiText.PutHaloCentred(c, buf[..n], r.X + r.W * 0.5f, r.Y + (r.H - bodyH) * 0.5f, in t, GlyphColor, halo);
             }
 
             if (bar.Slot(slot).Kind == QuickbarEntryKind.Item)
@@ -150,12 +158,15 @@ public static class QuickbarPanel
                 int count = bar.ItemCount(slot);
                 if (PanelText.TryWriteInt(buf, Math.Min(count, 999), out n))
                 {
-                    float w = c.MeasureText(buf[..n], UiTextStyle.Body);
-                    PanelText.HaloCentred(c, buf[..n], r.Right - w * 0.5f - 1f, r.Bottom - bodyH, UiTextStyle.Body, count > 0 ? CountColor : EmptyCountColor);
+                    float w = UiText.Measure(c, buf[..n], in t);
+                    UiText.PutHaloCentred(c, buf[..n], r.Right - (w * 0.5f) - halo, r.Bottom - bodyH, in t, count > 0 ? CountColor : EmptyCountColor, halo);
                 }
             }
         }
     }
+
+    // The size of every glyph on a tile. Capped, because the tile comes from the art and cannot grow.
+    internal static UiSizedText TileText(in UiLayout l) => UiText.For(in l, TileTextUnits, TileTextMaxUnits);
 
     private static bool HasIcon(QuickbarHudState bar, UiSpriteTable s, int slot)
     {
