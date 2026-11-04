@@ -721,6 +721,7 @@ public partial class PlayScene
         Keys.Q => _captureKeys.HasFlag(HudCaptureKeys.Q),
         Keys.R => _captureKeys.HasFlag(HudCaptureKeys.R),
         Keys.LeftShift => _captureKeys.HasFlag(HudCaptureKeys.Shift),
+        Keys.Z => _captureKeys.HasFlag(HudCaptureKeys.Z),
         _ => false
     };
 

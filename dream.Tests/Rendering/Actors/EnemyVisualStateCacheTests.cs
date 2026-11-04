@@ -152,6 +152,79 @@ public class EnemyVisualStateCacheTests
         Assert.Equal(clips.Move, clips.Resolve(EnemyBehaviorState.Chasing, stoppedGait));
     }
 
+    // F4: the snap guard is a SPEED, not a distance. A 2.9 m step passed the old 3 m distance gate,
+    // but at 60 fps it is a 174 m/s sample, and with SpeedSmoothing 0.5 one of those stays above the
+    // 3.0 m/s gait threshold for about six frames (174, 87, 43, 22, 11, 5.4, 2.7) while
+    // ResolveSprinting's latch holds the gallop until it falls below 2.6: a gallop flash on a
+    // walking wolf. Those samples are real - when ClientScenePresenter.ApplyEnemySample has just
+    // cleared the interpolation buffer, EnemyRenderer falls back to the snapshot-quantised
+    // actor.Position and the measurement becomes a train of spikes and zeros.
+    //
+    // This test FAILS against the distance-only guard: it is the whole discrimination.
+    [Fact]
+    public void ObserveMotion_DiscardsASpikeSampleUnderTheOldDistanceGate_SoTheGallopDoesNotFlash()
+    {
+        EnemyVisualState state = new();
+        EnemyClipSet clips = EnemyVisualCatalog.WolfClips;
+        const float dt = 1f / 60f;
+        const float walkSpeed = 1.4f;
+
+        Vector3 position = Vector3.Zero;
+        state.ObserveMotion(position, dt);
+        for (int i = 0; i < 240; i++)
+        {
+            position += new Vector3(walkSpeed * dt, 0f, 0f);
+            state.ObserveMotion(position, dt);
+        }
+
+        Assert.Equal(walkSpeed, state.ObservedSpeed, 3);
+        Assert.Equal(clips.Move, clips.Resolve(EnemyBehaviorState.Chasing, state.ResolveGaitSpeed(in clips, EnemyBehaviorState.Chasing)));
+
+        // One frame of snapped pose: 2.9 m in a 60 fps frame, under the old 3 m distance gate and
+        // 174 m/s of implied speed.
+        position += new Vector3(2.9f, 0f, 0f);
+        state.ObserveMotion(position, dt);
+        Assert.True(2.9f < 3f, "the spike has to be under the old distance gate or it proves nothing");
+
+        // Then the walk resumes. Not one of these frames may show the gallop.
+        for (int i = 0; i < 30; i++)
+        {
+            float gait = state.ResolveGaitSpeed(in clips, EnemyBehaviorState.Chasing);
+            Assert.Equal(clips.Move, clips.Resolve(EnemyBehaviorState.Chasing, gait));
+            Assert.True(
+                state.ObservedSpeed < clips.SprintSpeedThreshold,
+                $"frame {i}: the spike leaked into the measured speed ({state.ObservedSpeed} m/s)");
+            position += new Vector3(walkSpeed * dt, 0f, 0f);
+            state.ObserveMotion(position, dt);
+        }
+    }
+
+    // And the gate is wide enough that nothing an enemy actually does is thrown away: every chase
+    // speed in the catalog has room to spare under it.
+    [Fact]
+    public void TheSnapGuard_IsAboveEveryChaseSpeedInTheCatalog()
+    {
+        foreach (EnemyClipSet clips in new[] { EnemyVisualCatalog.WolfClips, EnemyVisualCatalog.HoundClips })
+        {
+            Assert.True(
+                EnemyVisualState.MaxObservedSpeed >= 2f * clips.SprintReferenceSpeed,
+                $"the snap guard {EnemyVisualState.MaxObservedSpeed} m/s is too close to a chase at {clips.SprintReferenceSpeed} m/s");
+        }
+
+        // A real gallop is measured, not discarded.
+        EnemyVisualState state = new();
+        const float dt = 1f / 60f;
+        Vector3 position = Vector3.Zero;
+        state.ObserveMotion(position, dt);
+        for (int i = 0; i < 240; i++)
+        {
+            position += new Vector3(6f * dt, 0f, 0f);
+            state.ObserveMotion(position, dt);
+        }
+
+        Assert.Equal(6f, state.ObservedSpeed, 3);
+    }
+
     [Fact]
     public void ObserveMotion_AllocatesNothing()
     {

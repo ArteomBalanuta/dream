@@ -350,27 +350,49 @@ public sealed class PlayerAnimationStateMachine
         if (_moving && !inputs.Airborne)
         {
             _gait = ResolveGaitTier(inputs.HorizontalSpeed, _gait);
-            if (_gait == PlayerGaitTier.Sprint)
+            // EVERY tier goes through C2's sector table, the sprint included. The walk and the run
+            // tier need it because the run is the default cruise, so a run that skipped the table
+            // would leave the moonwalk fix applying only at speeds the player almost never moves
+            // at. The sprint goes through it because you CANNOT SPRINT SIDEWAYS: that branch used
+            // to bypass the table and play the forward sprint cycle with the legs yawed up to 90
+            // degrees, which was unreachable dead code while SprintSpeedThreshold was 9 m/s
+            // against a 6 m/s cap and became reachable in this wave. Nobody has ever looked at a
+            // sideways or backwards sprint, so rather than ship a never-inspected pose for a
+            // capture to judge, a sprint outside the forward sector falls through to the run
+            // tier's handling below and keeps the directional clip.
+            //
+            // Running the table on every path also means _walkClip is always current: the old
+            // sprint branch left it stale, so the sector hysteresis resumed from whatever sector
+            // the body walked in before a long sprint.
+            string sector = ResolveWalkClip(rawTwist, _walkClip, out float residual);
+            _walkClip = sector;
+            bool forwardSector = string.Equals(sector, WalkClip, StringComparison.Ordinal);
+            float reference;
+            if (_gait == PlayerGaitTier.Sprint && forwardSector)
             {
-                // One sprint clip, so the twist stays the raw delta under the wider sprint clamp.
+                // One sprint clip for the whole forward sector, so the twist stays the RAW delta
+                // under the wider sprint clamp (legTwist as computed above) - the clip carries no
+                // direction of its own, so the pose layers must carry all of it.
                 clip = SprintClip;
+                reference = ReferenceSprintSpeed;
             }
             else
             {
-                // The walk AND the run tier go through C2's sector table: the run tier is the
-                // default cruise, so a run that skipped the table would leave the moonwalk fix
-                // applying only at speeds the player almost never moves at. The forward sector
-                // swaps in the run cycle; the other three sectors reuse the directional walk clips
-                // played faster, and the sector hysteresis keeps holding the sector's own name.
-                string sector = ResolveWalkClip(rawTwist, _walkClip, out float residual);
-                _walkClip = sector;
-                clip = _gait == PlayerGaitTier.Run && string.Equals(sector, WalkClip, StringComparison.Ordinal)
-                    ? RunClip
-                    : sector;
+                // The forward sector swaps in the tier's own cycle; the other three reuse the
+                // directional walk clips. Those three are walk-AUTHORED and unchanged by this
+                // wave, so their playback divides by the WALK reference and not by the tier's: at
+                // the run cruise the tier's own reference gives 4.3 / 4.3 = 1.0 and the feet skate
+                // about 2.7x, while the walk reference clamps at MaxPlaybackSpeed and gets the
+                // legs 1.6x faster. A sprint that fell through to here lands on the same clamp.
+                clip = forwardSector && _gait == PlayerGaitTier.Run ? RunClip : sector;
+                reference = forwardSector ? ReferenceSpeed(_gait) : ReferenceWalkSpeed;
+                // A directional clip carries its sector, so the pose layers get only the RESIDUAL
+                // under the narrow clamp. Passing the raw delta here would double-count the turn:
+                // it looks right from the front and wrong from the side.
                 legTwist = Math.Clamp(residual, -MaxLegTwistRadians, MaxLegTwistRadians);
             }
 
-            speed = Math.Clamp(inputs.HorizontalSpeed / ReferenceSpeed(_gait), MinPlaybackSpeed, MaxPlaybackSpeed);
+            speed = Math.Clamp(inputs.HorizontalSpeed / reference, MinPlaybackSpeed, MaxPlaybackSpeed);
         }
         else
         {

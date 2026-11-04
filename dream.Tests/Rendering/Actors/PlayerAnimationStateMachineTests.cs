@@ -135,29 +135,43 @@ public class PlayerAnimationStateMachineTests
         Assert.True(MathF.Abs(frame.LegTwistRadians) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f);
     }
 
-    // The sprint deliberately keeps ONE clip (C2), so nothing covers its direction but the twist -
-    // and the twist it gets is the RAW delta, not a sector residual. It therefore keeps the wider
-    // pre-C2 clamp: at pi/4 a backwards sprint would leave the stride 135 degrees off its travel,
-    // worse than the 90 degrees it was before this wave and closer to the moonwalk C2 set out to
-    // kill. The same holds for an attack while moving, which also plays one clip.
+    // YOU CANNOT SPRINT SIDEWAYS. The sprint keeps ONE clip and the RAW delta under the wider
+    // pre-C2 clamp, but only in the FORWARD sector: the clip carries no direction of its own, so
+    // the twist has to, and clamping its raw delta to pi/4 would leave a 135-degree offset. Outside
+    // the forward sector the sprint falls through to the directional clip instead - that branch
+    // used to play the forward sprint cycle with the legs yawed up to 90 degrees, which nobody ever
+    // looked at because SprintSpeedThreshold 9 against a 6 m/s cap made it dead code until this
+    // wave. The same single-clip/raw-delta treatment still holds for an attack while moving.
     [Fact]
-    public void Sprinting_KeepsOneClip_AndTheRawDeltaUnderTheWiderSprintClamp()
+    public void SprintingForward_KeepsOneClip_AndTheRawDeltaUnderTheWiderSprintClamp()
     {
-        PlayerAnimationFrame backwards = new PlayerAnimationStateMachine()
-            .Update(Inputs(speed: 10f, twist: MathF.PI), Dt);
-        PlayerAnimationFrame diagonal = new PlayerAnimationStateMachine()
-            .Update(Inputs(speed: 10f, twist: -MathF.PI / 3f), Dt);
+        PlayerAnimationFrame forward = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: 10f, twist: MathF.PI / 8f), Dt);
 
-        Assert.Equal("sprint", backwards.Clip);
+        Assert.Equal("sprint", forward.Clip);
         Assert.Equal(MathF.PI / 2f, PlayerAnimationStateMachine.MaxSprintLegTwistRadians, 5);
-        // Straight backwards: the stride ends 90 degrees off travel, as it did before C2 - not the
-        // 135 degrees a pi/4 clamp would leave.
-        Assert.Equal(PlayerAnimationStateMachine.MaxSprintLegTwistRadians, backwards.LegTwistRadians, 5);
-        Assert.True(backwards.LegTwistRadians > PlayerAnimationStateMachine.MaxLegTwistRadians);
-        Assert.Equal(MathF.PI - backwards.LegTwistRadians, MathF.PI / 2f, 5);
-        // Inside the sprint clamp the raw delta passes through untouched.
-        Assert.Equal("sprint", diagonal.Clip);
-        Assert.Equal(-MathF.PI / 3f, diagonal.LegTwistRadians, 5);
+        // The raw delta, not a residual: inside the forward sector the two coincide, and the point
+        // is which clamp applies - the sprint's, which is wider than MaxLegTwistRadians.
+        Assert.Equal(MathF.PI / 8f, forward.LegTwistRadians, 5);
+        Assert.True(PlayerAnimationStateMachine.MaxSprintLegTwistRadians > PlayerAnimationStateMachine.MaxLegTwistRadians);
+    }
+
+    [Theory]
+    [InlineData(MathF.PI, "walk-back")]
+    [InlineData(-MathF.PI / 2f, "walk-strafe-left")]
+    [InlineData(MathF.PI / 2f, "walk-strafe-right")]
+    public void SprintingSideways_FallsThroughToTheDirectionalClip(float twist, string expectedClip)
+    {
+        PlayerAnimationFrame frame = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: 10f, twist: twist), Dt);
+
+        Assert.Equal(expectedClip, frame.Clip);
+        // And it takes the run tier's bookkeeping with it: the residual under the NARROW clamp,
+        // because the clip now carries the sector. Passing the raw delta here would double-count
+        // the turn, which looks right from the front and wrong from the side.
+        PlayerAnimationStateMachine.ResolveWalkClip(twist, out float residual);
+        Assert.Equal(residual, frame.LegTwistRadians, 5);
+        Assert.True(MathF.Abs(frame.LegTwistRadians) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f);
     }
 
     // An attack while moving also plays one clip (the swing), so it takes the same wide clamp.
@@ -535,12 +549,12 @@ public class PlayerAnimationStateMachineTests
     // does - the forward sector swaps in the run cycle and the other sectors reuse the directional
     // walk clips played faster. A run tier that played one clip would silently switch the moonwalk
     // fix off at the speed the player actually moves at, and still look right from the front. The
-    // sprint tier deliberately keeps its single clip.
+    // sprint tier now goes through the same table, and only its forward sector keeps its own clip.
     [Theory]
-    [InlineData(MathF.PI / 2f, "walk-strafe-right")]
-    [InlineData(MathF.PI, "walk-back")]
-    [InlineData(0f, "run")]
-    public void TheRunTier_StillPicksTheDirectionalClip(float twist, string expectedClip)
+    [InlineData(MathF.PI / 2f, "walk-strafe-right", "walk-strafe-right")]
+    [InlineData(MathF.PI, "walk-back", "walk-back")]
+    [InlineData(0f, "run", "sprint")]
+    public void TheRunTier_StillPicksTheDirectionalClip(float twist, string expectedClip, string expectedSprintClip)
     {
         PlayerAnimationFrame running = new PlayerAnimationStateMachine()
             .Update(Inputs(speed: PlayerAnimationStateMachine.ReferenceRunSpeed, twist: twist), Dt);
@@ -549,18 +563,78 @@ public class PlayerAnimationStateMachineTests
 
         Assert.Equal(expectedClip, running.Clip);
         Assert.True(MathF.Abs(running.LegTwistRadians) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f);
-        Assert.Equal("sprint", sprinting.Clip);
+        Assert.Equal(expectedSprintClip, sprinting.Clip);
     }
 
-    // The run tier plays the directional walk clips FASTER: they are authored for the walk, so the
-    // playback rate is still the run tier's, not the walk's.
-    [Fact]
-    public void TheRunTier_PlaysTheDirectionalWalkClipsAtTheRunRate()
+    // F2: the three directional sectors play WALK-authored clips, so their playback rate divides by
+    // the WALK reference and not by the tier's. Dividing by the tier's own reference gave
+    // 4.3 / 4.3 = 1.0 at the run cruise - a walk cadence under a body moving 2.7x faster, which is
+    // exactly the skate D5 set out to remove, met in one sector out of four. The walk reference
+    // runs into MaxPlaybackSpeed instead, which is the fastest these clips can legibly play.
+    [Theory]
+    [InlineData(PlayerAnimationStateMachine.ReferenceWalkSpeed, 1f)]
+    [InlineData(PlayerAnimationStateMachine.ReferenceRunSpeed, PlayerAnimationStateMachine.MaxPlaybackSpeed)]
+    [InlineData(PlayerAnimationStateMachine.ReferenceSprintSpeed, PlayerAnimationStateMachine.MaxPlaybackSpeed)]
+    public void TheDirectionalWalkClips_PlayAtTheWalkReferencedRate(float speed, float expectedPlayback)
     {
         PlayerAnimationFrame frame = new PlayerAnimationStateMachine().Update(
-            Inputs(speed: PlayerAnimationStateMachine.ReferenceRunSpeed, twist: MathF.PI), Dt);
+            Inputs(speed: speed, twist: MathF.PI), Dt);
 
         Assert.Equal("walk-back", frame.Clip);
-        Assert.Equal(1f, frame.PlaybackSpeed, 2);
+        Assert.Equal(expectedPlayback, frame.PlaybackSpeed, 2);
+        // Said as the ratio that matters: the legs run at the walk's rate times the clamp, never at
+        // the authored walk rate while the body crosses the ground three times as fast.
+        Assert.Equal(
+            Math.Clamp(
+                speed / PlayerAnimationStateMachine.ReferenceWalkSpeed,
+                PlayerAnimationStateMachine.MinPlaybackSpeed,
+                PlayerAnimationStateMachine.MaxPlaybackSpeed),
+            frame.PlaybackSpeed,
+            4);
+    }
+
+    // The forward sector is the one that keeps the tier's own reference: its clip is authored for
+    // that tier's speed, so playback 1.0 is correct there and only there.
+    [Fact]
+    public void TheForwardSector_KeepsTheTiersOwnReference()
+    {
+        foreach ((float speed, string clip) in new[]
+        {
+            (PlayerAnimationStateMachine.ReferenceWalkSpeed, "walk"),
+            (PlayerAnimationStateMachine.ReferenceRunSpeed, "run"),
+            (PlayerAnimationStateMachine.ReferenceSprintSpeed, "sprint")
+        })
+        {
+            PlayerAnimationFrame frame = new PlayerAnimationStateMachine().Update(Inputs(speed: speed), Dt);
+            Assert.Equal(clip, frame.Clip);
+            Assert.Equal(1f, frame.PlaybackSpeed, 2);
+        }
+    }
+
+    // The nit the sprint branch used to carry: it never updated the sector it was holding, so after
+    // a long sprint the sector hysteresis resumed from whatever sector the body walked in before.
+    // Running the table on every tier fixes it by construction - this is the regression guard.
+    [Fact]
+    public void ALongSprint_LeavesTheSectorUpToDate_NotStale()
+    {
+        PlayerAnimationStateMachine machine = new();
+
+        // Walk out to the left strafe sector, so a stale sector would be "walk-strafe-left".
+        for (int i = 0; i < 60; i++)
+        {
+            Assert.Equal("walk-strafe-left", machine.Update(Inputs(speed: 1.6f, twist: -MathF.PI / 2f), Dt).Clip);
+        }
+
+        // Sprint forward for a while, then walk at a delta just inside the forward sector's sticky
+        // band on the LEFT boundary. A stale left-strafe sector would hold the strafe there; the
+        // sector the sprint actually ran is the forward one, which holds the walk.
+        for (int i = 0; i < 60; i++)
+        {
+            Assert.Equal("sprint", machine.Update(Inputs(speed: 10f, twist: 0f), Dt).Clip);
+        }
+
+        float justPast = -(PlayerAnimationStateMachine.StrafeSectorStartRadians +
+            (PlayerAnimationStateMachine.SectorHysteresisRadians * 0.5f));
+        Assert.Equal("walk", machine.Update(Inputs(speed: 1.6f, twist: justPast), Dt).Clip);
     }
 }
