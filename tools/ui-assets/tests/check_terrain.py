@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -45,7 +46,7 @@ GATES = {
     "alpha_p1_max": 30.0,
     "alpha_p99_min": 225.0,
     "alpha_seam_max": 1.20,      # the height wraps like the colour
-    "alpha_corr_min": 0.05,      # height and luma agree in sign: crests catch light, crevices are dark
+    "alpha_corr_min": 0.15,      # height and luma agree in sign: crests catch light, crevices are dark (measured .22 to .69)
     "autocorr_max": 0.45,        # no 4x4-style repetition inside the tile (see repetition())
 }
 # TILE_LUMA of gen_ground_decals before the dark rework. Ratchet: every tile must now be at or below RATCHET x this.
@@ -56,19 +57,19 @@ RATCHET = 0.85
 # measured value, and keep it as tight as the measurement allows.
 OVERRIDES: dict[str, dict] = {
     # Soil, mud and fractured rock are grain-first by design (fine clods, pebbles, chips), so their 4 u over 0.5 u band
-    # ratio sits below the default. Measured 2026-11: grass_side .215, grass_bottom .234, dirt .235, mud .336, rock .280.
+    # ratio sits below the default. Measured 2026-11: grass_side .215, grass_bottom .234, dirt .178, mud .336, rock .280.
     # Their big shapes come from albedo mottling and the 8 u fragments, not from grain-free relief.
     "grass_side": {"form_ratio_min": 0.18},
     "grass_bottom": {"form_ratio_min": 0.18},
-    "dirt": {"form_ratio_min": 0.15},
+    "dirt": {"form_ratio_min": 0.17},
     "mud": {"form_ratio_min": 0.25},
     "rock": {"form_ratio_min": 0.23},
     # Measured 2026-11 on the dark set: cobble .299 (setts are 5 u, joints are fine detail), sod .387 and path .3999 (blade ridges),
-    # gravel .112 (pebbles of 0.6 to 3 u over grit are grain by construction), dirt .178.
-    "stone": {"form_ratio_min": 0.25},
-    "grass_top": {"form_ratio_min": 0.33},
-    "grass_path": {"form_ratio_min": 0.35},
-    "sand": {"form_ratio_min": 0.09},
+    # gravel .112 (pebbles of 0.6 to 3 u over grit are grain by construction). Each floor is the measurement minus about 0.01.
+    "stone": {"form_ratio_min": 0.29},
+    "grass_top": {"form_ratio_min": 0.38},
+    "grass_path": {"form_ratio_min": 0.39},
+    "sand": {"form_ratio_min": 0.10},
 }
 
 
@@ -233,10 +234,10 @@ def format_errors(name: str, im: np.ndarray, size: list) -> list[str]:
     return errs
 
 
-def shipped_copy_errors(name: str, im: np.ndarray, forge_root: Path) -> list[str]:
+def shipped_copy_errors(name: str, forge_root: Path, terrain_root: Path = TERRAIN) -> list[str]:
     """The engine's copy dream/animations/library/forge/<n>/<n>.albedo.png must be byte-identical to terrain/<n>.png."""
     p = forge_root / name / f"{name}.albedo.png"
-    src = TERRAIN / f"{name}.png"
+    src = terrain_root / f"{name}.png"
     if not p.exists():
         return [f"{name}: shipped copy {p} missing"]
     if p.read_bytes() != src.read_bytes():
@@ -326,6 +327,20 @@ def self_test() -> list[str]:
             errs.append(f"self-test: the format {label} negative reported {got}, expected exactly one {want!r}")
     if format_errors("selftest.clean", np.full((64, 64, 4), 255, np.uint8), [64, 64]):
         errs.append("self-test: a clean 64x64 opaque tile fails the format gate, so no negative above is specific")
+    # Shipped copy negatives: a missing and a differing engine copy must each fail, an identical one must pass.
+    with tempfile.TemporaryDirectory() as tmp:
+        terr, forge = Path(tmp) / "terrain", Path(tmp) / "forge"
+        (forge / "t").mkdir(parents=True)
+        terr.mkdir()
+        (terr / "t.png").write_bytes(b"tile-a")
+        if not any("missing" in e for e in shipped_copy_errors("t", forge, terr)):
+            errs.append("self-test: a missing shipped copy did not fail")
+        (forge / "t" / "t.albedo.png").write_bytes(b"tile-b")
+        if not any("differs" in e for e in shipped_copy_errors("t", forge, terr)):
+            errs.append("self-test: a differing shipped copy did not fail")
+        (forge / "t" / "t.albedo.png").write_bytes(b"tile-a")
+        if shipped_copy_errors("t", forge, terr):
+            errs.append("self-test: an identical shipped copy fails, so the negatives above are not specific")
     return errs
 
 
@@ -352,6 +367,7 @@ def main() -> int:
             continue
         tiles[n] = im
         errs += format_errors(n, im, sizes.get(n, [gen_terrain.TILE_PX] * 2))
+        errs += shipped_copy_errors(n, FORGE_ROOT)
     if TERRAIN.exists():
         wanted = {f"{n}.png" for n in NAMES} | {"terrain_manifest.json", "terrain_sheet.png"}
         errs += [f"stale committed file {p.name}: no generator tile produces it" for p in sorted(TERRAIN.iterdir()) if p.name not in wanted]

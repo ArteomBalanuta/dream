@@ -27,6 +27,9 @@ def main(argv: list[str]) -> int:
     only = None
     if "--only" in argv:
         i = argv.index("--only")
+        if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+            print("usage: regen_terrain.py [--only a,b] [--decals]   (--only needs a comma separated tile list)", file=sys.stderr)
+            return 2
         only = argv[i + 1].split(",")
     res: dict = {}
     gen_terrain.main(HERE, only, ship_root=ROOT / "dream" / "animations" / "library" / "forge", results=res)
