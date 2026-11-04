@@ -64,8 +64,8 @@ content footprints): `references/asset-families.md`. Ground schema, budgets and 
 5. Regenerate the family into its shipped location with a **full** run of that generator (no `--only`, no out dir):
    `python tools/ui-assets/gen_ground_stone.py --preview` (stone and decals write GLBs, manifest and sheet in one
    run; flora needs `gen_ground_flora.py` and then `gen_ground_flora.py --preview`, which writes only the sheet).
-   A ground `--only` run rewrites `<family>.json` with only the named
-   stems, so never point `--only` at the shipped root. `build_all.py` regenerates every UI atlas plus actors, props
+   A ground `--only` run writes only the named GLBs and leaves `<family>.json` untouched (it prints a note), so
+   a new stem only enters the manifest through a full run. `build_all.py` regenerates every UI atlas plus actors, props
    and ground (not terrain or iso) and rewrites all manifests; use it only when a shared kit changed.
 6. Run the family gate in full, then hygiene:
    `python tools/ui-assets/tests/check_ground_stone.py` and `python tools/ui-assets/tests/check_sources.py`.
@@ -112,5 +112,5 @@ Rules, numbers and a symptom -> fix table: `references/gates-and-failures.md`.
 - `azimuth` / `seam_share` red on a tiny asset: measure, then a commented `OVERRIDES` entry with the measured value.
 - Manifest differs only on Windows: missing `text eol=lf` pin in `.gitattributes` for that JSON path.
 - `check_sources` red on a new generator: a direct `import gen_props` / `import groundkit`; use `importlib`.
-- Manifest suddenly holds one entry: an `--only` run hit the shipped root; rerun the full family.
+- New stem missing from the manifest, or a GLB flagged stale: it was only written by an `--only` run; rerun the full family.
 - Asset missing in game: unknown class/layer/material in C#; read `[render-fault] ground-assets` lines in stdout.

@@ -68,7 +68,7 @@ as far as needed and a comment with the reason, e.g. `"stump_axe": {"azimuth_max
 | `quad` / `lowfreq` red | a directional key or gradient got baked (tint ramp along an axis, light in the material) | bake albedo only; keep tints as patchy `waves3` mottle, not a ramp |
 | shipped-bytes red after editing a generator | committed output is stale | regenerate the family (full run) and commit GLBs and manifest together |
 | manifest bytes differ only on Windows | CRLF checkout | `.gitattributes` must pin `text eol=lf` for the manifest path (ground, iso, terrain are pinned); GLB/PNG are `binary`. A new JSON output path needs a new pin |
-| manifest suddenly lists one asset | ran `--only` into the shipped root | rerun the full family (no `--only`) into the default root |
+| new stem missing from the manifest / GLB reported stale | written by an `--only` run, which never touches the manifest | rerun the full family (no `--only`) into the default root |
 | `stale: <family>/x.glb is not in the manifest` | removed or renamed a stem, the old GLB is still on disk | delete the old GLB from the family folder and commit the removal |
 | `check_sources` red: `import gen_props` | direct sibling import | `importlib.import_module("gen_props")` |
 | `check_sources` red: `reads ...` | a generator reads a file | build from code; if it re-reads its own output, add a `READ_ALLOW` entry with the reason |

@@ -16,7 +16,7 @@
 
 ## Findings worth keeping
 
-- A ground generator run with `--only` writes `<family>.json` with only the named stems. Iterate into a scratch
-  root; regenerate the shipped family with a full run.
+- A ground generator run with `--only` writes only the named GLBs and leaves `<family>.json` untouched (fixed in
+  ground loop 1; it used to truncate the manifest). Iterate into a scratch root; regenerate with a full run.
 - `gen_ground_decals.TILE_LUMA` mirrors the terrain tiles in `dream/animations/library/forge`; retuning a terrain
   tile makes `check_ground_decals.py` red until it is updated.
