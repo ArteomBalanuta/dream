@@ -100,4 +100,106 @@ public class GroundEdgeCaseTests
 
         Assert.Equal(rebuilds, index.RebuildCount);
     }
+
+    [Fact]
+    public void ADocument_WithAnotherSchema_OrNone_IsSkippedWithAFault()
+    {
+        GroundTestSets.Faults faults = new();
+        string entry = GroundTestSets.Entry("flora.a", "grass", "cover", 0.2f, 0.1f, 0.2f, ["grass"]);
+        string v2 = GroundTestSets.Manifest(entry).Replace("dream.ground/1", "dream.ground/2");
+        string none = $$"""{ "assets": [ {{entry}} ] }""";
+        string good = GroundTestSets.Manifest(GroundTestSets.Entry("stone.rock", "rock", "accent", 0.8f, 0.5f, 0.8f, ["stone"]));
+
+        GroundAssetSet set = GroundAssetSet.Parse([("v2.json", v2), ("none.json", none), ("good.json", good)], GroundTestSets.Dir, faults);
+
+        Assert.Equal(["stone.rock"], set.Assets.Select(a => a.Id));
+        Assert.Equal(2, faults.Lines.Count);
+        Assert.All(faults.Lines, l => Assert.Contains("schema", l));
+    }
+
+    [Fact]
+    public void AColumn_WithAMaterialBeyondTheEnum_IsSkipped_NotIndexedOutOfRange()
+    {
+        StaticGround ground = new();
+        for (int z = 0; z < 30; z++)
+        {
+            for (int x = 0; x < 30; x++)
+            {
+                ground.Add(x, 0, z, true, x >= 10 && x < 20 ? (GeometryMaterialId)99 : GeometryMaterialId.Grass);
+            }
+        }
+
+        ground.Seal();
+
+        List<GroundPlacement> placed = GroundTestSets.Layout(ground, [], GroundTestSets.Synthetic());
+
+        Assert.NotEmpty(placed);
+        Assert.All(placed, p => Assert.True(p.Position.X < 10f || p.Position.X >= 20f, $"{p} stands on the unknown material"));
+    }
+
+    [Fact]
+    public void ADecal_NeverHangsOverAStep()
+    {
+        // Grass at level 0 on the west, a one-cell step up at x >= 20: any decal whose disc reaches the step is refused.
+        StaticGround ground = new();
+        for (int z = 0; z < 40; z++)
+        {
+            for (int x = 0; x < 40; x++)
+            {
+                ground.Add(x, x >= 20 ? 1 : 0, z, true, GeometryMaterialId.Grass);
+            }
+        }
+
+        ground.Seal();
+        GroundAssetSet assets = GroundAssetSet.Parse(
+            [("d.json", GroundTestSets.Manifest(GroundTestSets.Entry("decals.dirt", "decal.dirt", "decal", 0.9f, 0f, 0f, ["grass"], scaleMin: 1f, scaleMax: 1f)))],
+            GroundTestSets.Dir,
+            new GroundTestSets.Faults());
+
+        List<GroundPlacement> placed = GroundTestSets.Layout(ground, [], assets);
+
+        Assert.NotEmpty(placed);
+        foreach (GroundPlacement p in placed)
+        {
+            bool west = p.Position.X < 20f;
+            float edgeDistance = MathF.Abs(p.Position.X - 20f);
+            Assert.True(edgeDistance >= 0.9f, $"{p} is within its radius of the step");
+            Assert.Equal(west ? 1f : 2f, MathF.Floor(p.Position.Y + 0.5f));
+        }
+    }
+
+    [Fact]
+    public void CoverAndDecals_KeepOffTheCellsUnderAnAccentOrLandmark()
+    {
+        (PropIndex props, StaticGround ground) = GroundTestSets.World(WorldDefaults.ServerNewWorldSize);
+        GroundAssetSet assets = GroundAssetSet.LoadShipped();
+
+        List<GroundPlacement> placed = GroundTestSets.Layout(ground, props.Placements, assets);
+
+        List<GroundPlacement> big = placed.Where(p => assets.Assets[p.Asset].Layer >= GroundLayer.Accent).ToList();
+        Assert.NotEmpty(big);
+        foreach (GroundPlacement small in placed.Where(p => assets.Assets[p.Asset].Layer <= GroundLayer.Cover))
+        {
+            foreach (GroundPlacement b in big)
+            {
+                float radius = assets.Assets[b.Asset].Radius * b.Scale;
+                float dx = (MathF.Floor(small.Position.X) + 0.5f) - b.Position.X;
+                float dz = (MathF.Floor(small.Position.Z) + 0.5f) - b.Position.Z;
+                Assert.False((dx * dx) + (dz * dz) <= radius * radius, $"{small} sits under {b}");
+            }
+        }
+    }
+
+    [Fact]
+    public void EveryShippedAsset_IsPlacedAtLeastOnce_OnTheHundredWorld()
+    {
+        GroundAssetSet assets = GroundAssetSet.LoadShipped();
+        (PropIndex props, StaticGround ground) = GroundTestSets.World(WorldDefaults.ServerNewWorldSize);
+
+        List<GroundPlacement> placed = GroundTestSets.Layout(ground, props.Placements, assets);
+
+        HashSet<int> seen = placed.Select(p => p.Asset).ToHashSet();
+        string[] missing = assets.Assets.Where((_, i) => !seen.Contains(i)).Select(a => $"{a.Id} ({a.Layer}, {string.Join('/', a.Ground)})").ToArray();
+        Assert.True(missing.Length == 0, $"{missing.Length} of {assets.Assets.Count} never placed: {string.Join("; ", missing)}");
+    }
 }

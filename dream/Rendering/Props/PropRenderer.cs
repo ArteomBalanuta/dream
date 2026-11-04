@@ -40,9 +40,10 @@ public sealed class PropRenderer
     // Props the last Draw submitted (tests and diagnostics).
     public int LastDrawnCount { get; private set; }
 
-    // After CollectFrameLights, once per frame.
+    // The ground scatter this renderer feeds and draws.
     public Dream.Rendering.Ground.GroundScatterRenderer Scatter => _ground;
 
+    // After CollectFrameLights, once per frame.
     public void Update(in Dream.Simulation.World.Geometry.GeometryRenderExport export, Dream.Rendering.Lighting.PlacedLightIndex placedLights)
     {
         _index.Update(in export, placedLights);

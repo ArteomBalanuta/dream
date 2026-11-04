@@ -25,6 +25,7 @@ public sealed class GroundScatterRenderer
     private readonly Render _render;
     private readonly GroundScatterIndex _index = new();
     private Matrix4[] _matrices = new Matrix4[256];
+    private bool[] _cellVisible = [];
     private GroundAssetSet? _assets;
     private GroundAssetSet? _preloaded;
 
@@ -79,6 +80,20 @@ public sealed class GroundScatterRenderer
         Matrix4 projection = _render.ProjectionMatrix;
         ViewFrustum frustum = ViewFrustum.FromViewAndProjection(view, projection);
         IReadOnlyList<GroundScatterIndex.Block> blocks = _index.Blocks;
+
+        // Visibility once per spatial cell per frame; every asset's pass then only looks inside the visible cells.
+        IReadOnlyList<GroundScatterIndex.Cell> cells = _index.Cells;
+        if (_cellVisible.Length < cells.Count)
+        {
+            _cellVisible = new bool[cells.Count];
+        }
+
+        for (int c = 0; c < cells.Count; c++)
+        {
+            GroundScatterIndex.Cell cell = cells[c];
+            _cellVisible[c] = CellVisible(in cell, LandmarkDrawDistance, focus, in frustum);
+        }
+
         int cursor = 0;
         while (cursor < blocks.Count)
         {
@@ -95,7 +110,7 @@ public sealed class GroundScatterRenderer
             for (int b = cursor; b < end; b++)
             {
                 GroundScatterIndex.Block block = blocks[b];
-                if (!BlockVisible(in block, DrawDistance(info.Layer), focus, in frustum))
+                if (!_cellVisible[block.Cell])
                 {
                     continue;
                 }
@@ -160,11 +175,11 @@ public sealed class GroundScatterRenderer
             new Vector3(p.X + radius, p.Y + (asset.Height * placement.Scale) + 0.3f, p.Z + radius));
     }
 
-    // The whole run: the nearest point of its box to the focus is within the distance, and the box touches the frustum.
-    public static bool BlockVisible(in GroundScatterIndex.Block block, float distance, Vector3 focus, in ViewFrustum frustum)
+    // The whole spatial cell: the nearest point of its box to the focus is within the distance, and the box touches the frustum.
+    public static bool CellVisible(in GroundScatterIndex.Cell cell, float distance, Vector3 focus, in ViewFrustum frustum)
     {
-        float dx = MathF.Max(0f, MathF.Max(block.Min.X - focus.X, focus.X - block.Max.X));
-        float dz = MathF.Max(0f, MathF.Max(block.Min.Z - focus.Z, focus.Z - block.Max.Z));
-        return ((dx * dx) + (dz * dz) <= distance * distance) && frustum.IntersectsAabb(block.Min, block.Max);
+        float dx = MathF.Max(0f, MathF.Max(cell.Min.X - focus.X, focus.X - cell.Max.X));
+        float dz = MathF.Max(0f, MathF.Max(cell.Min.Z - focus.Z, focus.Z - cell.Max.Z));
+        return ((dx * dx) + (dz * dz) <= distance * distance) && frustum.IntersectsAabb(cell.Min, cell.Max);
     }
 }

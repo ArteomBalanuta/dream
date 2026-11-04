@@ -6,17 +6,22 @@ namespace Dream.Rendering.Ground;
 
 // The ground scatter of the current static world, rebuilt only when the prop layout it follows was rebuilt (the
 // same change signal the props use: PropIndex.RebuildCount) or the asset set changed. The placements are grouped for
-// culling: sorted by asset, then by 8x8-cell block, and each (asset, block) run is one Block with its own box, so the
-// renderer can reject whole runs. Steady state allocates nothing.
+// culling: sorted by asset, then by 8x8-cell block. Each non-empty spatial block is one Cell with a box that holds
+// everything of every asset inside it (radius and height included), so the renderer tests visibility once per cell per
+// frame; each (asset, cell) run is one Block that names its cell. Steady state allocates nothing.
 public sealed class GroundScatterIndex
 {
     public const int BlockCells = 8;
 
-    // A run of placements of one asset inside one block, with the box that holds them (radius and height included).
-    public readonly record struct Block(int Asset, int Start, int Count, Vector3 Min, Vector3 Max);
+    // A run of placements of one asset inside one spatial block (Cell indexes Cells).
+    public readonly record struct Block(int Asset, int Start, int Count, int Cell);
+
+    // One 8x8-cell spatial block that holds any placement, with the box that holds them all.
+    public readonly record struct Cell(Vector3 Min, Vector3 Max);
 
     private readonly List<GroundPlacement> _placements = [];
     private readonly List<Block> _blocks = [];
+    private readonly List<Cell> _cells = [];
     private GroundAssetSet _assets = GroundAssetSet.Empty;
     private int _propRebuilds = -1;
     private bool _hasScan;
@@ -30,6 +35,8 @@ public sealed class GroundScatterIndex
     public IReadOnlyList<GroundPlacement> Placements => _placements;
 
     public IReadOnlyList<Block> Blocks => _blocks;
+
+    public IReadOnlyList<Cell> Cells => _cells;
 
     // Once per frame after PropIndex.Update.
     public void Update(PropIndex props, GroundAssetSet assets)
@@ -77,6 +84,28 @@ public sealed class GroundScatterIndex
         });
 
         _blocks.Clear();
+        _cells.Clear();
+        Dictionary<(int X, int Z), int> cellOf = [];
+        for (int i = 0; i < _placements.Count; i++)
+        {
+            GroundPlacement p = _placements[i];
+            GroundAsset asset = list[p.Asset];
+            float r = asset.Radius * p.Scale;
+            Vector3 lo = new(p.Position.X - r, p.Position.Y - 0.3f, p.Position.Z - r);
+            Vector3 hi = new(p.Position.X + r, p.Position.Y + (asset.Height * p.Scale) + 0.3f, p.Position.Z + r);
+            (int X, int Z) key = (BlockOf(p.Position.X), BlockOf(p.Position.Z));
+            if (cellOf.TryGetValue(key, out int existing))
+            {
+                Cell c = _cells[existing];
+                _cells[existing] = new Cell(Vector3.ComponentMin(c.Min, lo), Vector3.ComponentMax(c.Max, hi));
+            }
+            else
+            {
+                cellOf[key] = _cells.Count;
+                _cells.Add(new Cell(lo, hi));
+            }
+        }
+
         int start = 0;
         while (start < _placements.Count)
         {
@@ -90,18 +119,7 @@ public sealed class GroundScatterIndex
                 end++;
             }
 
-            GroundAsset asset = list[first.Asset];
-            Vector3 min = new(float.MaxValue);
-            Vector3 max = new(float.MinValue);
-            for (int i = start; i < end; i++)
-            {
-                GroundPlacement p = _placements[i];
-                float r = asset.Radius * p.Scale;
-                min = Vector3.ComponentMin(min, new Vector3(p.Position.X - r, p.Position.Y - 0.3f, p.Position.Z - r));
-                max = Vector3.ComponentMax(max, new Vector3(p.Position.X + r, p.Position.Y + (asset.Height * p.Scale) + 0.3f, p.Position.Z + r));
-            }
-
-            _blocks.Add(new Block(first.Asset, start, end - start, min, max));
+            _blocks.Add(new Block(first.Asset, start, end - start, cellOf[(bx, bz)]));
             start = end;
         }
 

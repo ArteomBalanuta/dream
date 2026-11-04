@@ -9,7 +9,7 @@ using OpenTK.Mathematics;
 namespace Dream.Tests.Rendering.Ground;
 
 // Shared fixtures: a synthetic manifest with one asset per class (the real manifests come from the generators),
-// the default terrain at both world sizes, and a fault sink that remembers what was reported.
+// the enriched startup terrain (what the server makes) at both world sizes, and a fault sink that remembers what was reported.
 internal static class GroundTestSets
 {
     public const string Dir = "ground-test";
@@ -64,7 +64,7 @@ internal static class GroundTestSets
 
     public static (PropIndex Props, StaticGround Ground) World(int size)
     {
-        Map map = new(width: size, depth: size);
+        Map map = new(physics: null, generateStartupTerrain: true, width: size, depth: size);
         GeometryRenderExport export = map.CapturePresentationGeometryRenderExport(new Vector3(size / 2f, 2f, size / 2f), 400f);
         PlacedLightIndex lights = new();
         lights.Collect(export, new Vector3(8.5f, 2.5f, 8.5f), new LightCollector());

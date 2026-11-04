@@ -189,12 +189,20 @@ public class GroundScatterLayoutTests
             float lift = d.Position.Y - top;
             Assert.True(MathF.Abs(lift - GroundScatterLayout.DecalLiftA) < 1e-4f || MathF.Abs(lift - GroundScatterLayout.DecalLiftB) < 1e-4f, $"decal lift {lift}");
 
-            // Level under its whole footprint: every column it covers has the same top.
+            // Level under its whole footprint: every column the disc touches has the same top (the bounding square's
+            // corner cells the disc does not reach are not part of it).
             float r = AssetOf(assets, d).Radius * d.Scale;
             for (int z = (int)MathF.Floor(d.Position.Z - r); z <= (int)MathF.Floor(d.Position.Z + r); z++)
             {
                 for (int x = (int)MathF.Floor(d.Position.X - r); x <= (int)MathF.Floor(d.Position.X + r); x++)
                 {
+                    float nearX = MathF.Max(0f, MathF.Max(x - d.Position.X, d.Position.X - (x + 1f)));
+                    float nearZ = MathF.Max(0f, MathF.Max(z - d.Position.Z, d.Position.Z - (z + 1f)));
+                    if ((nearX * nearX) + (nearZ * nearZ) > r * r)
+                    {
+                        continue;
+                    }
+
                     Assert.True(ground.TryGet(x, z, out StaticGround.Column c) && c.TopY + 1f == top, $"decal at {d.Position} is not level at {x}, {z}");
                 }
             }
@@ -244,7 +252,7 @@ public class GroundScatterLayoutTests
         }
 
         _output.WriteLine($"decal {counts[0]} cover {counts[1]} accent {counts[2]} landmark {counts[3]}");
-        Assert.InRange(counts[(int)GroundLayer.Decal], 400, 1100);
+        Assert.InRange(counts[(int)GroundLayer.Decal], 250, 1100);
         Assert.InRange(counts[(int)GroundLayer.Cover], 1500, 6000);
         Assert.InRange(counts[(int)GroundLayer.Accent], 120, 500);
         Assert.InRange(counts[(int)GroundLayer.Landmark], 25, 120);
@@ -349,9 +357,9 @@ public class GroundScatterLayoutTests
         Assert.True(a.SequenceEqual(b));
     }
 
-    // The shipped set (flora, stone, decals manifests) on the real hundred world: every placement stands on a
-    // material its own manifest allows, and each layer lands in the plan's band. Measured at integration: decal 494,
-    // cover 5052, accent 185, landmark 49 (the default terrain is all grass, so grass-free assets are not placed here).
+    // The shipped set (flora, stone, decals manifests) on the real hundred world with the enriched terrain the server
+    // makes (grass, dirt, stone, sand, mud, snow, rock, paths): every placement stands on a material its own manifest
+    // allows, and each layer lands in the plan's band. Measured: decal 418, cover 3336, accent 181, landmark 45.
     [Fact]
     public void TheShippedSet_OnTheHundredWorld_StandsOnAllowedMaterials_InMeasuredBands()
     {
@@ -368,7 +376,7 @@ public class GroundScatterLayoutTests
         }
 
         _output.WriteLine($"shipped: decal {counts[0]} cover {counts[1]} accent {counts[2]} landmark {counts[3]}");
-        Assert.InRange(counts[(int)GroundLayer.Decal], 400, 1100);
+        Assert.InRange(counts[(int)GroundLayer.Decal], 250, 1100);
         Assert.InRange(counts[(int)GroundLayer.Cover], 1500, 6000);
         Assert.InRange(counts[(int)GroundLayer.Accent], 120, 500);
         Assert.InRange(counts[(int)GroundLayer.Landmark], 25, 120);
