@@ -60,8 +60,11 @@ ARM_OFFSET_U = 0.2 / UNITS_PER_U   # the grip sits 0.2 units outboard of the arm
 CUSTOM = {
     "cloth.red": ("#5A1E1A", 0.90, 0.030, 0.40, None),       # the one saturated thing, as in the target
     "steel.cool": ("#5C6475", 0.50, 0.050, 0.26, "#7E869A"),
-    "cloth.cold": ("#2A3040", 0.92, 0.030, 0.28, None),
-    "cloth.ash.cold": ("#363940", 0.94, 0.028, 0.24, None),
+    "cloth.cold": ("#161A28", 0.92, 0.030, 0.28, None),
+    "cloth.ash.cold": ("#1E2024", 0.94, 0.028, 0.24, None),
+    # The eye sockets' own surface. It is NOT baked into the atlas (it rides its own emissive material), but
+    # bake_material has to answer for it anyway: the preview sheet renders every part build_parts returns.
+    "ember.eye": ("#160A06", 0.95, 0.025, 0.30, None),
 }
 MATERIALS = {
     "leather": "grim.leather",
@@ -91,7 +94,14 @@ def bake_material(key: str):
 # once, in encode_atlas(), to the linear albedo of the baked atlas.
 ALBEDO_LIFT = 3.0
 ATLAS_SIZE = 512
-UNWRAP_AXIS = (0.0, 0.0, 1.0)   # every part is a loft along iso z, so project around z, not around the longest extent
+UNWRAP_AXIS = (0.0, 0.0, 1.0)   # a loft is built along iso z, so project around z, not around the longest extent
+
+# One dull ember behind the mask. Emissive is added AFTER dreamExpose, so it bypasses the gain entirely and a
+# generous factor would be the brightest thing in a night frame; this is the dimmest glow that still reads, and
+# the two sockets together cover about half a percent of the silhouette. Linear, as gen_props' coals are.
+EMBER_EYE = (0.22, 0.055, 0.020)
+EMBER_BASE = (0.012, 0.008, 0.006)      # the flat baseColorFactor under the glow: all but black
+EMISSIVE_KEYS = ("ember.eye",)
 
 
 # ---------------------------------------------------------------------------- mesh plumbing
@@ -118,6 +128,98 @@ def loft(rings, sides: int = 10) -> I.Mesh:
         cn = np.broadcast_to(np.array((0.0, 0.0, sgn)), cap_v.shape)
         out = out.merge(I.Mesh(cap_v, cf, cn, np.zeros((len(cap_v), 2), dtype=np.float32)))
     return out
+
+
+# Radial schedule for a plate's broad faces, outermost first (1.0 = the outline, 0.0 = the centre, implicit).
+# Not uniform, and that is the point. bake_albedo evaluates occlusion and curvature PER VERTEX and interpolates
+# them across the triangle. A plate's outline vertices are shared with its rim and its underside, so their
+# welded normal tilts outward and the plate's own rim occludes them: those vertices are legitimately dark. With
+# evenly spaced rings that darkness interpolates across most of the face - at two rings it covers three quarters
+# of the AREA. Crowding the first ring in to 0.9 of the outline confines it to the outer 19% and leaves the rest
+# of the face at the occlusion it actually has, which for an up-facing plate in clear air is about 0.9.
+# MEASURED: evenly spaced, the pauldron's top baked at a linear albedo of 0.27; on this schedule, 0.44.
+PLATE_RINGS = (1.0, 0.50)
+
+
+def _disc(o: np.ndarray, c: np.ndarray, z: float, rings: int):
+    """One face of a plate: concentric copies of the outline shrinking to a centre vertex, triangulated.
+    `rings` is how many of PLATE_RINGS to use (the centre vertex is always added)."""
+    cols = [c + (o - c) * k for k in PLATE_RINGS[:rings]]
+    pts = np.vstack([np.column_stack((v, np.full(len(v), z))) for v in cols]
+                    + [np.array([[c[0], c[1], z]])])
+    n = len(o)
+    f = []
+    for r in range(rings - 1):
+        a0, b0 = r * n, (r + 1) * n
+        for k in range(n):
+            k2 = (k + 1) % n
+            f += [(a0 + k, a0 + k2, b0 + k2), (a0 + k, b0 + k2, b0 + k)]
+    last, centre = (rings - 1) * n, rings * n
+    f += [(last + k, last + (k + 1) % n, centre) for k in range(n)]
+    return pts, f
+
+
+def plate(outline, thick: float, taper: float = 0.70, rings: int | None = None) -> I.Mesh:
+    """A flat slab: the convex polygon `outline` ((x, y) in u, in order) at z = +thick/2, and the same polygon
+    shrunk about its centroid by `taper` at z = -thick/2, closed by a rim.
+
+    Flat-faceted, and that is the entire point. The top is ONE plane however many triangles it takes, so every
+    pixel of it falls in the same N.L bucket: a plate puts a SPIKE in the figure's lambert histogram where a
+    6-12 sided elliptical loft puts a smooth ramp, and p90-p10 of the rendered value is a histogram statistic.
+    MEASURED: the figure's lambert histogram before the plates was 64% at N.L < 0.1 and a flat 4-6% smear
+    across every bucket above it; the spread that produced was 0.2901 against M3's floor of 0.50.
+
+    `taper` under 1 tucks the underside in, so the plate overhangs what it is mounted on. The engine has no
+    shadowing, so an undercut is not a shadow - it is a surface whose normal points down and inward, which
+    takes the point light's 0.25 wrap term alone and nothing else. That is the dark half of the histogram."""
+    o = np.asarray(outline, dtype=np.float64)
+    if len(o) < 3:
+        raise ValueError("a plate needs at least three outline points")
+    n = len(o)
+    c = o.mean(axis=0)
+    rings = len(PLATE_RINGS) if rings is None else rings
+    tv, tf = _disc(o, c, thick * 0.5, rings)
+    bv, bf = _disc(c + (o - c) * taper, c, -thick * 0.5, rings)
+    v = np.vstack((tv, bv))
+    off = len(tv)
+    # Triangle ORDER matters and is load-bearing. A slab's thin axis makes charforge project it planar, and a
+    # planar projection maps the two broad faces onto the SAME atlas rectangle; bake_albedo resolves an overlap
+    # by letting the last triangle win. So the underside goes first, then the rim, then the top: the face the
+    # camera actually sees is the one that owns the texels. MEASURED with the order the other way round: the
+    # pauldron baked at a linear albedo of 0.08 (its own shaded underside) instead of 0.45.
+    f = [(a + off, b + off, d + off) for a, b, d in bf]
+    for k in range(n):                              # the rim, between the two outer rings
+        a, b = k, (k + 1) % n
+        f += [(a, off + a, off + b), (a, off + b, b)]
+    f += list(tf)
+    f = np.array(f, dtype=np.int32)
+    return I.Mesh(v, I._orient_outward(v, f, np.array((c[0], c[1], 0.0))))
+
+
+def _oct(hx: float, hy: float, cut: float = 0.34, front: float = 1.0, taper_x: float = 1.0):
+    """A chamfered rectangle 2hx by 2hy with its corners cut by `cut` of the half-extent: eight points, convex,
+    in order. `front` scales the +y half (a trapezoid), `taper_x` the +y end's width."""
+    cx, cy = hx * cut, hy * cut
+    fy, fx = hy * front, hx * taper_x
+    return [(-hx + cx, -hy), (hx - cx, -hy), (hx, -hy + cy), (fx, fy - cy),
+            (fx - cx, fy), (-fx + cx, fy), (-fx, fy - cy), (-hx, -hy + cy)]
+
+
+def unwrap_axes(meshes):
+    """One projection spec per part for charforge.unwrap_split: iso z for a loft, which is the axis it was
+    built along, and an explicit planar unwrap for a flat-faceted plate. Forcing a cylinder about z on a
+    horizontal plate would collapse its rectangle to the slab's thickness, a couple of texels tall; letting PCA
+    choose leaves it one authoring tweak away from flipping to a cylinder about its own long axis, which is the
+    one projection the seam splitter cannot fully open."""
+    return ["planar" if m.n is None else UNWRAP_AXIS for m in meshes]
+
+
+def split_parts(parts):
+    """(baked, emissive): the parts that go in the albedo atlas, and the ones that ride their own flat emissive
+    material. Keeps build_parts a single list, so the preview sheet still sees the whole figure."""
+    baked = [p for p in parts if p[2] not in EMISSIVE_KEYS]
+    emissive = [p for p in parts if p[2] in EMISSIVE_KEYS]
+    return baked, emissive
 
 
 def _render_arrays(mesh: I.Mesh, uv_in: np.ndarray):
@@ -200,9 +302,12 @@ def _limb_arm(side: float):
     bracer = loft([(-9.0, 0.66, 0.66, 0.0, 0.12), (-7.8, 0.78, 0.78, 0.0, 0.18), (-5.4, 0.90, 0.90, 0.0, 0.30)], 8)
     hand = loft([(-11.4, 0.40, 0.28, 0.0, 0.15), (-10.7, 0.58, 0.40, 0.0, 0.18), (-9.6, 0.58, 0.46, 0.0, 0.14),
                  (-9.1, 0.50, 0.44, 0.0, 0.12)], 6)
+    # A couter at the elbow: a small near-flat rondel in clear air, so it baked at full albedo where a plate
+    # tucked against the body does not.
+    couter = plate(_oct(0.98, 1.08, 0.38), 0.40, 0.66).xform(rot_deg=(-6.0, 0.0, 0.0), move=(0.0, 0.25, -5.30))
     mv = (side * ARM_OFFSET_U, 0.0, 0.0)
     return [("cloth.cold", sleeve.xform(move=mv)), ("steel.cool", bracer.xform(move=mv)),
-            ("flesh.grey", hand.xform(move=mv))]
+            ("flesh.grey", hand.xform(move=mv)), ("steel.cool", couter.xform(move=mv))]
 
 
 def _limb_leg():
@@ -211,17 +316,77 @@ def _limb_leg():
     boot = loft([(-LEG_U, 0.92, 1.45, 0.0, 0.70), (-14.0, 0.98, 1.50, 0.0, 0.70), (-13.0, 0.92, 1.10, 0.0, 0.50),
                  (-11.5, 0.90, 0.96, 0.0, 0.08), (-10.2, 0.94, 0.94, 0.0, 0.0)], 8)
     guard = loft([(-8.2, 0.98, 0.98, 0.0, 0.10), (-7.0, 1.08, 1.08, 0.0, 0.22), (-5.9, 0.99, 0.99, 0.0, 0.10)], 8)
-    return [("cloth.ash.cold", trouser), ("leather", boot), ("steel.cool", guard)]
+    # Knee cop and instep cap: two broad plates on a limb that is otherwise soft. The cop faces almost straight
+    # forward, so one key azimuth lights it and the mirrored one does not - the dark half, by design.
+    cop = plate(_oct(1.02, 0.86, 0.40), 0.42, 0.70).xform(rot_deg=(-58.0, 0.0, 0.0), move=(0.0, 1.00, -6.95))
+    # A broad near-flat sabaton over the instep and a cuisse over the thigh, both clear of the skirt and of
+    # each other by more than 2 u: on the legs there is nothing to occlude them, so they bake at full albedo.
+    sabaton = plate(_oct(1.30, 1.96, 0.34, front=1.05), 0.40, 0.66).xform(rot_deg=(-9.0, 0.0, 0.0),
+                                                                         move=(0.0, 0.70, -12.25))
+    cuisse = plate(_oct(1.38, 1.60, 0.36), 0.42, 0.68).xform(rot_deg=(-10.0, 0.0, 0.0), move=(0.0, 0.35, -5.60))
+    return [("cloth.ash.cold", trouser), ("leather", boot), ("steel.cool", guard),
+            ("steel.cool", cop), ("steel.cool", sabaton), ("steel.cool", cuisse)]
+
+
+def _torso_plates():
+    """The plated half of the torso: a chest lame, a flared gorget bib, two pauldron lamellae over the left
+    shoulder and one small cop over the right.
+
+    Two rules decide every angle and position here, and both are MEASURED, not taste.
+
+    1. NEARLY HORIZONTAL. The fixed play camera looks down at 50 degrees, so an up-facing facet is the one
+       surface both the camera and a light standing near the figure can see. DERIVED from C4 with the brazier
+       at 1.5 units: a horizontal facet takes N.L 0.672 whatever the light's screen azimuth, and a facet tilted
+       16 degrees outward takes 0.769 with the light on its side but only 0.483 with the light on the other -
+       a 1.6x swing in the rendered value. M3 gates on the WORSE azimuth, so a flat plate beats a flared one.
+
+    2. CLEAR AIR. bake_albedo's occlusion term is a cliff, not a ramp: MEASURED, a plate whose vertices sit at
+       ao 0.9 bakes at a linear albedo of 0.50, one at ao 0.6 bakes at 0.17, because the occlusion feeds the
+       ao multiplier, the cavity darkening AND the soot mask at once. A plate crowded under the hood or inside
+       the cloak is therefore a DARK plate however well it faces the light. Three plates were cut from this
+       figure for exactly that reason (a four-panel gorget's side and back panels, and a yoke across the upper
+       back behind the cloak), and the hood's base was narrowed to give the pauldron room."""
+    out = []
+    lame = plate(_oct(2.72, 1.72, 0.40, front=0.92), 0.46, 0.64)
+    out.append(lame.xform(rot_deg=(-11.0, 0.0, 0.0), move=(0.0, 0.40, 8.40)))
+    # the gorget bib: steeply flared, so it overhangs the chest. This one is for the DARK half - it is tucked
+    # under the mask and the pauldron, and it reads as the shadow the plates sit in.
+    out.append(plate(_oct(1.80, 0.92, 0.40), 0.42, 0.66).xform(rot_deg=(-30.0, 0.0, 0.0), move=(0.0, 2.00, 10.55)))
+    # the left pauldron: a broad near-flat upper lamella with a steeper one under its outboard edge
+    out.append(plate(_oct(2.42, 2.62, 0.34, front=0.94), 0.50, 0.68)
+               .xform(rot_deg=(0.0, 3.0, 0.0), move=(4.15, 0.05, 9.95)))
+    out.append(plate(_oct(1.95, 2.05, 0.36, front=0.94), 0.48, 0.70)
+               .xform(rot_deg=(0.0, 22.0, 0.0), move=(4.60, -0.05, 8.55)))
+    # the right shoulder carries a single small cop: the asymmetry is the figure's identity hook
+    out.append(plate(_oct(1.86, 1.96, 0.36), 0.44, 0.70).xform(rot_deg=(0.0, -5.0, 0.0), move=(-3.10, 0.05, 9.70)))
+    return out
+
+
+def _head_plates():
+    """A kettle helm over the hood: a wide near-flat brim, a small crown above it, and a brow shelf over the
+    mask. The brim is the brightest thing on the figure under a close light - it is broad, horizontal and has
+    clear air above it, which is the one combination the bake does not darken. The brow is the deepest undercut:
+    it overhangs the eye sockets, so the mask's upper half faces down and inward and takes the 0.25 wrap alone."""
+    brim = plate(_oct(2.32, 2.52, 0.34), 0.46, 0.68).xform(rot_deg=(-5.0, 0.0, 0.0), move=(0.0, 0.05, 4.15))
+    crown = plate(_oct(1.22, 1.36, 0.38), 0.46, 0.62).xform(rot_deg=(-8.0, 0.0, 0.0), move=(0.0, 0.00, 5.25))
+    brow = plate(_oct(1.46, 0.78, 0.40, front=1.0), 0.42, 0.62).xform(rot_deg=(-34.0, 0.0, 0.0),
+                                                                     move=(0.0, 1.55, 2.95))
+    return [brim, crown, brow]
 
 
 def build_parts():
-    """-> list of (node_name, local mesh in u, material key). Geometry is local to its node's joint."""
+    """-> list of (node_name, local mesh in u, material key). Geometry is local to its node's joint.
+
+    Two kinds of part. The soft ones are loft()s - elliptical, 6 to 12 sided, smooth-normalled: cloth, leather,
+    flesh. The hard ones are plate()s - flat-faceted slabs with large coplanar faces and tapered undersides.
+    That division is the art direction and the measurement at once (see plate() and _torso_plates())."""
     parts = []
 
-    # torso, local origin at the pelvis: plate over a waist, belt, hip skirt, red tail, cloak, gorget,
-    # backplate, left pauldron
-    plate = loft([(0.0, 2.00, 1.35, 0.0, 0.0), (2.6, 1.75, 1.25, 0.0, 0.0), (5.2, 2.45, 1.65, 0.0, 0.1),
-                  (7.6, 2.75, 1.70, 0.0, 0.2), (9.0, 2.35, 1.45, 0.0, 0.3), (9.7, 1.10, 0.95, 0.0, 0.35)], 8)
+    # torso, local origin at the pelvis: a narrow cuirass under the lame, belt, hip skirt, red tail, cloak,
+    # backplate and the plated shoulders. The cuirass is deliberately NARROWER than the plates over it, so the
+    # lame and the gorget overhang it instead of sitting flush.
+    cuirass = loft([(0.0, 2.00, 1.35, 0.0, 0.0), (2.6, 1.75, 1.25, 0.0, 0.0), (5.2, 2.05, 1.45, 0.0, 0.1),
+                    (7.6, 2.18, 1.48, 0.0, 0.2), (9.0, 2.00, 1.32, 0.0, 0.3), (9.7, 1.10, 0.95, 0.0, 0.35)], 8)
     belt = loft([(1.0, 2.10, 1.50, 0.0, 0.0), (2.3, 2.00, 1.45, 0.0, 0.0)], 10)
     skirt = loft([(-2.0, 2.95, 1.75, 0.0, 0.0), (-0.5, 2.75, 1.70, 0.0, 0.0), (1.3, 2.05, 1.45, 0.0, 0.0)], 10)
     tail = loft([(-4.6, 0.90, 0.30, 0.0, 2.15), (-2.5, 0.96, 0.33, 0.0, 2.00), (0.2, 1.02, 0.36, 0.0, 1.95),
@@ -230,24 +395,24 @@ def build_parts():
                   (8.6, 2.90, 1.00, 0.0, -1.55), (9.5, 2.00, 0.80, 0.0, -1.00)], 12)
     backplate = loft([(3.2, 1.55, 0.50, 0.0, -3.35), (5.6, 1.95, 0.55, 0.0, -3.00), (8.2, 2.05, 0.55, 0.0, -2.45),
                       (8.9, 1.20, 0.40, 0.0, -2.20)], 8)
-    gorget = loft([(8.6, 2.55, 2.05, 0.0, 0.2), (9.5, 2.45, 1.95, 0.0, 0.3), (10.4, 1.65, 1.45, 0.0, 0.4)], 8)
-    pauldron = loft([(-0.5, 2.60, 2.10, 0.0, 0.0), (0.0, 2.90, 2.30, 0.0, 0.0), (0.4, 2.70, 2.10, 0.0, 0.0),
-                     (1.0, 1.80, 1.50, 0.0, 0.0), (1.3, 0.80, 0.70, 0.0, 0.0)], 6)
-    pauldron = pauldron.xform(rot_deg=(0.0, 22.0, 0.0), move=(4.1, 0.0, 9.3))
-    parts += [("torso", plate, "steel.cool"), ("torso", belt, "leather"), ("torso", skirt, "cloth.ash.cold"),
-              ("torso", tail, "cloth.red"), ("torso", cloak, "cloth.cold"), ("torso", backplate, "steel.cool"),
-              ("torso", gorget, "steel.cool"), ("torso", pauldron, "steel.cool")]
+    parts += [("torso", cuirass, "steel.cool"), ("torso", belt, "leather"), ("torso", skirt, "cloth.ash.cold"),
+              ("torso", tail, "cloth.red"), ("torso", cloak, "cloth.cold"), ("torso", backplate, "steel.cool")]
+    parts += [("torso", m, "steel.cool") for m in _torso_plates()]
 
-    # head, local origin at the neck base: peaked hood, pale mask, two dark sockets
-    hood = loft([(-0.8, 2.70, 2.20, 0.0, -0.2), (0.6, 2.00, 1.90, 0.0, 0.0), (2.2, 1.95, 2.15, 0.0, 0.0),
+    # head, local origin at the neck base: peaked hood, pale mask, the plated helm, two ember sockets
+    # The cowl's base is narrower than it was (2.70 -> 2.00 u): at that radius it sat a unit above the pauldron
+    # and occluded it, and the occlusion cost the pauldron two thirds of its baked albedo. The plated gorget is
+    # the collar now; the cloth only has to meet it.
+    hood = loft([(-0.8, 2.00, 1.80, 0.0, -0.2), (0.6, 1.90, 1.85, 0.0, 0.0), (2.2, 1.95, 2.15, 0.0, 0.0),
                  (3.8, 1.70, 2.00, 0.0, -0.2), (5.0, 1.15, 1.50, 0.0, -0.7), (5.7, 0.55, 0.90, 0.0, -1.4),
                  (6.1, 0.12, 0.30, 0.0, -2.1)], 10)
     mask = loft([(0.2, 0.60, 0.50, 0.0, 1.45), (1.2, 1.15, 0.90, 0.0, 1.50), (2.4, 1.25, 1.00, 0.0, 1.50),
                  (3.6, 1.00, 0.80, 0.0, 1.45), (4.3, 0.40, 0.40, 0.0, 1.30)], 8)
     parts += [("head", hood, "cloth.cold"), ("head", mask, "bone")]
+    parts += [("head", m, "steel.cool") for m in _head_plates()]
     for sx in (1.0, -1.0):
         socket = loft([(-0.25, 0.30, 0.22, 0.0, 0.0), (0.0, 0.34, 0.26, 0.0, 0.0), (0.25, 0.30, 0.22, 0.0, 0.0)], 6)
-        parts.append(("head", socket.xform(move=(sx * 0.58, 2.38, 2.95)), "cloth.cold"))
+        parts.append(("head", socket.xform(move=(sx * 0.58, 2.38, 2.95)), "ember.eye"))
 
     for node, side in (("arm-left", 1.0), ("arm-right", -1.0)):
         for key, mesh in _limb_arm(side):
@@ -312,10 +477,14 @@ def clip_idle(n: dict) -> G.GltfAnimation:
     }, index=n)
 
 
-def _gait(name, t, swing, arm_k, dip, lean, twist, n) -> G.GltfAnimation:
+def _gait(name, t, swing, arm_k, dip, lean, twist, n, leg_yaw: float = 0.0) -> G.GltfAnimation:
+    """`leg_yaw` turns the whole stride about the model's vertical axis before the swing, which is how the
+    directional clips carry their share of the travel-minus-facing angle (C2). quat_y(0) is exactly identity
+    and _mul by identity is bit-exact, so the existing clips' bytes do not move."""
+    y = quat_y(leg_yaw)
     rot = {
-        "leg-left": [quat_x(a) for a in swing],
-        "leg-right": [quat_x(-a) for a in swing],
+        "leg-left": [_mul(y, quat_x(a)) for a in swing],
+        "leg-right": [_mul(y, quat_x(-a)) for a in swing],
         "arm-left": [quat_x(-a * arm_k) for a in swing],
         "arm-right": [quat_x(a * arm_k) for a in swing],
         "torso": [_mul(quat_x(lean), quat_y(twist * a / max(swing))) for a in swing],
@@ -336,6 +505,32 @@ def clip_walk(n: dict) -> G.GltfAnimation:
     lean and does not twist: a held arm rides the torso (PlayerPoseLayers), and a held item must not swing with the walk."""
     t = [0.0, 0.2, 0.4, 0.6, 0.8]
     return _gait("walk", t, [22.0, 0.0, -22.0, 0.0, 22.0], 0.75, [0.0, -0.018, 0.0, -0.018, 0.0], 3.0, 0.0, n)
+
+
+def clip_walk_back(n: dict) -> G.GltfAnimation:
+    """Backpedalling, C2's `walk-back`. The clip carries the WHOLE half turn of the stride and
+    PlayerAnimationFrame.LegTwistRadians carries only the residual (delta -+ 180 degrees, inside the new
+    pi/4 clamp). The clip and the state machine must not both apply it or the legs double-count: that is the
+    one way this clip can be wrong and still look plausible from the front.
+
+    Shorter stride than the forward walk, a slight backward lean, and the arms stay in the FACING frame - the
+    pose layers twist the legs only, so an arm that swung with the travel direction would fight a held item."""
+    t = [0.0, 0.22, 0.44, 0.66, 0.88]
+    return _gait("walk-back", t, [15.0, 0.0, -15.0, 0.0, 15.0], 0.45, [0.0, -0.014, 0.0, -0.014, 0.0],
+                 -3.5, 0.0, n, leg_yaw=180.0)
+
+
+def clip_strafe(n: dict, side: float) -> G.GltfAnimation:
+    """A sidestep, C2's `walk-strafe-right` (side > 0) and `walk-strafe-left` (side < 0). The clip carries
+    exactly the +-90 degrees the selection table subtracts, in the same sense as PlayerPoseLayers' leg twist
+    (a yaw about the model's vertical axis, +Z turning towards +X), so clip plus residual equals the raw delta.
+
+    The legs scissor sideways because the swing axis is yawed with them; the arms barely move and the torso
+    leans a couple of degrees into the step."""
+    name = "walk-strafe-right" if side > 0 else "walk-strafe-left"
+    t = [0.0, 0.21, 0.42, 0.63, 0.84]
+    return _gait(name, t, [17.0, 0.0, -17.0, 0.0, 17.0], 0.22, [0.0, -0.015, 0.0, -0.015, 0.0],
+                 1.5, 0.0, n, leg_yaw=90.0 * side)
 
 
 def clip_sprint(n: dict) -> G.GltfAnimation:
@@ -387,10 +582,10 @@ def clip_die(n: dict, lift: float) -> G.GltfAnimation:
 def build_asset():
     """-> dict with nodes, primitives, materials, animations, the atlas and a stats blurb. Pure function of the
     source: nothing here reads the clock, the environment or the filesystem."""
-    parts = build_parts()
-    wmeshes = world_meshes(parts)
-    meshes, uvs, rects = C.unwrap_split(wmeshes, ATLAS_SIZE, axis=UNWRAP_AXIS)
-    mats = [bake_material(key) for _, _, key in parts]
+    baked, emissive = split_parts(build_parts())
+    wmeshes = world_meshes(baked)
+    meshes, uvs, rects = C.unwrap_split(wmeshes, ATLAS_SIZE, axis=unwrap_axes(wmeshes))
+    mats = [bake_material(key) for _, _, key in baked]
     atlas = C.bake_albedo(meshes, None, None, uvs, rects, ATLAS_SIZE, materials=mats, seed="player_grim")
     png, scale, enc = encode_atlas(atlas)
 
@@ -403,7 +598,7 @@ def build_asset():
 
     wp = joint_world_u()
     primitives, back = [], 0.0
-    for (node, _, _), wm, uv in zip(parts, meshes, uvs):
+    for (node, _, _), wm, uv in zip(baked, meshes, uvs):
         local = wm.xform(move=tuple(-wp[node]))
         pos, nrm, uvo, idx = _render_arrays(local, uv)
         primitives.append(G.GltfPrimitive(positions=pos, normals=nrm, uvs=uvo, indices=idx, joints=None,
@@ -411,17 +606,32 @@ def build_asset():
         back = max(back, float(-(wm.v[:, 1].min()) * UNITS_PER_U))   # how far behind the pelvis axis the body reaches
     materials = [{"name": "grim.actor", "base_color_factor": (scale, scale, scale, 1.0), "base_color_png": png,
                   "metallic": 0.0, "roughness": 0.9}]
+    if emissive:
+        # One extra material, flat and untextured, carrying the emissive factor: the pattern gen_props uses for
+        # the brazier's coals. No emissive TEXTURE - the factor path is already wired in both the writer and the
+        # shader, and a texture would only let the glow vary where it has no business varying.
+        materials.append({"name": "grim.actor.ember", "base_color_factor": EMBER_BASE + (1.0,),
+                          "metallic": 0.0, "roughness": 0.9, "emissive_factor": EMBER_EYE})
+        for node, m, _ in emissive:
+            local = m.xform(move=tuple(-wp[node]))
+            pos, nrm, uvo, idx = _render_arrays(local, np.zeros((len(local.v), 2), dtype=np.float32))
+            primitives.append(G.GltfPrimitive(positions=pos, normals=nrm, uvs=uvo, indices=idx, joints=None,
+                                              weights=None, material=len(materials) - 1, node=index[node]))
     animations = [clip_idle(index), clip_walk(index), clip_sprint(index), clip_die(index, back),
-                  clip_melee(index), clip_shoot(index)]
+                  clip_melee(index), clip_shoot(index), clip_walk_back(index), clip_strafe(index, 1.0),
+                  clip_strafe(index, -1.0)]
     return dict(nodes=nodes, primitives=primitives, materials=materials, animations=animations,
-                atlas=atlas, encoded=enc, scale=scale, rects=rects, parts=parts, meshes=meshes, uvs=uvs)
+                atlas=atlas, encoded=enc, scale=scale, rects=rects, parts=baked, emissive=emissive,
+                meshes=meshes, uvs=uvs)
 
 
-def main(out_dir: str | None = None) -> Path:
+def main(out_dir: str | None = None, filename: str | None = None) -> Path:
     out = Path(out_dir) if out_dir else HERE / "char"
     out.mkdir(parents=True, exist_ok=True)
     a = build_asset()
-    path = out / "player_grim.glb"
+    # build_all.py passes the shipped name, which the engine's PlayerModelAssetDefinition loads; run by hand the
+    # generator keeps writing its own working copy under char/.
+    path = out / (filename or "player_grim.glb")
     G.write_glb(str(path), a["nodes"], a["primitives"], None, None, a["animations"], a["materials"])
 
     tris = sum(len(p.indices) for p in a["primitives"])

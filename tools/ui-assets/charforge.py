@@ -242,6 +242,49 @@ def skin(skeleton: Skeleton, pose: Pose, parts, skins) -> list[Mesh]:
     return out
 
 
+def skin_attributes(skin: Skin, joint_count: int):
+    """Skin -> (JOINTS_0 uint16 (V,4), WEIGHTS_0 float32 (V,4)) for gltfwrite / the glTF skinning contract C3.
+
+    Two influences per vertex, the other two slots zero. Slot 1 takes the second joint's weight and slot 0 takes
+    1 - it, so the row sums to exactly 1 before gltfwrite's own normalisation ever runs; a vertex bound to a
+    single joint (bind() sets i1 == i0 for those) puts the whole 1.0 on slot 0 and nothing on slot 1, rather
+    than splitting it across two copies of the same index, which a loader is entitled to read as a duplicate."""
+    n = len(skin.i0)
+    j = np.zeros((n, 4), dtype=np.uint16)
+    w = np.zeros((n, 4), dtype=F32)
+    i0 = np.asarray(skin.i0, dtype=np.int64)
+    i1 = np.asarray(skin.i1, dtype=np.int64)
+    if n and (max(int(i0.max()), int(i1.max())) >= joint_count or min(int(i0.min()), int(i1.min())) < 0):
+        raise ValueError("skin points at a joint outside the skeleton")
+    same = i0 == i1
+    w1 = np.where(same, 0.0, np.clip(np.asarray(skin.w, dtype=np.float64), 0.0, 1.0))
+    j[:, 0] = i0.astype(np.uint16)
+    j[:, 1] = np.where(same, 0, i1).astype(np.uint16)
+    w[:, 0] = (1.0 - w1).astype(F32)
+    w[:, 1] = w1.astype(F32)
+    return j, w
+
+
+def inverse_bind_export(skeleton: Skeleton, units_per_u: float) -> np.ndarray:
+    """(J, 4, 4) float32 inverseBindMatrices in EXPORTED space, ready for gltfwrite.
+
+    This is contract C3's single most error-prone step and the one nothing else exercises (risk R4).
+    bind_world() is in iso axes and world u; the export is glTF axes - iso (x, y, z) -> glTF (x, z, y), the same
+    permutation gen_char_player._render_arrays applies to positions - scaled by units_per_u. The bind pose has no
+    rotation, so the inverse bind is exactly a negated translation and nothing else; the LAST ROW of each 4x4
+    carries it, because glTF stores matrices column-major and gltfwrite hands the array's rows straight to the
+    buffer. Get the row/column wrong, or forget the scale, and the mesh explodes on the first non-rest frame
+    without anything throwing, which is why check_actors.py cross-checks CPU skinning against a glTF-space
+    forward-kinematic evaluation instead of trusting this."""
+    bw = skeleton.bind_world()
+    out = np.zeros((len(skeleton.joints), 4, 4), dtype=F32)
+    for k, jt in enumerate(skeleton.joints):
+        p = bw[jt.name][:3, 3]
+        out[k] = np.eye(4, dtype=F32)
+        out[k][3, :3] = -np.array((p[0], p[2], p[1]), dtype=np.float64) * units_per_u
+    return out
+
+
 # 3. unwrap -------------------------------------------------------------------------------
 
 
@@ -274,10 +317,17 @@ def _project_ex(mesh: Mesh, axis=None):
     size in u, and whether x wraps. _project_ex adds a fifth item: (per-vertex distance from the cylinder axis in u,
     mean radius), which unwrap_split uses to find the poles; (None, 0.0) for a planar part.
     `axis` (a 3-vector) forces a cylinder about that direction instead: PCA picks the longest extent, which for a
-    short wide ring such as a belt is a horizontal axis through its side wall, not the loft axis it was built on."""
+    short wide ring such as a belt is a horizontal axis through its side wall, not the loft axis it was built on.
+    `axis="planar"` forces the planar branch along PCA's own minor axis: a flat slab whose thickness happens to
+    sit near the 1/16 variance threshold would otherwise flip to a cylinder on a millimetre of authoring, and a
+    cylinder round a slab's long axis is a projection _split_cylinder cannot fully open (MEASURED: 4 straddling
+    triangles per slab survive it, because both fan apexes land on the axis)."""
+    plane = isinstance(axis, str)
+    if plane and axis != "planar":
+        raise ValueError(f"unknown axis mode {axis!r}")
     v = mesh.v.astype(np.float64)
     d = v - v.mean(axis=0)
-    if axis is not None:
+    if axis is not None and not plane:
         e0 = np.asarray(axis, dtype=np.float64)
         e0 = e0 / np.linalg.norm(e0)
         helper = np.array((1.0, 0.0, 0.0)) if abs(e0[0]) < 0.9 else np.array((0.0, 1.0, 0.0))
@@ -290,7 +340,7 @@ def _project_ex(mesh: Mesh, axis=None):
         e2, e1, e0 = (_canon(E[:, k]) for k in range(3))  # minor, middle, major
         ev = np.maximum(ev, 0.0)
     a0, a1 = d @ e0, d @ e1
-    if ev[0] < ev[1] / 16.0:
+    if plane or ev[0] < ev[1] / 16.0:
         x, y = a0 - a0.min(), a1 - a1.min()
         return np.stack((x, y), 1), max(x.max(), 1e-3), max(y.max(), 1e-3), False, (None, 0.0)
     a2 = d @ e2
@@ -436,13 +486,12 @@ def unwrap_split(parts, tex_size: int, axis=None):
     vertices added (planar parts come back unchanged); uvs[i] is per vertex of meshes[i]. Use THESE meshes, not
     the originals, for bake_albedo and for export: the uvs only mean something on the split topology. Where
     unwrap() leaves one column of triangles whose u jumps across the atlas rectangle, this has none.
-    `axis` forces every part to a cylinder about that direction (a 3-vector, or a list with one vector or None
-    per part); None keeps unwrap()'s own choice. Use it for parts built as lofts along a known axis."""
+    `axis` forces every part to a cylinder about that direction (a 3-vector), or to a planar unwrap along its own
+    minor axis ("planar"); None keeps unwrap()'s own choice. Pass a LIST to give one such spec per part - a list
+    is the only way to ask for per-part specs, because a list of mixed vectors and Nones cannot be told from a
+    single vector by its shape."""
     meshes = [_mesh(p) for p in parts]
-    if axis is None or np.ndim(axis[0]) == 0:
-        axes = [axis] * len(meshes)
-    else:
-        axes = list(axis)
+    axes = list(axis) if isinstance(axis, list) else [axis] * len(meshes)
     proj = [_project_ex(m, a) for m, a in zip(meshes, axes)]
     split, coords = [], []
     for m, (xy, wu, hu, cyl, (rv, _)) in zip(meshes, proj):

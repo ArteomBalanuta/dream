@@ -22,12 +22,16 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import charforge as C  # noqa: E402
+import enginelook as L  # noqa: E402
 import gen_char_player as P  # noqa: E402
 import gltfwrite as G  # noqa: E402
 import uiart as U  # noqa: E402
 
-REQUIRED_CLIPS = ("idle", "walk", "sprint", "die", "attack-melee-right", "holding-right-shoot")
+REQUIRED_CLIPS = ("idle", "walk", "sprint", "die", "attack-melee-right", "holding-right-shoot",
+                  "walk-back", "walk-strafe-left", "walk-strafe-right")
 ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right")
+M3_SPREAD_MIN = 0.50       # spec 00-acceptance M3, the offline bimodal-lambert floor
+EMBER_FACTOR_MAX = 0.35    # the emissive accent's brightest channel; it bypasses the gain, so it stays dim
 errs: list[str] = []
 
 
@@ -59,30 +63,13 @@ def area(m) -> float:
 
 
 def fk_vertices(asset: dict, clip_name: str | None, t_index: int | None) -> np.ndarray:
-    """All primitive vertices in model space (glTF axes), the bind pose or one key of one clip."""
-    nodes = asset["nodes"]
-    rot = {i: np.array([0.0, 0.0, 0.0, 1.0]) for i in range(len(nodes))}
-    trs = {i: np.array(n.translation, dtype=np.float64) for i, n in enumerate(nodes)}
-    if clip_name:
-        clip = next(a for a in asset["animations"] if a.name == clip_name)
-        for n, (_, q) in clip.rotations.items():
-            rot[n] = np.asarray(q[t_index], dtype=np.float64)
-        for n, (_, v) in clip.translations.items():
-            trs[n] = trs[n] + np.asarray(v[t_index], dtype=np.float64)
+    """All primitive vertices in model space (glTF axes), the bind pose or one key of one clip.
 
-    def mat(i):
-        x, y, z, w = rot[i]
-        R = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-                      [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
-        M = np.eye(4)
-        M[:3, :3] = R
-        M[:3, 3] = trs[i]
-        return M
-
-    world = {}
-    for i, n in enumerate(nodes):
-        world[i] = mat(i) if n.parent is None else world[n.parent] @ mat(i)
+    The forward kinematics itself lives in enginelook.node_worlds, so the gate and the measuring instrument
+    cannot drift apart - and so there is exactly one place where "an animation channel replaces a node's TRS,
+    it is not a delta on it" is written down."""
+    clip = next(a for a in asset["animations"] if a.name == clip_name) if clip_name else None
+    world = L.node_worlds(asset["nodes"], clip, t_index or 0)
     pts = []
     for p in asset["primitives"]:
         v = np.asarray(p.positions, dtype=np.float64)
@@ -138,18 +125,30 @@ def main() -> int:
         fail(f"a clip pushes the body {-worst:.3f} units into the ground")
     else:
         ok(f"no clip sinks the body more than {-worst:.3f} units below y = 0")
+    # The fall must end LYING DOWN. Stated as a fraction of the figure's own standing height rather than as an
+    # absolute 1.0 units, which was the old gaunt cloth figure's thickness: a plated figure in a wide-brimmed
+    # helm is genuinely thicker lying on its back (MEASURED 1.06 units against the 2.68 it stands at, because
+    # the helm brim and the pauldron are broad horizontal plates and a half turn about X stands them upright).
+    # The sibling below is what keeps this honest: the STANDING pose must fail the same test.
     last = len(next(x for x in a["animations"] if x.name == "die").rotations[1][0]) - 1
     dv = fk_vertices(a, "die", last)
     span_y = float(dv[:, 1].max() - dv[:, 1].min())
-    if span_y > 1.0:
-        fail(f"die ends {span_y:.2f} units tall; the body should be lying down")
+    stand = top - ymin
+    if span_y > 0.45 * stand:
+        fail(f"die ends {span_y:.2f} units tall, over 45% of the {stand:.2f} it stands at; it is not lying down")
     else:
-        ok(f"die ends lying down ({span_y:.2f} units tall, lowest y {float(dv[:, 1].min()):+.3f})")
+        ok(f"die ends lying down ({span_y:.2f} units, {span_y / stand:.0%} of its standing {stand:.2f}; "
+           f"lowest y {float(dv[:, 1].min()):+.3f})")
+    bind_span = stand
+    if bind_span <= 0.45 * stand:
+        fail("the lying-down gate passes the STANDING bind pose; it has stopped measuring the fall")
+    else:
+        ok(f"the gate is live: the standing bind pose spans {bind_span:.2f} units and would fail it")
 
     # seams: no cylinder triangle jumps across its atlas rectangle, and cutting changed no geometry
-    parts = P.build_parts()
+    parts, _ = P.split_parts(P.build_parts())
     world = P.world_meshes(parts)
-    new_m, uvs, rects = C.unwrap_split(world, P.ATLAS_SIZE, axis=P.UNWRAP_AXIS)
+    new_m, uvs, rects = C.unwrap_split(world, P.ATLAS_SIZE, axis=P.unwrap_axes(world))
     bad, total = seam_report(new_m, uvs, rects, P.ATLAS_SIZE)
     if bad:
         fail(f"{bad} of {total} cylinder triangles still straddle a seam after unwrap_split")
@@ -181,11 +180,51 @@ def main() -> int:
         ok(f"lift applied once: shipped / baked linear albedo = {ratio:.3f} (lift {P.ALBEDO_LIFT})")
     if not (0.0 < factor <= 1.0) or len(set(a["materials"][0]["base_color_factor"][:3])) != 1:
         fail(f"baseColorFactor {a['materials'][0]['base_color_factor']} must be a single scale in (0,1]")
-    # the texture really is wired to every primitive
-    if len(doc["materials"]) != 1 or "baseColorTexture" not in doc["materials"][0]["pbrMetallicRoughness"]:
-        fail("the GLB material has no baseColorTexture")
+    # the texture really is wired to the baked material, and the emissive accent is a SECOND material with no
+    # texture of its own: emissive is added after dreamExpose, so it bypasses the gain and has to stay dim
+    if "baseColorTexture" not in doc["materials"][0]["pbrMetallicRoughness"]:
+        fail("the GLB's material 0 has no baseColorTexture")
+    elif len(doc["materials"]) > 2:
+        fail(f"{len(doc['materials'])} materials; the figure is one baked atlas plus at most one emissive accent")
     else:
-        ok("baseColorTexture present on the single material")
+        ok(f"baseColorTexture on material 0, {len(doc['materials'])} material(s) total")
+    extra = doc["materials"][1:]
+    if extra:
+        m = extra[0]
+        emis = m.get("emissiveFactor")
+        if "baseColorTexture" in m["pbrMetallicRoughness"]:
+            fail("the emissive accent carries a texture; the factor path is the whole mechanism")
+        elif not emis or max(emis) > EMBER_FACTOR_MAX:
+            fail(f"emissiveFactor {emis} is missing or brighter than {EMBER_FACTOR_MAX}")
+        else:
+            share = sum(len(p.indices) for p in a["primitives"] if p.material == 1) / \
+                sum(len(p.indices) for p in a["primitives"])
+            ok(f"emissive accent: factor {[round(x, 3) for x in emis]}, {share:.3%} of the figure's triangles")
+    accent_prims = [p for p in a["primitives"] if p.material != 0]
+    if len(accent_prims) != len(a["emissive"]):
+        fail(f"{len(accent_prims)} primitives off material 0 but {len(a['emissive'])} emissive parts")
+
+    # M3: the figure's own geometry, shaded with the engine's actor transfer function (C4) at a brazier 1.5
+    # units away, must span >= 0.50 of HSV value over its silhouette - at the WORSE of two mirrored key
+    # azimuths, so a figure cannot pass by being plated down one side only.
+    surfaces = L.asset_surfaces(a, [a["encoded"]] + [None] * (len(a["materials"]) - 1))
+    m3 = L.m3_measure(surfaces)
+    per = m3["per_azimuth"]
+    if m3["spread"] < M3_SPREAD_MIN:
+        fail(f"M3 spread {m3['spread']:.4f} < {M3_SPREAD_MIN} at azimuth {m3['worst_azimuth']:.0f} "
+             f"(the figure's lambert histogram is not bimodal enough to read under a close light)")
+    else:
+        ok(f"M3 spread {m3['spread']:.4f} >= {M3_SPREAD_MIN} (worst azimuth {m3['worst_azimuth']:.0f}; "
+           + ", ".join(f"az {k:.0f} p10 {v['p10']:.4f} p90 {v['p90']:.4f}" for k, v in sorted(per.items())) + ")")
+    # the negative control: the same figure with every flat PLATE removed, i.e. the smooth elliptical lofts
+    # alone, which is what the figure was before this wave. It must fail the floor, or the gate has stopped
+    # measuring the thing it claims to measure.
+    lofts = [s for s, part in zip(surfaces, a["parts"]) if part[1].n is not None]
+    bare = L.m3_measure(lofts)
+    if bare["spread"] >= M3_SPREAD_MIN:
+        fail(f"the M3 gate passes the loft-only figure at {bare['spread']:.4f}; it has stopped measuring the plates")
+    else:
+        ok(f"the M3 gate is live: lofts alone, with no plate, spread {bare['spread']:.4f} < {M3_SPREAD_MIN}")
 
     # the baked texture's own palette discipline: no forbidden hues, and saturation past 0.35 belongs to the one
     # accent material alone, which keeps to a few percent of the figure's atlas area
