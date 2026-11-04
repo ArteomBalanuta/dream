@@ -11,7 +11,9 @@ public class StatusBarPanelTests
 {
     private static StatusBarRecordingCanvas Run(HudView v, UiLayout l, StatusBarFakeInput? input = null, StatusBarFakeActions? actions = null, bool recording = true)
     {
-        StatusBarRecordingCanvas c = new(StatusBarTestData.Table, recording);
+        // The real canvas takes its text scale from the layout in BeginFrame; the fake has to be told,
+        // or every width and height here is measured at scale 1 and means nothing above it.
+        StatusBarRecordingCanvas c = new(StatusBarTestData.Table, recording) { TextScale = l.TextScale };
         StatusBarPanel.Build(c, input ?? new StatusBarFakeInput(), v, l, StatusBarTestData.Table, actions ?? new StatusBarFakeActions());
         return c;
     }
@@ -19,6 +21,16 @@ public class StatusBarPanelTests
     private static UiLayout Layout1080() => UiLayout.Create(1920, 1080, 0f);
 
     private static UiRect GemRect(UiLayout l) => l.FromUnits(l.LeftGroup, 98f, -2f, 50f, 50f);
+
+    // The EXP percent is dead by geometry: the trough is 6 u and the bar's text is at least 9.5 u, so
+    // the gate on StatusBarPanel never opens. It used to appear in these tests only because the fake
+    // canvas ignored the text scale, which made the line box 13 px at every scale. The text is NOT
+    // shrunk into a 6 u slot to bring it back; the art would have to give it a taller trough.
+    private static void NoPercentFitsTheTrough(StatusBarRecordingCanvas c, UiLayout l)
+    {
+        Assert.True(6f * l.Scale < UiFontSetup.BodyPixels * l.TextScale, "the trough grew: the percent could be drawn again");
+        Assert.DoesNotContain(c.Texts, t => t.Text is not null && t.Text.EndsWith('%'));
+    }
 
     // The bar draws a number as text, or as "hudnum" sprites when the art has them. This accepts either:
     // the text itself, or one numeral sprite per character (digits and the slash) in left to right order.
@@ -93,8 +105,8 @@ public class StatusBarPanelTests
         StatusBarRecordingCanvas c = Run(StatusBarTestData.View(exp: 40, toNext: 0), l);
 
         Assert.DoesNotContain(c.Calls, x => x.Kind == StatusBarCallKind.Tile && x.Name == "exp.fill");
-        Assert.Contains(c.Texts, t => t.Text == "0%");
         Assert.Single(c.Sprites("exp.trough"));
+        NoPercentFitsTheTrough(c, l);
     }
 
     [Fact]
@@ -107,8 +119,8 @@ public class StatusBarPanelTests
         StatusBarCall fill = Assert.Single(c.Calls, x => x.Kind == StatusBarCallKind.Tile && x.Name == "exp.fill");
         Assert.Equal(MathF.Round(span.W * 0.5f), fill.Rect.W, 2);
         Assert.Equal(span.X, fill.Rect.X, 2);
-        Assert.Contains(c.Texts, t => t.Text == "50%");
         Assert.True(ShowsNumber(c, "12"));
+        NoPercentFitsTheTrough(c, l);
     }
 
     [Fact]
@@ -148,7 +160,7 @@ public class StatusBarPanelTests
         StatusBarRecordingCanvas c = Run(StatusBarTestData.View(mode: PlayerInteractionMode.Building), l);
 
         StatusBarCall label = c.Texts.First(t => t.Text == "Building");
-        float lineHeight = 13f;
+        float lineHeight = UiFontSetup.BodyPixels * l.TextScale;
         Assert.True(label.TextPos.Y + lineHeight <= l.CentreGroup.Y, $"label bottom {label.TextPos.Y + lineHeight} is inside the bar (top {l.CentreGroup.Y})");
         Assert.True(label.TextPos.Y >= 0f);
     }

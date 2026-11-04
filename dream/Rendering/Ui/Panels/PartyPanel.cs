@@ -34,23 +34,26 @@ public static class PartyPanel
 
         UiTextStyle style = UiTextStyle.Body;
         float pad = MathF.Max(2f, MathF.Round(2.5f * l.Scale));
+        // Leading, rim and text shadow all used to be a baked 1 to 3 px, so they stayed hairlines
+        // while the rows grew with ui_scale.
+        float hair = UiText.ShadowPx(in l);
         float textH = PanelText.Height(c, style);
         float rowH = RowHeight(l, textH);
         float width = MathF.Max(MathF.Min(l.ViewportWidth * 0.2f, 96f * l.Scale), MathF.Min(l.ViewportWidth, 130f));
         float x = MathF.Round(6f * l.Scale);
         float y = Top(l);
-        Frame(c, new UiRect(x, y, width, PlateHeight(party, textH, rowH, pad)), Plate);
+        Frame(c, new UiRect(x, y, width, PlateHeight(l, party, textH, rowH, pad)), Plate, hair);
 
         float rowY = y + pad;
         for (int n = 0; n < party.Count; n++)
         {
-            DrawMember(c, style, party.MemberAt(n), x + pad, rowY, width - (2f * pad), textH, rowH);
+            DrawMember(c, style, party.MemberAt(n), x + pad, rowY, width - (2f * pad), textH, rowH, hair);
             rowY += rowH;
         }
 
         if (party.PendingInviteFrom is { } inviter)
         {
-            DrawInvite(c, style, inviter, x + pad, rowY, width - (2f * pad), textH);
+            DrawInvite(c, style, inviter, x + pad, rowY, width - (2f * pad), textH, hair);
         }
     }
 
@@ -64,20 +67,24 @@ public static class PartyPanel
 
         float pad = MathF.Max(2f, MathF.Round(2.5f * l.Scale));
         float textH = PanelText.Height(c, UiTextStyle.Body);
-        return Top(l) + PlateHeight(party, textH, RowHeight(l, textH), pad);
+        return Top(l) + PlateHeight(l, party, textH, RowHeight(l, textH), pad);
     }
 
     private static float Top(in UiLayout l) => MathF.Round(l.ViewportHeight * 0.16f);
 
-    private static float RowHeight(in UiLayout l, float textH) => textH + MathF.Max(3f, MathF.Round(2f * l.Scale)) + 2f;
+    // Name, a hairline, the health bar: the row is exactly what DrawMember puts in it, so BottomOf
+    // and the quest plate under it agree with what was drawn at every scale.
+    private static float BarHeight(in UiLayout l) => MathF.Max(3f, MathF.Round(2f * l.Scale));
 
-    private static float PlateHeight(PartyHudState party, float textH, float rowH, float pad)
+    private static float RowHeight(in UiLayout l, float textH) => textH + UiText.ShadowPx(in l) + BarHeight(in l);
+
+    private static float PlateHeight(in UiLayout l, PartyHudState party, float textH, float rowH, float pad)
     {
-        float inviteH = party.PendingInviteFrom != null ? (2f * textH) + 3f : 0f;
+        float inviteH = party.PendingInviteFrom != null ? (2f * textH) + UiText.ShadowPx(in l) : 0f;
         return (party.Count * rowH) + inviteH + (2f * pad);
     }
 
-    private static void DrawMember(IUiCanvas c, UiTextStyle style, PartyMemberLine member, float x, float y, float width, float textH, float rowH)
+    private static void DrawMember(IUiCanvas c, UiTextStyle style, PartyMemberLine member, float x, float y, float width, float textH, float rowH, float hair)
     {
         Span<char> levelMem = stackalloc char[8];
         int levelLength = 0;
@@ -91,13 +98,13 @@ public static class PartyPanel
         ReadOnlySpan<char> name = member.Name ?? string.Empty;
         name = name[..PanelText.FitLength(c, name, style, MathF.Max(0f, width - levelW - 6f))];
         UiColor nameColor = member.IsLeader ? LeaderName : MemberName;
-        c.Text(name, new Vector2(x + 1f, y + 1f), style, Shadow);
+        c.Text(name, new Vector2(x + hair, y + hair), style, Shadow);
         c.Text(name, new Vector2(x, y), style, nameColor);
-        c.Text(level, new Vector2(x + width - levelW + 1f, y + 1f), style, Shadow);
+        c.Text(level, new Vector2(x + width - levelW + hair, y + hair), style, Shadow);
         c.Text(level, new Vector2(x + width - levelW, y), style, Dim);
 
-        float barY = y + textH + 1f;
-        float barH = MathF.Max(2f, rowH - textH - 3f);
+        float barY = y + textH + hair;
+        float barH = MathF.Max(2f, rowH - textH - hair);
         UiRect trough = new(x, barY, width, barH);
         c.Solid(trough, Trough);
         int max = Math.Max(1, member.MaxHealth);
@@ -113,7 +120,7 @@ public static class PartyPanel
     }
 
     // Two short lines, so the plate can stay narrow: "<name> invites you" and the two commands.
-    private static void DrawInvite(IUiCanvas c, UiTextStyle style, string inviter, float x, float y, float width, float textH)
+    private static void DrawInvite(IUiCanvas c, UiTextStyle style, string inviter, float x, float y, float width, float textH, float hair)
     {
         const string Invites = " invites you";
         float invitesW = c.MeasureText(Invites, style);
@@ -126,16 +133,16 @@ public static class PartyPanel
 
         ReadOnlySpan<char> hint = "/accept or /decline";
         hint = hint[..PanelText.FitLength(c, hint, style, width)];
-        c.Text(hint, new Vector2(x, y + textH + 1f), style, Dim);
+        c.Text(hint, new Vector2(x, y + textH + hair), style, Dim);
     }
 
-    private static void Frame(IUiCanvas c, UiRect r, UiColor fill)
+    private static void Frame(IUiCanvas c, UiRect r, UiColor fill, float t)
     {
         c.Solid(r, fill);
-        c.Solid(new UiRect(r.X, r.Y, r.W, 1f), Rim);
-        c.Solid(new UiRect(r.X, r.Bottom - 1f, r.W, 1f), Rim);
-        c.Solid(new UiRect(r.X, r.Y, 1f, r.H), Rim);
-        c.Solid(new UiRect(r.Right - 1f, r.Y, 1f, r.H), Rim);
-        c.Solid(new UiRect(r.X + 1f, r.Y + 1f, r.W - 2f, 1f), RimInner);
+        c.Solid(new UiRect(r.X, r.Y, r.W, t), Rim);
+        c.Solid(new UiRect(r.X, r.Bottom - t, r.W, t), Rim);
+        c.Solid(new UiRect(r.X, r.Y, t, r.H), Rim);
+        c.Solid(new UiRect(r.Right - t, r.Y, t, r.H), Rim);
+        c.Solid(new UiRect(r.X + t, r.Y + t, r.W - (2f * t), t), RimInner);
     }
 }
