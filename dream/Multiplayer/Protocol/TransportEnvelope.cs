@@ -58,8 +58,15 @@ public readonly record struct TransportEnvelope(
     // v19 merges the stats sheet: combat group [str, as, vit, agi, energy], player VisualKey main|off,
     // agility/energy in ServerPlayerProgress.BaseStats; a v18 peer would misread the combat group, so
     // both sides refuse it.
+    // Version 20 (worn equipment visuals) widens the player VisualKey from "main|off" to nine
+    // positional fields "main|off|head|body|hands|feet|legs|back|companion", with trailing empty
+    // fields trimmed (a player wearing nothing still sends exactly "main|off") and Neck and the two
+    // ring slots deliberately absent - at the shipped isometric zoom the whole figure is 28x101
+    // pixels and a ring is under 2; a v19 peer reads a worn key's extra separators as a malformed
+    // key and draws an armoured player bare-handed, so both sides refuse it. Every other payload is
+    // unchanged apart from the version digit.
     // Decode rejects any other version.
-    public const int CurrentProtocolVersion = 19;
+    public const int CurrentProtocolVersion = 20;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

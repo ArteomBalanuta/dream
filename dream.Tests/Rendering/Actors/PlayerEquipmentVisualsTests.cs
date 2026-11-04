@@ -30,7 +30,6 @@ public class PlayerEquipmentVisualsTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("|")]
-    [InlineData("held.weapon.sword")]
     [InlineData("a|b|c")]
     [InlineData("HELD.WEAPON.SWORD|")]
     [InlineData("held.weapon.sw ord|")]
@@ -42,6 +41,28 @@ public class PlayerEquipmentVisualsTests
         PlayerEquipmentVisuals visuals = PlayerEquipmentVisuals.Parse(key);
 
         Assert.True(visuals.IsEmpty);
+    }
+
+    // Contract 1: Parse accepts 1..9 fields, so a lone field is the main hand (the v19 parser read it as
+    // malformed; no v20 sender emits it, as Format always keeps the first two fields).
+    [Fact]
+    public void Parse_ALoneFieldIsTheMainHand()
+    {
+        PlayerEquipmentVisuals visuals = PlayerEquipmentVisuals.Parse("held.weapon.sword");
+
+        Assert.Equal(new PlayerEquipmentVisuals("held.weapon.sword"), visuals);
+        Assert.False(visuals.HasWorn);
+        Assert.True(visuals.HasHeld);
+    }
+
+    [Fact]
+    public void Normalize_BySlot_RequiresTheSlotsPrefix()
+    {
+        Assert.Equal("worn.head.leather-cap", PlayerEquipmentVisuals.Normalize(Dream.Simulation.Inventory.EquipmentSlot.Head, "worn.head.leather-cap"));
+        Assert.Null(PlayerEquipmentVisuals.Normalize(Dream.Simulation.Inventory.EquipmentSlot.Head, "worn.feet.iron-boots"));
+        Assert.Null(PlayerEquipmentVisuals.Normalize(Dream.Simulation.Inventory.EquipmentSlot.MainHand, "held.none"));
+        Assert.Null(PlayerEquipmentVisuals.Normalize(Dream.Simulation.Inventory.EquipmentSlot.Neck, "worn.neck.iron-torc"));
+        Assert.Null(PlayerEquipmentVisuals.Normalize(Dream.Simulation.Inventory.EquipmentSlot.Back, "worn.back.Bad"));
     }
 
     [Fact]

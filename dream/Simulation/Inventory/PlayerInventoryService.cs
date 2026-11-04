@@ -972,8 +972,7 @@ internal sealed partial class PlayerInventoryService
 
         HeldLightKind mainLight = HeldLightKind.None;
         HeldLightKind offLight = HeldLightKind.None;
-        string mainVisual = string.Empty;
-        string offVisual = string.Empty;
+        Span<string?> visuals = new string?[VisualKeyFieldCount];
         ulong digest = ModifierDigestSalt;
         bool anyRolled = false;
         Span<long> seen = stackalloc long[EquipmentSlots.Count];
@@ -990,12 +989,16 @@ internal sealed partial class PlayerInventoryService
             if (slot == EquipmentSlot.MainHand)
             {
                 mainLight = definition.HeldLight;
-                mainVisual = definition.VisualId ?? string.Empty;
             }
             else if (slot == EquipmentSlot.OffHand)
             {
                 offLight = definition.HeldLight;
-                offVisual = definition.VisualId ?? string.Empty;
+            }
+
+            int field = VisualKeyField(slot);
+            if (field >= 0)
+            {
+                visuals[field] = definition.VisualId;
             }
 
             if (item.Roll == null)
@@ -1031,23 +1034,56 @@ internal sealed partial class PlayerInventoryService
         _equippedSummaryByPlayer[playerName] = new EquippedSummary(
             EquipmentSlots.ResolveHeldLight(mainLight, offLight),
             anyRolled ? digest : 0UL,
-            BuildVisualKey(mainVisual, offVisual));
+            BuildVisualKey(visuals));
     }
 
-    // The player VisualKey: "<mainHandVisualId>|<offHandVisualId>", an empty side for an empty hand,
-    // and null (off the wire) when both hands are empty. The cached string is reused every snapshot.
-    private static string? BuildVisualKey(string mainVisual, string offVisual)
+    // The player VisualKey: nine positional fields "main|off|head|body|hands|feet|legs|back|companion",
+    // trailing empty fields trimmed but the first two kept (a player wearing nothing but a held item
+    // sends exactly "main|off", as protocol v19 did), and null (off the wire) when every field is empty.
+    // The cached string is reused every snapshot. Neck and the rings are not replicated. Mirrors
+    // PlayerEquipmentVisuals, which Simulation does not reference; a test pins the two together.
+    private static string? BuildVisualKey(ReadOnlySpan<string?> visuals)
     {
-        if (mainVisual.Length == 0 && offVisual.Length == 0)
+        int count = VisualKeyFieldCount;
+        while (count > 0 && string.IsNullOrEmpty(visuals[count - 1]))
+        {
+            count--;
+        }
+
+        if (count == 0)
         {
             return null;
         }
 
-        string key = string.Concat(mainVisual, "|", offVisual);
+        count = Math.Max(count, 2);
+        string[] parts = new string[count];
+        for (int i = 0; i < count; i++)
+        {
+            parts[i] = visuals[i] ?? string.Empty;
+        }
+
+        string key = string.Join('|', parts);
         return key.Length <= MaxPlayerVisualKeyLength ? key : null;
     }
 
-    public const int MaxPlayerVisualKeyLength = 129;
+    private const int VisualKeyFieldCount = 9;
+
+    // The position of a slot in the VisualKey, or -1 for the slots that are never replicated.
+    private static int VisualKeyField(EquipmentSlot slot) => slot switch
+    {
+        EquipmentSlot.MainHand => 0,
+        EquipmentSlot.OffHand => 1,
+        EquipmentSlot.Head => 2,
+        EquipmentSlot.Body => 3,
+        EquipmentSlot.Hands => 4,
+        EquipmentSlot.Feet => 5,
+        EquipmentSlot.Legs => 6,
+        EquipmentSlot.Back => 7,
+        EquipmentSlot.Companion => 8,
+        _ => -1,
+    };
+
+    public const int MaxPlayerVisualKeyLength = 584;
 
     private static bool IsApplicable(StatModifier modifier)
         => (uint)modifier.Stat < (uint)StatId.Count
