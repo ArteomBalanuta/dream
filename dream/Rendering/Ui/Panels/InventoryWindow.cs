@@ -28,7 +28,27 @@ public static class InventoryWindow
     public const float GoldTopUnits = 376f;
     private static readonly UiColor GoldColor = new(0xD8, 0xB4, 0x5A, 255);
 
-    // The body line height on this canvas (doubled when the glyphs are).
+    // Text sizes in window units (1 u = Scale px), in the style of CharacterWindow.AttributeTextUnits.
+    // Every box in this window comes from the ART, so each size is capped by the box it goes in and the
+    // ones over a cell are cut or shrunk by its WIDTH as well: a fixed 13 px shrank relative to its own
+    // box as ui_scale rose, and a size taken from the scale alone overflows the box the art fixed.
+    internal const float TitleTextUnits = 7.5f;
+    internal const float TitleStripUnits = 8f;
+    internal const float RowTextUnits = 9.5f;
+    internal const float RowUnits = 12f;
+    internal const float CellTextUnits = 8f;
+    internal const float BandTextUnits = 8f;
+    internal const float BandUnits = 8f;
+
+    // The 8 u title strip's engraved capitals.
+    internal static UiSizedText TitleTextFor(in UiLayout l) =>
+        UiText.For(in l, TitleTextUnits, TitleStripUnits, UiTextFace.Title);
+
+    // A 12 u line box's text: the size every stone window gives a row.
+    internal static UiSizedText RowTextFor(in UiLayout l) => UiText.For(in l, RowTextUnits, RowUnits);
+
+    // The body line height on this canvas (doubled when the glyphs are). Only the overlays still lay
+    // out from it: their boxes follow the text height, so UiLayout.TextScale already sizes them.
     internal static float BodyHeight(IUiCanvas c) => BodyTextPx * c.TextScale;
 
     // Widget ids. The router keys on the int only, so a block far from small ids avoids clashes.
@@ -103,8 +123,10 @@ public static class InventoryWindow
         if (v.Inventory is null)
         {
             DrawCloseButton(c, i, l, s, a, win, IdCloseInventory, live);
-            DrawTextCentered(c, l.FromUnits(win, 34f, 12f, 120f, 8f), "Inventory", ItemTierStyle.Title);
-            DrawTextCentered(c, l.FromUnits(win, 15f, 200f, 160f, 20f), "Waiting for inventory...", ItemTierStyle.Dim);
+            DrawTitle(c, l, win);
+            UiText.PutCentered(
+                c, l.FromUnits(win, 15f, 200f, 160f, 20f), "Waiting for inventory...",
+                RowTextFor(in l), ItemTierStyle.Dim, UiText.ShadowPx(in l));
             return;
         }
 
@@ -134,7 +156,7 @@ public static class InventoryWindow
             }
         }
 
-        DrawTextCentered(c, l.FromUnits(win, 34f, 12f, 120f, 8f), "Inventory", ItemTierStyle.Title);
+        DrawTitle(c, l, win);
         for (int w = 0; w < Wells.Length; w++)
         {
             DrawWellLabel(c, v, l, win, w);
@@ -570,7 +592,7 @@ public static class InventoryWindow
     {
         if (TryItem(v.Worn, w, out _) && !v.Worn[w].HasIcon)
         {
-            DrawFallbackLabel(c, WellRect(l, win, w), v.Worn[w].Item.DisplayName);
+            DrawFallbackLabel(c, l, WellRect(l, win, w), v.Worn[w].Item.DisplayName);
         }
     }
 
@@ -687,7 +709,7 @@ public static class InventoryWindow
         UiRect r = ItemRect(l, win, anchor, v.BagFootprints[anchor]);
         if (!v.Backpack[anchor].HasIcon)
         {
-            DrawFallbackLabel(c, r, item.DisplayName);
+            DrawFallbackLabel(c, l, r, item.DisplayName);
         }
 
         if (item.StackCount > 1)
@@ -697,8 +719,14 @@ public static class InventoryWindow
             b.Append("x");
             b.Append(item.StackCount);
             ReadOnlySpan<char> text = b.Text;
-            float width = c.MeasureText(text, UiTextStyle.Body);
-            DrawText(c, text, new Vector2(r.Right - width - (2f * l.Scale), r.Bottom - BodyHeight(c) - l.Scale), ItemTierStyle.Body);
+            // Over a cell, so the count is shrunk to the cell's WIDTH as well as its height: "x12" at
+            // the 13 px bake is already wider than a 20 u cell at scale 1.
+            float pad = 2f * l.Scale;
+            var t = UiText.ForFitting(c, in l, text, CellTextUnits, CellUnits, MathF.Max(0f, r.W - (2f * pad)));
+            float width = UiText.Measure(c, text, in t);
+            UiText.Put(
+                c, text, new Vector2(r.Right - width - pad, r.Bottom - t.Px - l.Scale), in t,
+                ItemTierStyle.Body, UiText.ShadowPx(in l));
         }
     }
 
@@ -715,8 +743,8 @@ public static class InventoryWindow
         UiTextBuilder b = new(mem);
         b.Append(v.HeldBackCount);
         b.Append(CharacterPanelModel.HeldBackSuffix(v.HeldBackCount));
-        UiRect band = l.FromUnits(win, HeldBackLeftUnits, HeldBackTopUnits, BagColumns * CellUnits, 8f);
-        DrawText(c, b.Text, new Vector2(band.X, band.Y), ItemTierStyle.Danger);
+        UiRect band = l.FromUnits(win, HeldBackLeftUnits, HeldBackTopUnits, BagColumns * CellUnits, BandUnits);
+        UiText.PutLeft(c, band, 0f, b.Text, BandTextFor(in l), ItemTierStyle.Danger, UiText.ShadowPx(in l));
     }
 
     // "Gold 120" in the band under the held-back line: the wallet of the snapshot (M3).
@@ -727,20 +755,23 @@ public static class InventoryWindow
         UiTextBuilder b = new(mem);
         b.Append("Gold ");
         b.Append((int)Math.Clamp(gold, 0L, int.MaxValue));
-        UiRect band = l.FromUnits(win, HeldBackLeftUnits, GoldTopUnits, BagColumns * CellUnits, 8f);
-        DrawText(c, b.Text, new Vector2(band.X, band.Y), GoldColor);
+        UiRect band = l.FromUnits(win, HeldBackLeftUnits, GoldTopUnits, BagColumns * CellUnits, BandUnits);
+        UiText.PutLeft(c, band, 0f, b.Text, BandTextFor(in l), GoldColor, UiText.ShadowPx(in l));
     }
 
-    // An item with no sprite shows the start of its name, so it is never invisible.
-    private static void DrawFallbackLabel(IUiCanvas c, UiRect r, string? name)
+    // An item with no sprite shows the start of its name, so it is never invisible. Cut by WIDTH, not
+    // to three characters: three glyphs at 8 u need not fit a 20 u cell, and four often do.
+    private static void DrawFallbackLabel(IUiCanvas c, in UiLayout l, UiRect r, string? name)
     {
         if (string.IsNullOrEmpty(name))
         {
             return;
         }
 
-        ReadOnlySpan<char> text = name.AsSpan(0, Math.Min(name.Length, 3));
-        DrawTextCentered(c, r, text, ItemTierStyle.Body);
+        ReadOnlySpan<char> text = name.AsSpan(0, Math.Min(name.Length, 24));
+        var t = UiText.For(in l, CellTextUnits, CellUnits);
+        float room = MathF.Max(0f, r.W - (2f * l.Scale));
+        UiText.PutCentered(c, r, text[..UiText.FitLength(c, text, in t, room)], in t, ItemTierStyle.Body, UiText.ShadowPx(in l));
     }
 
     internal static void DrawCloseButton(
@@ -815,22 +846,26 @@ public static class InventoryWindow
         }
     }
 
-    // ---- text helpers shared by the windows -------------------------------------------------
+    // "Inventory" in the 8 u title strip, in the engraved face at the size the strip allows.
+    private static void DrawTitle(IUiCanvas c, in UiLayout l, UiRect win) =>
+        UiText.PutCentered(
+            c, l.FromUnits(win, 34f, 12f, 120f, TitleStripUnits), "Inventory",
+            TitleTextFor(in l), ItemTierStyle.Title, UiText.ShadowPx(in l));
 
-    internal static void DrawText(IUiCanvas c, ReadOnlySpan<char> text, Vector2 pos, UiColor color)
-    {
-        c.Text(text, new Vector2(pos.X + 1f, pos.Y + 1f), UiTextStyle.Body, ItemTierStyle.Shadow);
-        c.Text(text, pos, UiTextStyle.Body, color);
-    }
+    // The 8 u bands under the bag: the held-back warning and the wallet.
+    private static UiSizedText BandTextFor(in UiLayout l) => UiText.For(in l, BandTextUnits, BandUnits);
+
+    // ---- text helpers shared by the windows -------------------------------------------------
+    //
+    // These draw at whatever size the canvas is already set to (UiLayout.TextScale), so they are for
+    // the overlays, whose boxes follow the text height. A panel whose boxes come from the art asks
+    // UiText for a size capped by the box instead.
+
+    internal static void DrawText(IUiCanvas c, ReadOnlySpan<char> text, Vector2 pos, UiColor color) =>
+        UiText.Put(c, text, pos, UiText.AtCanvasScale(c), color);
 
     // Centred in r. Text wider than r is cut to fit instead of clipped, so it stays in the same draw
     // command as every other line of text.
-    internal static void DrawTextCentered(IUiCanvas c, UiRect r, ReadOnlySpan<char> text, UiColor color)
-    {
-        text = text[..PanelText.FitLength(c, text, UiTextStyle.Body, r.W)];
-        float width = c.MeasureText(text, UiTextStyle.Body);
-        float x = r.X + MathF.Max(0f, (r.W - width) * 0.5f);
-        float y = r.Y + MathF.Floor((r.H - BodyHeight(c)) * 0.5f);
-        DrawText(c, text, new Vector2(x, y), color);
-    }
+    internal static void DrawTextCentered(IUiCanvas c, UiRect r, ReadOnlySpan<char> text, UiColor color) =>
+        UiText.PutCentered(c, r, text, UiText.AtCanvasScale(c), color);
 }

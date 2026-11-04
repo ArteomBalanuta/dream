@@ -21,6 +21,12 @@ public static class VendorWindow
     private const float SellHeadTop = 168f;
     private const float SellTop = 182f;
     private const float PagerW = 14f;
+    private const float ButtonH = 16f;
+
+    // Text sizes in window units (1 u = Scale px); the boxes are the art's, so each is capped by its box.
+    internal const float RowTextUnits = 9.5f;
+    internal const float HeadTextUnits = 8f;
+    internal const float ButtonTextUnits = 9.5f;
 
     // Widget ids, clear of the inventory (0x100..0x502) and the character window (0x310..).
     internal const int IdBuyRow = InventoryWindow.IdBase + 0x600;
@@ -105,7 +111,7 @@ public static class VendorWindow
             }
         }
 
-        UiRect sell = l.FromUnits(win, RowX, SellTop + (SellRows * RowPitch) + 6f, RowW, 16f);
+        UiRect sell = l.FromUnits(win, RowX, SellTop + (SellRows * RowPitch) + 6f, RowW, ButtonH);
         bool canSell = vendor.SelectedAnchor >= 0;
         DrawRowPlate(c, s, sell);
         if (canSell && live && i.Hovered(IdSellButton, sell))
@@ -126,12 +132,20 @@ public static class VendorWindow
         DrawClose(c, i, l, s, a, win, live);
 
         // ---- text ----
-        InventoryWindow.DrawTextCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), TitleText(vendor.Title), ItemTierStyle.Title);
-        DrawGoldStrip(c, l, win, v);
-        InventoryWindow.DrawText(c, "For sale", HeadPos(l, win, BuyTop - 12f), ItemTierStyle.Dim);
+        // One size per kind of box, each capped by the box the art fixed; the pagers are 14 u wide,
+        // so their glyph is shrunk to that width and not only to the 12 u height.
+        float shadow = UiText.ShadowPx(in l);
+        var title = InventoryWindow.TitleTextFor(in l);
+        var row = UiText.For(in l, RowTextUnits, RowH);
+        var head = UiText.For(in l, HeadTextUnits, RowH);
+        var button = UiText.For(in l, ButtonTextUnits, ButtonH);
+        var pager = UiText.ForFitting(c, in l, "<", RowTextUnits, RowH, prev.W);
+        UiText.PutCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), TitleText(vendor.Title), in title, ItemTierStyle.Title, shadow);
+        DrawGoldStrip(c, l, win, v, in title, shadow);
+        UiText.PutLeft(c, HeadRect(l, win, BuyTop - 12f), 0f, "For sale", in head, ItemTierStyle.Dim, shadow);
         if (stock == 0)
         {
-            InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, BuyTop, RowW, RowH), "Nothing for sale", ItemTierStyle.Dim);
+            UiText.PutCentered(c, l.FromUnits(win, RowX, BuyTop, RowW, RowH), "Nothing for sale", in row, ItemTierStyle.Dim, shadow);
         }
 
         long gold = v.Inventory?.Gold ?? 0;
@@ -139,7 +153,7 @@ public static class VendorWindow
         {
             VendorStockLine line = vendor.StockAt(n);
             UiRect r = l.FromUnits(win, RowX, BuyTop + (n * RowPitch), RowW, RowH);
-            DrawPricedRow(c, r, line.DisplayName, line.Price, ItemTierStyle.Body, line.Price > gold ? ItemTierStyle.Danger : GoldColor);
+            DrawPricedRow(c, r, line.DisplayName, line.Price, ItemTierStyle.Body, line.Price > gold ? ItemTierStyle.Danger : GoldColor, in row, shadow);
         }
 
         Span<char> mem = stackalloc char[24];
@@ -147,15 +161,21 @@ public static class VendorWindow
         pageText.Append(vendor.SellPage + 1);
         pageText.Append("/");
         pageText.Append(pages);
-        InventoryWindow.DrawText(c, "Your goods", HeadPos(l, win, SellHeadTop + 1f), ItemTierStyle.Dim);
-        InventoryWindow.DrawTextCentered(c, prev, "<", vendor.SellPage > 0 ? ItemTierStyle.Body : ItemTierStyle.Dim);
-        InventoryWindow.DrawTextCentered(c, next, ">", vendor.SellPage < pages - 1 ? ItemTierStyle.Body : ItemTierStyle.Dim);
-        float pageX = prev.Right + (((next.X - prev.Right) - c.MeasureText(pageText.Text, UiTextStyle.Body)) * 0.5f);
-        InventoryWindow.DrawText(c, pageText.Text, new Vector2(pageX, prev.Y + MathF.Floor((prev.H - InventoryWindow.BodyHeight(c)) * 0.5f)), ItemTierStyle.Dim);
+        UiRect headRect = HeadRect(l, win, SellHeadTop + 1f);
+        UiText.PutLeft(c, headRect, 0f, "Your goods", in head, ItemTierStyle.Dim, shadow);
+        UiText.PutCentered(c, prev, "<", in pager, vendor.SellPage > 0 ? ItemTierStyle.Body : ItemTierStyle.Dim, shadow);
+        UiText.PutCentered(c, next, ">", in pager, vendor.SellPage < pages - 1 ? ItemTierStyle.Body : ItemTierStyle.Dim, shadow);
+
+        // "1/2" between the heading and the pagers. The 8 u gap between the two pagers is narrower than
+        // the text at any size, so it goes in the room the heading leaves instead of on top of them.
+        float pageLeft = headRect.X + UiText.Measure(c, "Your goods", in head) + (4f * l.Scale);
+        UiRect pageBox = new(pageLeft, prev.Y, MathF.Max(0f, prev.X - pageLeft), prev.H);
+        var page = UiText.ForFitting(c, in l, pageText.Text, HeadTextUnits, RowH, MathF.Max(0f, pageBox.W - (2f * l.Scale)));
+        UiText.PutRight(c, pageBox, 2f * l.Scale, pageText.Text, in page, ItemTierStyle.Dim, shadow);
 
         if (shown == 0)
         {
-            InventoryWindow.DrawTextCentered(c, l.FromUnits(win, RowX, SellTop, RowW, RowH), "Nothing to sell", ItemTierStyle.Dim);
+            UiText.PutCentered(c, l.FromUnits(win, RowX, SellTop, RowW, RowH), "Nothing to sell", in row, ItemTierStyle.Dim, shadow);
         }
 
         for (int n = 0; n < shown; n++)
@@ -163,13 +183,11 @@ public static class VendorWindow
             HudItemView item = v.Backpack[anchors[n]];
             UiRect r = l.FromUnits(win, RowX, SellTop + (n * RowPitch), RowW, RowH);
             string name = item.Item.DisplayName ?? string.Empty;
-            float inset = 2f * l.Scale;
             ReadOnlySpan<char> shownName = name.AsSpan(0, Math.Min(name.Length, 40));
-            shownName = shownName[..PanelText.FitLength(c, shownName, UiTextStyle.Body, r.W - (2f * inset))];
-            InventoryWindow.DrawText(c, shownName, new Vector2(r.X + inset, TextY(c, r)), ItemTierStyle.ColorOf(item.Tier));
+            UiText.PutLeft(c, r, 2f * l.Scale, shownName, in row, ItemTierStyle.ColorOf(item.Tier), shadow);
         }
 
-        InventoryWindow.DrawTextCentered(c, sell, "Sell", canSell ? ItemTierStyle.Title : ItemTierStyle.Dim);
+        UiText.PutCentered(c, sell, "Sell", in button, canSell ? ItemTierStyle.Title : ItemTierStyle.Dim, shadow);
     }
 
     // The bag items the sell list offers: every item with an anchor, in anchor order.
@@ -261,37 +279,35 @@ public static class VendorWindow
         return title.AsSpan(0, Math.Min(title.Length, VendorHudState.MaxTitleChars));
     }
 
-    private static void DrawGoldStrip(IUiCanvas c, in UiLayout l, UiRect win, HudView v)
+    private static void DrawGoldStrip(IUiCanvas c, in UiLayout l, UiRect win, HudView v, in UiSizedText t, float shadow)
     {
         Span<char> mem = stackalloc char[32];
         UiTextBuilder b = new(mem);
         b.Append("Gold ");
         b.Append(ClampToInt(v.Inventory?.Gold ?? 0));
-        InventoryWindow.DrawTextCentered(c, l.FromUnits(win, 35f, 20f, 119f, 8f), b.Text, GoldColor);
+        UiText.PutCentered(c, l.FromUnits(win, 35f, 20f, 119f, 8f), b.Text, in t, GoldColor, shadow);
     }
 
-    // Name on the left, price on the right; the name gives way to the price.
-    private static void DrawPricedRow(IUiCanvas c, UiRect r, string name, long price, UiColor nameColor, UiColor priceColor)
+    // Name on the left, price on the right; the name gives way to the price. Measured at the size it
+    // draws with: PanelText.FitLength reads the canvas's current scale, which is not this one.
+    private static void DrawPricedRow(
+        IUiCanvas c, UiRect r, string name, long price, UiColor nameColor, UiColor priceColor,
+        in UiSizedText t, float shadow)
     {
         Span<char> mem = stackalloc char[16];
         UiTextBuilder b = new(mem);
         b.Append(ClampToInt(price));
         float inset = MathF.Max(2f, r.H * 0.15f);
-        float priceW = c.MeasureText(b.Text, UiTextStyle.Body);
-        float y = TextY(c, r);
-        InventoryWindow.DrawText(c, b.Text, new Vector2(r.Right - inset - priceW, y), priceColor);
+        float priceW = UiText.Measure(c, b.Text, in t);
+        float y = UiText.TextY(r, in t);
+        UiText.Put(c, b.Text, new Vector2(r.Right - inset - priceW, y), in t, priceColor, shadow);
         ReadOnlySpan<char> shown = (name ?? string.Empty).AsSpan(0, Math.Min((name ?? string.Empty).Length, 40));
-        shown = shown[..PanelText.FitLength(c, shown, UiTextStyle.Body, MathF.Max(0f, r.W - (3f * inset) - priceW))];
-        InventoryWindow.DrawText(c, shown, new Vector2(r.X + inset, y), nameColor);
+        shown = shown[..UiText.FitLength(c, shown, in t, MathF.Max(0f, r.W - (3f * inset) - priceW))];
+        UiText.Put(c, shown, new Vector2(r.X + inset, y), in t, nameColor, shadow);
     }
 
-    private static float TextY(IUiCanvas c, UiRect r) => r.Y + MathF.Floor((r.H - InventoryWindow.BodyHeight(c)) * 0.5f);
-
-    private static Vector2 HeadPos(in UiLayout l, UiRect win, float topUnits)
-    {
-        UiRect r = l.FromUnits(win, RowX, topUnits, RowW, RowH);
-        return new Vector2(r.X, r.Y);
-    }
+    private static UiRect HeadRect(in UiLayout l, UiRect win, float topUnits) =>
+        l.FromUnits(win, RowX, topUnits, RowW, RowH);
 
     private static int ClampToInt(long value) => (int)Math.Clamp(value, 0L, int.MaxValue);
 }
