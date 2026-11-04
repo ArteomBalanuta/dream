@@ -165,4 +165,87 @@ public class TerrainMaterialMapTests
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.Equal(0, allocated);
     }
+
+    [Fact]
+    public void SingleCell_GivesAOneByOneByOneMap()
+    {
+        TerrainMaterialMap map = new();
+        map.Rebuild([Cell(-3, 5, 7, GeometryMaterialId.Dirt)]);
+
+        Assert.Equal(new Vector3i(1, 1, 1), map.Size);
+        Assert.Equal(new Vector3i(-3, 5, 7), map.Origin);
+        Assert.Equal(1, map.Count);
+        Assert.Equal(2, map.GetTexel(-3, 5, 7));
+        Assert.Equal(TerrainMaterialMap.EmptyTexel, map.GetTexel(-3, 6, 7));
+    }
+
+    [Fact]
+    public void StackedFullCells_OnlyTheTopStaysExposed()
+    {
+        TerrainMaterialMap map = new();
+        map.Rebuild(
+        [
+            Cell(0, 0, 0, GeometryMaterialId.Dirt),
+            Cell(0, 1, 0, GeometryMaterialId.Stone),
+            Cell(0, 2, 0, GeometryMaterialId.Grass)
+        ]);
+
+        Assert.Equal(TerrainMaterialMap.CoveredTexel, map.GetTexel(0, 0, 0));
+        Assert.Equal(TerrainMaterialMap.CoveredTexel, map.GetTexel(0, 1, 0));
+        Assert.Equal(1, map.GetTexel(0, 2, 0));
+    }
+
+    [Fact]
+    public void LampOnTop_CoversTheBlendableBelow_AndStaysNonBlendable()
+    {
+        TerrainMaterialMap map = new();
+        map.Rebuild(
+        [
+            Cell(0, 0, 0, GeometryMaterialId.Grass),
+            Cell(0, 1, 0, GeometryMaterialId.Lamp)
+        ]);
+
+        Assert.Equal(TerrainMaterialMap.CoveredTexel, map.GetTexel(0, 0, 0));
+        Assert.Equal(TerrainMaterialMap.NonBlendableTexel, map.GetTexel(0, 1, 0));
+    }
+
+    [Fact]
+    public void SubCellBlockAtAnIntegerMin_WithSizeBelowOne_IsEmpty()
+    {
+        TerrainMaterialMap map = new();
+        // min = (2, 0, 2), size 0.5: on the grid but not a full cell.
+        map.Rebuild(
+        [
+            new StaticVoxelRenderCell(new Vector3(2.25f, 0.25f, 2.25f), new Vector3(0.5f, 0.5f, 0.5f), GeometryMaterialId.Grass),
+            Cell(5, 0, 5, GeometryMaterialId.Stone)
+        ]);
+
+        Assert.Equal(new Vector3i(1, 1, 1), map.Size);
+        Assert.Equal(new Vector3i(5, 0, 5), map.Origin);
+        Assert.Equal(TerrainMaterialMap.EmptyTexel, map.GetTexel(2, 0, 2));
+    }
+
+    [Fact]
+    public void OnlySubCellBlocks_GiveNoMap()
+    {
+        TerrainMaterialMap map = new();
+        map.Rebuild(
+        [
+            new StaticVoxelRenderCell(new Vector3(2.25f, 0.25f, 2.25f), new Vector3(0.5f, 0.5f, 0.5f), GeometryMaterialId.Grass)
+        ]);
+
+        Assert.True(map.IsEmpty);
+    }
+
+    [Fact]
+    public void GetTexel_OutsideTheBounds_IsEmpty()
+    {
+        TerrainMaterialMap map = new();
+        map.Rebuild([Cell(1, 1, 1, GeometryMaterialId.Grass)]);
+
+        Assert.Equal(TerrainMaterialMap.EmptyTexel, map.GetTexel(0, 1, 1));
+        Assert.Equal(TerrainMaterialMap.EmptyTexel, map.GetTexel(2, 1, 1));
+        Assert.Equal(TerrainMaterialMap.EmptyTexel, map.GetTexel(1, 1, int.MinValue));
+        Assert.Equal(TerrainMaterialMap.EmptyTexel, new TerrainMaterialMap().GetTexel(0, 0, 0));
+    }
 }

@@ -68,6 +68,40 @@ public class StaticWorldChunkRendererMaterialMapTests
     }
 
     [Fact]
+    public void FramesThatDrawNothing_DoNotSync_AndTheNextDrawingFrameSyncsOnce()
+    {
+        MapStore store = new();
+        using StaticWorldChunkRenderer renderer = new(
+            request => Task.FromResult(StaticWorldChunkRenderer.BuildBatch(request)),
+            new RenderFaultLog(_ => { }),
+            store);
+        Camera away = new(new Vector3(3f, 2f, 3f));
+        away.SetFacing(new Vector3(1f, 0.5f, 1f));
+        ViewFrustum awayFrustum = ViewFrustum.FromViewAndProjection(away.GetViewMatrix(), ViewFrustumTests.GameProjection());
+        Camera toward = new(new Vector3(3f, 2f, 3f));
+        toward.SetFacing(new Vector3(-1f, -0.5f, -1f));
+        ViewFrustum towardFrustum = ViewFrustum.FromViewAndProjection(toward.GetViewMatrix(), ViewFrustumTests.GameProjection());
+        GeometryRenderExport export = CreateExport(new() { [(0, 0, 0)] = GeometryMaterialId.Grass }, 1, []);
+
+        for (int i = 0; i < 6; i++)
+        {
+            renderer.Draw(UnusedRender, away, in awayFrustum, export);
+        }
+
+        Assert.Equal(0, store.Drawn);
+        Assert.Equal(0, store.SyncCount);
+
+        for (int i = 0; i < 6; i++)
+        {
+            renderer.Draw(UnusedRender, toward, in towardFrustum, export);
+        }
+
+        Assert.True(store.Drawn > 0);
+        Assert.Equal(1, store.SyncCount);
+        Assert.Equal(new Vector3i(1, 1, 1), store.LastSize);
+    }
+
+    [Fact]
     public void Dispose_ClearsTheMap()
     {
         MapStore store = new();
