@@ -93,8 +93,8 @@ DECALS: dict[str, Decal] = {
     "decal_litter_01": Decal("decal.litter", "litter", 1.30, 0.80, ("grass", "dirt"), base=(0.30, 0.20, 0.10), alt=(0.20, 0.20, 0.11), var=0),
     "decal_litter_02": Decal("decal.litter", "litter", 1.05, 0.76, ("grass", "dirt"), base=(0.28, 0.19, 0.10), alt=(0.19, 0.19, 0.11), var=1),
     "decal_litter_03": Decal("decal.litter", "litter", 1.50, 0.84, ("grass", "dirt"), base=(0.31, 0.22, 0.12), alt=(0.21, 0.20, 0.12), var=2),
-    "decal_scorch_01": Decal("decal.scorch", "scorch", 1.40, 0.37, ALL_GROUND, weight=0.8, base=(0.05, 0.045, 0.04), alt=(0.22, 0.21, 0.19), var=0),
-    "decal_scorch_02": Decal("decal.scorch", "scorch", 1.00, 0.34, ALL_GROUND, weight=0.8, base=(0.05, 0.045, 0.04), alt=(0.22, 0.21, 0.19), var=1),
+    "decal_scorch_01": Decal("decal.scorch", "scorch", 1.40, 0.37, ALL_GROUND, weight=0.8, base=(0.09, 0.083, 0.075), alt=(0.32, 0.30, 0.27), var=0),
+    "decal_scorch_02": Decal("decal.scorch", "scorch", 1.00, 0.34, ALL_GROUND, weight=0.8, base=(0.09, 0.083, 0.075), alt=(0.32, 0.30, 0.27), var=1),
     "decal_stain_01": Decal("decal.stain", "stain", 0.90, 0.62, ("dirt", "stone", "sand"), weight=0.8, scale=(0.85, 1.15), base=(0.15, 0.13, 0.11), alt=(0.24, 0.20, 0.15), var=0),
     "decal_stain_02": Decal("decal.stain", "stain", 0.75, 0.58, ("dirt", "stone", "sand"), weight=0.8, scale=(0.85, 1.15), base=(0.15, 0.10, 0.09), alt=(0.20, 0.14, 0.12), var=1),
 }
