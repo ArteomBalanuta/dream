@@ -98,6 +98,10 @@ Guardrail: keep per-mesh state out of the pass. Anything that varies per mesh mu
 
 Guardrail: do not put a `discard` in an OPAQUE program. A fragment shader that can discard loses early depth testing even when it never discards, which measured about double the GPU actors time.
 
+### Terrain Surface Variation
+
+The terrain program (`DREAM_TERRAIN` build of `cubeFragment.glsl`, see Terrain surface in [Rendering And Assets](rendering-and-assets.md)) costs two `textureGrad` fetches instead of one and about 18 integer hashes per fragment with `DREAM_TERRAIN_VARIATION=1`: 4 for the variant noise, 2 for the variant offsets and 12 for the three macro octaves. There is no `discard` (so early depth stays on), no extra draw call and no per-mesh uniform upload: `uTerrainVariation` is set once per terrain pass or fallback bind. `DREAM_TERRAIN_VARIATION=0` takes the single plain sample path, whose cost is the old one. The terrain program is a separate compile so the stochastic path adds nothing to the actors, ground scatter or view-model draws that share the `cube` program.
+
 ### Worker Mesh Build With Render-Thread Upload
 
 Static chunk CPU mesh generation now runs on a background worker, while OpenGL buffer creation and replacement stay on the render thread. The renderer stages finished worker results and uploads only a bounded number of chunk meshes per frame, keeping stale buffers alive until the replacement batch completes.

@@ -10,6 +10,11 @@ namespace Dream.Rendering.Core;
 
 public partial class Render : IWorldInstanceDrawTarget
 {
+    // The terrain-only program: the cube sources compiled with Shader.TerrainDefine.
+    public const string TerrainShaderName = "terrain";
+
+    private readonly TerrainSurfaceSettings _terrainSurface = TerrainSurfaceSettings.FromEnvironment();
+
     public void DrawCube(Camera camera, Cube cube)
     {
         AnimatedModel? model = CubeMaterialModelCatalog.Resolve(cube.MaterialId);
@@ -56,7 +61,7 @@ public partial class Render : IWorldInstanceDrawTarget
     // material. Each mesh sees the same uniform values as when it was drawn on its own.
     public void BeginStaticTerrainPass(Camera camera)
     {
-        Shader shader = GetShader("cube");
+        Shader shader = GetShader(TerrainShaderName);
         shader.Use();
         shader.SetModelMatrix(Matrix4.Identity);
         shader.SetMatrix4("view", camera.GetViewMatrix());
@@ -68,6 +73,7 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
         shader.SetInt("material.baseColorTexture", 0);
+        shader.SetFloat("uTerrainVariation", _terrainSurface.Variation);
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.Enable(EnableCap.DepthTest);
         // Static terrain meshes are already hidden-face culled. Draw remaining
@@ -80,12 +86,12 @@ public partial class Render : IWorldInstanceDrawTarget
     public void BindStaticTerrainMaterial(int materialSlot)
     {
         StaticTerrainMaterial material = StaticTerrainMaterialCatalog.GetBySlot(materialSlot);
-        Shader shader = GetShader("cube");
+        Shader shader = GetShader(TerrainShaderName);
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
         shader.SetEmissiveFactor(material.Emissive);
-        // Terrain is opaque: it always draws with the base "cube" program, which has no discard
-        // (only its alpha-mask variant has one).
+        // Terrain is opaque: it always draws with the terrain program, which has no discard
+        // (and no alpha-mask variant).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
         if (texture != -1)
         {
@@ -146,7 +152,7 @@ public partial class Render : IWorldInstanceDrawTarget
         _fallbackInstances.Upload(modelMatrices, count);
         _fallbackCubeBuffer.DrawInstanced(_fallbackInstances, count);
         // Leave the program the way every non-instanced user of it expects.
-        GetShader("cube").SetBool("useInstancing", false);
+        GetShader(TerrainShaderName).SetBool("useInstancing", false);
     }
 
     // The asset scale for a batch's model, for callers outside Render that build its matrices.
@@ -172,7 +178,7 @@ public partial class Render : IWorldInstanceDrawTarget
         StaticTerrainMaterial material,
         bool instanced)
     {
-        Shader shader = GetShader("cube");
+        Shader shader = GetShader(TerrainShaderName);
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.Use();
         if (!instanced)
@@ -189,8 +195,9 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetFloat("material.roughnessFactor", 1f);
         shader.SetEmissiveFactor(material.Emissive);
         shader.SetHasEmissiveTexture(false);
-        // Terrain is opaque: it always draws with the base "cube" program, which has no discard
-        // (only its alpha-mask variant has one).
+        shader.SetFloat("uTerrainVariation", _terrainSurface.Variation);
+        // Terrain is opaque: it always draws with the terrain program, which has no discard
+        // (and no alpha-mask variant).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
         if (texture != -1)
         {
