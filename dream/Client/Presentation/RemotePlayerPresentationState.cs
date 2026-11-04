@@ -1,10 +1,11 @@
 using OpenTK.Mathematics;
+using Dream.Rendering.Actors;
 using Dream.Simulation.Inventory;
 
 namespace Dream.Client.Presentation;
 
-// What a remote player shows besides its pose. The held visuals come from the replicated VisualKey
-// ("<mainHandVisualId>|<offHandVisualId>"); the attack and hit serials count events the client
+// What a remote player shows besides its pose. The held and worn visuals come from the replicated VisualKey
+// ("main|off|head|body|hands|feet|legs|back|companion", trailing empties trimmed); the attack and hit serials count events the client
 // inferred from snapshots (a swing at an enemy in front, health lost); Airborne and HorizontalSpeed
 // come from the movement between snapshots, as does TravelDirection (a smoothed unit ground-plane
 // direction for the leg twist, zero when not moving); DeathAgeSeconds is how long the player has been dead
@@ -20,8 +21,7 @@ public readonly record struct RemotePlayerPresentationState(
     bool IsMoving = false,
     HeldLightKind HeldLight = HeldLightKind.None,
     int Level = 1,
-    string? MainHandVisual = null,
-    string? OffHandVisual = null,
+    PlayerEquipmentVisuals Equipment = default,
     int AttackSerial = 0,
     int HitSerial = 0,
     bool Airborne = false,

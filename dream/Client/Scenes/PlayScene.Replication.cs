@@ -373,9 +373,17 @@ public partial class PlayScene
         ApplyReplicatedMessage(new ServerSnapshotMessage(snapshot));
     }
 
-    // A weapon gallery for the loopback remote players: every few seconds each one holds the next
-    // known item (the shields in the off hand), so every mesh can be looked at without the items.
-    private static string? LoopbackGalleryVisualKey(float seconds, int shieldOffset)
+    private static readonly EquipmentSlot[] GalleryWornSlots =
+    [
+        EquipmentSlot.Head, EquipmentSlot.Body, EquipmentSlot.Hands, EquipmentSlot.Feet,
+        EquipmentSlot.Legs, EquipmentSlot.Back, EquipmentSlot.Companion,
+    ];
+
+    // A gallery for the loopback remote players: every 3 seconds each one holds the next known item
+    // (the shields in the off hand) and wears the next known piece in every worn slot, so every mesh
+    // can be looked at without the items, a vendor or a starter kit. The figures sit on different
+    // offsets, and each slot on its own, so more of the catalog is visible at once.
+    internal static string? LoopbackGalleryVisualKey(float seconds, int shieldOffset)
     {
         List<string> weapons = [];
         List<string> shields = [];
@@ -384,15 +392,43 @@ public partial class PlayScene
             (WeaponMeshCatalog.IsShield(id) ? shields : weapons).Add(id);
         }
 
-        if (weapons.Count == 0)
+        int step = (int)(seconds / 3f);
+        string? main = weapons.Count == 0 ? null : weapons[(step + (shieldOffset * 5)) % weapons.Count];
+        string? off = shields.Count == 0 ? null : shields[(step + shieldOffset) % shields.Count];
+
+        PlayerEquipmentVisuals visuals = new(main, off);
+        for (int slotIndex = 0; slotIndex < GalleryWornSlots.Length; slotIndex++)
         {
-            return null;
+            EquipmentSlot slot = GalleryWornSlots[slotIndex];
+            string prefix = PlayerEquipmentVisuals.PrefixFor(slot);
+            List<string> pieces = [];
+            foreach (string id in ArmourMeshCatalog.KnownVisualIds)
+            {
+                if (id.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    pieces.Add(id);
+                }
+            }
+
+            if (pieces.Count == 0)
+            {
+                continue;
+            }
+
+            string piece = pieces[(step + (shieldOffset * 3) + slotIndex) % pieces.Count];
+            visuals = slot switch
+            {
+                EquipmentSlot.Head => visuals with { Head = piece },
+                EquipmentSlot.Body => visuals with { Body = piece },
+                EquipmentSlot.Hands => visuals with { Hands = piece },
+                EquipmentSlot.Feet => visuals with { Feet = piece },
+                EquipmentSlot.Legs => visuals with { Legs = piece },
+                EquipmentSlot.Back => visuals with { Back = piece },
+                _ => visuals with { Companion = piece },
+            };
         }
 
-        int step = (int)(seconds / 3f);
-        string main = weapons[(step + (shieldOffset * 5)) % weapons.Count];
-        string? off = shields.Count == 0 ? null : shields[(step + shieldOffset) % shields.Count];
-        return PlayerEquipmentVisuals.Format(main, off);
+        return PlayerEquipmentVisuals.Format(in visuals);
     }
 
     public static bool ResolveLoopbackRemotePlayersEnabled()
@@ -429,7 +465,8 @@ public partial class PlayScene
     internal readonly record struct EquipmentPresentation(
         string MainHandVisualId,
         string? OffHandVisualId,
-        HeldLightKind HeldLight);
+        HeldLightKind HeldLight,
+        PlayerEquipmentVisuals Visuals = default);
 
     // Fills the loadout (modifiers per slot) from the snapshot and returns the visuals and light.
     // The snapshot is the server's word and may be hostile: EquipmentLoadout skips non-finite values,
@@ -448,6 +485,7 @@ public partial class PlayScene
         HeldLightKind offLight = HeldLightKind.None;
         string mainVisual = ViewModelAssets.EmptyHeldItemId;
         string? offVisual = null;
+        PlayerEquipmentVisuals worn = default;
 
         if (snapshot.EquippedSlot?.Item is InventoryItemSnapshot mainItem)
         {
@@ -471,6 +509,8 @@ public partial class PlayScene
                 }
 
                 loadout.Set(slot, item.Modifiers!, flatOnly: true);
+                // The local figure is dressed from this snapshot, never from a VisualKey.
+                worn = WithWornVisual(worn, slot, item.VisualId);
                 if (slot == EquipmentSlot.OffHand)
                 {
                     offVisual = item.VisualId ?? string.Empty;
@@ -479,7 +519,29 @@ public partial class PlayScene
             }
         }
 
-        return new EquipmentPresentation(mainVisual, offVisual, EquipmentSlots.ResolveHeldLight(mainLight, offLight));
+        PlayerEquipmentVisuals visuals = worn with
+        {
+            MainHand = PlayerEquipmentVisuals.Normalize(EquipmentSlot.MainHand, mainVisual),
+            OffHand = PlayerEquipmentVisuals.Normalize(EquipmentSlot.OffHand, offVisual),
+        };
+        return new EquipmentPresentation(mainVisual, offVisual, EquipmentSlots.ResolveHeldLight(mainLight, offLight), visuals);
+    }
+
+    // Records one worn slot's normalized id (null for a slot the key does not carry or a wrong-slot id).
+    private static PlayerEquipmentVisuals WithWornVisual(PlayerEquipmentVisuals visuals, EquipmentSlot slot, string? visualId)
+    {
+        string? id = PlayerEquipmentVisuals.Normalize(slot, visualId);
+        return slot switch
+        {
+            EquipmentSlot.Head => visuals with { Head = id },
+            EquipmentSlot.Body => visuals with { Body = id },
+            EquipmentSlot.Hands => visuals with { Hands = id },
+            EquipmentSlot.Feet => visuals with { Feet = id },
+            EquipmentSlot.Legs => visuals with { Legs = id },
+            EquipmentSlot.Back => visuals with { Back = id },
+            EquipmentSlot.Companion => visuals with { Companion = id },
+            _ => visuals,
+        };
     }
 
     private static HeldLightKind KnownLight(HeldLightKind light) =>
@@ -499,10 +561,6 @@ public partial class PlayScene
         // Read by CollectHeldLights (PlayScene.HeldLights.cs) each frame.
         _localHeldLight = presentation.HeldLight;
         // Before the first snapshot nothing is drawn in the hands; afterwards each hand shows its item.
-        _localEquipmentVisuals = inventory is null
-            ? default
-            : new PlayerEquipmentVisuals(
-                PlayerEquipmentVisuals.Normalize(presentation.MainHandVisualId),
-                PlayerEquipmentVisuals.Normalize(presentation.OffHandVisualId));
+        _localEquipmentVisuals = inventory is null ? default : presentation.Visuals;
     }
 }

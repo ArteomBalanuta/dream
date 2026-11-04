@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Presentation;
 using Dream.Client.Scenes;
+using Dream.Rendering.Actors;
 using Dream.Rendering.Lighting;
 using Dream.Simulation.Inventory;
 using Dream.Tests.Utilities;
@@ -102,6 +103,26 @@ public sealed class PlaySceneHeldLightsTests
         }, iterations: 1000);
 
         Assert.Equal(9, lights.Count);
+    }
+
+    [Fact]
+    public void TheGalleryKey_DressesTheRemotePlayers_WithoutChangingTheirLights()
+    {
+        string? key = PlayScene.LoopbackGalleryVisualKey(0f, shieldOffset: 2);
+        PlayerEquipmentVisuals gallery = PlayerEquipmentVisuals.Parse(key);
+        Assert.True(gallery.HasWorn);
+        RemotePlayerPresentationState dressed = Remote(2, new Vector3(10f, 0f, 0f), HeldLightKind.Torch) with { Equipment = gallery };
+        RemotePlayerPresentationState bare = Remote(2, new Vector3(10f, 0f, 0f), HeldLightKind.Torch);
+        LightCollector withGallery = new();
+        LightCollector without = new();
+        PlayScene.LocalHeldLight none = new(HeldLightKind.None, ActorId: 1, FirstPerson: true, Vector3.Zero, -Vector3.UnitZ);
+
+        PlayScene.AddHeldLights(withGallery, in none, CameraPosition, CameraFront, CameraRight, CameraUp, [dressed], timeSeconds: 0.0);
+        PlayScene.AddHeldLights(without, in none, CameraPosition, CameraFront, CameraRight, CameraUp, [bare], timeSeconds: 0.0);
+
+        Assert.Equal(1, withGallery.Count);
+        Assert.Equal(without.Lights[0].Position, withGallery.Lights[0].Position);
+        Assert.Equal(without.Lights[0].Radius, withGallery.Lights[0].Radius);
     }
 
     private static RemotePlayerPresentationState Remote(int actorId, Vector3 position, HeldLightKind heldLight, bool isAlive = true)
