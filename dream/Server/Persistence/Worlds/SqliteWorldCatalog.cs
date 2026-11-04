@@ -110,7 +110,12 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         ArgumentNullException.ThrowIfNull(options);
         string name = (options.Name ?? string.Empty).Trim();
         RequireValidName(name);
-        WorldDescriptor.ForFloorSize(options.Size, name: name).Validate();
+        // Validate rejects an unregistered generator key before a row is written.
+        WorldDescriptor descriptor = WorldDescriptor.ForFloorSize(
+            options.Size,
+            name: name,
+            generatorKey: options.GeneratorKey);
+        descriptor.Validate();
         ulong seed = options.Seed ?? SqliteWorldMetadataRepository.GenerateSimulationSeed();
 
         using SqliteSession session = _store.BeginOwnedTransaction();
@@ -122,8 +127,8 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
             WorldDescriptor.DefaultHeight,
             options.Size,
             WorldMapSourceText.ToStorage(WorldMapSource.Generated),
-            WorldGeneratorCatalog.DefaultKey,
-            WorldGeneratorCatalog.DefaultVersion,
+            descriptor.GeneratorKey,
+            descriptor.GeneratorVersion,
             seed.ToString(CultureInfo.InvariantCulture),
             0L);
         WorldRecord created = TryGet(session, new WorldId(id))!;

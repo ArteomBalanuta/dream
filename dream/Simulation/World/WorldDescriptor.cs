@@ -1,3 +1,5 @@
+using Dream.Simulation.World.MapSources;
+
 namespace Dream.Simulation.World;
 
 // The public identity of a world: what a client needs to build its map. The seed and the world
@@ -21,9 +23,19 @@ public sealed record WorldDescriptor(
     // World 1, "default", 56x8x56: exactly the map every host built before worlds became rows.
     public static WorldDescriptor Default { get; } = ForFloorSize(WorldDefaults.StartupFloorSize);
 
-    // A generated square world of the default generator. Does not validate; call Validate.
-    public static WorldDescriptor ForFloorSize(int floorSize, WorldId? id = null, string name = DefaultName)
+    // A generated square world. generatorKey picks the generator and takes its newest registered
+    // version; null is the default generator, which is what every caller before worlds could choose
+    // one gets. Does not validate; call Validate.
+    public static WorldDescriptor ForFloorSize(
+        int floorSize,
+        WorldId? id = null,
+        string name = DefaultName,
+        string? generatorKey = null)
     {
+        string key = generatorKey ?? WorldGeneratorCatalog.DefaultKey;
+        int version = WorldGeneratorCatalog.TryGetLatest(key, out IMapGenerator? generator)
+            ? generator.Version
+            : 0;
         return new WorldDescriptor(
             id ?? WorldId.Default,
             name,
@@ -31,8 +43,8 @@ public sealed record WorldDescriptor(
             DefaultHeight,
             floorSize,
             WorldMapSource.Generated,
-            WorldGeneratorCatalog.DefaultKey,
-            WorldGeneratorCatalog.DefaultVersion);
+            key,
+            version);
     }
 
     // Throws ArgumentException unless this build can host the world: a trimmed name of

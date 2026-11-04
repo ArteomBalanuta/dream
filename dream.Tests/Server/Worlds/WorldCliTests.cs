@@ -26,6 +26,39 @@ public sealed class WorldCliTests
     }
 
     [Fact]
+    public void CreateWithGenerator_StoresTheChosenGeneratorOnTheRow()
+    {
+        using WorldCatalogTestDatabase db = new();
+
+        (int exit, string created, _) = Run(db, "create", "Wilds", "--generator", "natural", "--size", "20");
+        Assert.Equal(0, exit);
+        Assert.Equal(["1", "Wilds", "20x8x20", "natural:1", "0"], created.TrimEnd().Split('	'));
+
+        Dream.Simulation.World.WorldDescriptor descriptor = db.Catalog.TryGetByName("Wilds")!.Descriptor;
+        Assert.Equal("natural", descriptor.GeneratorKey);
+        Assert.Equal(1, descriptor.GeneratorVersion);
+        descriptor.Validate();
+
+        // Without the flag a world is still built by the default generator.
+        (exit, string plain, _) = Run(db, "create", "Home", "--size", "20");
+        Assert.Equal(0, exit);
+        Assert.Equal("default:1", plain.TrimEnd().Split('	')[3]);
+    }
+
+    [Fact]
+    public void CreateWithABadGenerator_IsRejectedAndWritesNoRow()
+    {
+        using WorldCatalogTestDatabase db = new();
+
+        // An unregistered key, the flag with nothing after it, and the flag followed by another
+        // flag: all usage errors, and none of them may leave a world behind.
+        Assert.Equal(WorldCli.ExitUsage, Run(db, "create", "X", "--generator", "nope").Exit);
+        Assert.Equal(WorldCli.ExitUsage, Run(db, "create", "X", "--generator").Exit);
+        Assert.Equal(WorldCli.ExitUsage, Run(db, "create", "X", "--generator", "--size", "20").Exit);
+        Assert.Equal(string.Empty, Run(db, "list").Out.Trim());
+    }
+
+    [Fact]
     public void CreateListCopyDelete_RoundTripWithTabSeparatedOutputAndNoSeed()
     {
         using WorldCatalogTestDatabase db = new();

@@ -243,7 +243,13 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
             return;
         }
 
-        RebuildMapForFloorSize(world.Width);
+        if (world.MapSource != WorldMapSource.Generated)
+        {
+            throw new UnsupportedWorldException(
+                $"The world \"{world.Name}\" is {world.MapSource} and needs its terrain to be rebuilt.");
+        }
+
+        RebuildMapForDescriptor(world);
         World = world;
     }
 
@@ -269,12 +275,16 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
             Math.Clamp(currentPlayerPosition.Z, 0.5f, rebuiltMap.Depth - 0.5f)));
     }
 
-    private void RebuildMapForFloorSize(int floorSize)
+    // A generated world is rebuilt from its own generator, not from its size: the descriptor's key
+    // and version decide the distribution, and the server built its map from the same pair. The
+    // seed is server-only, and every registered generator is seed-independent, so 0 stands in for
+    // it (see WorldGeneratorCatalog).
+    private void RebuildMapForDescriptor(WorldDescriptor world)
     {
         Vector3 currentPlayerPosition = Player.GetWorldPosition();
         Map previousMap = Map;
         Physics.ResetMapBodies();
-        Map rebuiltMap = CreateMap(floorSize);
+        Map rebuiltMap = new(MapSources.ForWorld(world, seed: 0UL), Physics, replicatedCubeBodies: true);
         previousMap.CopyPlacedCubesTo(rebuiltMap);
         Map = rebuiltMap;
         Player.BindMap(rebuiltMap);

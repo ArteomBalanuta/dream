@@ -1,0 +1,4 @@
+interface:
+  display_name: "Blend Dream Terrain Materials"
+  short_description: "Natural terrain material distribution and blending"
+  default_prompt: "Use $blending-dream-terrain-materials to replace Dream's modulo-hash terrain scatter with noise-driven distribution and height-aware surface blending."

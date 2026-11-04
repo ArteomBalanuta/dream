@@ -11,8 +11,14 @@ public class WorldGenerator
     private const int SculptureSubdivisionResolution = WorldMicroGrid.MicroCellsPerWorldCell;
     private const int DefaultSpawnClearRadius = 4;
 
-    public WorldGenerator()
+    private readonly ITerrainMaterialPolicy _materials;
+
+    // The default policy is the classic modulo-hash scatter, so every existing caller keeps the
+    // world it has always built (MapSourceGoldenTests pins it). A generator that wants a different
+    // distribution passes its own policy; the geometry walk below is shared.
+    public WorldGenerator(ITerrainMaterialPolicy? materials = null)
     {
+        _materials = materials ?? ClassicTerrainMaterialPolicy.Instance;
     }
 
     public GeometryCellRecord CreateGeometryCell(Vector3 cellPosition, bool isFloor)
@@ -60,7 +66,7 @@ public class WorldGenerator
                         x,
                         y,
                         z,
-                        ResolveRaisedMaterial(x, z, width, depth, y, raisedHeight)));
+                        _materials.ResolveRaisedMaterial(x, z, width, depth, y, raisedHeight)));
                 }
             }
         }
@@ -117,7 +123,7 @@ public class WorldGenerator
         GeometryCellDefinition definition = new GeometryCellDefinition(
             GeometryShapeKind.SolidCube,
             useEnrichedTerrain
-                ? ResolveFloorMaterial(x, z, width, depth)
+                ? _materials.ResolveFloorMaterial(x, z, width, depth)
                 : GeometryMaterialId.Grass,
             DefaultSubdivisionResolution,
             IsSolid: true,
@@ -325,56 +331,9 @@ public class WorldGenerator
         return normalized <= 1f;
     }
 
-    private GeometryMaterialId ResolveFloorMaterial(int x, int z, int width, int depth)
-    {
-        int rimDistance = Math.Min(Math.Min(x, z), Math.Min((width - 1) - x, (depth - 1) - z));
-        int centerX = width / 2;
-        int centerZ = depth / 2;
-        const int spawnX = 5;
-        const int spawnZ = 5;
-        bool centralPath = Math.Abs(x - centerX) <= 1 || Math.Abs(z - centerZ) <= 1;
-        bool spawnPath = (Math.Abs(x - spawnX) <= 1 && z <= centerZ) ||
-            (Math.Abs(z - spawnZ) <= 1 && x <= centerX);
-
-        if (rimDistance <= 2)
-        {
-            return rimDistance == 0
-                ? GeometryMaterialId.Stone
-                : GeometryMaterialId.Rock;
-        }
-
-        if (spawnPath || centralPath)
-        {
-            return spawnPath
-                ? GeometryMaterialId.Dirt
-                : GeometryMaterialId.GrassPath;
-        }
-
-        int terrainHash = Hash(x / 3, z / 3);
-        if ((terrainHash % 29) == 0)
-        {
-            return GeometryMaterialId.Sand;
-        }
-
-        if ((terrainHash % 23) == 0)
-        {
-            return GeometryMaterialId.Mud;
-        }
-
-        if ((terrainHash % 11) <= 1)
-        {
-            return GeometryMaterialId.Dirt;
-        }
-
-        if ((terrainHash % 17) == 0)
-        {
-            return GeometryMaterialId.Stone;
-        }
-
-        return GeometryMaterialId.Grass;
-    }
-
-    private int ResolveRaisedLandmarkHeight(int x, int z, int width, int depth)
+    // Public and static because a material policy needs the terrain's own height to measure slope
+    // (NaturalTerrainMaterialPolicy); it is the shape of the world, which every policy shares.
+    public static int ResolveRaisedLandmarkHeight(int x, int z, int width, int depth)
     {
         if (x <= DefaultSpawnClearRadius && z <= DefaultSpawnClearRadius)
         {
@@ -393,50 +352,18 @@ public class WorldGenerator
 
     private static int ResolveSpawnIslandHeight(int x, int z)
     {
-        bool bridge = (x == 7 || x == 8) && z >= 4 && z <= 6;
-        if (bridge)
+        if (TerrainLandmarks.IsSpawnBridge(x, z))
         {
             return 1;
         }
 
-        bool outerIsland = x >= 9 && x <= 18 && z >= 3 && z <= 14;
-        if (!outerIsland)
+        if (!TerrainLandmarks.IsSpawnIsland(x, z))
         {
             return 0;
         }
 
         bool innerRise = x >= 11 && x <= 15 && z >= 6 && z <= 11;
         return innerRise ? 2 : 1;
-    }
-
-    private GeometryMaterialId ResolveRaisedMaterial(int x, int z, int width, int depth, int y, int raisedHeight)
-    {
-        if (y < raisedHeight)
-        {
-            return GeometryMaterialId.Stone;
-        }
-
-        bool bridge = (x == 7 || x == 8) && z >= 4 && z <= 6;
-        if (bridge)
-        {
-            return GeometryMaterialId.Dirt;
-        }
-
-        if (x >= 9 && x <= 18 && z >= 3 && z <= 14)
-        {
-            int rimDistance = Math.Min(Math.Min(x - 9, 18 - x), Math.Min(z - 3, 14 - z));
-            if (rimDistance <= 1)
-            {
-                return GeometryMaterialId.Stone;
-            }
-
-            int islandHash = Hash(x / 2, z / 2);
-            return (islandHash % 5) == 0
-                ? GeometryMaterialId.Dirt
-                : GeometryMaterialId.Grass;
-        }
-
-        return GeometryMaterialId.Stone;
     }
 
     private static int ResolveTerracedMoundHeight(int x, int z, int centerX, int centerZ, int radius, int maxHeight)
@@ -450,14 +377,4 @@ public class WorldGenerator
         return Math.Max(1, maxHeight - (distance / 2));
     }
 
-    private static int Hash(int x, int z)
-    {
-        unchecked
-        {
-            int hash = 17;
-            hash = (hash * 31) + x;
-            hash = (hash * 31) + z;
-            return Math.Abs(hash);
-        }
-    }
 }

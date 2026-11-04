@@ -8,7 +8,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Dream.Server.Worlds;
 
-// The `--worlds` command line: list | create <name> [--size N] | copy <src> <name> |
+// The `--worlds` command line: list | create <name> [--size N] [--generator KEY] | copy <src> <name> |
 // delete <id|name> --yes | export <src> <name> [--terrain-only] | reset-terrain <id|name> --yes. Output is tab-separated (id, name, size, generator, world time ticks); the
 // seed is never printed.
 public static class WorldCli
@@ -21,7 +21,7 @@ public static class WorldCli
     public const int ExitWorldHeld = 7;
 
     public const string Usage =
-        "Usage: --worlds list | create <name> [--size N] | copy <id|name> <new name> | delete <id|name> --yes | " +
+        "Usage: --worlds list | create <name> [--size N] [--generator KEY] | copy <id|name> <new name> | delete <id|name> --yes | " +
         "export <id|name> <new name> [--terrain-only] | reset-terrain <id|name> --yes";
 
     // Copy, delete, export and reset are offline commands. Against the default database they hold the
@@ -358,9 +358,21 @@ public static class WorldCli
         usageError = null;
         string? name = null;
         int size = WorldDefaults.ServerNewWorldSize;
+        string? generatorKey = null;
         for (int i = 0; i < rest.Length; i++)
         {
-            if (rest[i] == "--size")
+            if (rest[i] == "--generator")
+            {
+                if (i + 1 >= rest.Length || rest[i + 1].StartsWith("--", StringComparison.Ordinal))
+                {
+                    usageError = "--generator needs a generator key.";
+                    return null;
+                }
+
+                generatorKey = rest[i + 1];
+                i++;
+            }
+            else if (rest[i] == "--size")
             {
                 if (i + 1 >= rest.Length ||
                     !int.TryParse(rest[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out size))
@@ -390,9 +402,11 @@ public static class WorldCli
 
         int createSize = size;
         string createName = name;
+        string? createGenerator = generatorKey;
         return catalog =>
         {
-            output.WriteLine(Format(catalog.Create(new WorldCreateOptions(createName, createSize))));
+            output.WriteLine(Format(catalog.Create(
+                new WorldCreateOptions(createName, createSize, GeneratorKey: createGenerator))));
             return ExitOk;
         };
     }

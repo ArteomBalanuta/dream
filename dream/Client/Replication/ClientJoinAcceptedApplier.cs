@@ -107,9 +107,14 @@ public static class ClientJoinAcceptedApplier
             return;
         }
 
-        // A stored map never stands in for a generated world, even at the same size.
+        // A stored map never stands in for a generated world, even at the same size, and neither
+        // does a map built by a different generator: the key and version decide the material of
+        // every cell, and the floor is not in WorldChecksum (WorldStateChecksum.TryHashCell skips
+        // Key.Y <= 0), so keeping the old map would show the wrong ground silently.
         if (runtime.Map.Width != descriptor.Width || runtime.Map.Depth != descriptor.Depth ||
-            runtime.World.MapSource == WorldMapSource.Stored)
+            runtime.World.MapSource == WorldMapSource.Stored ||
+            runtime.World.GeneratorKey != descriptor.GeneratorKey ||
+            runtime.World.GeneratorVersion != descriptor.GeneratorVersion)
         {
             runtime.RebuildMapForWorld(descriptor);
         }

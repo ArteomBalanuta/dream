@@ -54,6 +54,40 @@ public class ClientWorldDescriptorApplyTests
     }
 
     [Fact]
+    public void ADescriptorOfTheSameSizeWithAnotherGenerator_RebuildsTheMap()
+    {
+        // Size alone is not enough to decide the map can stand: the generator key and version
+        // decide the material of every cell, and the floor is outside WorldChecksum
+        // (WorldStateChecksum skips Key.Y <= 0), so adopting the descriptor and keeping the old
+        // map would silently show the wrong ground.
+        using ClientWorldSession client = CreateClient(20);
+        Map before = client.Map;
+        Assert.Equal(WorldGeneratorCatalog.DefaultKey, client.World.GeneratorKey);
+
+        WorldDescriptor natural = WorldDescriptor.ForFloorSize(
+            20,
+            new WorldId(4),
+            "wilds",
+            WorldGeneratorCatalog.NaturalKey);
+
+        ClientJoinAcceptedApplier.ApplyToRuntime(client, Join(natural, initialWorld: null));
+
+        Assert.NotSame(before, client.Map);
+        Assert.Equal(natural, client.World);
+        Assert.Equal(20, client.Map.Width);
+
+        // The rebuilt map is the natural generator's ground, not the default one's.
+        IReadOnlyList<Dream.Simulation.World.Geometry.GeometryCellRecord> expected =
+            Dream.Simulation.World.MapSources.MapSources.ForWorld(natural, seed: 0).CreateCells();
+        foreach (Dream.Simulation.World.Geometry.GeometryCellRecord cell in expected)
+        {
+            Assert.Equal(
+                cell.Definition.MaterialId,
+                client.Map.GeometryCells[cell.Key].Definition.MaterialId);
+        }
+    }
+
+    [Fact]
     public void WithoutADescriptor_TheMapIsStillSizedFromTheInitialWorld()
     {
         using ClientWorldSession client = CreateClient(20);

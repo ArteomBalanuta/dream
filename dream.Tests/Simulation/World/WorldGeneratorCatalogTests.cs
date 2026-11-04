@@ -8,13 +8,79 @@ namespace Dream.Tests.Simulation.World;
 public class WorldGeneratorCatalogTests
 {
     [Fact]
-    public void Catalog_ListsOnlyTheDefaultGenerator()
+    public void Catalog_ListsTheDefaultGeneratorFirstThenTheNaturalOne()
     {
-        IMapGenerator generator = Assert.Single(WorldGeneratorCatalog.All);
+        // The default generator stays first: WorldGeneratorCatalog.All[0] is read as "the default
+        // one" in places, and every world row written before another generator existed names it.
+        Assert.Equal(2, WorldGeneratorCatalog.All.Count);
 
-        Assert.Equal("default", generator.Key);
-        Assert.Equal(1, generator.Version);
-        Assert.IsType<DefaultMapGenerator>(generator);
+        IMapGenerator first = WorldGeneratorCatalog.All[0];
+        Assert.Equal("default", first.Key);
+        Assert.Equal(1, first.Version);
+        Assert.IsType<DefaultMapGenerator>(first);
+
+        IMapGenerator second = WorldGeneratorCatalog.All[1];
+        Assert.Equal("natural", second.Key);
+        Assert.Equal(1, second.Version);
+        Assert.IsType<NaturalMapGenerator>(second);
+    }
+
+    [Fact]
+    public void Catalog_HasNoDuplicateKeyAndVersion()
+    {
+        // A duplicate pair would make TryGet's answer depend on the array order, and a world row
+        // names exactly this pair.
+        HashSet<(string Key, int Version)> seen = [];
+        foreach (IMapGenerator generator in WorldGeneratorCatalog.All)
+        {
+            Assert.False(
+                string.IsNullOrWhiteSpace(generator.Key),
+                "a registered generator has no key");
+            Assert.True(generator.Version >= 1, $"generator '{generator.Key}' has version {generator.Version}");
+            Assert.True(
+                seen.Add((generator.Key, generator.Version)),
+                $"'{generator.Key}' version {generator.Version} is registered twice");
+        }
+    }
+
+    [Fact]
+    public void EveryRegisteredGenerator_IgnoresTheSeed()
+    {
+        // The client rebuilds a generated world from its descriptor alone
+        // (ClientWorldSession.RebuildMapForDescriptor passes seed 0) because the simulation seed
+        // is server-only. A generator that reads the seed would hand the client different ground
+        // from the server's, and the floor half of that divergence is invisible to WorldChecksum.
+        // Registering one is therefore a protocol change, not a tuning change -- this test is the
+        // thing that says so.
+        foreach (IMapGenerator generator in WorldGeneratorCatalog.All)
+        {
+            IReadOnlyList<GeometryCellRecord> withoutSeed =
+                generator.Create(new MapGenerationRequest(56, 8, 56, 0)).CreateCells();
+            IReadOnlyList<GeometryCellRecord> withSeed =
+                generator.Create(new MapGenerationRequest(56, 8, 56, 0xDEADBEEFCAFEF00DUL)).CreateCells();
+
+            Assert.Equal(withoutSeed.Count, withSeed.Count);
+            for (int i = 0; i < withoutSeed.Count; i++)
+            {
+                Assert.Equal(withoutSeed[i].Key, withSeed[i].Key);
+                Assert.Equal(
+                    withoutSeed[i].Definition.MaterialId,
+                    withSeed[i].Definition.MaterialId);
+            }
+        }
+    }
+
+    [Fact]
+    public void TryGetLatest_PicksTheRegisteredVersionOfAKey()
+    {
+        Assert.True(WorldGeneratorCatalog.TryGetLatest("default", out IMapGenerator? latestDefault));
+        Assert.Equal(WorldGeneratorCatalog.DefaultVersion, latestDefault.Version);
+
+        Assert.True(WorldGeneratorCatalog.TryGetLatest("natural", out IMapGenerator? latestNatural));
+        Assert.Equal(WorldGeneratorCatalog.NaturalVersion, latestNatural.Version);
+
+        Assert.False(WorldGeneratorCatalog.TryGetLatest("nope", out IMapGenerator? missing));
+        Assert.Null(missing);
     }
 
     [Fact]
