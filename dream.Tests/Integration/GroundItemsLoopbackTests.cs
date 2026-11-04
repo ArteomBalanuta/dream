@@ -123,6 +123,87 @@ public sealed class GroundItemsLoopbackTests
     }
 
     [Fact]
+    public async Task ADrop_BecomesAGroundUpsert_TheStrangerIsRefused_TheDropperPicksItBackUp_AndADeadPlayerCannotDrop()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
+        await using WireLoopbackClient b = await server.ConnectAndJoinAsync(SessionB);
+        await TickAsync(server, 2);
+        IAuthoritativePlayerTarget targetA = Place(server, SessionA);
+        Place(server, SessionB);
+        await TickAsync(server);
+        WorldSessionRuntime runtime = server.Runtime;
+        Assert.Equal(0, runtime.GroundItemCount);
+
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            runtime.InventoryService.TryGrantRolled(KeyOf(SessionA), Band, ItemRarity.Common, new ItemRollSeed(7, 7, 7, 7, 0)));
+        await TickAsync(server);
+        InventorySlotSnapshot band = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.Slots.First(slot => slot.Item?.ItemKind == Band);
+        long id = band.Item!.Value.ItemInstanceId;
+        int free = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.FreeCells();
+
+        // ---- the drop: the item leaves the bag and appears once, at A's feet, claimed by A ----
+        ActionResult dropped = await ActAsync(server, a, new InventoryDropIntent(band.SlotIndex, id));
+        Assert.True(dropped.Accepted, dropped.Reason);
+        PlayerInventorySnapshot afterDrop = Assert.IsType<InventoryChangedResult>(dropped.Payload).Inventory;
+        Assert.DoesNotContain(afterDrop.AllItems(), item => item.ItemInstanceId == id);
+        Assert.Equal(free + 1, afterDrop.FreeCells());
+        Assert.Equal(1, runtime.GroundItemCount);
+        foreach (WireLoopbackClient client in new[] { a, b })
+        {
+            await WaitGroundAsync(client, ground => ground.Count == 1, "the dropped item");
+            GroundItemSnapshot seen = Assert.Single(Ground(client.Frames).Values);
+            Assert.Equal(id, seen.ItemInstanceId);
+            Assert.Equal(Band, seen.ItemKind);
+            Assert.Equal(targetA.ActorId, seen.ClaimantActorId);
+            Assert.True(Vector3.Distance(seen.Position, targetA.Position) < 1f);
+            Assert.Equal(1, client.Frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().SelectMany(m => m.Upserts).Count(u => u.ItemInstanceId == id));
+        }
+
+        Flush(server);
+        Assert.Equal("Ground", db.Scalar($"SELECT state FROM item_instances WHERE item_instance_id = {id};"));
+        Assert.IsType<DBNull>(db.Scalar($"SELECT owner_player_name FROM item_instances WHERE item_instance_id = {id};"));
+        Assert.Equal(0, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {id};"));
+
+        // ---- the claim holds the stranger off ----
+        ActionResult stranger = await ActAsync(server, b, new GroundPickupIntent(id));
+        Assert.False(stranger.Accepted);
+        Assert.Contains("reserved for another player", stranger.Reason);
+        Assert.Equal(1, runtime.GroundItemCount);
+
+        // ---- the dropper picks it straight back up ----
+        ActionResult picked = await ActAsync(server, a, new GroundPickupIntent(id));
+        Assert.True(picked.Accepted, picked.Reason);
+        Assert.Single(Assert.IsType<InventoryChangedResult>(picked.Payload).Inventory.AllItems(), item => item.ItemInstanceId == id);
+        Assert.Equal(0, runtime.GroundItemCount);
+        foreach (WireLoopbackClient client in new[] { a, b })
+        {
+            await WaitGroundAsync(client, ground => ground.Count == 0, "the pickup removed the item");
+        }
+
+        Flush(server);
+        Assert.Equal("Inventory", db.Scalar($"SELECT state FROM item_instances WHERE item_instance_id = {id};"));
+        Assert.Equal(1, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {id};"));
+
+        // ---- a dead player cannot drop ----
+        PlayerInventorySnapshot again = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value;
+        InventorySlotSnapshot anchor = again.Slots.First(slot => slot.Item?.ItemInstanceId == id);
+        WaveIRuntimeKit.Kill(runtime, SessionA);
+        ActionResult dead = await ActAsync(server, a, new InventoryDropIntent(anchor.SlotIndex, id));
+        Assert.False(dead.Accepted);
+        Assert.Contains("dead", dead.Reason);
+        Assert.Equal(0, runtime.GroundItemCount);
+        Assert.Contains(runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.AllItems(), item => item.ItemInstanceId == id);
+
+        await server.DisconnectAsync(a);
+        await server.DisconnectAsync(b);
+        await TickAsync(server, 2);
+        Flush(server);
+    }
+
+    [Fact]
     public async Task OverflowDrops_ClaimBlocksAStranger_ClaimantPicksUp_OneWinnerPerRace_Despawns_AndARestartRestoresWithoutDuplicates()
     {
         using MigrationTestDatabase db = new();

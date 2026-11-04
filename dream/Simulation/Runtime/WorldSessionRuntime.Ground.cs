@@ -49,4 +49,28 @@ public sealed partial class WorldSessionRuntime
             (intent.ItemInstanceId, Position: (Vector3)target.Position, Tick: CurrentServerTick));
         return CompleteInventoryAction(message, player, outcome, "pickup");
     }
+
+    private AuthoritativeActionResult ProcessInventoryDropAction(
+        PlayerActionMessage message,
+        ConnectedPlayer player,
+        InventoryDropIntent intent)
+    {
+        if (!TryResolveAuthoritativePlayerTarget(message.SessionId, out _, out IAuthoritativePlayerTarget? target)
+            || target == null)
+        {
+            return CreateRejectedActionResult(message, "Inventory drop rejected because the player has no position.");
+        }
+
+        InventoryEquipOutcome outcome = RunInventoryAction(
+            player,
+            static (service, key, request) => service.TryDropToGround(
+                key,
+                request.Intent.SlotIndex,
+                request.Intent.ItemInstanceId,
+                request.Position,
+                request.ActorId,
+                request.Tick),
+            (Intent: intent, Position: (Vector3)target.Position, target.ActorId, Tick: CurrentServerTick));
+        return CompleteInventoryAction(message, player, outcome, "drop");
+    }
 }
