@@ -63,6 +63,11 @@ public static class StatusBarPanel
     // the number at 13 px in a 100 px gem below that; the gem is 50 u, so 14 u of engraved capitals.
     public const float GemNumberUnits = 14f;
 
+    // The EXP trough's height in units. The percent drawn in it is sized from this, so the number
+    // and the slot it has to fit cannot drift apart the way they did when one followed the art and
+    // the other followed the default body size.
+    public const float TroughUnits = 6f;
+
     private static readonly UiColor NumberColor = new(0xF8, 0xF4, 0xE8, 255);
     private static readonly UiColor CoordsColor = new(0xA9, 0xA9, 0xA9, 255);
     private static readonly float[] NotchX = [216f, 247f, 279f];
@@ -188,7 +193,7 @@ public static class StatusBarPanel
         HudStatusSnapshot st = v.Status;
 
         // EXP: trough, fill clipped to the progress, section ticks, frame, cup with the level.
-        UiRect trough = l.FromUnits(g, 221f - CentreStart, 5f, 199f, 6f);
+        UiRect trough = l.FromUnits(g, 221f - CentreStart, 5f, 199f, TroughUnits);
         Sprite(c, s, UiSpriteNames.ExpTrough, trough, white);
         float exp = st.ExperienceToNextLevel <= 0 ? 0f : Math.Clamp(st.Experience / (float)st.ExperienceToNextLevel, 0f, 1f);
         if (exp > 0f && s.TryGet(UiSpriteNames.ExpFill, out UiSprite fill))
@@ -259,7 +264,7 @@ public static class StatusBarPanel
     {
         UiRect g = l.CentreGroup;
         HudStatusSnapshot st = v.Status;
-        UiRect trough = l.FromUnits(g, 221f - CentreStart, 5f, 199f, 6f);
+        UiRect trough = l.FromUnits(g, 221f - CentreStart, 5f, 199f, TroughUnits);
         UiRect cup = l.FromUnits(g, 420f - CentreStart, 3f, 12f, 12f);
         UiRect bracket = l.FromUnits(g, 304f - CentreStart, 11f, 32f, 36f);
         Span<char> buf = stackalloc char[32];
@@ -271,12 +276,16 @@ public static class StatusBarPanel
             PanelText.HaloCentred(c, buf[..n], cup.X + cup.W * 0.5f, cup.Y + (cup.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor, halo);
         }
 
-        // Dead by geometry: the trough is 6 u and the default text is at least 9.5 u, so this has
-        // never drawn. Kept because art with a taller trough would want it; the text is not shrunk
-        // into a 6 u slot to force it out.
-        if (trough.H >= bodyH && PanelText.TryWritePercent(buf, st.ExperiencePercent, out n))
+        // The percent is sized to its own trough rather than to the default body size. It is not
+        // dead code: under the old flat 13 px body it drew at ui_scale 2.25 and 3 -- plain 1080p and
+        // 1440p -- and sizing every panel from the scale is what switched it off, by raising the body
+        // to 21 and 28 px against a 13.5 and 18 px trough. The 13 px bake is still the floor, so at
+        // the small scales where the trough cannot hold a line it stays hidden, exactly as before.
+        UiSizedText percent = UiText.For(in l, TroughUnits, TroughUnits);
+        if (trough.H >= percent.Px && PanelText.TryWritePercent(buf, st.ExperiencePercent, out n))
         {
-            PanelText.HaloCentred(c, buf[..n], trough.X + trough.W * 0.5f, trough.Y + (trough.H - bodyH) * 0.5f, UiTextStyle.Body, NumberColor, halo);
+            UiText.PutHaloCentred(
+                c, buf[..n], trough.X + (trough.W * 0.5f), trough.Y + ((trough.H - percent.Px) * 0.5f), in percent, NumberColor, halo);
         }
 
         // The mode label stands on top of the bar, centred over the skill tile: the EXP trough runs

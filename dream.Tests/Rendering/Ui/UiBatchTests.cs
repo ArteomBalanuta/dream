@@ -436,3 +436,71 @@ public class UiBatchTests
         Assert.Contains("gl?.Dispose()", hudSource);
     }
 }
+
+// A bake drawn smaller than it was baked is the normal case for the Title and Serif faces (26 and
+// 24 px bakes sized to a row), so a glyph's two edges can land in the same pixel column.
+public class UiBatchThinGlyphTests
+{
+    // A narrow stem between two wider serifs, the shape of Cinzel's "I".
+    private const float StemX0 = 8.4f;
+    private const float StemX1 = 10.1f;
+
+    private static UiGlyphTable OneThinGlyph()
+    {
+        UiGlyphTable table = new(13f, 26f, 24f, 26f);
+        table.Set(UiTextStyle.Large, 'I', new UiGlyph(StemX0, 4f, StemX1, 22f, 0f, 0f, 1f, 1f, 18f));
+        table.Set(UiTextStyle.Large, '?', new UiGlyph(0f, 4f, 12f, 22f, 0f, 0f, 1f, 1f, 14f));
+        return table;
+    }
+
+    // What the code did before: round each edge on its own.
+    private static float UnguardedWidth(float pen, float textScale) =>
+        MathF.Round(pen + (StemX1 * textScale)) - MathF.Round(pen + (StemX0 * textScale));
+
+    // The control. Unless some (pen, scale) pair really does collapse under the old rounding, the
+    // test below proves nothing -- this is a real defect that shipped as "INVENTORY" losing its I.
+    [Fact]
+    public void TheOldRounding_Collapsed_AtSomePenAndScale()
+    {
+        List<(float Pen, float Scale)> collapsed = [];
+        for (float pen = 10f; pen < 11f; pen += 0.1f)
+        {
+            foreach (float scale in new[] { 0.25f, 0.4f, 0.5f, 0.6f, 0.808f, 0.9f })
+            {
+                if (UnguardedWidth(pen, scale) <= 0f)
+                {
+                    collapsed.Add((pen, scale));
+                }
+            }
+        }
+
+        Assert.NotEmpty(collapsed);
+    }
+
+    // And the guard: whatever the multiplier and wherever the pen lands, the stem keeps a pixel.
+    [Theory]
+    [InlineData(1f)]
+    [InlineData(0.9f)]
+    [InlineData(0.808f)]
+    [InlineData(0.6f)]
+    [InlineData(0.5f)]
+    [InlineData(0.25f)]
+    public void AThinStem_SurvivesEveryMultiplier(float textScale)
+    {
+        for (float pen = 10f; pen < 11f; pen += 0.1f)
+        {
+            UiBatch batch = new(OneThinGlyph());
+            batch.BeginFrame(UiLayout.Create(1920, 1080, 1f));
+            batch.TextScale = textScale;
+
+            batch.Text("I", new Vector2(pen, 20f), UiTextStyle.Large, UiColor.White);
+
+            Assert.Equal(1, batch.QuadCount);
+            ReadOnlySpan<UiVertex> v = batch.Vertices;
+            float width = v[1].X - v[0].X;
+            float height = v[2].Y - v[0].Y;
+            Assert.True(width >= 1f, $"the stem collapsed to {width} px at scale {textScale}, pen {pen}");
+            Assert.True(height >= 1f, $"the stem collapsed to {height} px tall at scale {textScale}, pen {pen}");
+        }
+    }
+}

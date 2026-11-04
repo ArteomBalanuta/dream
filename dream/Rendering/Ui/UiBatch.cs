@@ -561,13 +561,20 @@ public sealed class UiBatch : IUiCanvas
 
             if (g.X1 > g.X0 && g.Y1 > g.Y0)
             {
+                // Round the near edges, then give the quad at least one pixel of each dimension.
+                // Rounding both edges on their own collapses a thin stem to nothing whenever the
+                // multiplier is below 1: Cinzel's "I" is about 1.3 px wide when its 26 px bake is
+                // drawn at 21 px, both edges round to the same column, and the letter loses its
+                // stem and keeps only its serifs -- "INVENTORY" rendered as "NVENTORY".
+                float x0 = MathF.Round(pen + (g.X0 * ts));
+                float y0 = MathF.Round(top + (g.Y0 * ts));
                 AddQuad(
                     UiPage.Font,
                     UiVertexMode.Color,
-                    MathF.Round(pen + g.X0 * ts),
-                    MathF.Round(top + g.Y0 * ts),
-                    MathF.Round(pen + g.X1 * ts),
-                    MathF.Round(top + g.Y1 * ts),
+                    x0,
+                    y0,
+                    x0 + MathF.Max(1f, MathF.Round((g.X1 - g.X0) * ts)),
+                    y0 + MathF.Max(1f, MathF.Round((g.Y1 - g.Y0) * ts)),
                     g.U0,
                     g.V0,
                     g.U1,

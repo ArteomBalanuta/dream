@@ -22,6 +22,9 @@ public sealed class MenuWidgets
     public const float ButtonLabelUnits = 13f;
     public const float PanelTitleUnits = 18f;
     public const float OptionRowUnits = 11f;
+    // The status and credit lines were on the pixel face, which reads as a terminal font in the
+    // middle of engraved stone -- a red monospace "Session ended: the host closed the world" under
+    // Cinzel buttons. They take the same face as the rest of the menu.
     public const float StatusUnits = 11f;
 
     public static readonly UiColor Bone = new(0xE2, 0xD6, 0xBC, 255);

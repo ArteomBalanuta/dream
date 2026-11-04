@@ -22,14 +22,24 @@ public class StatusBarPanelTests
 
     private static UiRect GemRect(UiLayout l) => l.FromUnits(l.LeftGroup, 98f, -2f, 50f, 50f);
 
-    // The EXP percent is dead by geometry: the trough is 6 u and the bar's text is at least 9.5 u, so
-    // the gate on StatusBarPanel never opens. It used to appear in these tests only because the fake
-    // canvas ignored the text scale, which made the line box 13 px at every scale. The text is NOT
-    // shrunk into a 6 u slot to bring it back; the art would have to give it a taller trough.
-    private static void NoPercentFitsTheTrough(StatusBarRecordingCanvas c, UiLayout l)
+    // The EXP percent is drawn whenever its own trough can hold a line of it, and not otherwise.
+    // It is sized from the trough (StatusBarPanel.TroughUnits), not from the default body size: for a
+    // while it was called dead code, on the grounds that a 6 u trough cannot hold 9.5 u of text. That
+    // was only true after panel text started following ui_scale. Under the old flat 13 px body it drew
+    // at 1080p and 1440p, so "it never drew" would have re-pinned a test onto a regression.
+    private static void PercentFitsTheTrough(StatusBarRecordingCanvas c, UiLayout l, string expected)
     {
-        Assert.True(6f * l.Scale < UiFontSetup.BodyPixels * l.TextScale, "the trough grew: the percent could be drawn again");
-        Assert.DoesNotContain(c.Texts, t => t.Text is not null && t.Text.EndsWith('%'));
+        float troughPx = StatusBarPanel.TroughUnits * l.Scale;
+        float textPx = UiText.For(in l, StatusBarPanel.TroughUnits, StatusBarPanel.TroughUnits).Px;
+        if (troughPx >= textPx)
+        {
+            Assert.Contains(c.Texts, t => t.Text == expected);
+        }
+        else
+        {
+            // Below about ui_scale 2.2 the 13 px bake is taller than the trough; it stays hidden, as it always did.
+            Assert.DoesNotContain(c.Texts, t => t.Text is not null && t.Text.EndsWith('%'));
+        }
     }
 
     // The bar draws a number as text, or as "hudnum" sprites when the art has them. This accepts either:
@@ -106,7 +116,7 @@ public class StatusBarPanelTests
 
         Assert.DoesNotContain(c.Calls, x => x.Kind == StatusBarCallKind.Tile && x.Name == "exp.fill");
         Assert.Single(c.Sprites("exp.trough"));
-        NoPercentFitsTheTrough(c, l);
+        PercentFitsTheTrough(c, l, "0%");
     }
 
     [Fact]
@@ -120,7 +130,7 @@ public class StatusBarPanelTests
         Assert.Equal(MathF.Round(span.W * 0.5f), fill.Rect.W, 2);
         Assert.Equal(span.X, fill.Rect.X, 2);
         Assert.True(ShowsNumber(c, "12"));
-        NoPercentFitsTheTrough(c, l);
+        PercentFitsTheTrough(c, l, "50%");
     }
 
     [Fact]

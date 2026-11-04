@@ -52,7 +52,7 @@ public static class MainMenuPanel
         if (!string.IsNullOrWhiteSpace(status))
         {
             float y = w.OriginY + (ButtonsTopUnits + buttons.Length * MenuWidgets.ButtonPitchUnits + 8f) * w.Scale;
-            UiSizedText style = w.FitText(status, w.ViewportWidth * 0.9f, MenuWidgets.StatusUnits, allowTitle: false);
+            UiSizedText style = w.FitText(status, w.ViewportWidth * 0.9f, MenuWidgets.StatusUnits);
             w.TextCentred(status, w.CentreX, y, in style, statusIsError ? MenuWidgets.Error : MenuWidgets.Muted);
         }
 
@@ -77,7 +77,7 @@ public static class MainMenuPanel
                 bool heading = i == 0;
                 UiSizedText style = heading
                     ? w.FitTextInBox(line, panel.W, MenuWidgets.ButtonLabelUnits, 16f)
-                    : w.FitTextInBox(line, panel.W, MenuWidgets.StatusUnits, 16f, allowTitle: false);
+                    : w.FitTextInBox(line, panel.W, MenuWidgets.StatusUnits, 16f);
                 w.TextCentred(line, w.CentreX, y, in style, heading ? MenuWidgets.Gold : MenuWidgets.Bone);
             }
 
