@@ -113,10 +113,29 @@ Agility point, default 2.0 → 2.1; **(ii)** `Defense = Agility/4` enters mitiga
 
 - `80483b0` (starter kit v4): `ConsumableLoopbackTests` x3, `InventoryHostileIntentTests` x3.
 - `823f6eb` (the kit wears its torch): `HeldLightSnapshotBytesTests` x2.
-  `NoLight_200Ticks_Is58132Bytes` measures **58,180** (+48 B) because every character now wears a lit
-  torch, so the `heldLight` key is in every frame — **the test's name and premise are both obsolete,
-  there is no unlit baseline any more**. `OneTorch_GrowthPerFrame` cannot find the torch in a bag row
-  because it is worn; its control must become "unequip the worn torch".
+  `NoLight_200Ticks_Is58132Bytes` measures **58,180** (+48 B), and its name and premise are both
+  obsolete. `OneTorch_GrowthPerFrame` cannot find the torch in a bag row because it is worn; its
+  control must become "unequip the worn torch".
+
+  **CORRECTED 2026-11-04, MEASURED by dumping the frames: the +48 B is NOT the `heldLight` key.**
+  This plan first attributed it to the torch. `heldLight` appears in **neither** run — in the pinned
+  configuration the inventory is never read, so the equipped-summary cache is empty and
+  `ResolveEquippedHeldLight` returns `None` with a group mask of 255. The 48 B are the **Combat wire
+  group**: `ActorFrameJson.cs:161-162` now writes `stats.Agility` and `stats.Energy` (added by
+  `3fc2a4f`), so `[10,2,10]` became `[10,2,10,10,10]` — 6 B per player x 4 keyframes x 2 players = 48.
+  **Consequence for the integrator:** this golden is sensitive to WS-A, but through the *digit count*
+  of the default Agility/Energy values, not through the enemy cap or `MitigationArmor`. If it moves
+  after WS-A merges, look at the default attribute values first.
+
+  **A harness artifact, investigated and closed.** In this test harness the untouched runtime
+  replicates `heldLight = None` and `visualKey = null` for a player whose kit wears a lit torch, until
+  something loads the inventory. That raised the question of whether a new player's torch fails to
+  light until they open their bag — which would undermine the models wave's Q3 decision entirely. It
+  does not: the in-engine capture of a brand-new character measured actor mean v **0.4745 lit against
+  0.0196 stowed**, with the light pool following the figure from spawn. The real join flow loads the
+  inventory; it is a lazy-load artifact of the test harness's `AttachRemoteSession`, not a shipped
+  bug. Recorded because the symptom to watch for in play is "the held item and its light do not render
+  until the player touches the bag" (`WorldSessionRuntime.Replication.cs:215-219`).
 
 ### Kind D — a stale reference document, not a test: `check_manifest.py`'s 41 problems.
 
