@@ -27,6 +27,55 @@ public sealed class EnemyVisualCatalogTests
         Assert.Equal(new Vector3(-0.45f, -0.45f, -0.35f), dire.TintOffset);
     }
 
+    [Fact]
+    public void TheHound_IsItsOwnModel_WithItsOwnClips()
+    {
+        EnemyVisual hound = EnemyVisualCatalog.Resolve(EnemyVisualCatalog.HoundKey);
+
+        Assert.Equal(BeastAssetDefinition.HoundModelPath, hound.ModelPath);
+        Assert.NotEqual(WolfAssetDefinition.ModelPath, hound.ModelPath);
+        Assert.Equal(1.0f, hound.ScaleMultiplier);
+        Assert.Equal(Vector3.Zero, hound.TintOffset);
+        Assert.Equal(BeastAssetDefinition.IdleClip, hound.Clips.Idle);
+        Assert.Equal(BeastAssetDefinition.MoveClip, hound.Clips.Move);
+        Assert.Equal(BeastAssetDefinition.AttackClip, hound.Clips.Attack);
+        // The wolf pack has no death clip; the forged hound does.
+        Assert.Equal(BeastAssetDefinition.DieClip, hound.Clips.Die);
+        Assert.NotEqual(hound.Clips.Idle, hound.Clips.Die);
+    }
+
+    [Fact]
+    public void TheWolfsClips_KeepTheirPackPrefix_AndItsDeathHoldsTheIdle()
+    {
+        EnemyVisual wolf = EnemyVisualCatalog.Resolve(null);
+
+        Assert.Equal("AnimalArmature|Idle", wolf.Clips.Idle);
+        Assert.Equal("AnimalArmature|Walk", wolf.Clips.Move);
+        Assert.Equal(wolf.Clips.Idle, wolf.Clips.Die);
+        Assert.Equal(wolf.Clips.Move, wolf.Clips.Resolve(Dream.Simulation.Enemies.EnemyBehaviorState.Chasing));
+        Assert.Equal(wolf.Clips.Attack, wolf.Clips.Resolve(Dream.Simulation.Enemies.EnemyBehaviorState.Attacking));
+        Assert.Equal(wolf.Clips.Die, wolf.Clips.Resolve(Dream.Simulation.Enemies.EnemyBehaviorState.Dead));
+        Assert.Equal(wolf.Clips.Idle, wolf.Clips.Resolve(Dream.Simulation.Enemies.EnemyBehaviorState.Idle));
+    }
+
+    // Only GraveHowler moves to the hound this wave; the other three templates keep the wolf.
+    [Fact]
+    public void OnlyTheGraveHowler_PointsAtTheHound()
+    {
+        string root = AppContext.BaseDirectory;
+        while (root != null && !File.Exists(Path.Combine(root, "dream", "config", "content", "enemies.json")))
+        {
+            root = Path.GetDirectoryName(root)!;
+        }
+
+        string json = File.ReadAllText(Path.Combine(root!, "dream", "config", "content", "enemies.json"));
+
+        Assert.Equal(1, json.Split("enemy.hound", StringSplitOptions.None).Length - 1);
+        int howler = json.IndexOf("GraveHowler", StringComparison.Ordinal);
+        int hound = json.IndexOf("enemy.hound", StringComparison.Ordinal);
+        Assert.True(howler > 0 && hound > howler);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

@@ -12,6 +12,7 @@ namespace Dream.Rendering.Core;
 public partial class Render
 {
     private readonly List<WorldBox> _worldEntityBoxes = new();
+    private NpcModelRenderer? _npcModelRenderer;
     private readonly List<WorldEntityLabel> _worldEntityLabels = new();
     private ClientGroundItemCache? _entityGround;
     private ClientNpcCache? _entityNpcs;
@@ -24,7 +25,12 @@ public partial class Render
 
     public int LastWorldEntityBoxCount => _worldEntityBoxes.Count;
 
-    // Draws the flat boxes of the ground items and NPCs and remembers what the HUD labels need.
+    // The villagers' models, created on the first frame that draws them (a field initializer
+    // cannot see `this`, and Render's constructor does not need one more renderer).
+    public NpcModelRenderer Npcs => _npcModelRenderer ??= new NpcModelRenderer(this);
+
+    // Draws the flat boxes of the ground items, the villagers' models, and remembers what the HUD
+    // labels need. deltaTime is this frame's dt: each villager's clip advances by it exactly once.
     public void DrawWorldEntities(
         Camera camera,
         ClientGroundItemCache ground,
@@ -32,7 +38,8 @@ public partial class Render
         VendorHudState vendor,
         Vector3 playerPosition,
         int localActorId,
-        ulong serverTick)
+        ulong serverTick,
+        float deltaTime)
     {
         _entityGround = ground;
         _entityNpcs = npcs;
@@ -40,6 +47,8 @@ public partial class Render
         _entityPlayerPosition = playerPosition;
         _entityLocalActorId = localActorId;
         _entityServerTick = serverTick;
+
+        Npcs.Draw(camera, npcs, deltaTime);
 
         _worldEntityBoxes.Clear();
         WorldEntityRenderer.CollectBoxes(ground, npcs, camera.Position, _worldEntityBoxes);

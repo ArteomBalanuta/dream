@@ -60,7 +60,7 @@
       "aggroRange": 14,
       "attackRange": 1.35,
       "moveSpeed": 3.6,
-      "visualKey": "enemy.dire-wolf",
+      "visualKey": "enemy.hound",
       "spawnRole": "Primary",
       "lootTable": "grave-howler",
       "goldMin": 40,

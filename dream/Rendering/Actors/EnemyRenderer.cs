@@ -50,13 +50,13 @@ public sealed class EnemyRenderer
 
             InterpolatedActorPose pose = ResolveRenderPose(actor, poseSource, renderTick);
             EnemyVisual visual = EnemyVisualCatalog.Resolve(actor.VisualKey);
-            EnemyRenderState renderState = EnemyRenderState.CreateWolf(
+            EnemyRenderState renderState = EnemyRenderState.Create(
+                in visual,
                 pose.Position,
                 pose.Facing,
-                actor.BehaviorState,
-                WolfAssetDefinition.VisualScale * visual.ScaleMultiplier);
+                actor.BehaviorState);
 
-            // The shared wolf model loads in the background; until it is ready the enemy is not
+            // The shared model loads in the background; until it is ready the enemy is not
             // drawn and no clip is recorded, so the clip is applied on the first drawn frame.
             // The model (GPU buffers, skeleton, clips) is shared; each enemy animates its own
             // instance, which advances exactly once per frame by this frame's dt.

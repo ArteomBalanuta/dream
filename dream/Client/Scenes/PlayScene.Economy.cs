@@ -32,9 +32,16 @@ public partial class PlayScene
 
     private ulong EstimatedServerTick => (ulong)Math.Max(0d, _serverTickClock.EstimatedTick);
 
-    private void DrawEconomyEntities(Camera camera) =>
+    private void DrawEconomyEntities(Camera camera, float deltaTime) =>
         _render.DrawWorldEntities(
-            camera, _groundItems, _npcs, _vendorHud, _runtime.Player.GetWorldPosition(), LocalActorId, EstimatedServerTick);
+            camera,
+            _groundItems,
+            _npcs,
+            _vendorHud,
+            _runtime.Player.GetWorldPosition(),
+            LocalActorId,
+            EstimatedServerTick,
+            deltaTime);
 
     private void SendEconomyIntent(IPlayerActionPayload payload) =>
         _remoteClient.QueuePlayerAction(new PlayerActionMessage(

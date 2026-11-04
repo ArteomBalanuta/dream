@@ -8,7 +8,16 @@ namespace Dream.Rendering.Lighting;
 // per-player seed, so it is deterministic and costs no state; the lantern burns steady.
 public static class HeldLightCatalog
 {
-    public const float TorchIntensity = 1.6f;
+    // Raised from 1.6 toward the brazier's 3.0, and stopped just short of it: at 1.6 a self-lit
+    // figure's internal spread was 0.351 against A3's 0.45 gate, and the actor transfer function is
+    // strictly linear (no tonemap, no gamma encode), so the spread scales with the gain - 2.3 gives
+    // a DERIVED 0.505. It does not go to 3.0 because the fire halo packs
+    // light.Color * HeldHaloTint (0.375 red) into a byte: 3.0 * 0.375 = 1.125 clips the halo's red
+    // channel flat, and at 2.3 the halo still has headroom under its +-15% flicker.
+    // The RADIUS stays 8: BrazierRadius and LampRadius are both 10, and that radius is what
+    // FxSimulation.TryClassify matches for the fire halo, so drifting the torch onto it would give
+    // every torch a brazier halo.
+    public const float TorchIntensity = 2.3f;
     public const float TorchRadius = 8f;
     public const float LanternIntensity = 1.1f;
     public const float LanternRadius = 6f;

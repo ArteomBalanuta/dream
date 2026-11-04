@@ -1,3 +1,4 @@
+using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
 
@@ -70,14 +71,87 @@ public class PlayerAnimationStateMachineTests
         Assert.Equal(-MathF.PI / 4f, PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, 1f), 5);
     }
 
+    // C2: LegTwist is the RAW delta now, unclamped, because Update needs the whole angle to pick
+    // the walk clip's sector. The clamp moved to the residual the state machine reports.
     [Fact]
-    public void LegTwist_ClampsAtNinetyDegrees_IncludingStraightBackwards()
+    public void LegTwist_IsTheRawDelta_IncludingStraightBackwards()
     {
-        float max = PlayerAnimationStateMachine.MaxLegTwistRadians;
+        Assert.Equal(MathF.Atan2(1f, -0.5f), PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, -0.5f), 5);
+        Assert.Equal(-MathF.Atan2(1f, -0.5f), PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, -0.5f), 5);
+        Assert.Equal(MathF.PI, MathF.Abs(PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, -1f)), 4);
+        Assert.True(MathF.Abs(PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, -1f)) >
+            PlayerAnimationStateMachine.MaxLegTwistRadians);
+    }
 
-        Assert.Equal(max, PlayerAnimationStateMachine.LegTwist(0f, 1f, 1f, -0.5f), 5);
-        Assert.Equal(-max, PlayerAnimationStateMachine.LegTwist(0f, 1f, -1f, -0.5f), 5);
-        Assert.InRange(MathF.Abs(PlayerAnimationStateMachine.LegTwist(0f, 1f, 0f, -1f)), max - 1e-4f, max + 1e-4f);
+    // C2's table, exactly: the clip per sector and the residual the pose layers get. The residual
+    // never exceeds 45 degrees, which is why MaxLegTwistRadians could drop to pi/4.
+    [Theory]
+    [InlineData(0f, "walk", 0f)]
+    [InlineData(30f, "walk", 30f)]
+    [InlineData(-44f, "walk", -44f)]
+    [InlineData(45f, "walk", 45f)]
+    [InlineData(60f, "walk-strafe-right", -30f)]
+    [InlineData(90f, "walk-strafe-right", 0f)]
+    [InlineData(135f, "walk-strafe-right", 45f)]
+    [InlineData(-60f, "walk-strafe-left", 30f)]
+    [InlineData(-90f, "walk-strafe-left", 0f)]
+    [InlineData(-135f, "walk-strafe-left", -45f)]
+    [InlineData(160f, "walk-back", -20f)]
+    [InlineData(180f, "walk-back", 0f)]
+    [InlineData(-160f, "walk-back", 20f)]
+    public void ResolveWalkClip_FollowsTheDirectionalTable(float degrees, string expectedClip, float expectedResidualDegrees)
+    {
+        string clip = PlayerAnimationStateMachine.ResolveWalkClip(
+            MathHelper.DegreesToRadians(degrees), out float residual);
+
+        Assert.Equal(expectedClip, clip);
+        Assert.Equal(expectedResidualDegrees, MathHelper.RadiansToDegrees(residual), 3);
+        Assert.True(MathF.Abs(residual) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f);
+    }
+
+    [Fact]
+    public void TheLegTwistClamp_IsTheWithinSectorResidual()
+    {
+        Assert.Equal(MathF.PI / 4f, PlayerAnimationStateMachine.MaxLegTwistRadians, 5);
+        Assert.True(MathHelper.RadiansToDegrees(PlayerAnimationStateMachine.MaxLegTwistRadians) <= 45f + 1e-3f);
+    }
+
+    [Theory]
+    [InlineData(170f, "walk-back")]
+    [InlineData(-100f, "walk-strafe-left")]
+    [InlineData(10f, "walk")]
+    public void Moving_PicksTheDirectionalClip_AndReportsOnlyTheResidual(float degrees, string expectedClip)
+    {
+        float delta = MathHelper.DegreesToRadians(degrees);
+
+        PlayerAnimationFrame frame = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: 6f, twist: delta), Dt);
+
+        PlayerAnimationStateMachine.ResolveWalkClip(delta, out float residual);
+
+        Assert.Equal(expectedClip, frame.Clip);
+        Assert.Equal(residual, frame.LegTwistRadians, 5);
+        Assert.True(MathF.Abs(frame.LegTwistRadians) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f);
+    }
+
+    [Fact]
+    public void Sprinting_KeepsOneClip_AndTheClampedRawDelta()
+    {
+        PlayerAnimationFrame frame = new PlayerAnimationStateMachine()
+            .Update(Inputs(speed: 10f, twist: MathF.PI), Dt);
+
+        Assert.Equal("sprint", frame.Clip);
+        Assert.Equal(PlayerAnimationStateMachine.MaxLegTwistRadians, frame.LegTwistRadians, 5);
+    }
+
+    [Fact]
+    public void FallbackClip_LetsAModelWithoutTheDirectionalClipsKeepWalking()
+    {
+        Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-back"));
+        Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-strafe-left"));
+        Assert.Equal("walk", PlayerAnimationStateMachine.FallbackClip("walk-strafe-right"));
+        Assert.Equal("idle", PlayerAnimationStateMachine.FallbackClip("idle"));
+        Assert.Equal("die", PlayerAnimationStateMachine.FallbackClip("die"));
     }
 
     [Fact]
@@ -97,17 +171,23 @@ public class PlayerAnimationStateMachineTests
     }
 
     [Fact]
-    public void Frame_CarriesTheTwistWhileMoving_AndClampsIt()
+    public void Frame_CarriesTheResidualWhileMoving_WithinTheClamp()
     {
         PlayerAnimationStateMachine machine = new();
 
+        // 1.0 rad is a strafe sector: the clip takes 90 degrees, the residual is what is left.
         PlayerAnimationFrame moving = Run(machine, Inputs(speed: 6f, twist: 1.0f), 0.2f);
         PlayerAnimationFrame over = new PlayerAnimationStateMachine().Update(Inputs(speed: 6f, twist: 3.0f), Dt);
         PlayerAnimationFrame under = new PlayerAnimationStateMachine().Update(Inputs(speed: 6f, twist: -3.0f), Dt);
 
-        Assert.Equal(1.0f, moving.LegTwistRadians, 5);
-        Assert.Equal(PlayerAnimationStateMachine.MaxLegTwistRadians, over.LegTwistRadians, 5);
-        Assert.Equal(-PlayerAnimationStateMachine.MaxLegTwistRadians, under.LegTwistRadians, 5);
+        Assert.Equal("walk-strafe-right", moving.Clip);
+        Assert.Equal(1.0f - (MathF.PI / 2f), moving.LegTwistRadians, 5);
+        Assert.Equal("walk-back", over.Clip);
+        Assert.Equal(3.0f - MathF.PI, over.LegTwistRadians, 5);
+        Assert.Equal(MathF.PI - 3.0f, under.LegTwistRadians, 5);
+        Assert.All(
+            new[] { moving.LegTwistRadians, over.LegTwistRadians, under.LegTwistRadians },
+            twist => Assert.True(MathF.Abs(twist) <= PlayerAnimationStateMachine.MaxLegTwistRadians + 1e-4f));
     }
 
     [Fact]

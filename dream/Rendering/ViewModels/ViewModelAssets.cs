@@ -103,7 +103,10 @@ public static class ViewModelAssets
             TorchToolDefinition
         });
 
+    // The default hands carry a torch: the frame stays linear (no tonemap), so a figure reads only
+    // where there is light, and at 22:00 in open ground an unlit player measures a 0.059 internal
+    // spread. The torch puts the default player in the lit regime.
     public static readonly ViewModelLoadout DefaultLoadout = new(
         DebugHandsDefinition.Id,
-        BuilderToolDefinition.Id);
+        TorchToolDefinition.Id);
 }

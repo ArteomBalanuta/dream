@@ -37,10 +37,11 @@ public static class WorldEntityRenderer
     public const string ClaimedHint = "Claimed";
 
     private static readonly Vector3 ItemSize = new(0.3f, 0.3f, 0.3f);
+
+    // The villager's body no longer draws as boxes (NpcModelRenderer draws the model), but the
+    // label still hangs above where its head is.
     private static readonly Vector3 RobeSize = new(0.7f, 1.3f, 0.5f);
     private static readonly Vector3 HeadSize = new(0.34f, 0.34f, 0.34f);
-    private static readonly Vector3 RobeColor = new(0.20f, 0.09f, 0.09f);
-    private static readonly Vector3 HeadColor = new(0.52f, 0.46f, 0.38f);
 
     // Bone, dim rose and dim mint: the tier colours of the item names, darkened for the grim palette.
     public static Vector3 ItemColor(ItemRarity rarity) => rarity switch
@@ -50,6 +51,9 @@ public static class WorldEntityRenderer
         _ => new Vector3(0.56f, 0.53f, 0.47f)
     };
 
+    // Ground items only (M5): villagers are forged models now, drawn by NpcModelRenderer. The NPC
+    // cache stays in the signature because the box pass and the label pass share the call site, and
+    // the label pass anchors an NPC's label above where its head is.
     public static void CollectBoxes(ClientGroundItemCache ground, ClientNpcCache npcs, Vector3 eye, List<WorldBox> destination)
     {
         ArgumentNullException.ThrowIfNull(ground);
@@ -65,18 +69,6 @@ public static class WorldEntityRenderer
             }
 
             destination.Add(new WorldBox(item.Position + new Vector3(0f, ItemSize.Y * 0.5f, 0f), ItemSize, ItemColor(item.Rarity)));
-        }
-
-        for (int n = 0; n < npcs.Count; n++)
-        {
-            ClientNpc npc = npcs[n];
-            if (ClientGroundItemCache.HorizontalDistanceSquared(eye, npc.Position) > limit)
-            {
-                continue;
-            }
-
-            destination.Add(new WorldBox(npc.Position + new Vector3(0f, RobeSize.Y * 0.5f, 0f), RobeSize, RobeColor));
-            destination.Add(new WorldBox(npc.Position + new Vector3(0f, RobeSize.Y + (HeadSize.Y * 0.5f), 0f), HeadSize, HeadColor));
         }
     }
 
