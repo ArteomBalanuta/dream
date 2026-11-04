@@ -62,6 +62,11 @@ public partial class Render
     public void LoadTerrainShader(string name, string vertexPath, string fragmentPath)
     {
         Shader shader = new(vertexPath, fragmentPath, Shader.TerrainDefine);
+        // The two terrain samplers keep their units for the program's life: the tile array on unit 2
+        // and the world material map on unit 3 (unit 0 is the per-material texture, 1 the war mist).
+        shader.Use();
+        shader.SetInt(TerrainTilesUniform, TerrainTilesUnit);
+        shader.SetInt(TerrainMaterialMapUniform, TerrainMaterialMapUnit);
         _shaders.Replace(name, shader);
     }
 }

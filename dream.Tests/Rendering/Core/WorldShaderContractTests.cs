@@ -156,6 +156,12 @@ public class WorldShaderContractTests
         string bindTerrain = MethodBody(render, "private void BindTerrainMaterial(");
         Assert.Contains("Shader shader = GetShader(TerrainShaderName);", bindTerrain);
         Assert.DoesNotContain("AlphaMaskVariant", bindTerrain);
+        // Moving fallback cubes draw the plain tile: the world-keyed variation, blend and layer are off.
+        Assert.Contains("shader.SetFloat(\"uTerrainVariation\", 0f);", bindTerrain);
+        Assert.Contains("shader.SetFloat(\"uTerrainBlend\", 0f);", bindTerrain);
+        Assert.Contains("shader.SetInt(\"uTerrainLayer\", -1);", bindTerrain);
+        Assert.Contains("SetInt(TerrainTilesUniform, TerrainTilesUnit)", loadTerrain);
+        Assert.Contains("SetInt(TerrainMaterialMapUniform, TerrainMaterialMapUnit)", loadTerrain);
     }
 
     [Fact]

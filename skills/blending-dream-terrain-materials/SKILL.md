@@ -53,7 +53,14 @@ obvious repeating tile grid, are layer B.
   binds one terrain texture, so a cell knows nothing about its neighbour's material at
   fragment time.
 - `StaticWorldVertex` is `(Position, Normal, TexCoord)` only: no blend weight, no second
-  UV, no material index.
+  UV, no material index. The cross-material edge blend therefore does not use the mesh: the
+  fragment shader looks neighbours up in a world material map (3D `usampler3D`, unit 3,
+  built by the static chunk renderer) and samples the eight tiles from one
+  `Texture2DArray` (`StaticTerrainTileArray`, unit 2). Top faces blend within 0.35 m of a
+  cell edge along tile height (pass 3 of `algorithms.md`, per-material bias, depth 0.2),
+  and a bump normal from the tile alpha gives relief on top and side faces
+  (`DREAM_TERRAIN_BLEND`, `DREAM_TERRAIN_RELIEF`; both forced off with
+  `DREAM_TERRAIN_VARIATION=0`). Moving fallback cubes draw the plain look.
 
 ## Workflow
 

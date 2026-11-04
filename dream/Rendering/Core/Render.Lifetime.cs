@@ -35,6 +35,7 @@ public partial class Render
         RunDisposeStep(_fallbackCubeBuffer.Dispose, ref failures);
         RunDisposeStep(_fallbackInstances.Dispose, ref failures);
         RunDisposeStep(_staticTerrainTextures.Dispose, ref failures);
+        RunDisposeStep(_terrainTiles.Dispose, ref failures);
         RunDisposeStep(DisposeClassicHud, ref failures);
         RunDisposeStep(DeleteFontTexture, ref failures);
         RunDisposeStep(_hudShader.Dispose, ref failures);
