@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate Dream Assets"
+  short_description: "Add or regenerate procedural Dream art"
+  default_prompt: "Use $generating-dream-assets to add or change a procedural Dream asset, regenerate its family and pass its gates."
