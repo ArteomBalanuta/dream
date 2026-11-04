@@ -1,0 +1,4 @@
+interface:
+  display_name: "Capture Dream Screenshots"
+  short_description: "Serial in-engine PNG captures"
+  default_prompt: "Use $capturing-dream-screenshots to build a capture bin and take one serial in-engine screenshot run of Dream."

@@ -120,3 +120,5 @@ Assets currently live under `dream/animations/` and `dream/fonts/`.
 - `skills/creating-dream-skills/`: concise workflow for adding or refining repo-local Dream skills
 - `skills/profiling-dream-multiplayer/`: repeatable server/client launch and diagnostics workflow for multiplayer performance and visibility investigations
 - `skills/updating-dream-persistence-state/`: DDL-aware SQLite inspection and repair workflow for authoritative player, enemy, item, cube, and inventory persistence
+- `skills/generating-dream-assets/`: adding, changing and regenerating the procedural art in `tools/ui-assets` (ground manifests, props, actors, terrain, items, UI atlases) and passing its gates
+- `skills/capturing-dream-screenshots/`: serial in-engine PNG captures with `DREAM_HUD_CAPTURE` for visual verification, with a launch helper script
