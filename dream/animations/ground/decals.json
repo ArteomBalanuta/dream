@@ -1,0 +1,460 @@
+{
+  "schema": "dream.ground/1",
+  "family": "decals",
+  "generator": "tools/ui-assets/gen_ground_decals.py",
+  "assets": [
+    {
+      "id": "decals.decal_dirt_01",
+      "file": "decals/decal_dirt_01.glb",
+      "class": "decal.dirt",
+      "layer": "decal",
+      "radius": 0.65,
+      "footprint": 0.65,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_dirt_02",
+      "file": "decals/decal_dirt_02.glb",
+      "class": "decal.dirt",
+      "layer": "decal",
+      "radius": 0.525,
+      "footprint": 0.525,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_dirt_03",
+      "file": "decals/decal_dirt_03.glb",
+      "class": "decal.dirt",
+      "layer": "decal",
+      "radius": 0.75,
+      "footprint": 0.75,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_dirt_04",
+      "file": "decals/decal_dirt_04.glb",
+      "class": "decal.dirt",
+      "layer": "decal",
+      "radius": 0.45,
+      "footprint": 0.45,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_moss_01",
+      "file": "decals/decal_moss_01.glb",
+      "class": "decal.moss",
+      "layer": "decal",
+      "radius": 0.625,
+      "footprint": 0.625,
+      "height": 0.0,
+      "ground": [
+        "stone",
+        "rock",
+        "grass"
+      ],
+      "weight": 0.9,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_moss_02",
+      "file": "decals/decal_moss_02.glb",
+      "class": "decal.moss",
+      "layer": "decal",
+      "radius": 0.5,
+      "footprint": 0.5,
+      "height": 0.0,
+      "ground": [
+        "stone",
+        "rock",
+        "grass"
+      ],
+      "weight": 0.9,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_moss_03",
+      "file": "decals/decal_moss_03.glb",
+      "class": "decal.moss",
+      "layer": "decal",
+      "radius": 0.75,
+      "footprint": 0.75,
+      "height": 0.0,
+      "ground": [
+        "stone",
+        "rock",
+        "grass"
+      ],
+      "weight": 0.9,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_moss_04",
+      "file": "decals/decal_moss_04.glb",
+      "class": "decal.moss",
+      "layer": "decal",
+      "radius": 0.425,
+      "footprint": 0.425,
+      "height": 0.0,
+      "ground": [
+        "stone",
+        "rock",
+        "grass"
+      ],
+      "weight": 0.9,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_puddle_01",
+      "file": "decals/decal_puddle_01.glb",
+      "class": "decal.puddle",
+      "layer": "decal",
+      "radius": 0.65,
+      "footprint": 0.65,
+      "height": 0.0,
+      "ground": [
+        "mud",
+        "dirt"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_puddle_02",
+      "file": "decals/decal_puddle_02.glb",
+      "class": "decal.puddle",
+      "layer": "decal",
+      "radius": 0.5,
+      "footprint": 0.5,
+      "height": 0.0,
+      "ground": [
+        "mud",
+        "dirt"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_puddle_03",
+      "file": "decals/decal_puddle_03.glb",
+      "class": "decal.puddle",
+      "layer": "decal",
+      "radius": 0.775,
+      "footprint": 0.775,
+      "height": 0.0,
+      "ground": [
+        "mud",
+        "dirt"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_crack_01",
+      "file": "decals/decal_crack_01.glb",
+      "class": "decal.crack",
+      "layer": "decal",
+      "radius": 0.7,
+      "footprint": 0.7,
+      "height": 0.0,
+      "ground": [
+        "stone",
+        "rock"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_crack_02",
+      "file": "decals/decal_crack_02.glb",
+      "class": "decal.crack",
+      "layer": "decal",
+      "radius": 0.55,
+      "footprint": 0.55,
+      "height": 0.0,
+      "ground": [
+        "stone",
+        "rock"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_crack_03",
+      "file": "decals/decal_crack_03.glb",
+      "class": "decal.crack",
+      "layer": "decal",
+      "radius": 0.75,
+      "footprint": 0.75,
+      "height": 0.0,
+      "ground": [
+        "stone",
+        "rock"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_path_01",
+      "file": "decals/decal_path_01.glb",
+      "class": "decal.path",
+      "layer": "decal",
+      "radius": 1.1,
+      "footprint": 1.1,
+      "height": 0.0,
+      "ground": [
+        "grass_path",
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.1
+      ]
+    },
+    {
+      "id": "decals.decal_path_02",
+      "file": "decals/decal_path_02.glb",
+      "class": "decal.path",
+      "layer": "decal",
+      "radius": 1.15,
+      "footprint": 1.15,
+      "height": 0.0,
+      "ground": [
+        "grass_path",
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.08
+      ]
+    },
+    {
+      "id": "decals.decal_path_03",
+      "file": "decals/decal_path_03.glb",
+      "class": "decal.path",
+      "layer": "decal",
+      "radius": 1.05,
+      "footprint": 1.05,
+      "height": 0.0,
+      "ground": [
+        "grass_path",
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.1
+      ]
+    },
+    {
+      "id": "decals.decal_litter_01",
+      "file": "decals/decal_litter_01.glb",
+      "class": "decal.litter",
+      "layer": "decal",
+      "radius": 0.65,
+      "footprint": 0.65,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_litter_02",
+      "file": "decals/decal_litter_02.glb",
+      "class": "decal.litter",
+      "layer": "decal",
+      "radius": 0.525,
+      "footprint": 0.525,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_litter_03",
+      "file": "decals/decal_litter_03.glb",
+      "class": "decal.litter",
+      "layer": "decal",
+      "radius": 0.75,
+      "footprint": 0.75,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_scorch_01",
+      "file": "decals/decal_scorch_01.glb",
+      "class": "decal.scorch",
+      "layer": "decal",
+      "radius": 0.7,
+      "footprint": 0.7,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock",
+        "grass_path"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_scorch_02",
+      "file": "decals/decal_scorch_02.glb",
+      "class": "decal.scorch",
+      "layer": "decal",
+      "radius": 0.5,
+      "footprint": 0.5,
+      "height": 0.0,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock",
+        "grass_path"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_stain_01",
+      "file": "decals/decal_stain_01.glb",
+      "class": "decal.stain",
+      "layer": "decal",
+      "radius": 0.45,
+      "footprint": 0.45,
+      "height": 0.0,
+      "ground": [
+        "dirt",
+        "stone",
+        "sand"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "decals.decal_stain_02",
+      "file": "decals/decal_stain_02.glb",
+      "class": "decal.stain",
+      "layer": "decal",
+      "radius": 0.375,
+      "footprint": 0.375,
+      "height": 0.0,
+      "ground": [
+        "dirt",
+        "stone",
+        "sand"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    }
+  ]
+}
