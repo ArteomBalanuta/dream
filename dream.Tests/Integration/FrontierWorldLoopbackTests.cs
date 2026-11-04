@@ -34,7 +34,16 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
     // wave D/E baseline: a 100 m world with 10k cubes and 1k rubble joined in 232,677 B. An unedited world is smaller.
     private const long EditedHundredMeterJoinBytes = 232_677;
 
-    private static readonly string[] LegacyCampKeys = ["north-east-wolves", "south-west-wolves", "south-east-dire-wolf", "moonlit-dire-wolves"];
+    // Every camp of the <= 99 m homeland, in the order spawns.json lists them. A 100 m world holds none of them.
+    private static readonly string[] HomelandCampKeys =
+    [
+        "north-east-wolves", "south-west-wolves", "south-east-dire-wolf", "moonlit-dire-wolves",
+        "north-ridge-wolves", "old-road-wolves", "west-plain-wolves", "east-wood-wolves",
+        "south-mire-wolves", "south-fen-dire", "night-pack-west", "night-ridge-dire"
+    ];
+
+    private static readonly string HomelandCampKeySql =
+        string.Join(",", HomelandCampKeys.Select(key => $"'{key}'"));
 
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db, ServerStartOptions start, bool npcs = false)
     {
@@ -165,10 +174,10 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
             }
 
             // No legacy camp exists on this world: not in the content for 100 m, and no enemy near an old home.
-            Assert.DoesNotContain(CampsNow(runtime), camp => LegacyCampKeys.Contains(camp.Key));
+            Assert.DoesNotContain(CampsNow(runtime), camp => HomelandCampKeys.Contains(camp.Key));
             Assert.Contains(runtime.Enemies.ActiveActors, enemy => enemy.EnemyKind == "GraveHowler");
             M6EndToEndLoopbackTests.Flush(server);
-            Assert.Equal(0, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM enemy_instances WHERE camp_key IN ('north-east-wolves','south-west-wolves','south-east-dire-wolf','moonlit-dire-wolves')")));
+            Assert.Equal(0, Convert.ToInt64(db.Scalar($"SELECT COUNT(*) FROM enemy_instances WHERE camp_key IN ({HomelandCampKeySql})")));
             Assert.True(Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM enemy_instances WHERE camp_key LIKE 'frontier-%'")) >= enemiesBefore);
 
             // The vendor and the warden are within reach of the spawn.
@@ -232,9 +241,9 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task A56MeterWorld_OnTheSameBuild_HoldsExactlyTheFourLegacyCampsAndFourQuests()
+    public async Task A56MeterWorld_OnTheSameBuild_HoldsExactlyTheTwelveHomelandCampsAndFourQuests()
     {
-        Assert.Equal(LegacyCampKeys, ContentCatalog.Shipped.Camps.Where(camp => camp.ExistsOn(56)).Select(camp => camp.Key));
+        Assert.Equal(HomelandCampKeys, ContentCatalog.Shipped.Camps.Where(camp => camp.ExistsOn(56)).Select(camp => camp.Key));
         Assert.Equal(4, ContentCatalog.Shipped.Quests.Count(q => q.ExistsOn(56)));
         Assert.All(ContentCatalog.Shipped.Camps.Where(camp => camp.ExistsOn(56)), camp => Assert.False(camp.IsAbsolute, camp.Key));
 
@@ -256,7 +265,7 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
         await PlainStepAsync(server, a, 12);
 
         List<SpawnCamp> expected = [.. CampsNow(server.Runtime)];
-        Assert.All(expected, camp => Assert.Contains(camp.Key, LegacyCampKeys));
+        Assert.All(expected, camp => Assert.Contains(camp.Key, HomelandCampKeys));
         Assert.Equal(expected.Sum(camp => camp.Count), server.Runtime.Enemies.ActiveActors.Count(enemy => enemy.IsActive));
         Assert.DoesNotContain(server.Runtime.Enemies.ActiveActors, enemy => enemy.EnemyKind is Prowler or "GraveHowler");
 

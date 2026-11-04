@@ -15,6 +15,7 @@ using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.Stats;
+using Dream.Simulation.World;
 using Dream.Simulation.Rules;
 using Dream.Tests.Server.Persistence.Migrations;
 using Dream.Tests.Simulation.Runtime;
@@ -71,6 +72,11 @@ public sealed class SpawnCampProgressionLoopbackTests
     private static HudStatusSnapshot Panel(HeadlessPlayScene client) =>
         client.World.CapturePresentationState(64f).HudStatus;
 
+    // The world fills to its day population, or to its whole population when the clock starts after dark.
+    private static int ShippedCampMembers(bool night) => ContentCatalog.Shipped.Camps
+        .Where(camp => camp.ExistsOn(WorldDefaults.StartupFloorSize) && (night || !camp.Night))
+        .Sum(camp => camp.Count);
+
     private static int ActiveServerEnemies(WireLoopbackServer server) =>
         server.Runtime.Enemies.ActiveActors.Count(enemy => enemy.IsActive);
 
@@ -88,7 +94,10 @@ public sealed class SpawnCampProgressionLoopbackTests
 
             // The camps fill the world and the client sees the same enemies.
             camps = ActiveServerEnemies(server);
-            Assert.InRange(camps, 5, 7);
+            Assert.InRange(
+                camps,
+                ShippedCampMembers(night: false),
+                ShippedCampMembers(night: true));
             Assert.Equal(camps, client.World.Enemies.ActiveActors.Count(enemy => enemy.IsActive));
 
             // A server-side level-up: the snapshot carries the level and the server's threshold.

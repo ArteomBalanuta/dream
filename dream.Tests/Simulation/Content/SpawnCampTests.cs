@@ -28,6 +28,13 @@ public sealed class SpawnCampTests
     private static ContentCatalog Load(string spawnsJson) =>
         ContentCatalog.Load(Read(ContentCatalog.ItemsFileName), Read(ContentCatalog.EnemiesFileName), Read(ContentCatalog.LootFileName), spawnsJson);
 
+    // What a 56 m world holds by day once every camp has filled: the authored counts of the camps that are not
+    // night-only. Derived, so a camp added to spawns.json moves these tests with it; the literal totals are
+    // pinned once, in TheShippedCamps_AreNineDayCampsAndThreeNightCamps_OfWolvesAndDireWolves.
+    private static readonly int ShippedDayPopulation = ContentCatalog.Shipped.Camps
+        .Where(camp => camp.ExistsOn(WorldDefaults.StartupFloorSize) && !camp.Night)
+        .Sum(camp => camp.Count);
+
     private static string Camps(params string[] camps) => "{\"version\":1,\"camps\":[" + string.Join(",", camps) + "]}";
 
     private static string Camp(string key = "camp-a", string template = "Wolf", string x = "8.5", string z = "40.5", string count = "2", string respawn = "1", string extra = "") =>
@@ -36,18 +43,23 @@ public sealed class SpawnCampTests
     // ---- content ----
 
     [Fact]
-    public void TheShippedCamps_AreThreeDayCampsAndANightCamp_OfWolvesAndDireWolves()
+    public void TheShippedCamps_AreNineDayCampsAndThreeNightCamps_OfWolvesAndDireWolves()
     {
         // The camps of a 56 m world; the frontier camps (M9) exist on 100 m worlds only.
         IReadOnlyList<SpawnCamp> camps = [.. ContentCatalog.Shipped.Camps.Where(camp => camp.ExistsOn(WorldDefaults.StartupFloorSize))];
 
-        Assert.Equal(4, camps.Count);
-        Assert.Equal(3, camps.Count(camp => !camp.Night));
-        SpawnCamp night = Assert.Single(camps, camp => camp.Night);
-        Assert.Equal("DireWolf", night.Template);
+        Assert.Equal(12, camps.Count);
+        Assert.Equal(9, camps.Count(camp => !camp.Night));
+        Assert.Equal(3, camps.Count(camp => camp.Night));
+        Assert.Contains(camps, camp => camp.Night && camp.Template == "DireWolf");
+        Assert.Contains(camps, camp => camp.Night && camp.Template == "Wolf");
         Assert.Contains(camps, camp => camp.Template == "Wolf");
         Assert.Contains(camps, camp => camp.Template == "DireWolf" && !camp.Night);
         Assert.Equal(camps.Count, camps.Select(camp => camp.Key).Distinct().Count());
+
+        // The day packs are the bulk of the world's wolves; the night adds to them rather than replacing them.
+        Assert.Equal(21, camps.Where(camp => !camp.Night).Sum(camp => camp.Count));
+        Assert.Equal(28, camps.Sum(camp => camp.Count));
     }
 
     [Fact]
@@ -408,7 +420,7 @@ public sealed class SpawnCampTests
         }
 
         IReadOnlyList<PersistedEnemyInstance> rows = world.LoadActiveEnemies();
-        Assert.Equal(5, rows.Count);
+        Assert.Equal(ShippedDayPopulation, rows.Count);
         Assert.All(rows, row => Assert.NotNull(row.CampKey));
         Assert.Equal(2, rows.Count(row => row.CampKey == "north-east-wolves"));
         Assert.Equal(1, rows.Count(row => row.CampKey == "south-east-dire-wolf"));
@@ -428,7 +440,7 @@ public sealed class SpawnCampTests
         {
             ulong tick = 0;
             Tick(runtime, ref tick, 10);
-            Assert.Equal(5, Active(runtime));
+            Assert.Equal(ShippedDayPopulation, Active(runtime));
             runtime.PersistCheckpoint();
             Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
             before = Grouped(world.LoadActiveEnemies());
@@ -436,11 +448,11 @@ public sealed class SpawnCampTests
 
         using (WorldSessionRuntime restarted = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema, fresh: false))
         {
-            Assert.Equal(5, Active(restarted));
+            Assert.Equal(ShippedDayPopulation, Active(restarted));
             ulong tick = 0;
             Tick(restarted, ref tick, 4 * TicksPerSecond);
 
-            Assert.Equal(5, Active(restarted));
+            Assert.Equal(ShippedDayPopulation, Active(restarted));
             Assert.Equal(before, Grouped(world.LoadActiveEnemies()));
             // Each restored member idles at its camp, not at a legacy spawn.
             foreach (EnemyActor enemy in restarted.Enemies.ActiveActors)
@@ -467,10 +479,10 @@ public sealed class SpawnCampTests
         Tick(runtime, ref tick, 10);
 
         // The first camp fill drops the legacy wolf (no camp_key) so the camps are the whole population.
-        Assert.Equal(5, Active(runtime));
+        Assert.Equal(ShippedDayPopulation, Active(runtime));
         Assert.DoesNotContain(runtime.Enemies.ActiveActors, enemy => ReferenceEquals(enemy, legacy));
         Tick(runtime, ref tick, 4 * TicksPerSecond);
-        Assert.Equal(5, Active(runtime));
+        Assert.Equal(ShippedDayPopulation, Active(runtime));
         Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
         Assert.DoesNotContain(world.LoadActiveEnemies(), row => row.CampKey == null);
     }
@@ -489,13 +501,13 @@ public sealed class SpawnCampTests
             Assert.True(runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(10)));
         }
 
-        Assert.Equal(4, world.LoadActiveEnemies().Count);
+        Assert.Equal(ShippedDayPopulation - 1, world.LoadActiveEnemies().Count);
         using (WorldSessionRuntime restarted = CreateRuntime(ContentCatalog.Shipped, hour: 12, world, database.Schema, fresh: false))
         {
-            Assert.Equal(4, Active(restarted));
+            Assert.Equal(ShippedDayPopulation - 1, Active(restarted));
             ulong tick = 0;
             Tick(restarted, ref tick, 5);
-            Assert.Equal(5, Active(restarted));
+            Assert.Equal(ShippedDayPopulation, Active(restarted));
         }
     }
 
@@ -568,7 +580,7 @@ public sealed class SpawnCampTests
             }
             else if (size >= 56)
             {
-                Assert.Equal(hour == 12 ? 5 : 7, Active(runtime));
+                Assert.Equal(hour == 12 ? 21 : 28, Active(runtime));
             }
         }
     }
@@ -682,7 +694,7 @@ public sealed class SpawnCampTests
         // The camp refills at once after a restart (its timers are not saved); the new member must not stack.
         Tick(restarted, ref next, 5);
 
-        Assert.Equal(5, Active(restarted));
+        Assert.Equal(ShippedDayPopulation, Active(restarted));
         AssertPlacedSanely(restarted, "restart");
     }
 
