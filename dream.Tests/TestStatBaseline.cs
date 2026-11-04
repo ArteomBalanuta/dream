@@ -1,3 +1,5 @@
+using Dream.Server.Persistence;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 
 namespace Dream.Tests;
@@ -27,6 +29,41 @@ public static class TestStatBaseline
         Agility = Attribute,
         Energy = Attribute
     };
+
+    // A stored profile on the baseline, for the test doubles that stand in for the profile
+    // repository. Health is what the player.max_health formula makes of the baseline vitality.
+    public static PersistedPlayerProfile Profile(string playerName, DateTime nowUtc)
+    {
+        PersistedPlayerProfile created = PersistedPlayerProfile.CreateDefault(playerName, nowUtc);
+        return created with
+        {
+            Stats = created.Stats with
+            {
+                Strength = Attribute,
+                Agility = Attribute,
+                Vitality = Attribute,
+                Energy = Attribute,
+                AttackSpeed = AttackSpeed,
+                CurrentHealth = 50 + (Attribute * 5),
+                MaxHealth = 50 + (Attribute * 5)
+            }
+        };
+    }
+
+    // Writes baseline profile rows before a server is started, so the join finds them and
+    // GetOrCreate never makes a new character at the ceiling. This is how an integration test
+    // states the stats its combat, spend or byte expectations were written against.
+    public static void SeedProfiles(SqliteSchemaBootstrapper schema, params string[] playerNames)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(playerNames);
+        using SqlitePlayerProfileRepository profiles = new(schema);
+        DateTime now = DateTime.UtcNow;
+        foreach (string playerName in playerNames)
+        {
+            profiles.Save(Profile(playerName, now));
+        }
+    }
 
     // Puts a live character on the baseline, so the test below it is about the mechanic and not
     // about where new characters happen to start.

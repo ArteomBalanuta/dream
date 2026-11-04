@@ -269,7 +269,10 @@ public sealed class EquipmentTestProfiles : IPlayerProfileRepository
     {
         if (!_profiles.TryGetValue(playerName.Trim(), out PersistedPlayerProfile profile))
         {
-            profile = PersistedPlayerProfile.CreateDefault(playerName.Trim(), DateTime.UtcNow);
+            // The baseline, not the shipping default: a new character is created at the attribute
+            // ceiling, where vitality gear cannot raise max health and there is nothing to spend,
+            // and the tests on this double are about exactly those mechanics.
+            profile = TestStatBaseline.Profile(playerName.Trim(), DateTime.UtcNow);
             _profiles[profile.PlayerName] = profile;
         }
 
