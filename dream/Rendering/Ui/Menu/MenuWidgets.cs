@@ -16,6 +16,14 @@ public sealed class MenuWidgets
     public const float ButtonHeightUnits = 20f;
     public const float ButtonPitchUnits = 26f;
 
+    // Type sizes in design units: the menu plates are fixed art, so their text is sized from the box
+    // it sits in rather than drawn at a fixed bake that shrinks against the plate as ui_scale rises.
+    // A 13 u label fills the 20 u button plate the way the 13 px bake filled it at scale 1.
+    public const float ButtonLabelUnits = 13f;
+    public const float PanelTitleUnits = 18f;
+    public const float OptionRowUnits = 11f;
+    public const float StatusUnits = 11f;
+
     public static readonly UiColor Bone = new(0xE2, 0xD6, 0xBC, 255);
     public static readonly UiColor Gold = new(0xF0, 0xC4, 0x6C, 255);
     public static readonly UiColor Muted = new(0x9C, 0x93, 0x82, 255);
@@ -53,9 +61,6 @@ public sealed class MenuWidgets
     public float OriginY => MathF.Max(0f, (_layout.ViewportHeight - DesignHeightUnits * _layout.Scale) * 0.5f);
 
     public float CentreX => _layout.ViewportWidth * 0.5f;
-
-    // Large text from scale 2 up, else the small bake; a line that does not fit falls back to small.
-    public bool PreferLarge => _layout.Scale >= 2f;
 
     public void Begin(IUiCanvas canvas, IUiInput input, MenuSkin skin, in UiLayout layout)
     {
@@ -98,35 +103,64 @@ public sealed class MenuWidgets
 
     // ---- text ----
 
-    public UiTextStyle FitStyle(ReadOnlySpan<char> text, float maxWidth, bool allowLarge = true)
+    // Text about units tall for this scale: the engraved face when it fits maxWidthPx, else the pixel
+    // face, which is squeezed if even that is too wide (the menu columns are fixed in units, so a long
+    // label must give way rather than run into the next column).
+    public UiSizedText FitText(ReadOnlySpan<char> text, float maxWidthPx, float units, bool allowTitle = true)
     {
-        if (allowLarge && PreferLarge && Canvas.MeasureText(text, UiTextStyle.Large) <= maxWidth)
+        if (allowTitle)
         {
-            return UiTextStyle.Large;
+            UiSizedText title = UiText.For(in _layout, units, UiTextFace.Title);
+            if (UiText.Measure(Canvas, text, in title) <= maxWidthPx)
+            {
+                return title;
+            }
         }
 
-        return UiTextStyle.Body;
+        UiSizedText pixel = UiText.For(in _layout, units, UiTextFace.Pixel);
+        float width = UiText.Measure(Canvas, text, in pixel);
+        if (width > maxWidthPx && width > 0f && maxWidthPx > 0f)
+        {
+            float k = maxWidthPx / width;
+            pixel = new UiSizedText(pixel.Style, pixel.Scale * k, pixel.Px * k);
+        }
+
+        return pixel;
     }
 
-    public float TextHeight(UiTextStyle style) => PanelText.Height(Canvas, style);
+    // The same, but never taller than a box the art fixed: hUnits is the box in design units.
+    public UiSizedText FitTextInBox(ReadOnlySpan<char> text, float maxWidthPx, float units, float hUnits, bool allowTitle = true)
+    {
+        UiSizedText t = FitText(text, maxWidthPx, MathF.Min(units, hUnits), allowTitle);
+        float cap = hUnits * _layout.Scale;
+        return t.Px <= cap || cap <= 0f
+            ? t
+            : new UiSizedText(t.Style, t.Scale * (cap / t.Px), cap);
+    }
+
+    // The line box the text occupies: the height a box has to fit it into.
+    public float TextHeight(in UiSizedText t) => t.Px;
 
     // Draws one line with a dark shadow, centred on centreX, top at y.
-    public void TextCentred(ReadOnlySpan<char> text, float centreX, float y, UiTextStyle style, UiColor color)
+    public void TextCentred(ReadOnlySpan<char> text, float centreX, float y, in UiSizedText t, UiColor color)
     {
-        float w = Canvas.MeasureText(text, style);
-        TextAt(text, MathF.Round(centreX - w * 0.5f), y, style, color);
+        float w = UiText.Measure(Canvas, text, in t);
+        TextAt(text, MathF.Round(centreX - w * 0.5f), y, in t, color);
     }
 
-    public void TextAt(ReadOnlySpan<char> text, float x, float y, UiTextStyle style, UiColor color)
+    public void TextAt(ReadOnlySpan<char> text, float x, float y, in UiSizedText t, UiColor color)
     {
-        float off = MathF.Max(1f, MathF.Round(_layout.Scale * 0.5f));
-        Canvas.Text(text, new Vector2(x + off, MathF.Round(y) + off), style, Shadow);
-        Canvas.Text(text, new Vector2(x, MathF.Round(y)), style, color);
+        float off = UiText.ShadowPx(in _layout);
+        float previous = Canvas.TextScale;
+        Canvas.SetTextScale(t.Scale);
+        Canvas.Text(text, new Vector2(x + off, MathF.Round(y) + off), t.Style, Shadow);
+        Canvas.Text(text, new Vector2(x, MathF.Round(y)), t.Style, color);
+        Canvas.SetTextScale(previous);
     }
 
     // Text vertically centred in a rect, left-aligned at x.
-    public void TextLeftCentred(ReadOnlySpan<char> text, UiRect r, float x, UiTextStyle style, UiColor color) =>
-        TextAt(text, x, r.Y + (r.H - TextHeight(style)) * 0.5f, style, color);
+    public void TextLeftCentred(ReadOnlySpan<char> text, UiRect r, float x, in UiSizedText t, UiColor color) =>
+        TextAt(text, x, r.Y + (r.H - t.Px) * 0.5f, in t, color);
 
     // ---- chrome ----
 
@@ -199,7 +233,8 @@ public sealed class MenuWidgets
             return;
         }
 
-        TextCentred("DREAM", CentreX, OriginY + topUnits * _layout.Scale, UiTextStyle.Large, Gold);
+        UiSizedText word = FitText("DREAM", _layout.ViewportWidth * 0.9f, PanelTitleUnits * 2f);
+        TextCentred("DREAM", CentreX, OriginY + topUnits * _layout.Scale, in word, Gold);
     }
 
     public void DrawDivider(UiRect r)
@@ -243,13 +278,16 @@ public sealed class MenuWidgets
             Canvas.Solid(r, hovered ? new UiColor(60, 44, 30, 255) : new UiColor(26, 26, 28, 255));
         }
 
-        UiTextStyle style = FitStyle(label, r.W * 0.92f);
+        // Fitted in both directions: the plate is fixed art, and with a continuous scale an engraved
+        // label sized from the scale can outgrow the plate's height as easily as its width.
+        float plateUnits = _layout.Scale > 0f ? r.H / _layout.Scale : ButtonHeightUnits;
+        UiSizedText t = FitTextInBox(label, r.W * 0.92f, ButtonLabelUnits, plateUnits);
         UiColor color = !enabled ? Disabled : hovered ? Gold : Bone;
-        float push = down ? MathF.Max(1f, MathF.Round(_layout.Scale * 0.5f)) : 0f;
-        float w = Canvas.MeasureText(label, style);
+        float push = down ? UiText.ShadowPx(in _layout) : 0f;
+        float w = UiText.Measure(Canvas, label, in t);
         float x = MathF.Round(r.X + (r.W - w) * 0.5f);
-        float y = r.Y + (r.H - TextHeight(style)) * 0.5f + push;
-        TextAt(label, x, y, style, color);
+        float y = r.Y + (r.H - t.Px) * 0.5f + push;
+        TextAt(label, x, y, in t, color);
         return clicked;
     }
 

@@ -34,8 +34,8 @@ public static class PauseMenuPanel
         UiRect panel = w.Centered(top, PanelWidthUnits, heightUnits);
         w.DrawPanel(panel);
 
-        UiTextStyle titleStyle = w.FitStyle("PAUSED", panel.W);
-        w.TextCentred("PAUSED", w.CentreX, panel.Y + 14f * w.Scale, titleStyle, MenuWidgets.Gold);
+        UiSizedText titleStyle = w.FitText("PAUSED", panel.W, MenuWidgets.PanelTitleUnits);
+        w.TextCentred("PAUSED", w.CentreX, panel.Y + 14f * w.Scale, in titleStyle, MenuWidgets.Gold);
         w.DrawDivider(w.Inside(panel, 24f, 38f, PanelWidthUnits - 48f, 6f));
 
         MenuAction result = MenuAction.None;
