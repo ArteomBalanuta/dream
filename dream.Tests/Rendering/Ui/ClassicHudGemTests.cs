@@ -600,30 +600,33 @@ public sealed class ClassicHudGemTests
             Assert.True(covered > previous, $"coverage {covered} at {fill} did not rise above {previous}");
             previous = covered;
 
-            // With the old straight-gradient masks the surface is a horizontal line at 1 - level (the level
-            // is stretched a little past 0..1 at both ends): everything well below it is liquid, everything
-            // well above is glass, exactly where the clipped stone put them.
-            if (UiBatch.TryGetGemFamily(RealTable(), kind, out _, out _, out _, out _) && NewBatch(RealTable()).GemMasksAreLegacy)
+            // Every pixel is on the side of the surface its own mask puts it: the baked level maps
+            // (and the old straight gradient, which is just a mask that rises with y) give each pixel
+            // a threshold, and the pixel is liquid exactly where that threshold is under the level.
+            // The level is stretched a little past 0..1 at both ends; pixels within 0.05 of the
+            // surface are the meniscus and are not judged.
+            Assert.True(
+                UiBatch.TryGetGemFamily(RealTable(), kind, out _, out _, out _, out _),
+                $"The shipped art has no complete {kind} gem family, so no liquid is drawn at all.");
+            float level = -0.03f + 1.06f * fill;
+            int judged = 0;
+            int wrong = 0;
+            foreach ((int x, int y) in area)
             {
-                float surface = 1f - (-0.03f + 1.06f * fill);
-                int judged = 0;
-                int wrong = 0;
-                foreach ((int x, int y) in area)
+                float threshold = GemSurfaceThreshold(kind, x, y);
+                if (MathF.Abs(threshold - level) < 0.05f)
                 {
-                    float local = (y + 0.5f - 14f) / 100f;
-                    if (MathF.Abs(local - surface) < 0.05f)
-                    {
-                        continue;
-                    }
-
-                    judged++;
-                    Rgba32 px = c.GetRgba(x, y);
-                    bool isLiquid = Distance(px, full.GetRgba(x, y)) < Distance(px, empty.GetRgba(x, y));
-                    wrong += isLiquid == local > surface ? 0 : 1;
+                    continue;
                 }
 
-                Assert.True(wrong <= judged * 0.02, $"{wrong} of {judged} pixels are on the wrong side of the surface at fill {fill}");
+                judged++;
+                Rgba32 px = c.GetRgba(x, y);
+                bool isLiquid = Distance(px, full.GetRgba(x, y)) < Distance(px, empty.GetRgba(x, y));
+                wrong += isLiquid == threshold < level ? 0 : 1;
             }
+
+            Assert.True(judged > area.Count / 2, $"only {judged} of {area.Count} pixels were judged at fill {fill}");
+            Assert.True(wrong <= judged * 0.02, $"{wrong} of {judged} pixels are on the wrong side of the surface at fill {fill}");
         }
 
         // The bottom fills first: at a quarter the lowest area pixels are liquid and the highest are not.
@@ -635,6 +638,34 @@ public sealed class ClassicHudGemTests
     }
 
     private static int Distance(Rgba32 a, Rgba32 b) => Math.Abs(a.R - b.R) + Math.Abs(a.G - b.G) + Math.Abs(a.B - b.B);
+
+    // The level at which the liquid surface passes over the gem pixel (x, y) of RenderRealGem: the
+    // mask's R under that pixel, read the way the Gem mode reads it (bilinear on the page, and
+    // flipped for the old top-down gradient, exactly as uiFragment.glsl computes its threshold).
+    private static float GemSurfaceThreshold(UiGemKind kind, int x, int y)
+    {
+        UiSprite mask = RealTable().Get(kind == UiGemKind.Mana ? "gem.mp.mask" : "gem.hp.mask");
+        UiTexturePixels page = HudPage();
+        float sampleX = mask.X + ((x + 0.5f - 14f) / 100f * mask.W) - 0.5f;
+        float sampleY = mask.Y + ((y + 0.5f - 14f) / 100f * mask.H) - 0.5f;
+        int ix = (int)MathF.Floor(sampleX);
+        int iy = (int)MathF.Floor(sampleY);
+        float fx = sampleX - ix;
+        float fy = sampleY - iy;
+        float red = 0f;
+        for (int dy = 0; dy < 2; dy++)
+        {
+            int sy = Math.Clamp(iy + dy, 0, page.Height - 1);
+            float wy = dy == 0 ? 1f - fy : fy;
+            for (int dx = 0; dx < 2; dx++)
+            {
+                int sx = Math.Clamp(ix + dx, 0, page.Width - 1);
+                red += (dx == 0 ? 1f - fx : fx) * wy * (page.Rgba[((sy * page.Width) + sx) * 4] / 255f);
+            }
+        }
+
+        return NewBatch(RealTable()).GemMasksAreLegacy ? 1f - red : red;
+    }
 
     [Fact]
     public void RealArt_TheMaskOrientation_MatchesWhichArtGenerationTheBatchAssumes()

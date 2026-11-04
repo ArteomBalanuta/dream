@@ -27,8 +27,10 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
     private const float Tolerance = 1e-4f;
     private const float OnPathTolerance = 0.02f;
 
-    // Coalescing windows while the wolf chases: (first tick of the window, snapshots merged).
-    private static readonly (int Start, int Length)[] ChaseLag = [(40, 3), (60, 8), (90, 15), (130, 30), (190, 60)];
+    // Coalescing windows while the wolf chases: (first tick of the window, snapshots merged). The
+    // last one is deliberately longer than TickInterpolationBuffer.DefaultMaxTickSpan, so its
+    // delivery does restart the buffer and AssertNoFalseTeleportWithinALife has a restart to judge.
+    private static readonly (int Start, int Length)[] ChaseLag = [(40, 3), (60, 8), (90, 15), (130, 30), (180, 70)];
 
     [Fact]
     public void ChasingWolf_UnderCoalescedSnapshots_NeverRendersBackwards_AndARespawnSnaps()
@@ -231,6 +233,9 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
 
         output.WriteLine($"same-life deliveries: largest gap {maxGap} ticks, largest step {maxStep:F3} m, restarts {restarts}");
         Assert.True(maxGap >= 30, $"The largest coalescing gap was only {maxGap} ticks.");
+        // The premise of the check inside the loop: with no restart at all it never runs, and the
+        // longest coalescing window is there precisely to force one.
+        Assert.True(restarts > 0, $"No same-life delivery restarted the buffer (largest gap {maxGap} ticks).");
     }
 
     private static void AssertMonotonic(IReadOnlyList<Vector3> positions, Vector3 direction, string label)
