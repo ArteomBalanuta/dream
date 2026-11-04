@@ -34,6 +34,7 @@ public sealed class EnemyActor
         float aggroRange,
         float attackRange,
         float moveSpeed,
+        float patrolSpeed = 0f,
         float preferredStandOffDistance = 0f,
         float collisionRadius = 0.45f,
         float collisionHeight = 1.2f,
@@ -50,6 +51,9 @@ public sealed class EnemyActor
         AggroRange = Math.Max(attackRange, aggroRange);
         AttackRange = Math.Max(0.1f, attackRange);
         MoveSpeed = Math.Max(0f, moveSpeed);
+        // The walk home. 0 (unauthored, and every caller that predates patrol speeds) is half the
+        // chase speed, the same default ContentCatalog gives an enemy with no "patrolSpeed".
+        PatrolSpeed = patrolSpeed > 0f ? Math.Min(patrolSpeed, MoveSpeed) : MoveSpeed * 0.5f;
         // The stop point lies inside the attack range (90% of it at most), so a wolf that has stopped can bite.
         PreferredStandOffDistance = Math.Min(
             preferredStandOffDistance > 0f ? preferredStandOffDistance : AttackRange,
@@ -77,7 +81,16 @@ public sealed class EnemyActor
 
     public float AttackRange { get; }
 
+    // THE CHASE SPEED: what this enemy runs at while it is closing on a player. Persistence maps it
+    // from and to PersistedCreatureStats.MovementSpeed, so its name and meaning are load-bearing.
     public float MoveSpeed { get; }
+
+    // The walk it returns home at, at most MoveSpeed. Not persisted: it comes from the template.
+    public float PatrolSpeed { get; }
+
+    // Metres actually travelled per second over the last Update - after collision, so a wolf
+    // grinding along a cube reports what it really covered, not what it asked for. 0 when standing.
+    public float CurrentSpeed { get; private set; }
 
     public float PreferredStandOffDistance { get; }
 
@@ -174,7 +187,23 @@ public sealed class EnemyActor
         UpdateCore(deltaTime, playerPosition, map, resolveMovement: null);
     }
 
+    // Measures what the behaviour step actually moved, then runs it. CurrentSpeed is what the enemy
+    // really covered this tick; the client measures its own enemies from the drawn pose instead,
+    // because it never runs this.
     private void UpdateCore(
+        float deltaTime,
+        Vector3? playerPosition,
+        Map? map,
+        Func<Vector3, Vector3, Vector3>? resolveMovement)
+    {
+        Vector3 before = Position;
+        UpdateBehavior(deltaTime, playerPosition, map, resolveMovement);
+        Vector3 moved = Position - before;
+        moved.Y = 0f;
+        CurrentSpeed = deltaTime > 0f ? moved.Length / deltaTime : 0f;
+    }
+
+    private void UpdateBehavior(
         float deltaTime,
         Vector3? playerPosition,
         Map? map,
@@ -240,7 +269,8 @@ public sealed class EnemyActor
             || EnemyMovementCollision.HasClearBiteLine(map, Position, CollisionHeight * 0.5f, playerPosition, PlayerHalfHeight);
     }
 
-    // No target (or none in aggro range): walk back to the home point at the wolf's speed, stop on arrival and
+    // No target (or none in aggro range): walk back to the home point at the PATROL speed - the chase speed is
+    // for closing on a player, and an enemy that patrolled at it would never read as prowling - stop on arrival and
     // idle there. A step that is blocked leaves the wolf where it is. Deterministic, allocation-free.
     private void ReturnHome(float deltaTime, Map? map, Func<Vector3, Vector3, Vector3>? resolveMovement)
     {
@@ -253,7 +283,7 @@ public sealed class EnemyActor
             return;
         }
 
-        float step = Math.Min(MoveSpeed * Math.Max(0f, deltaTime), distanceToHome);
+        float step = Math.Min(PatrolSpeed * Math.Max(0f, deltaTime), distanceToHome);
         Vector3 before = Position;
         if (step > 0f)
         {

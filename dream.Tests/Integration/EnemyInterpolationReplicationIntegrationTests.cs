@@ -15,7 +15,7 @@ using Dream.Simulation.World;
 namespace Dream.Tests.Integration;
 
 // NET-4 under real replication: the production authoritative host runs the runtime's own wolf
-// (first actor id 2000, 2.8 m/s) chasing a walking player, the player kills it and it respawns at
+// (first actor id 2000, 5.0 m/s) chasing a walking player, the player kills it and it respawns at
 // its spawn point under a fresh actor id. Every snapshot goes through the wire codec and feeds a ServerTickClock and a
 // ClientScenePresenter frame by frame, the PlayScene order. A lagging client is modelled with the
 // server's own per-connection merge (ServerSnapshotEnvelope.TryCoalesce, what ServerConnection
@@ -101,8 +101,14 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
         Assert.True(ticksToThreshold > TickInterpolationBuffer.DefaultMaxTickSpan);
 
         // The runtime's persisted-enemy path uses the persisted MovementSpeed; the shipped wolf
-        // persists its own 2.8 m/s.
-        Assert.Equal(2.8f, wolfSpeed);
+        // persists its own chase speed, re-based from 2.8 to 5.0 this wave. The threshold above is
+        // derived from the FASTEST shipped chase speed (the Grave Howler's 6.0), so it has to clear
+        // that too - this test runs the wolf, which is not the worst case.
+        Assert.Equal(5.0f, wolfSpeed);
+        Assert.True(
+            6.0f * maxGapSeconds < ClientScenePresenter.EnemyTeleportDistance,
+            $"The fastest shipped chase speed covers {6.0f * maxGapSeconds:F2} m across the interpolation span, " +
+            $"which the {ClientScenePresenter.EnemyTeleportDistance} m teleport threshold must exceed.");
     }
 
     // Regression for a production bug: a wolf killed near its spawn point slides back to the

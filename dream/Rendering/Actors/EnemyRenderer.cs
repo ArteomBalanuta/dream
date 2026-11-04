@@ -50,22 +50,32 @@ public sealed class EnemyRenderer
 
             InterpolatedActorPose pose = ResolveRenderPose(actor, poseSource, renderTick);
             EnemyVisual visual = EnemyVisualCatalog.Resolve(actor.VisualKey);
-            EnemyRenderState renderState = EnemyRenderState.Create(
-                in visual,
-                pose.Position,
-                pose.Facing,
-                actor.BehaviorState);
 
             // The shared model loads in the background; until it is ready the enemy is not
             // drawn and no clip is recorded, so the clip is applied on the first drawn frame.
             // The model (GPU buffers, skeleton, clips) is shared; each enemy animates its own
             // instance, which advances exactly once per frame by this frame's dt.
-            if (ModelAssets.TryGet(renderState.ModelPath, out AnimatedModel? model))
+            if (ModelAssets.TryGet(visual.ModelPath, out AnimatedModel? model))
             {
+                // The gait is measured here, from the pose actually drawn: the client holds an
+                // enemy's speed nowhere (only BehaviorState replicates), so a walk and a gallop can
+                // only be told apart by how far the interpolated pose moved this frame.
+                EnemyVisualState visualState = _visualStates.GetOrAdd(actorId, model.Skeleton);
+                visualState.ObserveMotion(pose.Position, deltaTime);
+                EnemyClipSet clips = visual.Clips;
+                EnemyRenderState renderState = EnemyRenderState.Create(
+                    in visual,
+                    pose.Position,
+                    pose.Facing,
+                    actor.BehaviorState,
+                    scale: null,
+                    speed: visualState.ResolveGaitSpeed(in clips, actor.BehaviorState));
+
                 AnimatedModelInstance instance = AdvanceInstance(
-                    _visualStates.GetOrAdd(actorId, model.Skeleton),
+                    visualState,
                     renderState.ClipName,
-                    deltaTime);
+                    deltaTime,
+                    renderState.PlaybackSpeed);
 
                 Shader shader = _render.GetShader(renderState.ShaderName);
                 model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
@@ -133,14 +143,20 @@ public sealed class EnemyRenderer
 
     private const string TintUniformName = "uActorTintOffset";
 
-    // One enemy's per-frame animation step: start the clip if it changed, then advance the enemy's
-    // own instance by deltaTime. Called once per enemy per frame; allocates nothing.
-    public static AnimatedModelInstance AdvanceInstance(EnemyVisualState state, string clipName, float deltaTime)
+    // One enemy's per-frame animation step: start the clip if it changed, set the rate it plays at,
+    // then advance the enemy's own instance by deltaTime. Called once per enemy per frame; allocates
+    // nothing. The default rate of 1 is the as-authored playback every caller had before gaits.
+    public static AnimatedModelInstance AdvanceInstance(
+        EnemyVisualState state,
+        string clipName,
+        float deltaTime,
+        float playbackSpeed = 1f)
     {
         ArgumentNullException.ThrowIfNull(state);
         AnimatedModelInstance instance = state.Instance
             ?? throw new InvalidOperationException("The enemy state has no animation instance; bind it first.");
         state.ApplyClip(clipName);
+        instance.AnimationSpeed = playbackSpeed;
         instance.Update(deltaTime);
         return instance;
     }

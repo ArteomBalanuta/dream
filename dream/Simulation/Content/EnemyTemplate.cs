@@ -19,6 +19,28 @@ public enum EnemySpawnRole : byte
 // MaxHealth (the optional "maxHealth") replaces the enemy.max_health formula for new spawns: vitality is capped, so it is how
 // a high tier gets more health. A restored row keeps the health it was saved with.
 // GoldMin..GoldMax (the optional "goldMin" and "goldMax") is the gold a kill pays, inclusive; 0 and 0 pays none.
+//
+// MoveSpeed is THE CHASE SPEED: what the enemy runs at while it is closing on a player. The optional
+// "patrolSpeed" is the slower walk it returns home at; absent, it is half the chase speed. The authored
+// value is kept nullable so content without it keeps its digest, exactly as "maxHealth" does.
+//
+// The shipped speeds are set by one relative constraint, not by real animal figures (a real wolf gallops
+// 10-16 m/s, which is unreadable in an isometric camera): a chasing enemy outruns a RUNNING player
+// (4.3 m/s) so sprint (6.0) is the escape tool, except the top tier, which sprint can only hold level
+// with. enemies.json carries no comment of its own because the loader rejects JSON comments, so the
+// table lives here:
+//
+//   enemy          patrolSpeed  moveSpeed (chase)  was
+//   Wolf           1.4          5.0                2.8
+//   DireWolf       1.6          5.6                3.2
+//   AshenProwler   1.7          5.8                3.4
+//   GraveHowler    1.8          6.0                3.6
+//
+// GraveHowler is 6.0 and deliberately not higher: with no stamina system an enemy that strictly outruns
+// sprint on open ground is an unescapable trap, while one that exactly matches sprint holds its distance
+// forever without ever closing - the same dread, still beatable with terrain and cubes. The old 2.8-3.6
+// band was the actual unrealism: every enemy was slower than the player's single speed, so none of them
+// could ever close.
 public sealed record EnemyTemplate(
     string Key,
     string DisplayName,
@@ -35,7 +57,12 @@ public sealed record EnemyTemplate(
     EnemySpawnRole SpawnRole,
     int GoldMin = 0,
     int GoldMax = 0,
-    int? MaxHealth = null);
+    int? MaxHealth = null,
+    float? AuthoredPatrolSpeed = null)
+{
+    // The walk home: the authored "patrolSpeed", or half the chase speed when it is absent.
+    public float PatrolSpeed => AuthoredPatrolSpeed ?? MoveSpeed * 0.5f;
+}
 
 // A spawn camp as authored in spawns.json (M2-B): Count enemies of Template stand around (X, Z) on the
 // floor; a dead one is replaced RespawnSeconds later (counted in simulation ticks). A Night camp only

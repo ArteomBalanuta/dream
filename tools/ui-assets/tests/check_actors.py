@@ -304,8 +304,10 @@ def check_hound() -> None:
         fail(f"{label}: at {len(joints)} joints LoadSkinning would silently return null and draw bind pose")
 
     clips = {x["name"] for x in doc["animations"]}
-    if clips != {"idle", "walk", "attack", "die"}:
-        fail(f"{label}: clips {sorted(clips)}, expected idle/walk/attack/die as BARE names")
+    # Two gaits: the walk it patrols at and the gallop it chases at. A re-forge that dropped either one would
+    # leave EnemyClipSet naming a clip the GLB does not carry, and the engine holds the pose instead of throwing.
+    if clips != {"idle", "walk", "gallop", "attack", "die"}:
+        fail(f"{label}: clips {sorted(clips)}, expected idle/walk/gallop/attack/die as BARE names")
     else:
         ok(f"{label}: clips {sorted(clips)}")
 

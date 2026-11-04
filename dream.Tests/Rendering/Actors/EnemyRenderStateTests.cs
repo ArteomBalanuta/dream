@@ -112,6 +112,52 @@ public class EnemyRenderStateTests
             4);
     }
 
+    // Contract C-F: the speed is the LAST parameter and optional, so every call site above still means
+    // "no measured speed" - a walk at the authored rate.
+    [Fact]
+    public void WithNoSpeed_AChasingEnemyWalksAtTheAuthoredRate()
+    {
+        EnemyVisual wolf = EnemyVisualCatalog.Resolve(null);
+
+        EnemyRenderState state = EnemyRenderState.Create(in wolf, Vector3.Zero, Vector3.UnitX, EnemyBehaviorState.Chasing);
+
+        Assert.Equal(WolfAssetDefinition.WalkClip, state.ClipName);
+        Assert.Equal(1f, state.PlaybackSpeed, 4);
+    }
+
+    [Fact]
+    public void AMeasuredSpeed_PicksTheGait_AndTheRateItPlaysAt()
+    {
+        EnemyVisual wolf = EnemyVisualCatalog.Resolve(null);
+
+        EnemyRenderState patrolling = EnemyRenderState.Create(
+            in wolf, Vector3.Zero, Vector3.UnitX, EnemyBehaviorState.Chasing, scale: null, speed: 1.4f);
+        EnemyRenderState chasing = EnemyRenderState.Create(
+            in wolf, Vector3.Zero, Vector3.UnitX, EnemyBehaviorState.Chasing, scale: null, speed: 5.0f);
+
+        Assert.Equal(WolfAssetDefinition.WalkClip, patrolling.ClipName);
+        Assert.Equal(1f, patrolling.PlaybackSpeed, 4);
+        Assert.Equal(WolfAssetDefinition.GallopClip, chasing.ClipName);
+        Assert.Equal(1f, chasing.PlaybackSpeed, 4);
+        // Faster than the gallop's reference speed: the same clip, played faster.
+        EnemyRenderState hurried = EnemyRenderState.Create(
+            in wolf, Vector3.Zero, Vector3.UnitX, EnemyBehaviorState.Chasing, scale: null, speed: 6.0f);
+        Assert.Equal(WolfAssetDefinition.GallopClip, hurried.ClipName);
+        Assert.Equal(1.2f, hurried.PlaybackSpeed, 4);
+    }
+
+    [Fact]
+    public void TheWolfsDeath_IsItsOwnClip_NotItsIdle()
+    {
+        EnemyVisual wolf = EnemyVisualCatalog.Resolve(null);
+
+        EnemyRenderState dying = EnemyRenderState.Create(in wolf, Vector3.Zero, Vector3.UnitX, EnemyBehaviorState.Dead);
+
+        Assert.Equal(WolfAssetDefinition.DieClip, dying.ClipName);
+        Assert.NotEqual(WolfAssetDefinition.IdleClip, dying.ClipName);
+        Assert.Equal(1f, dying.PlaybackSpeed, 4);
+    }
+
     [Theory]
     [InlineData(0f, 0f, -1f)]
     [InlineData(1f, 0f, 0f)]

@@ -44,7 +44,11 @@ public sealed class WolfIntervalBitsTest
         Assert.Equal(100, wolf.Combatant.Health.CurrentHealth);
         Assert.Equal(1, wolf.Level);
         Assert.Null(wolf.VisualKey);
-        Assert.Equal(2.8f, wolf.MoveSpeed);
+        // The chase speed was re-based from 2.8 to 5.0 this wave (the player runs at 4.3 and sprints
+        // at 6.0, so at 2.8 no wolf could ever close). The interval, damage and health bits above are
+        // what this test exists to pin, and none of them moved with it.
+        Assert.Equal(5.0f, wolf.MoveSpeed);
+        Assert.Equal(1.4f, wolf.PatrolSpeed);
     }
 
     [Fact]
