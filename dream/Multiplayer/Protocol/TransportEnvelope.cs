@@ -58,8 +58,11 @@ public readonly record struct TransportEnvelope(
     // v19 merges the stats sheet: combat group [str, as, vit, agi, energy], player VisualKey main|off,
     // agility/energy in ServerPlayerProgress.BaseStats; a v18 peer would misread the combat group, so
     // both sides refuse it.
+    // Version 20 adds the "inventory.drop" action (InventoryDropIntent): a bag item dragged out of the
+    // inventory window becomes a ground item at the dropper's own position. No message kind and no
+    // payload changes; a v19 peer would fail on the unknown action, so both sides refuse it.
     // Decode rejects any other version.
-    public const int CurrentProtocolVersion = 19;
+    public const int CurrentProtocolVersion = 20;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

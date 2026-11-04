@@ -76,7 +76,11 @@ public enum InventoryHudActionKind : byte
     SpendStat,
     // Use (drink) the consumable ItemInstanceId anchored at SlotIndex (0..63). It travels as
     // ItemUseIntent; the server checks the item, the cooldown and that something would be restored.
-    Use
+    Use,
+    // Drop the bag item ItemInstanceId anchored at SlotIndex (0..63) onto the ground at the player's
+    // own position. It travels as InventoryDropIntent; no confirm, because the item stays in the world
+    // and the dropper can pick it straight back up, unlike Destroy.
+    Drop
 }
 
 // One inventory action picked in the character panel. Only slot numbers and the id of an item the

@@ -53,12 +53,24 @@ public sealed class InventoryItemWireTests
         Assert.Equal(new InventoryDestroyIntent(3, 9_000_000_000L), RoundTrip(new InventoryDestroyIntent(3, 9_000_000_000L)));
     }
 
+    // A drop names the anchor and the item and carries no position: the server reads the dropper's own.
+    [Fact]
+    public void ADrop_RoundTripsUnderItsName_AndCarriesNoPosition()
+    {
+        string json = EncodeAction(new InventoryDropIntent(3, 9_000_000_000L));
+
+        Assert.Contains("\"$type\":\"inventory.drop\",\"slotIndex\":3,\"itemInstanceId\":9000000000", json);
+        Assert.DoesNotContain("position", json);
+        Assert.Equal(new InventoryDropIntent(3, 9_000_000_000L), RoundTrip(new InventoryDropIntent(3, 9_000_000_000L)));
+    }
+
     [Fact]
     public void ThePlayerMaySendTheNewIntents()
     {
         Assert.True(IsSendable(new InventoryUnequipIntent(100)));
         Assert.True(IsSendable(new InventoryMoveIntent(0, 1)));
         Assert.True(IsSendable(new InventoryDestroyIntent(0, 1)));
+        Assert.True(IsSendable(new InventoryDropIntent(0, 1)));
         Assert.True(IsSendable(new InventoryEquipIntent(0, 101)));
 
         static bool IsSendable(IPlayerActionPayload payload)

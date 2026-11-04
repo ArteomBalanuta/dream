@@ -90,7 +90,7 @@ public sealed class PlayerActionHandler : IServerMessageHandler
     // server rechecks existence, claim, range and budget for each.
     private static bool IsClientSendable(IPlayerActionPayload payload)
     {
-        return payload is InventoryEquipIntent or InventoryUnequipIntent or InventoryMoveIntent or InventoryDestroyIntent
+        return payload is InventoryEquipIntent or InventoryUnequipIntent or InventoryMoveIntent or InventoryDestroyIntent or InventoryDropIntent
             or PlayerStatsUpdateIntent or PlayerStatSpendIntent or BuildMaterialSelectIntent
             or GroundPickupIntent or NpcInteractIntent or VendorBuyIntent or VendorSellIntent
             or SkillUseIntent or ItemUseIntent or QuickbarBindIntent
