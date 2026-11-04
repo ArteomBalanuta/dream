@@ -42,6 +42,10 @@ public class GameSettings
 
     public bool ShowPerformanceCounters { get; private set; }
 
+    // The war mist veil (isometric view). Starts from DREAM_WAR_MIST; the Settings window toggles it
+    // for the run. Visual only and not saved.
+    public bool WarMistEnabled { get; private set; } = Dream.Rendering.Mist.WarMistSettings.Current.Enabled;
+
     // The Esc pause menu (Resume, Options, Exit to Main Menu...). Drawn by the front-end renderer.
     public bool PauseMenuVisible { get; private set; }
 
@@ -207,6 +211,11 @@ public class GameSettings
     public void SetShowPerformanceCounters(bool showPerformanceCounters)
     {
         ShowPerformanceCounters = showPerformanceCounters;
+    }
+
+    public void SetWarMistEnabled(bool enabled)
+    {
+        WarMistEnabled = enabled;
     }
 
     // The view is always isometric; the argument is accepted and ignored.
