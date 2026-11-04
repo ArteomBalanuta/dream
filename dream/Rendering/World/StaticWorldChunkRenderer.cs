@@ -21,6 +21,9 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     private readonly Func<StaticWorldChunkBuildRequest, Task<StaticWorldChunkBuildBatch>> _startBuildTask;
     private readonly IRenderFaultSink _faultSink;
     private readonly IStaticWorldChunkMeshStore _meshStore;
+    private readonly TerrainMaterialMap _materialMap = new();
+    // The map version the store last saw; -1 until the first sync.
+    private int _syncedMaterialMapVersion = -1;
     // Distinct chunks drawn this frame; cleared each Draw, so the visible-chunk stat counts chunks
     // rather than (chunk, material) meshes without allocating.
     private readonly HashSet<StaticWorldChunkKey> _drawnChunks = new();
@@ -65,6 +68,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     // Runs on the build worker: plans from the request's cell snapshot and signature copy, then
     // builds the meshes. Touches no Cube and no renderer state.
+    // The material map of the full cells in the last extracted export. The terrain shader blends
+    // top faces with it; it is rebuilt with each scheduled build and cleared with the buffers.
+    internal TerrainMaterialMap TerrainMaterialMap => _materialMap;
+
     public static StaticWorldChunkBuildBatch BuildBatch(StaticWorldChunkBuildRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -182,6 +189,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
             // ExtractCells reads the mutable Cube positions, so it stays on the render thread; the
             // worker gets plain cell values. StartBuild adds the signature snapshot.
             IReadOnlyList<StaticVoxelRenderCell> cells = StaticWorldChunkExtractor.ExtractCells(export);
+            _materialMap.Rebuild(cells);
             extractMilliseconds = ElapsedMilliseconds(ref timestamp);
             ScheduleBuild(new StaticWorldChunkBuildRequest(exportSignature, dirtyChunks!, cells));
         }
@@ -282,6 +290,12 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         int materialBinds = 0;
         int boundSlot = -1;
+        if (_materialMap.Version != _syncedMaterialMapVersion)
+        {
+            _meshStore.SyncMaterialMap(_materialMap);
+            _syncedMaterialMapVersion = _materialMap.Version;
+        }
+
         _meshStore.BeginPass(render, camera);
         for (int i = 0; i < order.Length; i++)
         {
@@ -343,6 +357,7 @@ public sealed class StaticWorldChunkRenderer : IDisposable
     private void ClearBuffers()
     {
         _meshStore.Clear();
+        _materialMap.Reset();
         _meshes.Clear();
         _signatures.Clear();
         _lastAppliedExportSignature = 0;
@@ -798,12 +813,24 @@ internal interface IStaticWorldChunkMeshStore
 
     void EndPass(Render render);
 
+    // Brings the store's copy of the terrain material map up to date. Called before BeginPass, only
+    // when the map changed since the last call. Stores without a GPU copy keep the no-op default.
+    void SyncMaterialMap(TerrainMaterialMap map)
+    {
+    }
+
     void Clear();
 }
 
 internal sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
 {
     private readonly Dictionary<StaticWorldChunkMeshKey, StaticMeshBuffer> _buffers = new();
+    private TerrainMaterialMapTexture _mapTexture = new();
+
+    public void SyncMaterialMap(TerrainMaterialMap map)
+    {
+        _mapTexture.Upload(map);
+    }
 
     public void Upload(StaticWorldChunkMeshKey key, StaticWorldChunkMesh mesh)
     {
@@ -832,6 +859,7 @@ internal sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
     public void BeginPass(Render render, Camera camera)
     {
         render.BeginStaticTerrainPass(camera);
+        _mapTexture.Bind(render.GetShader(Render.TerrainShaderName));
     }
 
     public void BindMaterial(Render render, int materialSlot)
@@ -877,6 +905,8 @@ internal sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
         }
 
         _buffers.Clear();
+        _mapTexture.Dispose();
+        _mapTexture = new TerrainMaterialMapTexture();
     }
 }
 
