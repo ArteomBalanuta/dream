@@ -271,3 +271,31 @@ well, cart, two fences, crates, sacks, woodpile, signpost, scarecrow, cottage, i
   and an azimuth-leakage gate that a baked key from any side raises), the grim palette, the atlas gutter and
   uvs, a seam budget, grounding, the footprint `PropCatalog.cs` places with (parsed from the C# so they cannot
   drift), triangle and byte budgets, and emissive only on the brazier. Each gate has a synthetic negative.
+
+## Ground assets: flora, stones, debris and floor decals (in build_all)
+
+About a hundred rigid GLBs scattered over the open ground by the client, written to `dream/animations/ground/<family>/`
+with one manifest per family, `dream/animations/ground/<family>.json` (schema `dream.ground/1`): `gen_ground_flora.py`
+(trees, saplings, bushes, grass, flowers, mushrooms), `gen_ground_stone.py` (rocks, pebbles, stumps, logs, roots,
+twigs, leaves, bones, items) and `gen_ground_decals.py` (floor decals). `groundkit.py` is the shared kit (budgets,
+manifest writing and validation); each generator exposes `main(out_root, only)` and `ASSETS`.
+
+```bash
+.venv/Scripts/python tools/ui-assets/gen_ground_flora.py [--only a,b]
+.venv/Scripts/python tools/ui-assets/tests/check_ground_flora.py [--fast] [--measure]   # likewise _stone, _decals
+```
+
+- A manifest entry carries `id` (`<family>.<stem>`), `file`, `class`, `layer` (decal, cover, accent, landmark; only
+  `decal.*` classes are decals), `radius` / `footprint` / `height` in world units (measured from the mesh, gated),
+  the `ground` materials it may stand on (`grass dirt stone sand mud snow rock grass_path`), a `weight` and a `scale`
+  range. Decals are one flat alpha-MASK quad at y = 0; every other asset is a baked atlas plus, for accents and
+  landmarks, a contact disc. No emissive, no baked key light.
+- The engine reads the manifests in `Dream.Rendering.Ground` (`GroundAssetSet`). An unknown class, layer or
+  material skips that entry and logs it; a missing directory is an empty set and draws nothing.
+- Placement (`GroundScatterLayout`) is a pure function of the replicated static ground, the prop placements and the
+  asset set: a fixed integer hash over cell coordinates, no seed, no RNG, so every client derives the same scatter.
+  Nothing collides and nothing is simulated. Landmarks (one per 7x7 bucket) and accents (one per 3x3 bucket) keep off
+  the roads, the authored zone and the props; cover (up to two per cell) and decals (one candidate per cell, on level
+  ground, not overlapping) follow a 12-cell noise field so they clump.
+- Draw: decals and cover use the `cube` program, accents and landmarks the `enemy` program; one instanced draw per
+  asset in view, culled per 8x8-cell block, at 24 / 24 / 34 / 42 units. `DREAM_GROUND_SCATTER=0` turns it off.

@@ -21,6 +21,9 @@ ASSET_GENERATORS = (
     ("gen_char_npc", lambda m, root: m.main(str(root / "animations" / "npcs"))),
     ("gen_char_beast", lambda m, root: m.main(str(root / "animations" / "enemies"))),
     ("gen_props", lambda m, root: m.main(str(root / "animations" / "props"))),
+    ("gen_ground_flora", lambda m, root: m.main(root / "animations" / "ground")),
+    ("gen_ground_stone", lambda m, root: m.main(root / "animations" / "ground")),
+    ("gen_ground_decals", lambda m, root: m.main(root / "animations" / "ground")),
 )
 
 
