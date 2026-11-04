@@ -44,16 +44,16 @@ PREVIEW = HERE / "previews" / "ground_decals.png"
 FAN = 16                            # rim vertices of the flat fan; the atlas content stays inside the inscribed circle
 CIRCLE_MAX = 0.955                  # texels beyond this normalised radius are always clear
 
-# Mean luma of the ten terrain albedo tiles (dream/animations/library/forge/<n>/<n>.albedo.png, bytes as linear), measured
-# once. tests/check_ground_decals.py re-measures them from the shipped files and fails if these drift.
-TILE_LUMA = {"dirt": 0.2736, "grass_bottom": 0.2620, "grass_path": 0.3115, "grass_side": 0.2679, "grass_top": 0.2832,
-             "mud": 0.2487, "rock": 0.2767, "sand": 0.2959, "snow": 0.2780, "stone": 0.2912}
+# Mean luma of the ten terrain albedo tiles (dream/animations/library/forge/<n>/<n>.albedo.png, bytes as linear), as printed by
+# regen_terrain.py. tests/check_ground_decals.py re-measures them from the shipped files and fails if these drift.
+TILE_LUMA = {"dirt": 0.2030, "grass_bottom": 0.1725, "grass_path": 0.1877, "grass_side": 0.1739, "grass_top": 0.1657,
+             "mud": 0.1822, "rock": 0.1851, "sand": 0.2159, "snow": 0.2187, "stone": 0.1907}
 # Which tile a ground name resolves to in StaticTerrainMaterialCatalog (Grass draws grass_top on top faces).
 TILE_OF = {"grass": "grass_top", "dirt": "dirt", "stone": "stone", "sand": "sand", "mud": "mud", "snow": "snow",
            "rock": "rock", "grass_path": "grass_path"}
 # Flat backdrop colours for the preview sheet (the tiles' mean RGB).
-TILE_RGB = {"dirt": (78, 68, 59), "grass_top": (67, 75, 59), "grass_path": (80, 81, 66), "mud": (70, 62, 55),
-            "stone": (74, 74, 73), "sand": (81, 75, 67), "rock": (73, 70, 67)}
+TILE_RGB = {"dirt": (57, 51, 45), "grass_top": (40, 44, 35), "grass_path": (53, 47, 40), "mud": (50, 46, 42),
+            "stone": (48, 49, 46), "sand": (58, 55, 49), "rock": (49, 47, 45)}
 
 
 @dataclass(frozen=True)

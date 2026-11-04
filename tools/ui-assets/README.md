@@ -234,9 +234,20 @@ why the world stopped looking like daylit photographs of real dirt.
   seam gate compares the wrap edges against interior neighbour pairs. `forge.py`'s `wrap="xy"` still
   seams in `bake` (its AO resize clamps at the edge), so `gen_terrain.py` bakes on an oversized canvas
   and crops. The real fix belongs in `forge.py`.
-- Each stone block carries an identical tile, so the ground reads as a regular lattice at the
-  isometric camera distance. Accepted for now; a fix means per-cell UV variation in the chunk mesh
-  builder, not an art change.
+- **Alpha is height.** Each tile is RGBA with straight alpha holding the relief (`prim + tert` of `render_hires`),
+  box-downsampled and stretched per tile so p1 maps to 0 and p99 to 255 (crest 255, crevice or puddle floor 0), seamless
+  on both axes. RGB stays sRGB-encoded bytes sampled as linear albedo and is darker than before (mean luma 0.16 to
+  0.22 per tile): the shader multiplies by a macro term averaging about 0.95, so the tiles carry the darkening.
+  `check_terrain.py` gates the alpha (spread, range, wrap seam, agreement with luma), the mean luma window, a ratchet
+  against the old `TILE_LUMA`, repetition inside the tile (wrapped luma autocorrelation at shifts of 16 px or more)
+  and that the engine copies are byte-identical to `terrain/<n>.png`. Every tile survives quarter turns and mirroring
+  (no directional ruts or fringes): the shader rotates top faces.
+- Regenerate and ship with `python tools/ui-assets/regen_terrain.py [--only a,b] [--decals]`: it writes `terrain/` and
+  the engine copies at `dream/animations/library/forge/<n>/<n>.albedo.png`, and prints the measured `TILE_LUMA` and
+  `TILE_RGB` to paste into `gen_ground_decals.py`. `--decals` then rebuilds the ground decals, which darken through
+  `TILE_LUMA`. The generator's own `main(out_root, only, ship_root=None)` never writes under `dream/` unless asked.
+- Every voxel top face of a material shows the same tile; the shader breaks that repetition (the `terrain` program,
+  `DREAM_TERRAIN_VARIATION`), not the art.
 
 ## gen_props.py: world props as glTF (not part of build_all)
 
