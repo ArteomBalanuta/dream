@@ -134,6 +134,30 @@ The suite covers the simulation, protocol and transport, server, persistence, cl
 - **Load and measurement tests** (`dream.Tests/Load`) are skipped unless `DREAM_LOAD_TEST=1`. They start a real server on loopback and write `artifacts/load/<scenario>.json` and a `.md` summary. Use Release. See `skills/profiling-dream-multiplayer/SKILL.md` and the variables in `docs/configuration.md`.
 - **Performance harness.** `skills/profiling-dream-multiplayer/scripts/launch-and-summarize.ps1` runs a dedicated server plus desktop clients and writes `logs/perf-run-*`. `-NoStopExisting` keeps it from stopping running `dream` processes, and `-Exe <path>` launches a `dream.exe` from another output folder (pair it with `-SkipBuild`).
 
+### Dead assertions (coverage of the test assembly itself)
+
+A check that cannot fail reads as coverage but is not. The mechanical test is coverage over `dream.Tests`
+itself after a green run: an `Assert.` line with zero hits is a dead check, and a conditional-assert guard
+whose body never executed is a claim nothing verifies. The collector is **opt-in**; a plain
+`dotnet test dream.Tests\dream.Tests.csproj` neither restores nor loads it.
+
+```powershell
+dotnet test dream.Tests\dream.Tests.csproj -p:Coverage=true `
+  --settings dream.Tests\coverage.runsettings --collect:"XPlat Code Coverage" `
+  --results-directory artifacts\coverage
+```
+
+- `-p:Coverage=true` is what adds the `coverlet.collector` reference (`dream.Tests.csproj`); without it
+  nothing changes for anyone.
+- `dream.Tests/coverage.runsettings` sets `IncludeTestAssembly=true` and `Include=[dream.Tests]*`. Both
+  matter: coverlet excludes the test assembly by default, so the stock configuration measures the game and
+  says nothing about the assertions.
+- The run writes `coverage.json` (per-line hit counts and per-branch hits, easiest to script) and
+  `coverage.cobertura.xml`. Zero-hit `Assert.` lines are the list to triage; expect the
+  `DREAM_LOAD_TEST`-gated `dream.Tests/Load` tests to dominate it, since they never ran.
+- Coverage costs about two extra minutes on the full suite (12 min versus 10 min) and does not change the
+  result.
+
 ## Known Warnings
 
 The project currently builds with warnings, including:

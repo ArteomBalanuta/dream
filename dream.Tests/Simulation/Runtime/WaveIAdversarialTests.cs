@@ -499,19 +499,18 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
             Assert.Equal(effective + combatant.Defense, mitigationArmor);
             // 100 / (100 + armor) over the widest armor the sheet can reach: 1000 of gear plus Defense.
             Assert.InRange(combatant.DamageTakenFactor, 100d / (1100d + combatant.Defense) - 1e-12, 1d);
+            // Default stats put Defense at Agility / 4 = 2, so MitigationArmor is never 0 here, not even
+            // on the rows where EffectiveArmor clamps to 0: the zero-armor pass-through belongs to
+            // ArmorMitigationTests, which sets Agility 0. State the premise instead of branching on it.
+            Assert.True(mitigationArmor > 0, $"mitigation armor {mitigationArmor} was 0: the theory lost its premise");
             foreach (int amount in new[] { 1, 2, 12, 18, 1000, 1_000_000, int.MaxValue })
             {
                 int mitigated = combatant.MitigateDamage(amount);
                 Assert.InRange(mitigated, 1, amount);
-                if (mitigationArmor == 0)
+                // Any armor at all strictly reduces a hit big enough to clear the rounding: at the floor
+                // of Defense 2, 1000 * 100 / 102 = 980.
+                if (amount >= 1000)
                 {
-                    Assert.Equal(amount, mitigated);
-                }
-                else if (amount >= 1000)
-                {
-                    // Any armor at all strictly reduces a hit big enough to clear the rounding, so this
-                    // branch stays live even though the default Agility keeps MitigationArmor above 0:
-                    // at the floor of Defense 2, 1000 * 100 / 102 = 980.
                     Assert.True(mitigated < amount, $"mitigation armor {mitigationArmor} did not reduce {amount}");
                 }
             }

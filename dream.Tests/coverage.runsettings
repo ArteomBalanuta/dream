@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Opt-in coverage of the test assembly itself: a dead assertion is an Assert. line with zero hits.
+     See the "Dead assertions" recipe in docs/build-and-run.md for the command line. IncludeTestAssembly
+     is the whole point: coverlet leaves dream.Tests out by default, so the stock configuration measures
+     the game and says nothing about the checks themselves. -->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>json,cobertura</Format>
+          <IncludeTestAssembly>true</IncludeTestAssembly>
+          <Include>[dream.Tests]*</Include>
+          <ExcludeByAttribute>Obsolete,GeneratedCodeAttribute,CompilerGeneratedAttribute</ExcludeByAttribute>
+          <SingleHit>false</SingleHit>
+          <UseSourceLink>false</UseSourceLink>
+          <DeterministicReport>false</DeterministicReport>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

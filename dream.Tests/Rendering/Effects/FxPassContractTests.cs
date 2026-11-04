@@ -92,6 +92,9 @@ public class FxPassContractTests
             }
         }
 
+        // The premise: a regex that stopped matching would scrape nothing and the set comparison below
+        // would still hold only because UniformNames happens to be non-empty.
+        Assert.NotEmpty(declared);
         Assert.Equal(declared.OrderBy(name => name), FxRenderer.UniformNames.OrderBy(name => name));
 
         string renderer = ReadSource("dream/Rendering/Effects/FxRenderer.cs");

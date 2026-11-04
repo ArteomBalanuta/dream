@@ -234,17 +234,15 @@ public sealed class PlaySceneEquipmentSnapshotTests
         Assert.Contains(honest, json);
         string hostile = json.Replace(honest, "[0,1,\"gear.iron-blade\",6,[0,1e99,6,4]]");
 
-        PlayerInventorySnapshot decoded;
-        try
-        {
-            decoded = Assert.IsType<InventoryChangedResult>(
-                Assert.IsType<ServerActionMessage>(codec.Decode(Encoding.UTF8.GetBytes(hostile)).Message).Result.Payload).Inventory;
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            // The decoder refused the value: nothing reaches the loadout at all.
-            return;
-        }
+        // Settled behaviour, not a guess: Utf8JsonReader.TryGetSingle succeeds on 1e99 and hands back
+        // float.PositiveInfinity (it does not throw and it does not clamp), so the converter's own
+        // float.IsFinite filter is what stops the value: the Strength modifier is dropped outright and
+        // only the honest Armor one survives. Decoding must therefore not throw at all.
+        PlayerInventorySnapshot decoded = Assert.IsType<InventoryChangedResult>(
+            Assert.IsType<ServerActionMessage>(codec.Decode(Encoding.UTF8.GetBytes(hostile)).Message).Result.Payload).Inventory;
+
+        StatModifier surviving = Assert.Single(decoded.Slots[0].Item!.Value.Modifiers);
+        Assert.Equal(new StatModifier(StatId.Armor, StatOp.Flat, 4f), surviving);
 
         EquipmentLoadout loadout = new();
         PlayerInventorySnapshot withEquipment = new(
@@ -255,7 +253,8 @@ public sealed class PlaySceneEquipmentSnapshotTests
         player.ApplyEquipment(loadout);
 
         Assert.InRange(player.Stats.Strength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength);
-        Assert.All(loadout.Get(EquipmentSlot.MainHand).ToArray(), m => Assert.True(float.IsFinite(m.Value)));
+        StatModifier equipped = Assert.Single(loadout.Get(EquipmentSlot.MainHand).ToArray());
+        Assert.True(float.IsFinite(equipped.Value));
     }
 
     [Fact]
@@ -271,7 +270,10 @@ public sealed class PlaySceneEquipmentSnapshotTests
 
         PlayScene.ReadEquipment(inventory, loadout);
 
-        Assert.All(loadout.Get(EquipmentSlot.MainHand).ToArray(), m => Assert.Equal(StatOp.Flat, m.Op));
+        // Exactly one survives: the Percent one is dropped and the Flat one is kept. Without the count
+        // this also passed when ReadEquipment dropped both.
+        StatModifier kept = Assert.Single(loadout.Get(EquipmentSlot.MainHand).ToArray());
+        Assert.Equal(StatOp.Flat, kept.Op);
         PlayerCombatant player = NewPlayer();
         player.ApplyEquipment(loadout);
         Assert.InRange(player.Stats.Strength, PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength);
