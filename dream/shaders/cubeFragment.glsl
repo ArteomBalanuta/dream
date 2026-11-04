@@ -33,6 +33,8 @@ uniform Material material;
 
 #include "lighting.glsl"
 #include "pointLights.glsl"
+// The boundary mist wall: the final colour is mixed toward smoke at and near the map edge.
+#include "boundaryMist.glsl"
 
 void main()
 {
@@ -57,5 +59,5 @@ void main()
     if (material.hasEmissiveTexture) {
         emissive *= texture(material.emissiveTexture, texCoord0 + material.emissiveUvScroll * uTime).rgb;
     }
-    FragColor = vec4(dreamApplyFog(dreamExpose(lit) + emissive, fragPos), baseColor.a);
+    FragColor = vec4(dreamApplyBoundaryMist(dreamApplyFog(dreamExpose(lit) + emissive, fragPos), fragPos), baseColor.a);
 }

@@ -190,6 +190,13 @@ public partial class Render
                     showPerformanceCounters = showPerformance;
                 }
 
+                // Applied at once: the mist is a visual setting with no request to route.
+                bool warMist = settings.WarMistEnabled;
+                if (ImGui.Checkbox("War Mist", ref warMist))
+                {
+                    settings.SetWarMistEnabled(warMist);
+                }
+
                 int floorSize = settings.PendingFloorSize;
                 if (ImGui.SliderInt("New local world size", ref floorSize, GameSettings.MinFloorSize, GameSettings.MaxFloorSize))
                 {
