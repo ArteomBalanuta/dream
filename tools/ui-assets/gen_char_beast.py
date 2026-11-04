@@ -56,7 +56,7 @@ SHOULDER_U = 13.4                   # withers height; a hound a little under a m
 MATS = {
     "hide": C._mat("#23201D", 0.93, 0.030, 0.20, wear=0.5),
     "hide.dark": C._mat("#191714", 0.94, 0.030, 0.18, wear=0.5),
-    "bone": C._mat("#645D4C", 0.82, 0.030, 0.24, wear=0.6),
+    "bone": C._mat("#6B6353", 0.82, 0.030, 0.24, wear=0.6),
     # Warm-neutral rather than the palette's grim.iron.pitted (#212022). That hex has blue a level above red,
     # and on a collar this dark the 8-bit atlas quantises the pair into a hue of exactly 300 degrees - magenta -
     # on 70 texels, which check_char's palette gate counts as a forbidden hue. Nudging red above blue removes
@@ -137,12 +137,27 @@ def build_parts():
                   tuple(p["chest"]), tuple(p["neck"])],
                  [1.70, 2.05, 2.00, 1.85, 1.95, 1.35], sides=10)
     out.append((body, "hide"))
-    skull = _tube([tuple(p["head"] + (0, -0.6, 0.1)), tuple(p["head"] + (0, 0.9, 0.15)),
-                   tuple(p["head"] + (0, 2.6, -0.25)), tuple(p["head"] + (0, 3.9, -0.55))],
-                 [1.25, 1.15, 0.72, 0.42], sides=8)
+    # HAUNCH AND SHOULDER MASS. Without these the legs are sticks pinned to a tube and the whole thing reads as
+    # a mechanical insect rather than an animal: a quadruped's leg has to emerge FROM a body. Each is a short
+    # fat loft centred between the hip (or shoulder) joint and the body's axis, so charforge.bind splits it
+    # between the limb's upper joint and the spine section behind it and it deforms with the stride.
+    for tag, anchor, fwd, rad in (("hl", "root", -0.4, (1.95, 2.35, 1.80)), ("hr", "root", -0.4, (1.95, 2.35, 1.80)),
+                                  ("fl", "chest", 0.3, (1.55, 1.95, 1.45)), ("fr", "chest", 0.3, (1.55, 1.95, 1.45))):
+        j, b = p[f"{tag}-upper"], p[anchor]
+        cx = (j[0] + b[0]) * 0.5
+        mass = _tube([(cx, j[1] + fwd - 1.5, j[2] + 1.9), (cx, j[1] + fwd, j[2] + 0.5),
+                      (cx, j[1] + fwd + 1.2, j[2] - 1.3)], list(rad), sides=8)
+        out.append((mass, "hide"))
+    # SKULL. Brought up in size against the body - a small head on a long tube is the other half of the
+    # insect read - and given a brow mass behind the muzzle so it narrows towards the nose like a hound.
+    skull = _tube([tuple(p["head"] + (0, -1.2, 0.0)), tuple(p["head"] + (0, 0.2, 0.35)),
+                   tuple(p["head"] + (0, 1.6, 0.25)), tuple(p["head"] + (0, 3.2, -0.35)),
+                   tuple(p["head"] + (0, 4.6, -0.70))],
+                  [1.45, 1.85, 1.60, 0.92, 0.52], sides=10)
     out.append((skull, "hide.dark"))
-    jaw = _tube([tuple(p["jaw"] + (0, -0.2, 0.0)), tuple(p["jaw"] + (0, 1.5, -0.15)),
-                 tuple(p["jaw"] + (0, 2.9, -0.3))], [0.62, 0.52, 0.34], sides=6)
+    jaw = _tube([tuple(p["jaw"] + (0, -0.4, 0.1)), tuple(p["jaw"] + (0, 1.4, -0.05)),
+                 tuple(p["jaw"] + (0, 3.1, -0.25)), tuple(p["jaw"] + (0, 3.9, -0.35))],
+                [0.95, 0.80, 0.52, 0.34], sides=8)
     out.append((jaw, "bone"))
     tail = _tube([tuple(p["tail1"]), tuple(p["tail2"]), tuple(p["tail3"]), tuple(p["tail3"] + (0, -2.6, -0.9))],
                  [0.70, 0.52, 0.36, 0.18], sides=6)
@@ -151,7 +166,7 @@ def build_parts():
     # the legs, each a two-segment tube plus a paw
     for tag in ("fl", "fr", "hl", "hr"):
         u, l, f = p[f"{tag}-upper"], p[f"{tag}-lower"], p[f"{tag}-foot"]
-        out.append((_tube([tuple(u), tuple(l), tuple(f)], [1.15, 0.72, 0.52], sides=8), "hide"))
+        out.append((_tube([tuple(u), tuple(l), tuple(f)], [1.35, 0.78, 0.55], sides=8), "hide"))
         paw = _tube([tuple(f + (0, -0.3, 0.1)), tuple(f + (0, 0.9, -0.25)), tuple(f + (0, 1.6, -0.3))],
                     [0.58, 0.62, 0.40], sides=6)
         out.append((paw, "claw"))
@@ -160,25 +175,36 @@ def build_parts():
     # smooth-lofted animal shades as one soft ramp and renders as a single flat value under a brazier. The
     # arithmetic is in gen_char_player._torso_plates; the short version is that on a camera looking down at 50
     # degrees, a horizontal facet is the only place a bright pixel can live.
-    for k, (along, hx, hy, tilt) in enumerate(((0.10, 1.75, 2.30, 0.0), (0.42, 1.80, 2.30, -3.0),
-                                               (0.74, 1.55, 2.00, -6.0))):
+    # Four of them, not three equal rectangles: they TAPER and overlap down the spine, each one narrower,
+    # shorter and more steeply raked than the one behind it, so the ridge follows the animal's back instead of
+    # sitting on it like a pair of saddlebags. The taper_x argument narrows each plate's front end as well.
+    for along, hx, hy, tilt, tap, lift in ((0.02, 1.95, 1.75, 2.0, 0.92, 1.80), (0.30, 1.78, 1.60, -1.0, 0.90, 1.82),
+                                           (0.57, 1.56, 1.45, -5.0, 0.88, 1.80), (0.82, 1.30, 1.25, -10.0, 0.86, 1.72)):
         a = p["root"] + (p["chest"] - p["root"]) * along
-        out.append((P.plate(P._oct(hx, hy, 0.36), 0.42, 0.66)
-                    .xform(rot_deg=(tilt, 0.0, 0.0), move=(a[0], a[1], a[2] + 1.75)), "bone"))
-    out.append((P.plate(P._oct(1.30, 1.44, 0.38), 0.42, 0.64)
-                .xform(rot_deg=(-14.0, 0.0, 0.0), move=(p["head"][0], p["head"][1] + 0.5, p["head"][2] + 1.05)),
+        out.append((P.plate(P._oct(hx, hy, 0.40, front=0.96, taper_x=tap), 0.44, 0.64, bevel=0.12)
+                    .xform(rot_deg=(tilt, 0.0, 0.0), move=(a[0], a[1], a[2] + lift)), "bone"))
+    out.append((P.plate(P._oct(1.46, 1.62, 0.40, front=0.92, taper_x=0.80), 0.44, 0.62, bevel=0.12)
+                .xform(rot_deg=(-14.0, 0.0, 0.0), move=(p["head"][0], p["head"][1] + 0.7, p["head"][2] + 1.45)),
                "bone"))
     out.append((P.plate(P._oct(1.52, 1.00, 0.40), 0.44, 0.66)
-                .xform(rot_deg=(-28.0, 0.0, 0.0), move=(p["neck"][0], p["neck"][1] + 0.1, p["neck"][2] + 0.95)),
+                .xform(rot_deg=(-28.0, 0.0, 0.0), move=(p["neck"][0], p["neck"][1] + 0.1, p["neck"][2] + 1.05)),
                "iron"))
+    for tag, anchor, fwd in (("fl", "chest", 0.3), ("fr", "chest", 0.3)):
+        # a scapula plate over each new shoulder mass: bright bone where the foreleg meets the body, which is
+        # both what a gaunt grave-hound would show and where the mass change needs reading
+        j = p[f"{tag}-upper"]
+        sx = 1.0 if tag.endswith("l") else -1.0
+        out.append((P.plate(P._oct(1.00, 1.55, 0.44, front=0.94), 0.40, 0.64, bevel=0.12)
+                    .xform(rot_deg=(-4.0, 26.0 * sx, 0.0),
+                           move=(j[0] * 0.70, j[1] + fwd - 0.2, j[2] + 1.55)), "bone"))
     for sx in (1.0, -1.0):   # haunch plates, low and broad, where a brazier at the hound's own height rakes hardest
-        out.append((P.plate(P._oct(1.15, 1.70, 0.38), 0.40, 0.66)
-                    .xform(rot_deg=(0.0, 22.0 * sx, 0.0),
-                           move=(p["root"][0] + sx * 1.55, p["root"][1] - 0.5, p["root"][2] + 1.05)), "bone"))
+        out.append((P.plate(P._oct(1.30, 1.90, 0.44, front=0.94), 0.42, 0.64, bevel=0.12)
+                    .xform(rot_deg=(-2.0, 26.0 * sx, 0.0),
+                           move=(p["root"][0] + sx * 1.70, p["root"][1] - 0.4, p["root"][2] + 1.35)), "bone"))
     for sx in (1.0, -1.0):   # ears, flat and swept back
-        out.append((P.plate(P._oct(0.55, 0.95, 0.40), 0.30, 0.70)
+        out.append((P.plate(P._oct(0.62, 1.10, 0.40), 0.30, 0.70)
                     .xform(rot_deg=(-62.0, 0.0, 26.0 * sx),
-                           move=(p["head"][0] + sx * 0.85, p["head"][1] - 0.35, p["head"][2] + 1.25)), "hide.dark"))
+                           move=(p["head"][0] + sx * 1.05, p["head"][1] - 0.70, p["head"][2] + 1.60)), "hide.dark"))
     return out
 
 

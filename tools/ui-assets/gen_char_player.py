@@ -140,6 +140,15 @@ def loft(rings, sides: int = 10) -> I.Mesh:
 # MEASURED: evenly spaced, the pauldron's top baked at a linear albedo of 0.27; on this schedule, 0.44.
 PLATE_RINGS = (1.0, 0.50)
 
+# How much of a shoulder plate's half-extent the chamfer takes. Pure silhouette: it costs the broad face
+# about 1 - (1 - PAULDRON_BEVEL)^2 of its area and gives that strip to the dark half of the histogram, so the
+# M3 price is real and is reported. At 0.14 the measured price on the player is under 0.01.
+PAULDRON_BEVEL = 0.14
+# How deep the shoulder plates' corners are cut, against 0.34 everywhere else. The second half of the
+# box-read fix and nearly free: a near-octagonal spaulder costs 0.003 of M3 against a square-cornered one,
+# because the corners it removes were the plate's worst-lit texels anyway.
+SHOULDER_CUT = 0.52
+
 
 def _disc(o: np.ndarray, c: np.ndarray, z: float, rings: int):
     """One face of a plate: concentric copies of the outline shrinking to a centre vertex, triangulated.
@@ -159,7 +168,8 @@ def _disc(o: np.ndarray, c: np.ndarray, z: float, rings: int):
     return pts, f
 
 
-def plate(outline, thick: float, taper: float = 0.70, rings: int | None = None) -> I.Mesh:
+def plate(outline, thick: float, taper: float = 0.70, rings: int | None = None,
+          bevel: float = 0.0, bevel_drop: float = 1.0) -> I.Mesh:
     """A flat slab: the convex polygon `outline` ((x, y) in u, in order) at z = +thick/2, and the same polygon
     shrunk about its centroid by `taper` at z = -thick/2, closed by a rim.
 
@@ -171,26 +181,52 @@ def plate(outline, thick: float, taper: float = 0.70, rings: int | None = None) 
 
     `taper` under 1 tucks the underside in, so the plate overhangs what it is mounted on. The engine has no
     shadowing, so an undercut is not a shadow - it is a surface whose normal points down and inward, which
-    takes the point light's 0.25 wrap term alone and nothing else. That is the dark half of the histogram."""
+    takes the point light's 0.25 wrap term alone and nothing else. That is the dark half of the histogram.
+
+    `bevel` (a fraction of the half-extent) puts a narrow secondary facet around the outer rim, dropped by
+    `bevel_drop` of the thickness, so the broad face stops short of the outline and a chamfer carries the edge
+    down and outward. That is a SILHOUETTE fix, not a lighting one: a broad pale slab with square corners reads
+    as a crate at this camera distance rather than as plate. It deliberately does NOT round the face - the
+    coplanar face is what earns M3 - it only takes a strip off its edge and gives that strip its own N.L bucket,
+    which lands in the dark half. Applied to the big shoulder plates only, where the box-read showed.
+
+    `bevel_drop` is how far down the chamfer ring sits, as a fraction of the thickness from the broad face. It
+    has to be STEEP and the measurement says so: a shallow chamfer (0.45) faces down-and-outward at about 39
+    degrees, which still catches enough light to render mid-grey, and mid-grey pixels dilute both tails - that
+    setting cost 0.038 of M3. At 1.0 the chamfer runs the full thickness, reads at about 61 degrees, and falls
+    into the wrap term with the rest of the dark half; the measured cost is 0.016."""
     o = np.asarray(outline, dtype=np.float64)
     if len(o) < 3:
         raise ValueError("a plate needs at least three outline points")
     n = len(o)
     c = o.mean(axis=0)
     rings = len(PLATE_RINGS) if rings is None else rings
-    tv, tf = _disc(o, c, thick * 0.5, rings)
+    face = c + (o - c) * (1.0 - bevel) if bevel > 0.0 else o
+    tv, tf = _disc(face, c, thick * 0.5, rings)
     bv, bf = _disc(c + (o - c) * taper, c, -thick * 0.5, rings)
     v = np.vstack((tv, bv))
     off = len(tv)
+    chamfer = []
+    if bevel > 0.0:
+        # one ring on the outline itself, between the broad face and the rim
+        ring = len(v)
+        v = np.vstack((v, np.column_stack((o, np.full(n, thick * (0.5 - bevel_drop))))))
+        for k in range(n):
+            a, b = k, (k + 1) % n
+            chamfer += [(a, ring + a, ring + b), (a, ring + b, b)]
+        off_rim = ring   # the rim now starts from the chamfer ring, not from the broad face
+    else:
+        off_rim = 0
     # Triangle ORDER matters and is load-bearing. A slab's thin axis makes charforge project it planar, and a
     # planar projection maps the two broad faces onto the SAME atlas rectangle; bake_albedo resolves an overlap
     # by letting the last triangle win. So the underside goes first, then the rim, then the top: the face the
     # camera actually sees is the one that owns the texels. MEASURED with the order the other way round: the
     # pauldron baked at a linear albedo of 0.08 (its own shaded underside) instead of 0.45.
     f = [(a + off, b + off, d + off) for a, b, d in bf]
-    for k in range(n):                              # the rim, between the two outer rings
-        a, b = k, (k + 1) % n
-        f += [(a, off + a, off + b), (a, off + b, b)]
+    for k in range(n):                              # the rim, between the outermost top ring and the underside
+        a, b = off_rim + k, off_rim + (k + 1) % n
+        f += [(a, off + k, off + (k + 1) % n), (a, off + (k + 1) % n, b)]
+    f += chamfer
     f += list(tf)
     f = np.array(f, dtype=np.int32)
     return I.Mesh(v, I._orient_outward(v, f, np.array((c[0], c[1], 0.0))))
@@ -353,12 +389,13 @@ def _torso_plates():
     # under the mask and the pauldron, and it reads as the shadow the plates sit in.
     out.append(plate(_oct(1.80, 0.92, 0.40), 0.42, 0.66).xform(rot_deg=(-30.0, 0.0, 0.0), move=(0.0, 2.00, 10.55)))
     # the left pauldron: a broad near-flat upper lamella with a steeper one under its outboard edge
-    out.append(plate(_oct(2.42, 2.62, 0.34, front=0.94), 0.50, 0.68)
+    out.append(plate(_oct(2.42, 2.62, SHOULDER_CUT, front=0.94), 0.62, 0.62, bevel=PAULDRON_BEVEL)
                .xform(rot_deg=(0.0, 3.0, 0.0), move=(4.15, 0.05, 9.95)))
-    out.append(plate(_oct(1.95, 2.05, 0.36, front=0.94), 0.48, 0.70)
+    out.append(plate(_oct(1.95, 2.05, SHOULDER_CUT, front=0.94), 0.58, 0.64, bevel=PAULDRON_BEVEL)
                .xform(rot_deg=(0.0, 22.0, 0.0), move=(4.60, -0.05, 8.55)))
     # the right shoulder carries a single small cop: the asymmetry is the figure's identity hook
-    out.append(plate(_oct(1.86, 1.96, 0.36), 0.44, 0.70).xform(rot_deg=(0.0, -5.0, 0.0), move=(-3.10, 0.05, 9.70)))
+    out.append(plate(_oct(1.86, 1.96, SHOULDER_CUT), 0.54, 0.64, bevel=PAULDRON_BEVEL)
+               .xform(rot_deg=(0.0, -5.0, 0.0), move=(-3.10, 0.05, 9.70)))
     return out
 
 
