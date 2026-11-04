@@ -7,7 +7,7 @@
     { "item": "tool.field-blade", "version": 1 },
     { "item": "tool.stone-maul", "version": 1 },
     { "item": "tool.survey-lantern", "version": 1 },
-    { "item": "tool.torch", "version": 2 },
+    { "item": "tool.torch", "version": 2, "equip": "OffHand" },
     { "item": "consumable.weak-heal", "version": 3 },
     { "item": "consumable.minor-heal", "version": 3 },
     { "item": "potion.health", "version": 4 },

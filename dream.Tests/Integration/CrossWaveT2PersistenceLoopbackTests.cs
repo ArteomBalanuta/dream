@@ -40,9 +40,10 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
         {
             await using WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
             await TickAsync(server, 4);
-            // The hammer is worn; the other four kit tools are in the bag (the kit potions are not counted here).
+            // The hammer is worn in the main hand and the torch in the off hand; the other three kit
+            // tools are in the bag (the kit potions are not counted here).
             Assert.Equal(5, Inventory(server).AllItems().Count(item => item.ItemKind.StartsWith("tool.", StringComparison.Ordinal)));
-            Assert.Equal(4, Inventory(server).Slots.Count(slot => slot.Item?.ItemKind.StartsWith("tool.", StringComparison.Ordinal) == true));
+            Assert.Equal(3, Inventory(server).Slots.Count(slot => slot.Item?.ItemKind.StartsWith("tool.", StringComparison.Ordinal) == true));
             await server.DisconnectAsync(client);
             await TickAsync(server, 2);
         }

@@ -123,6 +123,16 @@ internal static class BagTestSupport
 
     public static int FreeCells(this PlayerInventorySnapshot snapshot) => BagGrid.CellCount - snapshot.OccupiedCells();
 
+    // The starter kit wears the torch in the off hand (StarterKitEntry.EquipWell), so a test that
+    // wants it on the board puts it back and takes its anchor from the bag rather than pinning one.
+    internal static int UnequipStarterTorch(this PlayerInventoryService service, string player)
+    {
+        Xunit.Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            service.TryUnequip(player, EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)));
+        return service.AnchorOf(player, "tool.torch");
+    }
+
     // Grants 1x1 items (rings by default) at the first fits until exactly freeCells cells of the board
     // are free, so a test can say "room for exactly three more" in cells.
     internal static void FillBagLeaving(this PlayerInventoryService service, string player, int freeCells, string kind = "gear.iron-band")

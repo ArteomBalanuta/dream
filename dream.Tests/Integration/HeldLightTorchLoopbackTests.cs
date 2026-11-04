@@ -23,6 +23,11 @@ public sealed class HeldLightTorchLoopbackTests(ITestOutputHelper output)
         Wave12DeltaActorLoopbackTests.Peer holder = await rig.JoinAsync("t2-torch-a");
         Wave12DeltaActorLoopbackTests.Peer observer = await rig.JoinAsync("t2-torch-b");
         PlayerInventorySnapshot Inventory() => rig.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(holder.SessionId))!.Value;
+        // The kit wears the torch in the off hand, so it goes back to the bag first: what this test
+        // watches is the torch crossing the wire when it is put in the main hand.
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            rig.Runtime.InventoryService.TryUnequip(Inventory().PlayerName, EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)));
         int torch = Assert.Single(Inventory().Slots, slot => slot.Item?.ItemKind == "tool.torch").SlotIndex;
 
         await EquipAndWaitAsync(rig, holder, 1, torch, HeldLightKind.Torch);

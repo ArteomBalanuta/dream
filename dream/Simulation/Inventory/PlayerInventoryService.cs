@@ -236,7 +236,9 @@ internal sealed partial class PlayerInventoryService
     // the player has received (the whole kit for a new player; see GrantStarterKit) and, on first
     // sight of the inventory only (no starter grant recorded yet, H-D3), moves the item of the lowest
     // occupied anchor that may be held in the main hand into the main hand when it is empty. After
-    // that an empty hand stays empty. The writes of one call (repair, items, slots, equip, grant
+    // that an empty hand stays empty. A character seeded from nothing also wears the kit kinds whose
+    // entry names an equipment well (EquipStarterKitWells, the torch in the off hand); an inventory
+    // that already had rows never does. The writes of one call (repair, items, slots, equip, grant
     // record) are buffered into ONE queued closure, so they land together or not at all: a crash or
     // a failed write leaves the player as before (a new player is seeded again by the next join) or
     // with the complete grant. False when the inventory could not be loaded yet (see
@@ -294,6 +296,7 @@ internal sealed partial class PlayerInventoryService
         if (!hasBackpackContent && firstSight)
         {
             EquipFirstOccupiedSlotIfNone(playerName, slots);
+            EquipStarterKitWells(playerName, slots);
         }
 
         // Last in the closure, so the grant record never lands without the items.
@@ -1378,6 +1381,48 @@ internal sealed partial class PlayerInventoryService
                 SetSlot(slots, changes, InventoryConstants.EquippedSlotIndex, itemInstanceId);
                 QueueChanges(playerName, changes);
                 return;
+            }
+        }
+    }
+
+    // Wears the starter kinds whose kit entry names an equipment well (StarterKitEntry.EquipWell):
+    // today only the torch, in the off hand, so a new character is lit after dark instead of being
+    // the 0.059-spread smudge an unlit figure measures at night. Called from EnsureCore only while
+    // seeding a character that had no inventory row at all and no grant record, never on a later
+    // login and never on a top-up: a returning player may have equipped, sold, dropped or destroyed
+    // the torch, and equipping over whatever they hold would be the worse bug. A well is filled only
+    // when it is empty and the kind sits at a bag anchor, so the main-hand item
+    // EquipFirstOccupiedSlotIfNone chose (the builder hammer) stays where it is. The bag row is
+    // replaced by the worn row (no alias), and the writes join the one closure Ensure buffers.
+    private void EquipStarterKitWells(string playerName, Dictionary<int, long> slots)
+    {
+        foreach (StarterKitEntry entry in ToolCatalog.StarterKit)
+        {
+            if (entry.EquipWell is not EquipmentSlot well)
+            {
+                continue;
+            }
+
+            int wellIndex = EquipmentSlots.ToSlotIndex(well);
+            if (slots.ContainsKey(wellIndex))
+            {
+                continue;
+            }
+
+            for (int anchor = 0; anchor < InventoryConstants.BackpackSlotCount; anchor++)
+            {
+                if (!slots.TryGetValue(anchor, out long itemInstanceId)
+                    || !_itemInstances.TryGetValue(itemInstanceId, out PersistedItemInstance candidate)
+                    || !string.Equals(candidate.ItemKind, entry.ItemKind, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                SlotChanges changes = new();
+                ClearSlot(slots, changes, anchor);
+                SetSlot(slots, changes, wellIndex, itemInstanceId);
+                QueueChanges(playerName, changes);
+                break;
             }
         }
     }

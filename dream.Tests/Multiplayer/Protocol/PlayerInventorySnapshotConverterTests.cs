@@ -440,7 +440,8 @@ public sealed class PlayerInventorySnapshotConverterTests
         foreach (string frame in new[] { join, push, result })
         {
             Assert.Contains("\"bag\":[[2,2,\"tool.field-blade\",0,[]]", frame, StringComparison.Ordinal);
-            Assert.Contains("\"worn\":[[100,1,\"tool.builder-hammer\",0,[]]]", frame, StringComparison.Ordinal);
+            // The kit wears the hammer in the main hand and the torch in the off hand.
+            Assert.Contains("\"worn\":[[100,1,\"tool.builder-hammer\",0,[]],[101,5,\"tool.torch\",0,[]]]", frame, StringComparison.Ordinal);
             Assert.DoesNotContain("\"slots\"", frame, StringComparison.Ordinal);
             Assert.DoesNotContain("detailLines", frame, StringComparison.Ordinal);
         }

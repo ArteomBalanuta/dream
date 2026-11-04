@@ -24,6 +24,14 @@ public sealed class HeldLightLoopbackTests(ITestOutputHelper output)
         await using Wave12DeltaActorLoopbackTests.Rig rig = await Wave12DeltaActorLoopbackTests.Rig.StartAsync(output);
         Wave12DeltaActorLoopbackTests.Peer holder = await rig.JoinAsync("t2f-holder");
         Wave12DeltaActorLoopbackTests.Peer observer = await rig.JoinAsync("t2f-observer");
+        // The kit wears the torch in the off hand, whose light wins over the main hand's
+        // (EquipmentSlots.ResolveHeldLight); it goes back to the bag so this test still watches one
+        // hand at a time.
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            rig.Runtime.InventoryService.TryUnequip(
+                rig.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(holder.SessionId))!.Value.PlayerName,
+                EquipmentSlots.ToSlotIndex(EquipmentSlot.OffHand)));
         PlayerInventorySnapshot inventory = rig.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(holder.SessionId))!.Value;
 
         // The starter item that casts a light (the torch, once T2b adds it), else the lantern; the

@@ -34,11 +34,14 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // ,"agility":10,"energy":10 (26 B) and the player actor its "visualKey":"held.tool.builder|" (32 B,
     // the worn main hand and empty off hand). Sha-256 was 73d2a7482a21a23b..., now c1ba86757bab6b22....
     // The join is 6,088 B in all.
+    // Re-pinned by the starter kit's off-hand torch (items.json "equip": "OffHand"): the player actor's
+    // visualKey reads "held.tool.builder|held.tool.torch" and it now carries a held light, 29 B in all.
+    // Sha-256 was c1ba86757bab6b22..., now 90a7bf84de99b7b7.... The join is 6,117 B in all.
     private const int C0FrameCount = 3;
-    private const long C0TotalBytes = 6_088;
+    private const long C0TotalBytes = 6_117;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "c1ba86757bab6b2276d285f8bd1ef914f7875699180b6ff469cda6f0d2ca4d9e";
+    private const string C0Sha256 = "90a7bf84de99b7b72c5cca0a84403fbd3406d725b036b7872286cdf241324e36";
     private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]

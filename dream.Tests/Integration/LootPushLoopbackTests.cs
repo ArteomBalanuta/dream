@@ -7,6 +7,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Tests.Server.Persistence.Migrations;
 using Dream.Tests.Simulation.Runtime;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Integration;
 
@@ -109,6 +110,10 @@ public sealed class LootPushLoopbackTests
         {
             Assert.True(seed < 100, "the backpack never filled");
         }
+
+        // The 2x2 caps leave odd cells over, and the kit wears its torch now instead of carrying it,
+        // so two more cells are free: top the board up with 1x1 items until not one cell is left.
+        server.Runtime.InventoryService.FillBagLeaving(key, freeCells: 0);
 
         await KillUntilPushAsync(server, killer);
 

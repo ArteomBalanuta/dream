@@ -57,7 +57,13 @@ public sealed class WorstCaseInventoryWireSizeTests(ITestOutputHelper output)
             WireLoopbackClient client = await server.ConnectAndJoinAsync(Session);
             PlayerInventoryService inventory = server.Runtime.InventoryService;
 
-            // Only rolled items: the starter kit goes first.
+            // Only rolled items: the starter kit goes first, out of both hands (the kit wears a torch
+            // in the off hand as well as the hammer in the main one) and then off the board.
+            foreach (InventorySlotSnapshot worn in inventory.BuildSnapshot(key).Equipment ?? [])
+            {
+                Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryUnequip(key, worn.SlotIndex));
+            }
+
             Assert.Equal(InventoryEquipOutcome.Equipped, inventory.TryUnequip(key, inventory.BuildSnapshot(key).EquippedSlot!.Value.SlotIndex));
             foreach (InventorySlotSnapshot slot in inventory.BuildSnapshot(key).Slots.Where(slot => slot.Item != null))
             {

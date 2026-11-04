@@ -163,9 +163,11 @@ public sealed class InventoryWriteFailureTests
         Assert.NotNull(restarted.Inventory.BuildSnapshot(Player).EquippedSlot!.Value.Item);
         Assert.True(restarted.Rows().ContainsKey(100));
         Assert.Equal((long)ToolCatalog.CurrentStarterKitVersion, db.Scalar("SELECT kit_version FROM player_starter_grants;"));
-        // Every kit item is in the bag or worn, each in exactly one row.
+        // Every kit item is in the bag or worn, each in exactly one row: the hammer in the main hand,
+        // the torch in the off hand (the first seed wore it) and the rest on the board.
+        Assert.Equal(2L, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index >= 100;"));
         Assert.Equal(
-            (long)ToolCatalog.StarterKit.Count - 1,
+            (long)ToolCatalog.StarterKit.Count - 2,
             db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index < 100;"));
         Assert.Equal((long)ToolCatalog.StarterKit.Count, db.Scalar("SELECT COUNT(DISTINCT item_instance_id) FROM player_inventory_slots;"));
     }
@@ -197,7 +199,10 @@ public sealed class InventoryWriteFailureTests
         Assert.Equal(1L, db.Scalar($"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {newest};"));
     }
 
-    private static void AssertCompleteKit(MigrationTestDatabase db)
+    // wornRows is 2 for a character seeded from nothing (the hammer in the main hand and the torch in
+    // the off hand, which only a brand-new character is given) and 1 for an inventory that already had
+    // rows, where the kit only tops up the bag.
+    private static void AssertCompleteKit(MigrationTestDatabase db, int wornRows = 1)
     {
         Assert.Equal((long)ToolCatalog.StarterKit.Count, db.Scalar("SELECT COUNT(*) FROM item_instances;"));
         foreach (StarterKitEntry entry in ToolCatalog.StarterKit)
@@ -205,9 +210,10 @@ public sealed class InventoryWriteFailureTests
             Assert.Equal(1L, db.Scalar($"SELECT COUNT(*) FROM item_instances WHERE item_kind = '{entry.ItemKind}';"));
         }
 
-        // The first kit item is in the main hand and the rest are in the bag: no item has two rows.
-        Assert.Equal((long)ToolCatalog.StarterKit.Count - 1, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index < 100;"));
+        // The worn kit items are in their slots and the rest are in the bag: no item has two rows.
+        Assert.Equal((long)ToolCatalog.StarterKit.Count - wornRows, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index < 100;"));
         Assert.Equal(1L, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index = 100;"));
+        Assert.Equal((long)wornRows, db.Scalar("SELECT COUNT(*) FROM player_inventory_slots WHERE slot_index >= 100;"));
         Assert.Equal((long)ToolCatalog.StarterKit.Count, db.Scalar("SELECT COUNT(DISTINCT item_instance_id) FROM player_inventory_slots;"));
         Assert.Equal((long)ToolCatalog.CurrentStarterKitVersion, db.Scalar("SELECT kit_version FROM player_starter_grants;"));
     }
@@ -239,7 +245,7 @@ public sealed class InventoryWriteFailureTests
         restarted.Flush();
 
         Assert.Equal(0, restarted.FailedWrites);
-        AssertCompleteKit(db);
+        AssertCompleteKit(db, wornRows: 2);
     }
 
     [Fact]
@@ -257,7 +263,7 @@ public sealed class InventoryWriteFailureTests
 
         Assert.Equal(1, writes.CompletedWrites - before);
         Assert.Equal(0, writes.FailedWrites);
-        AssertCompleteKit(db);
+        AssertCompleteKit(db, wornRows: 2);
     }
 
     [Fact]
