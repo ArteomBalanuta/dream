@@ -139,6 +139,20 @@ Sprite = footprint + 6 u margin per side. `pivot` = footprint top-left (24,24 px
 | 2x4 | 52x92 | `item.bow.verdant` `item.gear.hunting-spear` |
 | 3x2 | 72x52 | `item.gear.gossamer-wings` (veined alpha) `item.gear.travel-cloak` (3 u top overflow) |
 
+The shipped item icons (`1fd499c`, plus the two starter potions) carry the real content names and
+share the same footprint rule. One row per footprint, sizes as committed in `dream/ui/items/items.json`:
+
+| Footprint | u | Sprites |
+|---|---|---|
+| 1x1 | 32x32 | `item.gear.blood-ring` `item.gear.bone-amulet` `item.gear.bone-ring` `item.gear.hollow-locket` `item.gear.iron-torc` `item.gear.silver-ring` `item.potion.health` `item.potion.mana` `item.consumable.weak-heal` `item.consumable.minor-heal` `item.consumable.greater-heal` `item.consumable.minor-mana` `item.consumable.greater-mana` |
+| 1x2 | 32x52 | `item.gear.iron-dagger` |
+| 1x3 | 32x72 | `item.gear.short-sword` |
+| 1x4 | 32x92 | `item.gear.ash-staff` `item.gear.bone-staff` `item.gear.long-sword` |
+| 2x2 | 52x52 | `item.gear.greathelm` `item.gear.iron-helm` `item.gear.chain-hauberk` `item.gear.chain-chausses` `item.gear.plate-cuirass` `item.gear.plate-gauntlets` `item.gear.plate-greaves` `item.gear.plate-sabatons` `item.gear.leather-gloves` `item.gear.leather-leggings` `item.gear.leather-boots` `item.gear.hand-axe` `item.gear.wooden-buckler` |
+| 2x3 | 52x72 | `item.gear.battle-axe` `item.gear.flanged-mace` `item.gear.war-hammer` `item.gear.short-bow` `item.gear.kite-shield` |
+| 2x4 | 52x92 | `item.gear.greatsword` `item.gear.long-bow` `item.gear.tower-shield` |
+| 3x2 | 72x52 | `item.gear.grave-mantle` `item.gear.hooded-cloak` |
+
 Verify the `tool.*` and `gear.*` names against `dream/config/content/items.json`; every key must have a sprite. Footprints are art-only; the grid is 1x1 today. Set `meta.pivotOverflow` only if needed.
 
 Tiers share one layout: `items.json` with `meta.variants` listing the PNGs, `items.png` (Common), `items_uncommon.png` (light tint), `items_rare.png` (frozen orange cycle key `axe.cycle` with rims), `items_mask.png` (`kind:"mask"`; R metal, G reflect coord, B rim, A emissive), `tier_ramps.png/json` (256x16 per row: rare cycle, enhanced, chrome), and `fx.aura.blob` in `items.png` (30x30 u, soft radial).

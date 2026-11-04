@@ -2,7 +2,6 @@ using Dream.Assets;
 using Dream.Rendering.Core;
 using Dream.Rendering.Ui.Gl;
 using ImGuiNET;
-using OpenTK.Graphics.OpenGL4;
 
 namespace Dream.Rendering.Ui.Menu;
 
@@ -77,7 +76,7 @@ public sealed class MenuUiRenderer : IDisposable
             ImGuiIOPtr io = ImGui.GetIO();
             UiFontSetup.AddFonts(io);
             io.Fonts.GetTexDataAsRGBA32(out IntPtr pixels, out int width, out int height, out _);
-            fontTexture = UploadFontTexture(pixels, width, height);
+            fontTexture = UiGlFontTexture.Upload(pixels, width, height);
             glyphs = UiFontSetup.BuildGlyphTable(io.Fonts);
 
             gl = new UiGlRenderer();
@@ -94,7 +93,7 @@ public sealed class MenuUiRenderer : IDisposable
             gl?.Dispose();
             if (fontTexture != 0)
             {
-                GL.DeleteTexture(fontTexture);
+                UiGlFontTexture.Delete(fontTexture);
             }
 
             return null;
@@ -172,22 +171,8 @@ public sealed class MenuUiRenderer : IDisposable
             }
             finally
             {
-                GL.DeleteTexture(_fontTexture);
+                UiGlFontTexture.Delete(_fontTexture);
             }
         }
-    }
-
-    private static int UploadFontTexture(IntPtr pixels, int width, int height)
-    {
-        int previous = GL.GetInteger(GetPName.TextureBinding2D);
-        int texture = GL.GenTexture();
-        GL.ActiveTexture(TextureUnit.Texture0);
-        GL.BindTexture(TextureTarget.Texture2D, texture);
-        // GetTexDataAsRGBA32 returns R,G,B,A bytes.
-        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, width, height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
-        GL.BindTexture(TextureTarget.Texture2D, previous);
-        return texture;
     }
 }
