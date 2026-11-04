@@ -127,55 +127,6 @@ public sealed class StarterKitGrantPersistenceTests
         Assert.Equal(ToolCatalog.CurrentStarterKitVersion, world.LoadPlayerInventory("fay").StarterKitVersion);
     }
 
-    // The risk of widening the kit: GrantStarterKit places every entry into a bag free slot by FirstFit
-    // BEFORE EquipStarterKitWells moves the wells, so the whole kit must pack into the 64-cell bag. An
-    // entry that does not fit silently caps the granted version, which this test would then see.
-    [Fact]
-    public void NewPlayerSeeding_GrantsAllFifteenKinds_FillsTheSixWornWells_AndRecordsTheCurrentVersion()
-    {
-        using PersistenceTestDatabase database = new();
-        CreateProfiles(database, "hal");
-        SqliteWorldPersistenceRepository world = new(database.Schema);
-        using PersistenceWriteQueue writes = PersistenceWriteQueue.Inline();
-        PlayerInventoryService inventory = new(world, writes, new ObjectIdAllocator());
-        inventory.ApplyLoaded("hal", world.LoadPlayerInventory("hal"));
-
-        Assert.True(inventory.Ensure("hal"));
-
-        Assert.Equal(15, ToolCatalog.StarterKit.Count);
-        Assert.Equal(5, ToolCatalog.CurrentStarterKitVersion);
-        Assert.Equal(ToolCatalog.CurrentStarterKitVersion, world.LoadPlayerInventory("hal").StarterKitVersion);
-        Assert.Equal(15L, database.Count("SELECT COUNT(*) FROM item_instances WHERE owner_player_name = 'hal';"));
-
-        PlayerInventorySnapshot snapshot = inventory.BuildSnapshot("hal");
-        Dictionary<EquipmentSlot, string> worn = [];
-        foreach (InventorySlotSnapshot slot in snapshot.Equipment ?? [])
-        {
-            worn[(EquipmentSlot)(slot.SlotIndex - EquipmentSlots.FirstSlotIndex)] = slot.Item!.Value.ItemKind;
-        }
-
-        Assert.Equal("gear.leather-cap", worn[EquipmentSlot.Head]);
-        Assert.Equal("gear.leather-vest", worn[EquipmentSlot.Body]);
-        Assert.Equal("gear.leather-gloves", worn[EquipmentSlot.Hands]);
-        Assert.Equal("gear.leather-boots", worn[EquipmentSlot.Feet]);
-        Assert.Equal("gear.leather-leggings", worn[EquipmentSlot.Legs]);
-        Assert.Equal("gear.travel-cloak", worn[EquipmentSlot.Back]);
-        Assert.Equal("tool.torch", worn[EquipmentSlot.OffHand]);
-
-        // Every kind is held exactly once: worn above, or in the bag.
-        List<string> held = [.. worn.Values];
-        held.Add(snapshot.EquippedSlot!.Value.Item!.Value.ItemKind);
-        held.AddRange(snapshot.Slots.Select(slot => slot.Item!.Value.ItemKind));
-        foreach (StarterKitEntry entry in ToolCatalog.StarterKit)
-        {
-            Assert.Equal(1, held.Count(kind => string.Equals(kind, entry.ItemKind, StringComparison.OrdinalIgnoreCase)));
-        }
-
-        Assert.Equal(
-            "held.tool.builder|held.tool.torch|worn.head.leather-cap|worn.body.leather-vest|worn.hands.leather-gloves|worn.feet.leather-boots|worn.legs.leather-leggings|worn.back.travel-cloak",
-            inventory.ResolveEquippedVisualKey("hal"));
-    }
-
     [Fact]
     public void Grants_AreDeletedWithTheirProfile()
     {

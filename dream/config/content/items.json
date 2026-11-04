@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "starterKitVersion": 5,
+  "starterKitVersion": 4,
   "unrecordedStarterKitVersion": 1,
   "starterKit": [
     { "item": "tool.builder-hammer", "version": 1 },
@@ -11,13 +11,7 @@
     { "item": "consumable.weak-heal", "version": 3 },
     { "item": "consumable.minor-heal", "version": 3 },
     { "item": "potion.health", "version": 4 },
-    { "item": "potion.mana", "version": 4 },
-    { "item": "gear.leather-cap", "version": 5, "equip": "Head" },
-    { "item": "gear.leather-vest", "version": 5, "equip": "Body" },
-    { "item": "gear.leather-gloves", "version": 5, "equip": "Hands" },
-    { "item": "gear.leather-boots", "version": 5, "equip": "Feet" },
-    { "item": "gear.leather-leggings", "version": 5, "equip": "Legs" },
-    { "item": "gear.travel-cloak", "version": 5, "equip": "Back" }
+    { "item": "potion.mana", "version": 4 }
   ],
   "items": [
     {
