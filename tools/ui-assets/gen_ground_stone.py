@@ -23,9 +23,10 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import gen_props as GP  # noqa: E402
+import groundkit as K  # noqa: E402
 import isoforge as I  # noqa: E402
 import uiart as U  # noqa: E402
-from gen_props import Part, cat  # noqa: E402
+from gen_props import Part  # noqa: E402
 
 TAU = math.tau
 FAMILY = "stone"
@@ -57,6 +58,20 @@ WOOD = GP.WOOD_OLD
 
 
 # ---------------------------------------------------------------------------------------------- mesh helpers
+def smooth(m: I.Mesh) -> I.Mesh:
+    """Shared vertices and welded normals (35 degree crease): a flat mesh unwelds to three vertices a triangle the moment it
+    merges with a smooth one, and the cover and accent byte budgets cannot pay for that."""
+    return m if m.n is not None else I.Mesh(m.v, m.f, I._smooth_normals(m.v, m.f), m.uv, m.tint)
+
+
+def cat(meshes) -> I.Mesh:
+    out = None
+    for m in meshes:
+        m = smooth(m)
+        out = m if out is None else out.merge(m)
+    return out
+
+
 def sub(m: I.Mesh) -> I.Mesh:
     """One midpoint subdivision, welded: four triangles per triangle. Flat output."""
     v = m.v.astype(np.float64)
@@ -173,12 +188,12 @@ def rock_slab_01():
     """Stacked, stepped plates of shale, tilted a little."""
     r = U.rng("gs.slab1")
     out, z = None, 0.0
-    for k in range(4):
-        h = 2.2 * (0.8 + 0.4 * float(r.random()))
-        pl = I.convex(f"gs.slab1.{k}", 14.0 * (1.0 - 0.14 * k), 7, (1.25, 1.0, h / 14.0 * 1.6))
+    for k in range(3):
+        h = 3.0 * (0.8 + 0.4 * float(r.random()))
+        pl = I.convex(f"gs.slab1.{k}", 14.0 * (1.0 - 0.14 * k), 9, (1.25, 1.0, h / 14.0 * 1.6))
         pl = sub(pl).displace(f"gs.slab1.d{k}", 0.9, 2.5, 6.0)
         pl = pl.xform((0, 0, float(r.uniform(-25, 25))), (float(r.uniform(-2, 2)), float(r.uniform(-2, 2)), z + h * 0.5))
-        pl = I.Mesh(pl.v, pl.f, None, None, np.full((len(pl.v), 3), (0.65 + 0.35 * float(r.random())) * (1 - 0.1 * k)))
+        pl = I.Mesh(pl.v, pl.f, None, None, np.full((len(pl.v), 3), (0.8 + 0.2 * float(r.random())) * (1 - 0.08 * k)))
         z += h * 1.1
         out = pl if out is None else out.merge(pl)
     return [Part(out.xform((5, -7, 25)), SLATE)]
@@ -217,7 +232,7 @@ def rock_scree_03():
     return _scree("03", 11, 11.0, 1.2, 2.6)
 
 
-def _pebbles(tag: str, n: int, spread: float, lo: float, hi: float):
+def _pebbles(tag: str, n: int, spread: float, lo: float, hi: float, rows: int, sides: int):
     r = U.rng("gs.pebbles." + tag)
     ms = []
     for i in range(n):
@@ -225,20 +240,20 @@ def _pebbles(tag: str, n: int, spread: float, lo: float, hi: float):
         d = spread * math.sqrt(float(r.random()))
         rx = float(r.uniform(lo, hi))
         ms.append(blob(rx, rx * float(r.uniform(0.7, 1.0)), rx * 0.55, f"gs.pb.{tag}.{i}", (d * math.cos(a), d * math.sin(a), rx * 0.2),
-                       (0, 0, float(r.uniform(0, 360))), 4, 7, 0.10))
+                       (0, 0, float(r.uniform(0, 360))), rows, sides, 0.10))
     return [Part(cat(ms), ROCK)]
 
 
 def pebbles_01():
-    return _pebbles("01", 12, 7.0, 0.7, 1.3)
+    return _pebbles("01", 9, 7.0, 0.8, 1.4, 3, 7)
 
 
 def pebbles_02():
-    return _pebbles("02", 7, 6.0, 1.0, 1.9)
+    return _pebbles("02", 6, 6.0, 1.0, 1.9, 4, 7)
 
 
 def pebbles_03():
-    return _pebbles("03", 16, 9.0, 0.5, 1.1)
+    return _pebbles("03", 10, 9.0, 0.6, 1.2, 3, 6)
 
 
 # ---------------------------------------------------------------------------------------------- stumps
@@ -364,9 +379,10 @@ def _roots(tag: str, n: int, reach: float):
         a = TAU * (i + 0.5 * float(r.random())) / n
         L = reach * float(r.uniform(0.7, 1.15))
         wig = float(r.uniform(-0.5, 0.5))
-        pts = [(0.0, 0.0, 3.0), (0.4 * L * math.cos(a + wig * 0.4), 0.4 * L * math.sin(a + wig * 0.4), 2.2),
-               (0.75 * L * math.cos(a + wig), 0.75 * L * math.sin(a + wig), 1.0), (L * math.cos(a + wig * 1.3), L * math.sin(a + wig * 1.3), 0.45)]
-        ms.append(I.tube(pts, [2.6, 1.9, 1.1, 0.5], sides=6, seg_u=3.6).displace(f"gs.roots.{tag}.{i}", 0.3, 2.5, 4.5))
+        pts = [(0.0, 0.0, 1.8), (0.4 * L * math.cos(a + wig * 0.4), 0.4 * L * math.sin(a + wig * 0.4), 1.6),
+               (0.75 * L * math.cos(a + wig), 0.75 * L * math.sin(a + wig), 0.9), (L * math.cos(a + wig * 1.3), L * math.sin(a + wig * 1.3), 0.4)]
+        ms.append(I.tube(pts, [1.7, 1.3, 0.85, 0.4], sides=6, seg_u=3.6).displace(f"gs.roots.{tag}.{i}", 0.3, 2.5, 4.5))
+    ms.append(blob(3.4, 3.4, 1.6, f"gs.roots.{tag}.k", (0, 0, 0.2), rows=3, sides=8, amp=0.2))   # the knuckle the roots leave
     return [Part(mottle(cat(ms), f"gs.roots.{tag}.m", 0.3, 3.0, 6.0), ROOT)]
 
 
@@ -448,20 +464,19 @@ def _bone(a, b, r, knob=1.5) -> I.Mesh:
     """A long bone: a six-sided shaft swollen at both ends, from a to b."""
     a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
     ln = float(np.linalg.norm(b - a))
-    prof = [(0.0, 0.0), (r * knob * 0.9, 0.0), (r * knob, ln * 0.04), (r * 0.95, ln * 0.14), (r * 0.8, ln * 0.5), (r * 0.95, ln * 0.86),
-            (r * knob, ln * 0.96), (r * knob * 0.9, ln), (0.0, ln)]
+    prof = [(0.0, 0.0), (r * knob, 0.0), (r * 0.95, ln * 0.14), (r * 0.8, ln * 0.5), (r * 0.95, ln * 0.86), (r * knob, ln), (0.0, ln)]
     d = (b - a) / ln
     ry = math.degrees(math.acos(max(-1.0, min(1.0, float(d[2])))))
     rz = math.degrees(math.atan2(float(d[1]), float(d[0])))
-    return I.lathe(prof, 6).xform((0, ry, rz), a)
+    return I.lathe(prof, 5).xform((0, ry, rz), a)
 
 
 def _skull_lo(name: str, at=(0.0, 0.0, 0.0), yaw: float = 0.0, scale: float = 1.0) -> I.Mesh:
     """A low-poly skull: cranium, muzzle, jaw and cheek bones; sockets and the nose go near black through the tint."""
-    sk = cat([blob(3.2, 3.8, 3.0, name + ".c", (0, 0.4, 3.0), rows=6, sides=10, amp=0.05),
-              blob(2.0, 2.2, 1.6, name + ".m", (0, -2.8, 1.8), rows=4, sides=8, amp=0.04),
-              blob(2.2, 2.4, 0.7, name + ".j", (0, -2.6, 0.5), rows=3, sides=8, amp=0.04)]
-             + [blob(0.9, 1.0, 1.0, f"{name}.k{s}", (2.2 * s, -1.6, 2.4), rows=3, sides=6, amp=0.0) for s in (-1, 1)])
+    sk = cat([blob(3.2, 3.8, 3.0, name + ".c", (0, 0.4, 3.0), rows=5, sides=9, amp=0.05),
+              blob(2.0, 2.2, 1.6, name + ".m", (0, -2.8, 1.8), rows=3, sides=7, amp=0.04),
+              blob(2.2, 2.4, 0.7, name + ".j", (0, -2.6, 0.5), rows=3, sides=7, amp=0.04)]
+             + [blob(0.9, 1.0, 1.0, f"{name}.k{s}", (2.2 * s, -1.6, 2.4), rows=2, sides=5, amp=0.0) for s in (-1, 1)])
     tint = np.ones((len(sk.v), 3))
     for s in (-1, 1):
         for c, rad in (((1.35 * s, -2.9, 3.4), 1.25), ((0.0, -4.4, 2.2), 0.9)):
@@ -472,8 +487,8 @@ def _skull_lo(name: str, at=(0.0, 0.0, 0.0), yaw: float = 0.0, scale: float = 1.
 def bones_skull():
     sk = _skull_lo("gs.bones.skull", (0, 0, 0), -25.0, 1.05).xform((-8, 6, 0))
     jaw = cat([_bone((-2.4, 0.0, 0.5), (0.0, 4.5, 0.5), 0.55, 1.2), _bone((2.4, 0.0, 0.5), (0.0, 4.5, 0.5), 0.55, 1.2)]).xform((0, 0, 20), (6.0, -4.0, 0.0))
-    bits = cat([_bone((-6.0, -5.0, 0.6), (-2.0, -9.0, 0.6), 0.5), _bone((7.0, 3.0, 0.5), (11.0, 1.0, 0.5), 0.45)])
-    dust = blob(8.0, 7.0, 0.5, "gs.bones.skull.dust", (0, -1.0, 0.1), rows=3, sides=10, amp=0.2)
+    bits = _bone((-6.0, -5.0, 0.6), (-2.0, -9.0, 0.6), 0.5)
+    dust = blob(8.0, 7.0, 0.5, "gs.bones.skull.dust", (0, -1.0, 0.1), rows=2, sides=8, amp=0.2)
     return [Part(mottle(cat([sk, jaw, bits]), "gs.bones.skull.m", 0.25, 3.0, 6.0), BONE), Part(dust, BONE_DUST)]
 
 
@@ -481,28 +496,28 @@ def bones_ribcage():
     spine = I.tube([(-9.0, 0.0, 1.0), (-3.0, 0.8, 1.2), (3.0, -0.4, 1.0), (9.0, 0.6, 1.1)], 0.85, sides=6, seg_u=4.0)
     ribs = []
     r = U.rng("gs.bones.rib")
-    for i in range(6):
+    for i in range(5):
         side = 1 if i % 2 == 0 else -1
-        ln = 8.5 * float(r.uniform(0.6, 1.0)) * (0.55 if i == 4 else 1.0)
+        ln = 8.5 * float(r.uniform(0.6, 1.0)) * (0.55 if i == 3 else 1.0)
         rise = 4.0 + 1.5 * float(r.random())
         p = [(0.0, 0.0, 0.0), (0.2 * ln, side * 0.35 * ln, rise * 0.8), (0.3 * ln, side * 0.7 * ln, rise), (0.2 * ln, side * ln, rise * 0.25)]
-        ribs.append(I.tube(p, [0.7, 0.6, 0.55, 0.35], sides=5, seg_u=3.2).xform((0, 0, float(r.uniform(-14, 14))), (-7.0 + 2.8 * i, 0.3, 0.9)))
-    dust = blob(11.0, 7.0, 0.5, "gs.bones.rib.dust", (0, 0, 0.1), rows=3, sides=10, amp=0.2)
+        ribs.append(I.tube(p, [0.7, 0.6, 0.55, 0.35], sides=5, seg_u=4.0).xform((0, 0, float(r.uniform(-14, 14))), (-7.0 + 3.4 * i, 0.3, 0.9)))
+    dust = blob(11.0, 7.0, 0.5, "gs.bones.rib.dust", (0, 0, 0.1), rows=2, sides=8, amp=0.2)
     return [Part(mottle(cat([spine] + ribs), "gs.bones.rib.m", 0.25, 3.0, 6.0), BONE), Part(dust, BONE_DUST)]
 
 
 def bones_scatter():
     r = U.rng("gs.bones.scatter")
     ms = []
-    for _ in range(7):
+    for _ in range(5):
         a = float(r.uniform(0, TAU))
         c = (float(r.uniform(-8, 8)), float(r.uniform(-6, 6)))
         ln = float(r.uniform(5.0, 9.0))
         d = (math.cos(a), math.sin(a))
         ms.append(_bone((c[0] - d[0] * ln / 2, c[1] - d[1] * ln / 2, 0.8), (c[0] + d[0] * ln / 2, c[1] + d[1] * ln / 2, 0.8 + float(r.uniform(0, 0.5))),
                         float(r.uniform(0.5, 0.75)), 1.6))
-    ms.append(_skull_lo("gs.bones.sc.skull", (9.0, 5.0, 0.0), 100.0, 0.5))
-    dust = blob(10.0, 7.0, 0.5, "gs.bones.sc.dust", (0, 0, 0.1), rows=3, sides=10, amp=0.2)
+    ms.append(blob(2.6, 3.0, 2.4, "gs.bones.sc.cap", (9.0, 5.0, 1.2), (0, 0, 40), rows=3, sides=8, amp=0.06))   # a broken cranium
+    dust = blob(10.0, 7.0, 0.5, "gs.bones.sc.dust", (0, 0, 0.1), rows=2, sides=8, amp=0.2)
     return [Part(mottle(cat(ms), "gs.bones.sc.m", 0.25, 3.0, 6.0), BONE), Part(dust, BONE_DUST)]
 
 
@@ -522,10 +537,10 @@ def bones_antler():
 def item_rusted_helm():
     prof = [(6.6, 0.0), (7.0, 3.0), (6.8, 6.8), (5.6, 9.8), (3.2, 11.8), (0.0, 12.4), (0.0, 11.7), (2.9, 11.2), (5.0, 9.4), (6.1, 6.9), (6.3, 3.0), (5.9, 0.3)]
     shell = I.lathe(prof, 12).displace("gs.helm.dent", 0.7, 2.5, 5.0)
-    shell = I.Mesh(shell.v * np.array([1.0, 0.88, 1.0]), shell.f, None)
+    shell = I.Mesh(shell.v * np.array([1.0, 0.88, 1.0]), shell.f, shell.n)
     brim = I.torus(6.7, 0.5, 5, 12).xform((0, 0, 0), (0, 0, 0.3))
     crest = I.box(1.0, 14.0, 1.6, 0.2).xform((0, 0, 0), (0, 0, 11.6))
-    return [Part(cat([shell, brim, crest]).xform((78, 8, 35)), IRON)]
+    return [Part(cat([shell, brim, crest]).xform((78, 8, 35), (0, 0, 0), 0.6), IRON)]
 
 
 def item_broken_blade():
@@ -571,17 +586,16 @@ LEAF_AGE = (0.10, 0.40, 0.0, 0.05)
 
 
 def _spec(build, cls, layer, atlas, ground_=ANY_ROCK, weight=1.0, scale=(0.9, 1.15), disc=(0.0, 0.0), weld=False, age=(0.40, 0.60, 0.0, 0.12)):
-    import groundkit as K
     return K.GroundSpec(lambda: ground(build()), cls, layer, atlas, disc, weld, age, ground_, weight, scale)
 
 
-def _assets() -> dict:
+def _assets() -> dict[str, K.GroundSpec]:
     s = _spec
     return {
         "boulder_01": s(boulder_01, "rock", "accent", 256, weight=0.8, scale=(0.8, 1.3), disc=(26.0, 20.0)),
         "boulder_02": s(boulder_02, "rock", "accent", 256, weight=0.8, scale=(0.8, 1.3), disc=(26.0, 20.0)),
         "boulder_03": s(boulder_03, "rock", "accent", 256, weight=0.6, scale=(0.8, 1.25), disc=(26.0, 20.0)),
-        "rock_slab_01": s(rock_slab_01, "rock", "accent", 256, weight=0.9, scale=(0.85, 1.3), disc=(20.0, 18.0)),
+        "rock_slab_01": s(rock_slab_01, "rock", "accent", 128, weight=0.9, scale=(0.85, 1.3), disc=(20.0, 18.0), age=(0.25, 0.40, 0.0, 0.04)),
         "rock_slab_02": s(rock_slab_02, "rock", "accent", 256, weight=0.8, scale=(0.85, 1.25), disc=(20.0, 20.0)),
         "rock_scree_01": s(rock_scree_01, "rock", "cover", 128, weight=1.2),
         "rock_scree_02": s(rock_scree_02, "rock", "cover", 128, weight=1.2),
@@ -617,8 +631,87 @@ def _assets() -> dict:
     }
 
 
-BUILDERS = {n: f for n, f in globals().items() if n in (
-    "boulder_01 boulder_02 boulder_03 rock_slab_01 rock_slab_02 rock_scree_01 rock_scree_02 rock_scree_03 pebbles_01 pebbles_02 pebbles_03 "
-    "stump_axe stump_rotten stump_hollow stump_root_flare log_fallen_long log_fallen_split log_mossy log_burnt roots_surface_01 roots_surface_02 "
-    "roots_surface_03 twigs_01 twigs_02 twigs_03 leaf_heap_01 leaf_heap_02 leaf_heap_03 bones_skull bones_ribcage bones_scatter bones_antler "
-    "item_rusted_helm item_broken_blade item_split_shield item_spent_lantern").split()}
+ASSETS: dict[str, K.GroundSpec] = _assets()
+BUILDERS = {n: f for n, f in globals().items() if n in ASSETS}
+assert list(BUILDERS) != [] and set(BUILDERS) == set(ASSETS), "every stem needs a builder of the same name"
+
+
+# ---------------------------------------------------------------------------------------------- build and write
+def main(out_root: Path = K.GROUND_ROOT, only: list[str] | None = None) -> dict:
+    stems = [n for n in ASSETS if not only or n in only]
+    unknown = [n for n in (only or []) if n not in ASSETS]
+    if unknown:
+        raise SystemExit(f"unknown stone assets: {unknown}")
+    entries, files, built = [], {}, {}
+    for stem in stems:
+        a = K.build_ground_asset(FAMILY, stem, ASSETS[stem])
+        data = K.glb_bytes(a)
+        files[stem] = data
+        built[stem] = a
+        entries.append(K.manifest_entry(FAMILY, stem, ASSETS[stem], a["bounds"]))
+        tris = sum(len(p.indices) for p in a["primitives"])
+        print(f"gen_ground_stone: {stem:18s} {ASSETS[stem].cls:8s} {ASSETS[stem].layer:7s} tris={tris:5d} size={len(data):7d}")
+    K.write_family(Path(out_root), FAMILY, entries, files, "tools/ui-assets/gen_ground_stone.py")
+    print(f"gen_ground_stone: {len(files)} assets, {sum(map(len, files.values()))} bytes -> {out_root}")
+    return built
+
+
+# ---------------------------------------------------------------------------------------------- review sheet
+def preview(built: dict, out: Path, cols: int = 6, tile: int = 200, ss: int = 3) -> Path:
+    """A contact sheet of every asset, painter-sorted and flat-lit from the baked atlas: a review aid, not a shipped asset."""
+    from PIL import Image, ImageDraw
+    rows = (len(built) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * tile, rows * tile), (58, 58, 56))
+    yaw, pitch = math.radians(35.0), math.radians(40.0)
+    cy, sy, cp, sp = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)
+    light = np.array([-0.45, 0.8, 0.4]) / np.linalg.norm([-0.45, 0.8, 0.4])
+    for n, (stem, a) in enumerate(built.items()):
+        prim = a["primitives"][0]
+        pos, nrm, uv, idx = prim.positions.astype(np.float64), prim.normals.astype(np.float64), prim.uvs.astype(np.float64), prim.indices.astype(np.int64)
+        enc = a["encoded"]
+        tex = enc.shape[0]
+        # glTF Y up: rotate about Y, then tilt about X, drop the depth
+        x = pos[:, 0] * cy + pos[:, 2] * sy
+        z = -pos[:, 0] * sy + pos[:, 2] * cy
+        sx, syv, depth = x, pos[:, 1] * cp - z * sp, pos[:, 1] * sp + z * cp
+        ext = max(float(np.ptp(sx)), float(np.ptp(syv)), 0.5)
+        k = (tile * ss * 0.78) / ext
+        ox, oy = tile * ss / 2 - k * (sx.min() + sx.max()) / 2, tile * ss * 0.62 + k * (syv.min() + syv.max()) / 2 - k * float(np.ptp(syv)) * 0.0
+        px, py = ox + sx * k, oy - syv * k
+        tri = idx
+        cen_uv = uv[tri].mean(1)
+        tx = np.clip((cen_uv[:, 0] * tex).astype(int), 0, tex - 1)
+        ty = np.clip((cen_uv[:, 1] * tex).astype(int), 0, tex - 1)
+        albedo = enc[ty, tx, :3].astype(np.float64) / 255.0 * a["scale"]
+        fn = nrm[tri].mean(1)
+        fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-9)
+        lit = 0.45 + 0.55 * np.clip(fn @ light, 0, 1) + 0.15 * np.clip(fn[:, 1], 0, 1)
+        col = np.clip((albedo * lit[:, None] * 3.5) ** (1 / 2.2), 0, 1)
+        order = np.argsort(depth[tri].mean(1))
+        img = Image.new("RGB", (tile * ss, tile * ss), (58, 58, 56))
+        dr = ImageDraw.Draw(img)
+        dr.ellipse([tile * ss * 0.5 - 34 * ss, tile * ss * 0.68, tile * ss * 0.5 + 34 * ss, tile * ss * 0.68 + 26 * ss], fill=(50, 50, 48))
+        for t in order:
+            q = tri[t]
+            dr.polygon([(px[q[0]], py[q[0]]), (px[q[1]], py[q[1]]), (px[q[2]], py[q[2]])], fill=tuple(int(c * 255) for c in col[t]))
+        img = img.resize((tile, tile), Image.LANCZOS)
+        d2 = ImageDraw.Draw(img)
+        d2.text((4, 3), stem, fill=(190, 190, 180))
+        sheet.paste(img, ((n % cols) * tile, (n // cols) * tile))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out, format="PNG", optimize=True)
+    return out
+
+
+if __name__ == "__main__":
+    argv = sys.argv[1:]
+    only_arg = None
+    if "--only" in argv:
+        i = argv.index("--only")
+        only_arg = argv[i + 1].split(",")
+        del argv[i:i + 2]
+    want_preview = "--preview" in argv
+    pos_args = [x for x in argv if not x.startswith("--")]
+    built_ = main(Path(pos_args[0]) if pos_args else K.GROUND_ROOT, only_arg)
+    if want_preview:
+        print("preview:", preview(built_, HERE / "previews" / "ground_stone.png"))

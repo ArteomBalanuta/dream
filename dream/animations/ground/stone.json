@@ -1,0 +1,739 @@
+{
+  "schema": "dream.ground/1",
+  "family": "stone",
+  "generator": "tools/ui-assets/gen_ground_stone.py",
+  "assets": [
+    {
+      "id": "stone.boulder_01",
+      "file": "stone/boulder_01.glb",
+      "class": "rock",
+      "layer": "accent",
+      "radius": 1.148,
+      "footprint": 1.05,
+      "height": 0.818,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.8,
+        1.3
+      ]
+    },
+    {
+      "id": "stone.boulder_02",
+      "file": "stone/boulder_02.glb",
+      "class": "rock",
+      "layer": "accent",
+      "radius": 0.783,
+      "footprint": 0.73,
+      "height": 0.832,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.8,
+        1.3
+      ]
+    },
+    {
+      "id": "stone.boulder_03",
+      "file": "stone/boulder_03.glb",
+      "class": "rock",
+      "layer": "accent",
+      "radius": 0.962,
+      "footprint": 0.775,
+      "height": 0.851,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 0.6,
+      "scale": [
+        0.8,
+        1.25
+      ]
+    },
+    {
+      "id": "stone.rock_slab_01",
+      "file": "stone/rock_slab_01.glb",
+      "class": "rock",
+      "layer": "accent",
+      "radius": 0.801,
+      "footprint": 0.69,
+      "height": 0.519,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 0.9,
+      "scale": [
+        0.85,
+        1.3
+      ]
+    },
+    {
+      "id": "stone.rock_slab_02",
+      "file": "stone/rock_slab_02.glb",
+      "class": "rock",
+      "layer": "accent",
+      "radius": 0.869,
+      "footprint": 0.654,
+      "height": 0.82,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.85,
+        1.25
+      ]
+    },
+    {
+      "id": "stone.rock_scree_01",
+      "file": "stone/rock_scree_01.glb",
+      "class": "rock",
+      "layer": "cover",
+      "radius": 0.484,
+      "footprint": 0.434,
+      "height": 0.181,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 1.2,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.rock_scree_02",
+      "file": "stone/rock_scree_02.glb",
+      "class": "rock",
+      "layer": "cover",
+      "radius": 0.411,
+      "footprint": 0.333,
+      "height": 0.192,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 1.2,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.rock_scree_03",
+      "file": "stone/rock_scree_03.glb",
+      "class": "rock",
+      "layer": "cover",
+      "radius": 0.484,
+      "footprint": 0.468,
+      "height": 0.152,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 1.2,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.pebbles_01",
+      "file": "stone/pebbles_01.glb",
+      "class": "pebbles",
+      "layer": "cover",
+      "radius": 0.303,
+      "footprint": 0.269,
+      "height": 0.057,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 1.5,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.pebbles_02",
+      "file": "stone/pebbles_02.glb",
+      "class": "pebbles",
+      "layer": "cover",
+      "radius": 0.282,
+      "footprint": 0.281,
+      "height": 0.081,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 1.5,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.pebbles_03",
+      "file": "stone/pebbles_03.glb",
+      "class": "pebbles",
+      "layer": "cover",
+      "radius": 0.338,
+      "footprint": 0.26,
+      "height": 0.052,
+      "ground": [
+        "grass",
+        "dirt",
+        "stone",
+        "sand",
+        "mud",
+        "snow",
+        "rock"
+      ],
+      "weight": 1.5,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.stump_axe",
+      "file": "stone/stump_axe.glb",
+      "class": "stump",
+      "layer": "accent",
+      "radius": 0.43,
+      "footprint": 0.415,
+      "height": 0.95,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 0.5,
+      "scale": [
+        0.9,
+        1.1
+      ]
+    },
+    {
+      "id": "stone.stump_rotten",
+      "file": "stone/stump_rotten.glb",
+      "class": "stump",
+      "layer": "accent",
+      "radius": 0.516,
+      "footprint": 0.476,
+      "height": 0.494,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.2
+      ]
+    },
+    {
+      "id": "stone.stump_hollow",
+      "file": "stone/stump_hollow.glb",
+      "class": "stump",
+      "layer": "accent",
+      "radius": 0.463,
+      "footprint": 0.424,
+      "height": 0.902,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.9,
+        1.2
+      ]
+    },
+    {
+      "id": "stone.stump_root_flare",
+      "file": "stone/stump_root_flare.glb",
+      "class": "stump",
+      "layer": "accent",
+      "radius": 0.818,
+      "footprint": 0.707,
+      "height": 0.438,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.2
+      ]
+    },
+    {
+      "id": "stone.log_fallen_long",
+      "file": "stone/log_fallen_long.glb",
+      "class": "log",
+      "layer": "accent",
+      "radius": 1.429,
+      "footprint": 1.409,
+      "height": 0.556,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.log_fallen_split",
+      "file": "stone/log_fallen_split.glb",
+      "class": "log",
+      "layer": "accent",
+      "radius": 1.448,
+      "footprint": 1.432,
+      "height": 0.607,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 0.7,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.log_mossy",
+      "file": "stone/log_mossy.glb",
+      "class": "log",
+      "layer": "accent",
+      "radius": 1.297,
+      "footprint": 1.236,
+      "height": 0.612,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.log_burnt",
+      "file": "stone/log_burnt.glb",
+      "class": "log",
+      "layer": "accent",
+      "radius": 1.248,
+      "footprint": 1.241,
+      "height": 0.619,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 0.6,
+      "scale": [
+        0.85,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.roots_surface_01",
+      "file": "stone/roots_surface_01.glb",
+      "class": "root",
+      "layer": "cover",
+      "radius": 0.524,
+      "footprint": 0.408,
+      "height": 0.219,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.25
+      ]
+    },
+    {
+      "id": "stone.roots_surface_02",
+      "file": "stone/roots_surface_02.glb",
+      "class": "root",
+      "layer": "cover",
+      "radius": 0.465,
+      "footprint": 0.345,
+      "height": 0.197,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.0,
+      "scale": [
+        0.9,
+        1.25
+      ]
+    },
+    {
+      "id": "stone.roots_surface_03",
+      "file": "stone/roots_surface_03.glb",
+      "class": "root",
+      "layer": "cover",
+      "radius": 0.577,
+      "footprint": 0.517,
+      "height": 0.202,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 0.8,
+      "scale": [
+        0.9,
+        1.25
+      ]
+    },
+    {
+      "id": "stone.twigs_01",
+      "file": "stone/twigs_01.glb",
+      "class": "twigs",
+      "layer": "cover",
+      "radius": 0.436,
+      "footprint": 0.377,
+      "height": 0.12,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.5,
+      "scale": [
+        0.9,
+        1.25
+      ]
+    },
+    {
+      "id": "stone.twigs_02",
+      "file": "stone/twigs_02.glb",
+      "class": "twigs",
+      "layer": "cover",
+      "radius": 0.419,
+      "footprint": 0.319,
+      "height": 0.12,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.5,
+      "scale": [
+        0.9,
+        1.25
+      ]
+    },
+    {
+      "id": "stone.twigs_03",
+      "file": "stone/twigs_03.glb",
+      "class": "twigs",
+      "layer": "cover",
+      "radius": 0.395,
+      "footprint": 0.394,
+      "height": 0.113,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.2,
+      "scale": [
+        0.9,
+        1.25
+      ]
+    },
+    {
+      "id": "stone.leaf_heap_01",
+      "file": "stone/leaf_heap_01.glb",
+      "class": "leaves",
+      "layer": "cover",
+      "radius": 0.447,
+      "footprint": 0.429,
+      "height": 0.147,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.5,
+      "scale": [
+        0.9,
+        1.3
+      ]
+    },
+    {
+      "id": "stone.leaf_heap_02",
+      "file": "stone/leaf_heap_02.glb",
+      "class": "leaves",
+      "layer": "cover",
+      "radius": 0.416,
+      "footprint": 0.379,
+      "height": 0.136,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.5,
+      "scale": [
+        0.9,
+        1.3
+      ]
+    },
+    {
+      "id": "stone.leaf_heap_03",
+      "file": "stone/leaf_heap_03.glb",
+      "class": "leaves",
+      "layer": "cover",
+      "radius": 0.556,
+      "footprint": 0.504,
+      "height": 0.122,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud"
+      ],
+      "weight": 1.5,
+      "scale": [
+        0.9,
+        1.3
+      ]
+    },
+    {
+      "id": "stone.bones_skull",
+      "file": "stone/bones_skull.glb",
+      "class": "bones",
+      "layer": "cover",
+      "radius": 0.329,
+      "footprint": 0.327,
+      "height": 0.252,
+      "ground": [
+        "dirt",
+        "mud",
+        "sand"
+      ],
+      "weight": 0.6,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.bones_ribcage",
+      "file": "stone/bones_ribcage.glb",
+      "class": "bones",
+      "layer": "cover",
+      "radius": 0.427,
+      "footprint": 0.426,
+      "height": 0.27,
+      "ground": [
+        "dirt",
+        "mud",
+        "sand"
+      ],
+      "weight": 0.5,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.bones_scatter",
+      "file": "stone/bones_scatter.glb",
+      "class": "bones",
+      "layer": "cover",
+      "radius": 0.464,
+      "footprint": 0.418,
+      "height": 0.198,
+      "ground": [
+        "dirt",
+        "mud",
+        "sand"
+      ],
+      "weight": 0.9,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.bones_antler",
+      "file": "stone/bones_antler.glb",
+      "class": "bones",
+      "layer": "cover",
+      "radius": 0.435,
+      "footprint": 0.434,
+      "height": 0.314,
+      "ground": [
+        "dirt",
+        "mud",
+        "sand"
+      ],
+      "weight": 0.6,
+      "scale": [
+        0.9,
+        1.15
+      ]
+    },
+    {
+      "id": "stone.item_rusted_helm",
+      "file": "stone/item_rusted_helm.glb",
+      "class": "item",
+      "layer": "cover",
+      "radius": 0.231,
+      "footprint": 0.194,
+      "height": 0.384,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud",
+        "sand"
+      ],
+      "weight": 0.3,
+      "scale": [
+        0.95,
+        1.1
+      ]
+    },
+    {
+      "id": "stone.item_broken_blade",
+      "file": "stone/item_broken_blade.glb",
+      "class": "item",
+      "layer": "cover",
+      "radius": 0.589,
+      "footprint": 0.56,
+      "height": 0.088,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud",
+        "sand"
+      ],
+      "weight": 0.3,
+      "scale": [
+        0.95,
+        1.1
+      ]
+    },
+    {
+      "id": "stone.item_split_shield",
+      "file": "stone/item_split_shield.glb",
+      "class": "item",
+      "layer": "cover",
+      "radius": 0.417,
+      "footprint": 0.414,
+      "height": 0.198,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud",
+        "sand"
+      ],
+      "weight": 0.3,
+      "scale": [
+        0.95,
+        1.1
+      ]
+    },
+    {
+      "id": "stone.item_spent_lantern",
+      "file": "stone/item_spent_lantern.glb",
+      "class": "item",
+      "layer": "cover",
+      "radius": 0.333,
+      "footprint": 0.254,
+      "height": 0.344,
+      "ground": [
+        "grass",
+        "dirt",
+        "mud",
+        "sand"
+      ],
+      "weight": 0.3,
+      "scale": [
+        0.95,
+        1.1
+      ]
+    }
+  ]
+}
