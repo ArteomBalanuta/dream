@@ -4,16 +4,24 @@ namespace Dream.Simulation.Players;
 
 public sealed class PlayerCombatStats
 {
+    // The attribute ceiling sits an order of magnitude above what a new character is created with
+    // (PlayerStatRules.NewCharacterAttribute, 1000), and that gap is the point of it. While the
+    // default and the ceiling were the same number, every flat Strength, Agility, Vitality and
+    // Energy modifier on a piece of gear clamped away to nothing and no point could be spent: the
+    // whole itemisation layer still computed and then moved no number at all. Keep this well above
+    // the default, or that returns.
+    public const int AttributeCeiling = 10000;
+
     public const int MinStrength = 1;
-    public const int MaxStrength = 1000;
+    public const int MaxStrength = AttributeCeiling;
     public const float MinAttackSpeed = 0.5f;
     public const float MaxAttackSpeed = 5.0f;
     public const int MinVitality = 1;
-    public const int MaxVitality = 1000;
+    public const int MaxVitality = AttributeCeiling;
     public const int MinAgility = 0;
-    public const int MaxAgility = 1000;
+    public const int MaxAgility = AttributeCeiling;
     public const int MinEnergy = 0;
-    public const int MaxEnergy = 1000;
+    public const int MaxEnergy = AttributeCeiling;
 
     // The unseeded sheet, which is NOT what a new character gets. A player's starting stats are
     // PlayerStatRules.Start* (1000 each), written by PersistedPlayerProfile.CreateDefault and the

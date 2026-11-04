@@ -8,15 +8,18 @@ namespace Dream.Simulation.Stats;
 /// </summary>
 public static class StatRules
 {
-    public const float DefaultMaxUnused = 1000f;
+    // The fallback ceiling for a stat with no explicit limit, Agility and Energy among them. It
+    // tracks the attribute ceiling: left at the old 1000 it would clamp exactly the gear bonuses
+    // that raising PlayerCombatStats.AttributeCeiling exists to let through.
+    public const float DefaultMaxUnused = PlayerCombatStats.AttributeCeiling;
 
     /// <summary>
     /// The base ceiling for an enemy's Strength and Vitality. Enemies do not share the player ceiling
-    /// (<see cref="PlayerCombatStats.MaxStrength"/>, raised to 1000 for the character sheet's point
-    /// spend): the shipped templates top out at Strength 40, and `enemy.attack_damage = strength + 2`
+    /// (<see cref="PlayerCombatStats.MaxStrength"/>, the attribute ceiling the character sheet spends
+    /// toward): the shipped templates top out at Strength 40, and `enemy.attack_damage = strength + 2`
     /// turns the ceiling straight into the worst bite a corrupt or tampered row can deal. At 50 that is
-    /// 52, survivable against a player's 100 base max health; at the player ceiling it would be 1002, a
-    /// one-shot on anyone. Keep this well under the player ceiling, and above the content maximum of 40.
+    /// 52; at the player ceiling it would be 10002, a one-shot on anyone whatever their vitality.
+    /// Keep this well under the player ceiling, and above the content maximum of 40.
     /// </summary>
     public const float MaxEnemyBase = 50f;
 

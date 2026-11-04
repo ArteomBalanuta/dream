@@ -13,30 +13,23 @@ public static class PlayerStatRules
 {
     public const int PointsPerLevel = 5;
 
-    // The values a new character starts with (the PlayerCombatStats defaults). Spending raises a
-    // stat above these; a stat below its start has no refund and counts as nothing spent.
-    //
-    // These are the ORIGIN OF THE POINT COUNT, not what a new character is handed. A new character
-    // is created at 1000 in every attribute (PersistedPlayerProfile.CreateDefault and the
-    // player_profiles column defaults), which is each attribute's ceiling; it therefore reads as
-    // far over budget and gets 0 points available, which PointsAvailable already handles without
-    // going negative. Keeping the origin here at the old modest values is what leaves the point
-    // arithmetic meaningful for a character that sits below the ceiling.
-    // What a NEW character is created with, in every attribute: the ceiling of each
-    // (PlayerCombatStats.MaxStrength and friends). PersistedPlayerProfile.CreateDefault writes it,
-    // and the player_profiles column defaults match. Deliberately separate from the Start* values
-    // below, which are only the origin the point count measures from -- a character created at the
-    // ceiling reads as far over budget and gets 0 points available, which PointsAvailable already
-    // handles without going negative. Characters stored before this keep the stats they have;
-    // this is the value for new ones, not a migration.
+    // What a new character is created with, in every attribute. PersistedPlayerProfile.CreateDefault
+    // writes it, and it sits an order of magnitude below PlayerCombatStats.AttributeCeiling so gear
+    // bonuses and spent points still move the number. Characters stored before this keep the stats
+    // they have; this is the value for new ones, not a migration.
     public const int NewCharacterAttribute = 1000;
 
-    public const int StartStrength = 10;
+    // The origin the point count measures from: deliberately the same number a new character is
+    // handed. While the two disagreed, a new character read as having spent thousands of points it
+    // never earned -- PointsSpent counted the free attributes as spending, so PointsAvailable was 0
+    // at every level and nothing could ever be spent. Measuring from what a character starts with
+    // makes PointsSpent 0 on creation and the level budget real. A character stored below the start
+    // keeps its stats, has no refund, and counts as nothing spent.
+    public const int StartStrength = NewCharacterAttribute;
     public const float StartAttackSpeed = 2.0f;
-    public const int StartVitality = 10;
-    // The point origin for Agility and Energy, likewise.
-    public const int StartAgility = 10;
-    public const int StartEnergy = 10;
+    public const int StartVitality = NewCharacterAttribute;
+    public const int StartAgility = NewCharacterAttribute;
+    public const int StartEnergy = NewCharacterAttribute;
 
     // One Attack Speed point bought this much (legacy spends only).
     public const float AttackSpeedPerPoint = 0.05f;
