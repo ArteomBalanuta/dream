@@ -42,8 +42,8 @@ public sealed class ItemRollsMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(fromVersion, result.FromVersion);
-        Assert.Equal(15, result.ToVersion);
-        Assert.Equal(15, MigrationTestDatabase.ShippedLatestVersion);
+        Assert.Equal(16, result.ToVersion);
+        Assert.Equal(16, MigrationTestDatabase.ShippedLatestVersion);
         using SqliteConnection c = database.Open();
         Assert.Equal("ok", Scalar(c, "PRAGMA integrity_check;"));
         Assert.Empty(Rows(c, "PRAGMA foreign_key_check;"));
@@ -62,7 +62,7 @@ public sealed class ItemRollsMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(7, result.FromVersion);
-        Assert.Equal(15, result.ToVersion);
+        Assert.Equal(16, result.ToVersion);
         Assert.Equal(before, DumpItems(database, includeRolls: false));
         Assert.Equal(otherTablesBefore, DumpOtherTables(database));
         using SqliteConnection c = database.Open();
@@ -92,9 +92,9 @@ public sealed class ItemRollsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(15, result.ToVersion);
-        string backup = Assert.Single(database.Backups(), path => path.Contains("v0007-to-v0015", StringComparison.Ordinal));
-        Assert.Matches(@"persistence\.sqlite\.v0007-to-v0015\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Equal(16, result.ToVersion);
+        string backup = Assert.Single(database.Backups(), path => path.Contains("v0007-to-v0016", StringComparison.Ordinal));
+        Assert.Matches(@"persistence\.sqlite\.v0007-to-v0016\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection old = MigrationTestDatabase.OpenFile(backup);
         Assert.Equal(0L, Scalar(old, "SELECT COUNT(*) FROM pragma_table_info('item_instances') WHERE name = 'rolled_modifiers';"));
         Assert.Equal(3L, Scalar(old, "SELECT COUNT(*) FROM item_instances;"));
@@ -213,7 +213,7 @@ public sealed class ItemRollsMigrationTests
         using SqliteConnection c = database.Open();
         SchemaTooNewException error = Assert.Throws<SchemaTooNewException>(() => v7Build.Migrate(database.DatabasePath, c));
 
-        Assert.Equal(15, error.StoredVersion);
+        Assert.Equal(16, error.StoredVersion);
         Assert.Equal(7, error.LatestVersion);
         Assert.Equal(3, ServerBootstrap.SchemaTooNewExitCode);
     }

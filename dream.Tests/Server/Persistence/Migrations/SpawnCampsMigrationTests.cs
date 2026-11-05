@@ -60,9 +60,9 @@ public sealed class SpawnCampsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(new SchemaMigrationResult(10, 15, result.BackupPath), result);
-        Assert.Contains("v0010-to-v0015", Assert.Single(database.Backups()), StringComparison.Ordinal);
-        Assert.Equal(15L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(new SchemaMigrationResult(10, 16, result.BackupPath), result);
+        Assert.Contains("v0010-to-v0016", Assert.Single(database.Backups()), StringComparison.Ordinal);
+        Assert.Equal(16L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal("spawn_camps", database.Scalar("SELECT name FROM schema_version WHERE version = 11;"));
         Assert.Equal(before, Dump(database));
         Assert.Equal(2L, database.Scalar("SELECT COUNT(*) FROM enemy_instances WHERE camp_key IS NULL;"));
