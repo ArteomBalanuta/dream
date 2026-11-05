@@ -578,6 +578,12 @@ def _merge_arrays(items):
     return np.vstack(pos), np.vstack(nrm), np.vstack(uvs), np.vstack(idx).astype(np.uint32)
 
 
+# The detail strength for a prop with no entry in groundkit.PROP_STRENGTH. THIS IS AN ART CHANGE: it was 1.0 until commit 1ccfcafd ("Detail is
+# mean-preserving ..."), which raised it to 1.5 alongside the mean-preservation fix. The fix did not need it; it is most of why a prop's hf
+# roughly doubled (the field now swings 1.5x as deep). Kept on purpose, and recorded here so that nobody mistakes it for part of the fix.
+PROP_STRENGTH_DEFAULT = 1.5
+
+
 def _detail_and_cap(name: str, atlas: np.ndarray, rects):
     """Surface detail (groundkit.apply_detail, mean-preserving) and the albedo ceiling, before the atlas is encoded. The effective albedo
     of a prop texel is lift * linear(byte); groundkit.ALBEDO_CEILING caps it, so a clipped-flat texel cannot happen under a brazier."""
@@ -596,11 +602,12 @@ def _detail_and_cap(name: str, atlas: np.ndarray, rects):
         out[..., :3] = np.round(np.clip(U.linear_to_srgb(capped / ALBEDO_LIFT), 0.0, 1.0) * 255.0).astype(np.uint8)
         return out, report
     atlas, report = cap(atlas)   # the bake under the ceiling first (a soft knee); the detail modulates around that; a second cap is the safety net
+    report2 = {"cap_scale": 1.0, "moved_fraction": 0.0}   # the second pass, reported as cap2_*: it moves a further few % of texels on some assets
     if kind:   # the field modulates the LIGHT (linear), as the engine samples the bytes as linear albedo
-        atlas = K.apply_detail(atlas, rects, [kind] * len(rects), "prop." + name, K.PROP_STRENGTH.get(name, 1.5),
+        atlas = K.apply_detail(atlas, rects, [kind] * len(rects), "prop." + name, K.PROP_STRENGTH.get(name, PROP_STRENGTH_DEFAULT),
                                (U.srgb_to_linear, U.linear_to_srgb))
-        atlas, _ = cap(atlas)
-    return atlas, {**report, **base}
+        atlas, report2 = cap(atlas)
+    return atlas, {**report, "cap2_scale": report2["cap_scale"], "cap2_moved": report2["moved_fraction"], **base}
 
 
 def build_asset(name: str) -> dict:

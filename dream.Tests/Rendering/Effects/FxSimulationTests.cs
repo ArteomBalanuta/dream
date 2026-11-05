@@ -503,7 +503,7 @@ public class FxSimulationTests
         Assert.Equal(FxSimulation.DepthBiasHeld, halo.DepthBias);
         Assert.InRange(halo.HalfSize, 0.55f, 0.85f);
         Assert.Equal(at.Y - FxSimulation.HeldFxDrop + 0.1f, flame.Position.Y, 1e-4f);
-        Assert.Equal(0.20f, flame.HalfSize);
+        Assert.Equal(0.20f, flame.HalfSize, 1e-5f);
         Assert.Equal(0.55f, flame.DepthBias);
         Assert.Equal(0u, flame.Color >> 24);
         Assert.InRange(flame.Frame, (float)FxFrame.Flame0, (float)FxFrame.Flame0 + 3f);

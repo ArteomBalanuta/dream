@@ -35,17 +35,50 @@ public class HeldItemScaleTests
         return max - min;
     }
 
-    [Fact]
-    public void EveryId_LandsWithin12PercentOfItsRealWorldLength_AsDrawn()
+    // What a person would call a plausible length for each item, in metres. Written out here on purpose and
+    // NOT derived from HeldItemScale.TargetLengthMetres: Resolve is defined as target / authored length, so
+    // any check of the form "drawn length is near the target" is true for every target whatsoever.
+    private static readonly Dictionary<string, (float Min, float Max)> PlausibleMetres = new()
     {
-        string[] ids = AllIds();
-        Assert.Equal(23, ids.Length);
-        foreach (string id in ids.Append(WeaponMeshCatalog.GenericVisualId))
+        ["held.weapon.dagger"] = (0.25f, 0.50f),
+        ["held.weapon.short-sword"] = (0.60f, 0.90f),
+        ["held.weapon.sword"] = (0.80f, 1.10f),
+        ["held.weapon.greatsword"] = (1.30f, 1.80f),
+        ["held.weapon.axe"] = (0.70f, 1.10f),
+        ["held.weapon.hand-axe"] = (0.40f, 0.70f),
+        ["held.weapon.mace"] = (0.55f, 0.95f),
+        ["held.weapon.hammer"] = (0.80f, 1.30f),
+        ["held.weapon.spear"] = (1.80f, 2.40f),
+        ["held.weapon.bow"] = (1.40f, 1.90f),
+        ["held.weapon.short-bow"] = (0.90f, 1.30f),
+        ["held.weapon.staff"] = (1.50f, 2.00f),
+        ["held.weapon.bone-staff"] = (1.40f, 1.90f),
+        ["held.weapon.iron-blade"] = (0.70f, 1.10f),
+        ["held.gear.ward-lantern"] = (0.25f, 0.50f),
+        ["held.shield.buckler"] = (0.30f, 0.50f),
+        ["held.shield.kite"] = (0.80f, 1.10f),
+        ["held.shield.tower"] = (1.00f, 1.30f),
+        ["held.tool.blade"] = (0.60f, 1.00f),
+        ["held.tool.maul"] = (0.80f, 1.30f),
+        ["held.tool.builder"] = (0.40f, 0.80f),
+        ["held.tool.torch"] = (0.40f, 0.70f),
+        ["held.tool.lantern"] = (0.22f, 0.45f),
+        [WeaponMeshCatalog.GenericVisualId] = (0.50f, 1.10f)
+    };
+
+    [Fact]
+    public void EveryId_IsDrawnWithinAPlausibleLengthForItsClass_InTheWorld()
+    {
+        string[] ids = AllIds().Append(WeaponMeshCatalog.GenericVisualId).ToArray();
+        Assert.Equal(23, AllIds().Length);
+        Assert.Equal(ids.Order(StringComparer.Ordinal), PlausibleMetres.Keys.Order(StringComparer.Ordinal));
+        float worldPerMetre = HeldItemScale.ModelUnitsPerMetre * PlayerModelAssetDefinition.VisualScale;
+        foreach (string id in ids)
         {
-            // The drawn extent (rotations included) times the scale the renderer applies.
-            float metres = DrawnExtentModelUnits(id) * HeldItemScale.Resolve(id) / HeldItemScale.ModelUnitsPerMetre;
-            float target = HeldItemScale.TargetLengthMetres(id);
-            Assert.True(MathF.Abs(metres - target) <= 0.12f * target, $"{id}: {metres:F3} m against {target:F3} m");
+            // The world length actually drawn: the rotated extent times the renderer's scale times the figure's scale.
+            float world = HeldItemScale.AuthoredLengthModelUnits(id) * HeldItemScale.Resolve(id) * PlayerModelAssetDefinition.VisualScale;
+            (float min, float max) = PlausibleMetres[id];
+            Assert.InRange(world, min * worldPerMetre, max * worldPerMetre);
         }
     }
 
