@@ -1,4 +1,5 @@
 using Dream.Assets;
+using Dream.Rendering.Shadows;
 
 namespace Dream.Rendering.Core;
 
@@ -21,7 +22,17 @@ public partial class Render
         LoadWorldShader("enemy",
             AssetPaths.Shader("cubeVertex.glsl"),
             AssetPaths.Shader("enemyFragment.glsl"));
+
+        // The shadow caster program. It reuses cubeVertex.glsl VERBATIM, the same file cube, the terrain variant and
+        // enemy use: skinning, instancing and the wind sway all live there, so a caster is displaced by exactly the code
+        // that displaces what it casts for, and a shadow cannot detach from a swaying canopy. Its fragment stage is empty
+        // (its MASK variant discards, so contact discs and decals cast nothing).
+        LoadWorldShader(ShadowDepthShaderName,
+            AssetPaths.Shader("cubeVertex.glsl"),
+            AssetPaths.Shader("depthFragment.glsl"));
     }
+
+    public const string ShadowDepthShaderName = "shadowDepth";
 
     public Shader GetShader(string name)
     {
@@ -53,6 +64,12 @@ public partial class Render
             throw;
         }
 
+        BindShadowSamplers(shader);
+        if (shader.AlphaMaskVariant != null)
+        {
+            BindShadowSamplers(shader.AlphaMaskVariant);
+        }
+
         _shaders.Replace(name, shader);
     }
 
@@ -67,6 +84,18 @@ public partial class Render
         shader.Use();
         shader.SetInt(TerrainTilesUniform, TerrainTilesUnit);
         shader.SetInt(TerrainMaterialMapUniform, TerrainMaterialMapUnit);
+        BindShadowSamplers(shader);
         _shaders.Replace(name, shader);
+    }
+
+    // The shadow samplers keep their units for the program's life, like the terrain samplers above and for the same
+    // reason (AnimatedModel.SetTexture re-sets the material sampler uniforms per draw and must not fight them). A
+    // program without the sampler (it is optimised out when nothing reads it) has location -1, which SetInt ignores.
+    // The MASK variants are separate programs and need it too.
+    private static void BindShadowSamplers(Shader shader)
+    {
+        shader.Use();
+        shader.SetInt(ShadowSettings.SunMapUniform, ShadowSettings.SunTextureUnit);
+        shader.SetInt(ShadowSettings.AtlasUniform, ShadowSettings.AtlasTextureUnit);
     }
 }

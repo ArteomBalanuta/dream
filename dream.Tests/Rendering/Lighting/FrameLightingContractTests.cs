@@ -29,18 +29,47 @@ public class FrameLightingContractTests
     ];
 
     [Fact]
-    public void The_Struct_Is_176_Bytes_Of_Eleven_Std140_Vec4s()
+    public void The_Struct_Is_256_Bytes_Of_Sixteen_Std140_Vec4s()
     {
         Assert.Equal(FrameLighting.SizeInBytes, Marshal.SizeOf<FrameLighting>());
-        Assert.Equal(176, FrameLighting.SizeInBytes);
+        Assert.Equal(256, FrameLighting.SizeInBytes);
 
         FieldInfo[] fields = OrderedFields();
-        Assert.Equal(11, fields.Length);
+        Assert.Equal(16, fields.Length);
+        Assert.Equal(fields.Length * 16, FrameLighting.SizeInBytes);
         for (int i = 0; i < fields.Length; i++)
         {
             Assert.Equal(typeof(Vector4), fields[i].FieldType);
             Assert.Equal(i * 16, (int)Marshal.OffsetOf<FrameLighting>(fields[i].Name));
         }
+    }
+
+    // The field-count test above cannot see a DUPLICATED [FieldOffset] on its own (two fields at the same offset still
+    // count, and OrderedFields would sort them adjacent), so compare the raw offsets to the strictly ascending ladder.
+    [Fact]
+    public void Every_Field_Has_A_Distinct_Strictly_Ascending_Sixteen_Byte_Offset()
+    {
+        int[] offsets = typeof(FrameLighting)
+            .GetFields(BindingFlags.Public | BindingFlags.Instance)
+            .Select(field => (int)Marshal.OffsetOf<FrameLighting>(field.Name))
+            .OrderBy(offset => offset)
+            .ToArray();
+
+        Assert.Equal(offsets.Length, offsets.Distinct().Count());
+        for (int i = 1; i < offsets.Length; i++)
+        {
+            Assert.True(offsets[i] > offsets[i - 1], $"Offset {offsets[i]} does not ascend from {offsets[i - 1]}.");
+            Assert.Equal(16, offsets[i] - offsets[i - 1]);
+        }
+
+        Assert.Equal(0, offsets[0]);
+        Assert.Equal(FrameLighting.SizeInBytes - 16, offsets[^1]);
+        // The shadow members sit exactly where the shader contract and the documented layout say.
+        Assert.Equal(176, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.SunShadowMatrix0)));
+        Assert.Equal(192, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.SunShadowMatrix1)));
+        Assert.Equal(208, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.SunShadowMatrix2)));
+        Assert.Equal(224, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.SunShadowMatrix3)));
+        Assert.Equal(240, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.SunShadowParams)));
     }
 
     [Fact]
@@ -203,6 +232,10 @@ public class FrameLightingContractTests
     }
 
     [Theory]
+    [InlineData(256, 256, 256)]
+    [InlineData(256, 64, 256)]
+    [InlineData(256, 16, 256)]
+    [InlineData(256, 512, 512)]
     [InlineData(176, 256, 256)]
     [InlineData(176, 16, 176)]
     [InlineData(176, 64, 192)]
@@ -345,6 +378,57 @@ public class FrameLightingContractTests
         FrameLighting world = FrameLightingBuffer.ForWorld(in lighting, Spawn, 50d);
         Assert.NotEqual(Vector4.Zero, world.CloudParams);
         Assert.Equal(Vector4.Zero, FrameLightingBuffer.ForViewModel(in world, in view).CloudParams);
+    }
+
+    // Same reason as the cloud case: the sun shadow matrix maps WORLD positions, so an eye-space fragPos would read an
+    // arbitrary texel of the map. The view-model range must carry neither the matrix nor a non-zero strength.
+    [Fact]
+    public void The_View_Model_Range_Carries_No_Sun_Shadow_Whatever_The_World_Has()
+    {
+        FrameLighting lighting = FrameLighting.ReferenceNoon;
+        lighting.SunShadowMatrix = Matrix4.CreateRotationY(0.7f) * Matrix4.CreateTranslation(1f, 2f, 3f);
+        lighting.SunShadowParams = new Vector4(1f / 2048f, 0.0001f, 0.035f, 1f);
+        Matrix4 view = Matrix4.LookAt(Spawn, Spawn + Vector3.UnitX, Vector3.UnitY);
+
+        FrameLighting world = FrameLightingBuffer.ForWorld(in lighting, Spawn, 50d);
+        FrameLighting viewModel = FrameLightingBuffer.ForViewModel(in world, in view);
+
+        Assert.Equal(lighting.SunShadowMatrix0, world.SunShadowMatrix0);
+        Assert.Equal(lighting.SunShadowParams, world.SunShadowParams);
+        Assert.NotEqual(Vector4.Zero, world.SunShadowMatrix3);
+        Assert.Equal(Vector4.Zero, viewModel.SunShadowMatrix0);
+        Assert.Equal(Vector4.Zero, viewModel.SunShadowMatrix1);
+        Assert.Equal(Vector4.Zero, viewModel.SunShadowMatrix2);
+        Assert.Equal(Vector4.Zero, viewModel.SunShadowMatrix3);
+        Assert.Equal(Vector4.Zero, viewModel.SunShadowParams);
+    }
+
+    // The reference look carries no shadow: strength 0 is what keeps every pre-shadow lighting test exact.
+    [Fact]
+    public void Reference_Noon_Has_Shadow_Strength_Zero()
+    {
+        FrameLighting noon = FrameLighting.ReferenceNoon;
+
+        Assert.Equal(0f, noon.SunShadowParams.W);
+        Assert.Equal(Vector4.Zero, noon.SunShadowParams);
+        Assert.Equal(Matrix4.Zero, noon.SunShadowMatrix);
+    }
+
+    // FrameTime is OUTPUT-ONLY. FrameLightingBuffer.ForWorld rebuilds it from the raw clock and discards the caller's
+    // value. This pins the discard as intentional: a future feature that sets FrameTime upstream must change this
+    // test (and the contract comment on FrameLighting.FrameTime) rather than silently lose its value.
+    [Fact]
+    public void Frame_Time_Is_Output_Only_And_The_Callers_Value_Is_Discarded_At_Upload()
+    {
+        FrameLighting lighting = FrameLighting.ReferenceNoon;
+        lighting.FrameTime = new Vector4(7f, 8f, 9f, 10f);
+
+        FrameLighting world = FrameLightingBuffer.ForWorld(in lighting, Spawn, 0d);
+
+        Assert.Equal(Vector4.Zero, world.FrameTime);
+        Assert.NotEqual(lighting.FrameTime, world.FrameTime);
+        string source = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Lighting", "FrameLighting.cs"));
+        Assert.Contains("OUTPUT-ONLY", source);
     }
 
     [Fact]
