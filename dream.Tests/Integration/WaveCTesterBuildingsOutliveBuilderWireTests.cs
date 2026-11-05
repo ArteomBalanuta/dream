@@ -286,10 +286,10 @@ public sealed class WaveCTesterBuildingsOutliveBuilderWireTests(ITestOutputHelpe
         Assert.Single(server.Runtime.CaptureActorSnapshots(), actor => actor.SessionId == session).Position;
 
     // seedBaseline is true only for the first start. A new profile-backed character is created at
-    // Strength 1000, so player.min_damage (5 + strength * 2) is 2005 against a 100 hp cube and A's first
-    // swing breaks the cube it was meant to hit many times (the loop above waits for rubble over up to
-    // 1500 ticks of attacks, and the second cube must still be standing). The baseline's Strength 10
-    // gives 25-50 per hit. Later starts must not seed: A's profile row is deleted between phases and
+    // Strength 10, so player.min_damage (5 + strength * 2) is 25 against a 100 hp cube and it takes several
+    // hits (the loop above waits for rubble over up to 1500 ticks of attacks, and the second cube must still
+    // be standing). The baseline's Strength 10 gives 25-50 per hit, so seeding is a no-op on a new character
+    // and is kept to state the premise. Later starts must not seed: A's profile row is deleted between phases and
     // seeding would bring A back, which is the very thing the test is about.
     private static async Task<WireLoopbackServer> StartAsync(TempDatabase database, bool seedBaseline = false)
     {

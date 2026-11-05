@@ -29,7 +29,7 @@ public class PlayerCombatAttributeTests
     [Fact]
     public void ASpend_OnStrengthAndAgility_RaisesThem_AndUsesThePoints()
     {
-        // The point count measures from the start (PlayerStatRules.Start*, 1000), so the character must
+        // The point count measures from the start (PlayerStatRules.Start*, 10), so the character must
         // be seeded there: a sheet below the start has spent nothing and a spend of 1 would cost 0 of it.
         PlayerCombatant combatant = new(() => Vector3.Zero, stats: new PlayerCombatStats
         {

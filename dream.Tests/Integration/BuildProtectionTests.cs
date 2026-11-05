@@ -21,8 +21,9 @@ public sealed class BuildProtectionTests
     private const string StrangerRefusal = "That belongs to someone else.";
 
     // The tests expect an owned cube to survive one hit and break on a later one. A profile-backed new
-    // character is created at Strength 1000, so player.min_damage (5 + strength * 2) is 2005 against
-    // a 100 hp cube and the first swing breaks it. The baseline's Strength 10 gives 25-50 per hit.
+    // character is created at Strength 10, so player.min_damage (5 + strength * 2) is 25 against a 100 hp
+    // cube and it takes several hits. The seed to the baseline's Strength 10 (25-50 per hit) is now what
+    // production already gives; it is kept so the tests state the stats they were written for.
     // The rig builds its own bundle, so the tables are created here first (EnsureSchema is idempotent).
     private static Task<M4BRig> StartRigAsync(MigrationTestDatabase db)
     {

@@ -52,10 +52,11 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
 
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db, string? world = null, ServerConnectionOptions? options = null)
     {
-        // A new profile-backed character is created at Strength 1000, so player.min_damage
-        // (5 + strength * 2) is 2005 and max_damage (10 + strength * 4) 4010. These tests were written for
-        // the baseline's Strength 10 (25-50 per hit): a wolf, a dire wolf or a cube falls to the first
-        // swing otherwise. A row that already exists (a restart) is left as the earlier phase stored it.
+        // A new profile-backed character is created at Strength 10, so player.min_damage
+        // (5 + strength * 2) is 25 and max_damage (10 + strength * 4) 50: the baseline's 25-50 per hit,
+        // which is what these tests were written for (a wolf, a dire wolf or a cube takes several swings).
+        // The seed is therefore a no-op on a new character now, kept because it states the stats the tests
+        // assume. A row that already exists (a restart) is left as the earlier phase stored it.
         ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath, start: new ServerStartOptions(world));
         TestStatBaseline.SeedMissingProfiles(bundle.Schema, WorldSessionRuntime.ResolveJoinPlayerName(Session, $"Name {Session}"));
         DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(bundle);
@@ -476,11 +477,11 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
         // them as ServerPlayerProgress on the 16-tick vitals cadence, the first one just after the join.
         // Until it lands the client's local combatant holds the bare default sheet (Vitality
         // PlayerCombatStats.UnseededAttribute = 10, max health 50 + 10 * 5 = 100). In production the
-        // server's value differs (a new character is Vitality 1000, max health 5050), so an equipment push
+        // server's value can differ (a character with spent points has more Vitality), so an equipment push
         // in that window would recompute max health from the wrong Vitality. In THIS test the profile is
-        // seeded to the baseline's Vitality 10 (see StartAsync), so the server's max health is also 100
-        // and no mismatch can arise: the loop is belt-and-braces here. It is kept because the window is
-        // real in production and the test then starts from a client that has the stats the way a playing
+        // the baseline's Vitality 10 (a new character's too, see StartAsync), so the server's max health is
+        // also 100 and no mismatch can arise: the loop is belt-and-braces here. It is kept because the window
+        // is real in production and the test then starts from a client that has the stats the way a playing
         // one does.
         for (int steps = 0; !client.Applied.OfType<ServerPlayerProgress>().Any(); steps++)
         {

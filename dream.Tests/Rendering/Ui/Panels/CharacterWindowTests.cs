@@ -275,8 +275,8 @@ public sealed class CharacterWindowTests : IDisposable
     [Fact]
     public void ACappedAttribute_DoesNotSpend_TheOthersDo_AndAnOverBudgetCharacterSpendsNothing()
     {
-        // Strength at the 10000 ceiling is 9000 above the 1000 origin, so the budget has to cover that before any
-        // other attribute can spend: level 2000 earns 5 * 1999 = 9995, leaving 995. (Level 400 earned only 1995.)
+        // Strength at the 10000 ceiling is 9990 above the origin of 10, so the budget has to cover that before any
+        // other attribute can spend: level 2000 earns 5 * 1999 = 9995, leaving 5. (Level 400 earned only 1995.)
         Fill(PointsStatus(level: 2000, strength: Dream.Simulation.Players.PlayerCombatStats.MaxStrength));
         ClickPlate(0);
         Assert.Empty(_scene.Actions.Picked);

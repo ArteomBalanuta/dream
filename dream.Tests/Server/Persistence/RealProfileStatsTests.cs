@@ -94,7 +94,7 @@ public sealed class RealProfileStatsTests
         {
             Join(first, "conn-1", "stat-1");
             Dream.Simulation.Players.PlayerCombatant combatant = first.Runtime!.Player.Combatant;
-            // A new character is created at 1000 in every attribute, the same origin points are measured from.
+            // A new character is created at 10 in every attribute, the same origin points are measured from.
             combatant.ApplyProgression(2, 0);
             Assert.True(Dream.Simulation.Players.PlayerStatRules.TryValidateSpend(
                 combatant.Level,
@@ -114,7 +114,7 @@ public sealed class RealProfileStatsTests
         Join(second, "conn-2", "stat-2");
         Dream.Simulation.Players.PlayerCombatant restored = second.Runtime!.Player.Combatant;
         Assert.Equal(Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute + 2, restored.BaseStats.Energy);
-        // Level 2 earns 5 * (2 - 1) = 5; 2 went into Energy (1002 - 1000), so 3 remain.
+        // Level 2 earns 5 * (2 - 1) = 5; 2 went into Energy (12 - 10), so 3 remain.
         Assert.Equal(3, Dream.Simulation.Players.PlayerStatRules.PointsAvailable(restored.Level, restored.BaseStats));
         Assert.Equal(Dream.Simulation.Players.PlayerManaRules.MaxMana(2, Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute + 2), restored.MaxMana);
     }

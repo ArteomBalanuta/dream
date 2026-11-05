@@ -29,8 +29,8 @@ public sealed class MasterMpGapTests
 
     // ---- 1: Agility and Energy spend, end to end, persisted ----
 
-    // A new character is created at 1000 in every attribute, the origin points are measured from: spending 4 into
-    // Agility and 3 into Energy reads 1004 and 1003, and 7 of the 10 points level 3 earns (5 * (3 - 1)) leave 3.
+    // A new character is created at 10 in every attribute, the origin points are measured from: spending 4 into
+    // Agility and 3 into Energy reads 14 and 13, and 7 of the 10 points level 3 earns (5 * (3 - 1)) leave 3.
     private const int AgilityAfter = PlayerStatRules.NewCharacterAttribute + 4;
     private const int EnergyAfter = PlayerStatRules.NewCharacterAttribute + 3;
 
@@ -41,6 +41,7 @@ public sealed class MasterMpGapTests
         int defenseBefore;
         int maxManaBefore;
         float attackSpeedBefore;
+        float gearAttackSpeed;
 
         await using (WireLoopbackServer server = await M4AKit.StartAsync(db))
         {
@@ -54,6 +55,9 @@ public sealed class MasterMpGapTests
             defenseBefore = combatant.Defense;
             maxManaBefore = combatant.MaxMana;
             attackSpeedBefore = combatant.Stats.AttackSpeed;
+            // The worn starter kit adds attack speed on top of the base 2.0; the cap used to hide that. Recover it
+            // from the pre-spend value so the derived-value check below holds exactly.
+            gearAttackSpeed = attackSpeedBefore - PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed, PlayerStatRules.NewCharacterAttribute);
 
             ServerActionMessage agility = await M4AKit.ActAsync(server, a, new PlayerStatSpendIntent(StatId.Agility, 4), a);
             Assert.True(agility.Result.Accepted, agility.Result.Rejection?.Reason);
@@ -69,12 +73,12 @@ public sealed class MasterMpGapTests
             Assert.Equal(EnergyAfter, combatant.Stats.Energy);
             Assert.Equal(PlayerStatRules.Defense(AgilityAfter), combatant.Defense);
             Assert.True(combatant.Defense > defenseBefore, $"defense {defenseBefore} -> {combatant.Defense}");
-            // Attack speed is base 2.0 + 0.01 per Agility, clamped to MaxAttackSpeed (5). At the 1000 a character is
-            // created with that is 2 + 10 = 12 before the clamp, so it already sits on the cap and 4 more Agility
-            // cannot raise it: assert the derived value (the cap) rather than a rise the clamp makes impossible.
-            Assert.Equal(PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed, AgilityAfter), combatant.Stats.AttackSpeed);
-            Assert.Equal(PlayerCombatStats.MaxAttackSpeed, combatant.Stats.AttackSpeed);
-            Assert.True(combatant.Stats.AttackSpeed >= attackSpeedBefore, $"attack speed {attackSpeedBefore} -> {combatant.Stats.AttackSpeed}");
+            // Attack speed is base 2.0 + 0.01 per Agility, clamped to MaxAttackSpeed (5). At the 10 a character is
+            // created with that is 2.10, and 4 more Agility make 2.14: a strict rise (+0.04). The cap is about 300
+            // Agility away, so Agility's tempo effect is live again (at the 1000 origin it sat on the cap and a
+            // spend could not raise it).
+            Assert.Equal(PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed + gearAttackSpeed, AgilityAfter), combatant.Stats.AttackSpeed, 4);
+            Assert.True(combatant.Stats.AttackSpeed > attackSpeedBefore, $"attack speed {attackSpeedBefore} -> {combatant.Stats.AttackSpeed}");
             Assert.Equal(PlayerManaRules.MaxMana(3, EnergyAfter), combatant.MaxMana);
             Assert.True(combatant.MaxMana > maxManaBefore);
             Assert.Equal(3, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
@@ -102,8 +106,8 @@ public sealed class MasterMpGapTests
             Assert.Equal(EnergyAfter, combatant.BaseStats.Energy);
             Assert.Equal(PlayerStatRules.Defense(AgilityAfter), combatant.Defense);
             Assert.Equal(PlayerManaRules.MaxMana(3, EnergyAfter), combatant.MaxMana);
-            Assert.Equal(PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed, AgilityAfter), combatant.Stats.AttackSpeed);
-            Assert.Equal(PlayerCombatStats.MaxAttackSpeed, combatant.Stats.AttackSpeed);
+            Assert.Equal(PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed + gearAttackSpeed, AgilityAfter), combatant.Stats.AttackSpeed, 4);
+            Assert.True(combatant.Stats.AttackSpeed < PlayerCombatStats.MaxAttackSpeed, $"attack speed {combatant.Stats.AttackSpeed}");
             Assert.Equal(3, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
             await back.LeaveAsync();
         }
