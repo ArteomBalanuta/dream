@@ -64,12 +64,14 @@ float dreamCloudCover(vec2 planeXZ)
 // the dimmed term is already zero. If daytime coverage is ever gated there, the mirror must gain it.
 vec3 dreamDirectShaded(vec3 n, vec3 fragPos)
 {
-    float mask = 1.0;
+    // The sun attenuation is one named scalar on purpose: a shadow map can later multiply it in
+    // (sunMask * sunShadow) without restructuring. dreamCloudCover itself makes no lighting decisions.
+    float sunMask = 1.0;
     if (uCloudParams.x > 0.0 && uSunDirection.y > 0.02)
     {
         vec3 onPlane = fragPos + uSunDirection.xyz * ((CloudPlaneY - fragPos.y) / uSunDirection.y);
-        mask = 1.0 - uCloudParams.z * dreamCloudCover(onPlane.xz);
+        sunMask = 1.0 - uCloudParams.z * dreamCloudCover(onPlane.xz);
     }
-    return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * mask
+    return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask
          + max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;
 }
