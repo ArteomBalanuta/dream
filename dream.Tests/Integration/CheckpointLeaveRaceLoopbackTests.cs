@@ -70,7 +70,12 @@ public sealed class CheckpointLeaveRaceLoopbackTests(ITestOutputHelper output)
             await TickAsync(server, 3);
             leaving = Actor(server, SessionA);
             Assert.Equal(PlayerInteractionMode.Combat, leaving.InteractionMode);
-            Assert.True((leaving.Position - atCapture.Position).Length > 0.5f, $"A did not move: {atCapture.Position} -> {leaving.Position}");
+            // 12 ticks is a short move now that the motor ramps: at 18 m/s^2 the run cruise is
+            // 15.3 ticks away, so these 12 never reach it and cover about 0.34 m, not the 1.13 m
+            // a flat 6 m/s used to give. The assert only has to prove the move command landed, so
+            // it keeps the tick count - more ticks under the held write lock would move the race
+            // this test is about - and asks for a quarter metre instead.
+            Assert.True((leaving.Position - atCapture.Position).Length > 0.25f, $"A did not move: {atCapture.Position} -> {leaving.Position}");
             await server.DisconnectAsync(a);
             await TickAsync(server, 2);
             await Task.Delay(150);
