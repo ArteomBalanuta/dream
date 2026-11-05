@@ -83,7 +83,7 @@ no icon work was needed. The gap was purely on-character 3D.
   join bytes are untouched by this wave. Its pin dates from `823f6eb9` and is stale on master.
   Corroborated afterwards: `integrate/master-green-v2` re-pinned that gate in `9f54e66b` to exactly
   `e9dfe27f...` / `6_127` - the same bytes this wave measured independently, without having seen that
-  branch. The test goes green when master-green-v2 lands. This wave deliberately does **not**
+  branch. The test goes green once the attribute origin is rolled back to 10 (route A, on `integrate/master-ready`): the pin was never wrong, it was correct for an origin of 10 all along, and the ceiling raise invalidated it. The combined tree re-measures to the pin's own 90a7bf84 / 6,117 - the identical hash, not merely the identical count. Note the pin is protocol-insensitive only by maintenance: `StoredWorldJoinLoopbackTests` normalises the version literal to 8 before hashing, and that search pattern names the current version explicitly, so a bump that misses it makes the replace a silent no-op. This wave deliberately does **not**
   cherry-pick the re-pin: it is master-side, that branch owns it, and duplicating it would only
   produce a merge conflict.
 
