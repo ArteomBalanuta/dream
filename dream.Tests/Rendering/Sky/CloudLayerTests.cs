@@ -55,6 +55,85 @@ public class CloudLayerTests
         }
     }
 
+    // The clouds never wrap the clock. The drift is reduced modulo the lattice period (in double precision, on
+    // the CPU), which is seamless only because the lattice hash wraps at that same period at every octave.
+    [Fact]
+    public void The_Field_Repeats_Every_PeriodCells_On_Both_Axes()
+    {
+        Random random = new(5);
+        for (int i = 0; i < 2000; i++)
+        {
+            Vector2 p = new((float)random.NextDouble() * 4000f, (float)random.NextDouble() * 4000f);
+            Vector2 offset = new((float)random.NextDouble() * CloudLayer.PeriodCells, (float)random.NextDouble() * CloudLayer.PeriodCells);
+            float a = CloudLayer.CoverAtOffset(p, Authored, offset);
+            Assert.Equal(a, CloudLayer.CoverAtOffset(p, Authored, offset + new Vector2(CloudLayer.PeriodCells, 0f)), 0.002f);
+            Assert.Equal(a, CloudLayer.CoverAtOffset(p, Authored, offset - new Vector2(0f, CloudLayer.PeriodCells)), 0.002f);
+        }
+    }
+
+    // In the style of BoundaryMistFieldTests: the cover is continuous across every place the old pipeline
+    // snapped (the mist's 6400 s wrap) and across where the reduced drift itself wraps on each axis.
+    [Theory]
+    [InlineData(6400d)]
+    [InlineData(12800d)]
+    [InlineData(11111.111111111111d)]   // x drift reaches PeriodCells: 64 / (0.9 * 0.8 * 0.008)
+    [InlineData(14814.814814814814d)]   // y drift reaches PeriodCells: 64 / (0.9 * 0.6 * 0.008)
+    [InlineData(22222.222222222222d)]
+    [InlineData(1e7d)]
+    public void The_Cover_Is_Continuous_Across_The_Wrap(double boundarySeconds)
+    {
+        const double epsilon = 1e-3;
+        Random random = new(23);
+        float worst = 0f;
+        for (int i = 0; i < 1500; i++)
+        {
+            Vector2 p = new((float)random.NextDouble() * 1500f, (float)random.NextDouble() * 1500f);
+            float before = CloudLayer.Cover(p, Authored, boundarySeconds - epsilon);
+            float after = CloudLayer.Cover(p, Authored, boundarySeconds + epsilon);
+            worst = MathF.Max(worst, MathF.Abs(before - after));
+        }
+
+        Assert.True(worst <= 0.02f, $"cover jumped by {worst} across t = {boundarySeconds}");
+    }
+
+    [Fact]
+    public void The_Drift_Is_Reduced_Into_One_Period_Whatever_The_Clock()
+    {
+        foreach (double seconds in new[] { 0d, 1d, 6400d, 11111.2d, 1e6d, 1e9d })
+        {
+            Vector2 cells = CloudLayer.ScrollCells(0.9f, seconds);
+            Assert.InRange(cells.X, 0f, CloudLayer.PeriodCells);
+            Assert.InRange(cells.Y, 0f, CloudLayer.PeriodCells);
+        }
+
+        Assert.Equal(Vector2.Zero, CloudLayer.ScrollCells(0f, 12345d));
+    }
+
+    [Fact]
+    public void The_Glsl_Wraps_The_Lattice_At_The_Period_And_Takes_The_Drift_From_FrameTime_Yz()
+    {
+        string glsl = File.ReadAllText(Path.Combine(ShaderDirectory(), "clouds.glsl"));
+        Assert.Equal(CloudLayer.PeriodCells, Const(glsl, "CloudPeriodCells"));
+        Assert.Equal(4, Regex.Matches(glsl, @"dreamCloudHash\(mod\(cell[^;]*CloudPeriodCells\)\)").Count);
+        Assert.Contains("planeXZ * CloudCellsPerUnit - uFrameTime.yz", glsl);
+        // No clock in the cover: wrapping a clock is what made the sheet pop.
+        Assert.DoesNotContain("uFrameTime.x", Regex.Replace(glsl, @"//[^\n]*", ""));
+        // Every octave's stretch divides the period, and the per-octave shift is whole cells.
+        float stretch = MathF.Pow(CloudLayer.Lacunarity, CloudLayer.Octaves - 1);
+        Assert.Equal(0f, CloudLayer.PeriodCells % stretch);
+        Assert.Equal(0f, 17f % 1f);
+    }
+
+    // The sheet is traced from the camera's real position; uCameraPosition is the fog origin (the isometric focus).
+    [Fact]
+    public void The_Sky_Traces_The_Sheet_From_The_Real_Eye_Not_The_Fog_Origin()
+    {
+        string sky = File.ReadAllText(Path.Combine(ShaderDirectory(), "skyFragment.glsl"));
+        Assert.Contains("vec3 eye = uEyePosition;", sky);
+        Assert.DoesNotContain("vec3 eye = uCameraPosition", sky);
+        Assert.Contains("uEyePosition", Dream.Rendering.Sky.SkyRenderer.UniformNames);
+    }
+
     [Fact]
     public void The_Field_Is_Continuous()
     {

@@ -5,7 +5,7 @@ in vec4 vFarPoint;
 out vec4 FragColor;
 
 // The FrameLighting block (world range) and the shared cloud field; the cloud sheet below reads
-// uCloudParams, uFrameTime and uCameraPosition from it. The disc uniforms below are named
+// uCloudParams and uFrameTime from it (the view ray origin is the separate uEyePosition uniform). The disc uniforms below are named
 // uSunDiscColor / uMoonDiscColor because the block already owns uSunColor / uMoonColor.
 #include "lighting.glsl"
 #include "clouds.glsl"
@@ -18,6 +18,7 @@ uniform vec3 uSunDiscColor;  // disc colour, 0 when the sun is below the horizon
 uniform vec4 uMoon;           // xyz unit direction toward the moon, w disc angular radius (radians)
 uniform vec3 uMoonDiscColor;
 uniform float uStarVisibility; // 0..1
+uniform vec3 uEyePosition;     // the camera's world position (the view ray's origin for the cloud sheet)
 
 // Everything added on top of the gradient (stars, sun, glow, moon) fades in over this much
 // elevation, so at and below the horizon the sky is exactly uHorizonColor.
@@ -77,7 +78,9 @@ void main()
     // faded out with `above` so the sky still meets the fog with no seam. Coverage 0 leaves the sky untouched.
     if (uCloudParams.x > 0.0 && dir.y > 0.001)
     {
-        vec3 eye = uCameraPosition.xyz;
+        // The REAL eye (uEyePosition), not uCameraPosition: that is the fog origin, which in the isometric scene is the
+        // camera focus tens of units away, and the ground shadows use true world positions.
+        vec3 eye = uEyePosition;
         vec3 onPlane = eye + dir * ((CloudPlaneY - eye.y) / dir.y);
         float cloud = dreamCloudCover(onPlane.xz) * 0.8;
         vec3 cloudColor = uHorizonColor * 0.55 + dreamAmbient(vec3(0.0, 1.0, 0.0)) + uSunColor.rgb * (uSunDirection.w * 0.30);

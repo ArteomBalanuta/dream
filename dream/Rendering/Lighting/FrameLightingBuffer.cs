@@ -1,4 +1,6 @@
 using Dream.Rendering.Core;
+using Dream.Rendering.Ground;
+using Dream.Rendering.Sky;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 
@@ -67,10 +69,13 @@ public sealed class FrameLightingBuffer : IDisposable
     }
 
     // The world range: the frame's lighting with the camera position filled in (fog start kept).
-    public static FrameLighting ForWorld(in FrameLighting lighting, Vector3 cameraPosition, float clockSeconds = 0f)
+    // `rawClockSeconds` is the UNWRAPPED clock: the sway clock and the cloud drift are each reduced in double
+    // precision by the period that makes them seamless (GroundWind.ClockPeriodSeconds, CloudLayer.PeriodCells).
+    public static FrameLighting ForWorld(in FrameLighting lighting, Vector3 cameraPosition, double rawClockSeconds = 0d)
     {
         FrameLighting world = lighting;
-        world.FrameTime = new Vector4(clockSeconds, lighting.FrameTime.Y, lighting.FrameTime.Z, lighting.FrameTime.W);
+        Vector2 drift = CloudLayer.ScrollCells(lighting.CloudParams.W, rawClockSeconds);
+        world.FrameTime = new Vector4(GroundWind.WrapClock(rawClockSeconds), drift.X, drift.Y, 0f);
         world.CameraPosition = new Vector4(cameraPosition, lighting.CameraPosition.W);
         return world;
     }
@@ -83,16 +88,19 @@ public sealed class FrameLightingBuffer : IDisposable
         viewModel.SunDirection = new Vector4(ToEyeSpace(lighting.SunDirection.Xyz, in view), lighting.SunDirection.W);
         viewModel.MoonDirection = new Vector4(ToEyeSpace(lighting.MoonDirection.Xyz, in view), lighting.MoonDirection.W);
         viewModel.CameraPosition = new Vector4(0f, 0f, 0f, lighting.CameraPosition.W);
+        // The cloud shadow is a function of WORLD position and the world-space sun; the view-model pass has
+        // eye-space fragPos and sun, so it would sample the sheet at an arbitrary point. No clouds, no shadow.
+        viewModel.CloudParams = Vector4.Zero;
         viewModel.AmbientSky = FloorAmbient(lighting.AmbientSky);
         viewModel.AmbientGround = FloorAmbient(lighting.AmbientGround);
         return viewModel;
     }
 
     // Writes both ranges and binds the world range.
-    public void Upload(in FrameLighting lighting, Vector3 cameraPosition, in Matrix4 view, float clockSeconds = 0f)
+    public void Upload(in FrameLighting lighting, Vector3 cameraPosition, in Matrix4 view, double rawClockSeconds = 0d)
     {
-        FrameLighting world = ForWorld(in lighting, cameraPosition, clockSeconds);
-        // Clouds and wind are world-space: the view model keeps the world CloudParams and FrameTime.
+        FrameLighting world = ForWorld(in lighting, cameraPosition, rawClockSeconds);
+        // The cloud term is a world-space function and cannot ride the eye-space view-model range: ForViewModel zeroes it.
         FrameLighting viewModel = ForViewModel(in world, in view);
 
         GL.BindBuffer(BufferTarget.UniformBuffer, _handle);

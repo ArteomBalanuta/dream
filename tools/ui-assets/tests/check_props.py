@@ -73,7 +73,7 @@ GATES = {
     "footprint_pad": 0.15,       # ... plus this much (world units)
     "footprint_floor": 0.35,     # and must fill at least this share of it
     "ember_max": 0.35,           # emissive factor ceiling (the night look budget)
-    "hf_min": 0.027,             # FLOOR on the mean |4-neighbour luma gradient| of the shipped texture over the used uv area (7.0 / 255)
+    "hf_min": 7.0 / 255.0,       # FLOOR on the mean |4-neighbour luma gradient| of the shipped texture over the used uv area (7.0 / 255)
     "albedo_clip_max": 0.42,     # CEILING on byte / 255 * baseColorFactor over the used texels: above it the lit pixel clips flat
     # The cap (groundkit.cap_peak) keeps the shipped albedo under that ceiling whatever the bake does, so albedo_clip_max alone could never
     # fire. These three gate the bake BEFORE the cap, so that an over-bright bake is a failure and not a silent darkening / flattening:

@@ -54,6 +54,59 @@ public class GroundWindTests
         Assert.True(trunkPeak < 0.005f, $"trunk at 20% height moved {trunkPeak}");
     }
 
+    // The sway clock is reduced modulo 20 pi (not the mist's 6400): 1.7 * 20 pi and 2.9 * 20 pi are whole turns,
+    // so the displacement does not snap at the wrap whatever the instance phase.
+    [Theory]
+    [InlineData(1)]
+    [InlineData(100)]
+    [InlineData(10000)]
+    public void The_Displacement_Is_Continuous_Across_The_Clock_Wrap(int periods)
+    {
+        const double epsilon = 1e-3;
+        Vector2 wind = GroundWind.Uniform(GroundAssetClass.Tree, 5.5f);
+        double boundary = periods * GroundWind.ClockPeriodSeconds;
+        foreach (float phase in new[] { 0f, 1.3f, 17.9f, 250.4f })
+        {
+            float before = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(boundary - epsilon), phase);
+            float after = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(boundary + epsilon), phase);
+            Assert.True(MathF.Abs(before - after) <= 1e-3f, $"phase {phase}: {before} -> {after}");
+        }
+    }
+
+    [Fact]
+    public void The_Displacement_Is_Continuous_Across_The_Mist_Wrap_Too()
+    {
+        Vector2 wind = GroundWind.Uniform(GroundAssetClass.Tree, 5.5f);
+        foreach (float phase in new[] { 0f, 1.3f, 17.9f })
+        {
+            float before = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(6400d - 1e-3), phase);
+            float after = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(6400d + 1e-3), phase);
+            Assert.True(MathF.Abs(before - after) <= 1e-3f, $"phase {phase}: {before} -> {after}");
+        }
+    }
+
+    [Fact]
+    public void The_Clock_Wrap_Stays_In_Range_For_Any_Clock()
+    {
+        foreach (double seconds in new[] { 0d, 1d, -3d, 6400d, 1e6d, 1e9d })
+        {
+            Assert.InRange(GroundWind.WrapClock(seconds), 0f, (float)GroundWind.ClockPeriodSeconds);
+        }
+    }
+
+    // A half-size sapling must sway half as far as a full-size one (the shader weights by the instance's y scale).
+    [Fact]
+    public void The_Sway_Scales_With_The_Instance_Scale()
+    {
+        Vector2 wind = GroundWind.Uniform(GroundAssetClass.Sapling, 2f);
+        float full = GroundWind.Displacement(wind, 2f, 3.7f, 0.9f);
+        Assert.NotEqual(0f, full);
+        Assert.Equal(full * 0.5f, GroundWind.Displacement(wind, 2f, 3.7f, 0.9f, 0.5f), 6);
+        string vertex = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "shaders", "cubeVertex.glsl"));
+        Assert.Contains("float instanceScale = length(instanceModel[1].xyz);", vertex);
+        Assert.Contains("* instanceScale;", vertex);
+    }
+
     [Fact]
     public void A_Zero_Uniform_Displaces_Exactly_Nothing()
     {

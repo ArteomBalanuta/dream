@@ -90,6 +90,19 @@ public class GroundWindLeakTests
         Assert.Equal("uWind", GroundScatterRenderer.WindUniformName);
     }
 
+    // ModelAssets hands out shared AnimatedModel instances. The Wind a draw assigns to one is cleared in the finally
+    // as well, so an exception between the assignment and the clearing cannot leave a sway on a shared model.
+    [Fact]
+    public void The_Models_Wind_Is_Cleared_In_The_Finally_Too()
+    {
+        string source = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "Rendering", "Ground", "GroundScatterRenderer.cs"));
+        int finallyAt = source.IndexOf("finally", StringComparison.Ordinal);
+        Assert.True(finallyAt > 0);
+        string afterFinally = source[finallyAt..];
+        Assert.Matches(@"drawnModel\.Wind = Vector2\.Zero;", afterFinally);
+        Assert.Contains("drawnModel = model;", source[..finallyAt]);
+    }
+
     // Both wind trackers are reset, and the tracker for each program is the one the draw writes: the
     // terrain program for Decal/Cover layers, the actor program for the rest. A third tracker, or a
     // draw that bypasses them, would leave a program that no finally resets.

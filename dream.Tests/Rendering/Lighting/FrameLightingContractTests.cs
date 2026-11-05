@@ -3,7 +3,9 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Dream.Rendering.Core;
+using Dream.Rendering.Ground;
 using Dream.Rendering.Lighting;
+using Dream.Rendering.Sky;
 using Dream.Tests.Utilities;
 using OpenTK.Mathematics;
 using Xunit;
@@ -327,20 +329,41 @@ public class FrameLightingContractTests
         Assert.Equal(night.Params, viewModel.Params);
     }
 
-    [Fact]
-    public void Both_Ranges_Carry_The_Cloud_Params_And_The_Clock_Identically()
+    // The view model draws with the cube program in EYE space: fragPos is a hand 0.5 from the eye and the sun is
+    // rotated into eye space, so a cloud shadow evaluated there is an arbitrary value that swims as the player
+    // turns. The view-model range must therefore carry no clouds at all.
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(90f)]
+    [InlineData(200f)]
+    public void The_View_Model_Range_Carries_No_Clouds_Whatever_The_World_Has(float yawDegrees)
     {
         FrameLighting lighting = FrameLighting.ReferenceNoon;
         lighting.CloudParams = new Vector4(0.35f, 0.35f, 0.55f, 0.9f);
-        lighting.FrameTime = new Vector4(0f, 0.25f, 0f, 0f);
+        Matrix4 view = Matrix4.CreateRotationY(MathHelper.DegreesToRadians(yawDegrees));
+
+        FrameLighting world = FrameLightingBuffer.ForWorld(in lighting, Spawn, 50d);
+        Assert.NotEqual(Vector4.Zero, world.CloudParams);
+        Assert.Equal(Vector4.Zero, FrameLightingBuffer.ForViewModel(in world, in view).CloudParams);
+    }
+
+    [Fact]
+    public void The_World_Range_Carries_The_Cloud_Params_And_The_Wrapped_Clock_And_Cloud_Drift()
+    {
+        FrameLighting lighting = FrameLighting.ReferenceNoon;
+        lighting.CloudParams = new Vector4(0.35f, 0.35f, 0.55f, 0.9f);
         Matrix4 view = Matrix4.LookAt(Spawn, Spawn + Vector3.UnitX, Vector3.UnitY);
 
-        FrameLighting world = FrameLightingBuffer.ForWorld(in lighting, Spawn, 123.5f);
+        FrameLighting world = FrameLightingBuffer.ForWorld(in lighting, Spawn, 123.5d);
         FrameLighting viewModel = FrameLightingBuffer.ForViewModel(in world, in view);
 
         Assert.Equal(lighting.CloudParams, world.CloudParams);
-        Assert.Equal(new Vector4(123.5f, 0.25f, 0f, 0f), world.FrameTime);
-        Assert.Equal(world.CloudParams, viewModel.CloudParams);
+        Vector2 drift = CloudLayer.ScrollCells(0.9f, 123.5d);
+        Assert.Equal(new Vector4(GroundWind.WrapClock(123.5d), drift.X, drift.Y, 0f), world.FrameTime);
+        Assert.InRange(world.FrameTime.X, 0f, (float)GroundWind.ClockPeriodSeconds);
+        // The clock is raw seconds: a huge session clock still lands in range, in double precision.
+        Assert.InRange(FrameLightingBuffer.ForWorld(in lighting, Spawn, 1e9d).FrameTime.X, 0f, (float)GroundWind.ClockPeriodSeconds);
+        Assert.InRange(FrameLightingBuffer.ForWorld(in lighting, Spawn, 1e9d).FrameTime.Y, 0f, CloudLayer.PeriodCells);
         Assert.Equal(world.FrameTime, viewModel.FrameTime);
         // The clock never rides in Params.
         Assert.Equal(lighting.Params, world.Params);

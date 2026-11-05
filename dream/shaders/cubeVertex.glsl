@@ -17,7 +17,7 @@ uniform bool useSkinning;
 uniform bool useInstancing;
 uniform mat4 jointMatrices[64];
 
-// uFrameTime (the wrapped clock) comes from the FrameLighting block.
+// uFrameTime.x (the sway clock, wrapped at GroundWind.ClockPeriodSeconds = 20 pi so sin(1.7 t) and sin(2.9 t) are continuous) comes from the FrameLighting block.
 #include "lighting.glsl"
 
 // Ambient sway, set per draw by GroundScatterRenderer for flora and zero for everything else.
@@ -77,7 +77,9 @@ void main()
         float phase = dot(root.xz, vec2(0.45, 0.3));
         float t = uFrameTime.x;
         float sway = 0.7 * sin(t * 1.7 + phase) + 0.3 * sin(t * 2.9 + phase * 1.7);
-        float weight = uWind.x * pow(max(aPos.y, 0.0), uWind.y);
+        // The amplitude is authored for the asset at scale 1; the instance scale makes a small plant sway proportionally.
+        float instanceScale = length(instanceModel[1].xyz);
+        float weight = uWind.x * pow(max(aPos.y, 0.0), uWind.y) * instanceScale;
         fragPos.xz += WindDirection * (sway * weight);
     }
     texCoord0 = aTexCoord0;

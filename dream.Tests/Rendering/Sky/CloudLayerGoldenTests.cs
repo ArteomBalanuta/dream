@@ -20,12 +20,13 @@ public class CloudLayerGoldenTests
         ("p3 += dot(p3, p3.yzx + 33.33);", "Hash: d = x*(y+33.33)+y*(z+33.33)+z*(x+33.33); x,y,z += d"),
         ("return fract((p3.x + p3.y) * p3.z);", "Hash: Fract((x+y)*z)"),
         ("vec2 u = f * f * (3.0 - 2.0 * f);", "ValueNoise: ux, uy"),
-        ("float b = dreamCloudHash(cell + vec2(1.0, 0.0));", "ValueNoise: b"),
-        ("float c = dreamCloudHash(cell + vec2(0.0, 1.0));", "ValueNoise: c"),
-        ("float d = dreamCloudHash(cell + vec2(1.0, 1.0));", "ValueNoise: d"),
+        ("float a = dreamCloudHash(mod(cell, CloudPeriodCells));", "ValueNoise: a = Hash(Lattice(cx, cy))"),
+        ("float b = dreamCloudHash(mod(cell + vec2(1.0, 0.0), CloudPeriodCells));", "ValueNoise: b"),
+        ("float c = dreamCloudHash(mod(cell + vec2(0.0, 1.0), CloudPeriodCells));", "ValueNoise: c"),
+        ("float d = dreamCloudHash(mod(cell + vec2(1.0, 1.0), CloudPeriodCells));", "ValueNoise: d"),
         ("return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);", "ValueNoise: Mix(Mix(a,b,ux),Mix(c,d,ux),uy)"),
         ("if (uCloudParams.x <= 0.0) { return 0.0; }", "Cover: early out"),
-        ("vec2 p = (planeXZ - CloudDirection * (uCloudParams.w * uFrameTime.x)) * CloudCellsPerUnit;", "Cover: p"),
+        ("vec2 p = planeXZ * CloudCellsPerUnit - uFrameTime.yz;", "Cover: p = planeXZ * CellsPerUnit - scrollCells (ScrollCells reduces the drift on the CPU)"),
         ("sum += amplitude * dreamCloudValueNoise(p);", "Cover: octave sum"),
         ("p = p * CloudLacunarity + vec2(17.0, 31.0);", "Cover: octave step"),
         ("amplitude *= CloudGain;", "Cover: amplitude"),
@@ -53,21 +54,22 @@ public class CloudLayerGoldenTests
     }
 
     // Golden values of CloudLayer.Cover (authored params). A change to CloudLayer's arithmetic moves
-    // these; the GLSL lines above must then be re-checked against it. Single points (most of the sky is
+    // these; the GLSL lines above must then be re-checked against it. (Re-pinned when the lattice hash began
+    // wrapping at CloudPeriodCells so the drift can be reduced on the CPU; the field is a different, periodic one.) Single points (most of the sky is
     // clear at this coverage, so these are the fractional ones) plus the sum over a 64 x 64 grid at three
     // clocks, which sees every octave and the clock drift.
     [Theory]
-    [InlineData(310f, 205f, 1000f, 0.560156f)]
-    [InlineData(120.5f, -310.25f, 0f, 0.224910f)]
+    [InlineData(310f, 243f, 1000f, 0.282630f)]
+    [InlineData(120.5f, -186.75f, 0f, 0.234847f)]
     public void CloudLayer_Cover_Matches_Its_Pinned_Points(float x, float z, float clock, float expected)
     {
         Assert.Equal(expected, CloudLayer.Cover(new Vector2(x, z), Authored, clock), 4);
     }
 
     [Theory]
-    [InlineData(0f, 1160.755f)]
-    [InlineData(45f, 1133.329f)]
-    [InlineData(1800f, 1114.570f)]
+    [InlineData(0f, 1057.975f)]
+    [InlineData(45f, 1056.988f)]
+    [InlineData(1800f, 969.021f)]
     public void CloudLayer_Cover_Grid_Sum_Matches_Its_Pinned_Value(float clock, float expected)
     {
         double sum = 0.0;
