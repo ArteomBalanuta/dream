@@ -222,3 +222,35 @@ overcast sky colour (its own keyframe pass) · reconciling the two metre convent
 cascade plus omnidirectional shadows for the fires, with the caster pass applying the same wind
 displacement as the visible pass so shadows do not detach from swaying canopies, and the flicker
 driving the shadows it casts. It carries the whole shadow half of goal 5.
+
+---
+
+# Outcome
+
+Integrated on `integrate/living-world`, two review rounds, no Must-fix outstanding.
+Suite: 8331 passed / 1 failed / 47 skipped, the failure being a known exact-zero-allocation
+intermittent (`CubeRestFreezerTests...AllocatesNothing`) that passes alone.
+
+## What the goals actually got
+
+| Goal | Result |
+|---|---|
+| 1 proportions | Blanket x1.7/x1.5 gone, replaced by a per-item scale off the 1.408 u/m anchor. Greatsword 2.69 m -> 1.55, torch 1.65 -> 0.55, spear 3.21 -> 1.32 world units (under the 1.38 ceiling). Extents now measured from the **rotated** corners, which caught the buckler drawing 0.453 m against its documented 0.400. |
+| 2 textures | Flora atlas gradient 3.3-4.9 -> min 7.22/255 across all 98 assets, with bark, leaf-mass, blade and stone vocabularies. Detail is **mean-preserving**; the cap is a per-texel soft knee that scales all three channels equally, so hue and saturation survive. |
+| 3 sway | Vertex wind on instanced scatter, phase from the instance matrix (no new attribute), amplitude per asset class, scaled by instance scale, uniform reset in a `finally`. |
+| 4 clouds | 4-octave fBm shared by the sky sheet and the ground mask, so clouds sit over the shadows they cast. Lattice wraps at 64 cells, periodic at every octave. |
+| 5 fire | One shared flicker for light, halo and flame; amplitude 0.08 -> **0.25** at unchanged intensity. Flame brightness now strictly monotonic (bytes 191/219/247) with area climbing alongside. Braziers and lamps flicker for the first time. |
+
+## What the wave found that it was not looking for
+
+- **~50 of 98 ground and prop assets were already breaking the albedo ceiling on master** (birch 0.717, bramble 0.714 against ~0.41), so they clipped to flat patches near firelight — the very defect goal 2 set out to remove. Bringing them into gamut costs them 14-20 % of their mean value. That darkening is correct, not a regression, and it is why `mean_v_drop_capped_max` is a separate, looser gate derived from `precap_albedo_max > albedo_clip_max` rather than a hand-kept list.
+- **The gate set had ceilings but no floors.** Nothing measured a gradient floor (so flat art passed), and nothing measured a value floor (so "darken everything" passed). Both now exist, each with a negative that runs through the real pipeline.
+- **The flame sprite had no clipping ceiling at all.** The halo's byte was carefully derived; the flame's second packed byte was not, and saturated for half the cycle. Goal 5 was not achieved until that was fixed.
+- **Captures are not byte-deterministic**, even pinned: three independent clocks, of which `RenderFrameClock` is still unpinned. The byte-for-byte A/B gate in the plan above was never achievable as written.
+- **Four tests could not fail** and were caught only by mutation or by algebra: the gust bound, the "not a bulb" autocorrelation, the held-item 12 % band (twice), and a sway-continuity check that wrapped both sides through the same function.
+
+## Known limits, deliberately accepted
+
+The ~50 capped assets stay 14-20 % darker until their bake materials are re-authored or the engine
+gains a tonemap. `DREAM_FX_CLOCK` does not pin fire. The visible cloud sheet may rarely be in frame,
+since the isometric view is enclosed by boundary mist. Shadows are WS-D, not this wave.
