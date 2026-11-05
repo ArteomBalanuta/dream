@@ -17,7 +17,6 @@ namespace Dream.Tests.Integration;
 // Potions: an ItemUseIntent removes the item and applies the effect, and is rejected (consuming
 // nothing) when the pool is already full. Plus the pure pieces: HealthState.Restore, the catalogue
 // entries, the bag menu and the Q/R lookup.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class ConsumableUseTests
 {
     private const string Session = "consumable-use";

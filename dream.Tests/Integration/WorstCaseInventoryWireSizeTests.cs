@@ -19,7 +19,6 @@ namespace Dream.Tests.Integration;
 // item is not in the bag). The real join frame and the real push of the last item stay within the gate,
 // and so does that push with the most notices one can carry. If this fails, trim as I-D26 says; do not
 // raise the gate without recording why.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class WorstCaseInventoryWireSizeTests(ITestOutputHelper output)
 {
     private const string Session = "worst-case";

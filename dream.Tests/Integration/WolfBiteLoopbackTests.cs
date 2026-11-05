@@ -15,7 +15,6 @@ namespace Dream.Tests.Integration;
 
 // Wave I tester, round 4, over real TCP with a real PlayScene (no GL): spawn protection across a leave
 // and a rejoin of the same session.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class WolfBiteLoopbackTests(ITestOutputHelper output)
 {
     private const string Session = "adv4-tcp";

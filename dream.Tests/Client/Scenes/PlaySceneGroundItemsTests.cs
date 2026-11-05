@@ -16,7 +16,6 @@ namespace Dream.Tests.Client.Scenes;
 // M3 on the client: the ground-item cache and the E key, the vendor window's state and the economy
 // intents, with a real PlayScene (no GL) behind a loopback server for the scene-level cases. The cache
 // tests need no scene: the wire is hostile and the cache is where it is checked.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class PlaySceneGroundItemsTests
 {
     private const string Session = "ground-items";

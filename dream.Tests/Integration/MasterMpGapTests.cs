@@ -21,7 +21,6 @@ namespace Dream.Tests.Integration;
 // Gaps found when verifying the master-mp integration: Agility/Energy spends end to end (with a relog),
 // the mana potion's cooldown, noclip/freeze gating on a real server, a remote player's held-weapon key
 // next to M8's stat stripping, and what a brand-new character can drink with Q and R.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class MasterMpGapTests
 {
     private const string SessionA = "mp-gap-a";
@@ -106,7 +105,7 @@ public sealed class MasterMpGapTests
             M4AKit.Flush(server);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await using (WireLoopbackServer again = await M4AKit.StartAsync(db))
         {
             await using HeadlessPlayScene back = await M4AKit.JoinAsync(again, SessionA);

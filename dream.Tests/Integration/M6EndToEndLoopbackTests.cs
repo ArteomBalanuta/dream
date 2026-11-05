@@ -31,7 +31,6 @@ namespace Dream.Tests.Integration;
 //
 // Action sequences follow the note of M3EndToEndLoopbackTests: the scene's own tracker is driven the way
 // Update does.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class M6EndToEndLoopbackTests
 {
     private const string SessionA = "m6e2e-a";
@@ -427,7 +426,7 @@ public sealed class M6EndToEndLoopbackTests
             Flush(server);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         Assert.Equal(goldAtTheEnd, Count(db, $"SELECT COALESCE(SUM(gold), 0) FROM player_wallets WHERE player_name = '{keyA}'"));
 
         await using (WireLoopbackServer again = await StartAsync(db))

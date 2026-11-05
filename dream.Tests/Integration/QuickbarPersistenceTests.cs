@@ -12,7 +12,6 @@ namespace Dream.Tests.Integration;
 // The per-character quickbar (M4 workstream A): a character that never bound anything has no stored
 // bar (null in the snapshot, the content default on the client); the first bind writes all six slots,
 // later binds one. Binds are per character, survive a restart, and an invalid bind changes nothing.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class QuickbarPersistenceTests
 {
     private const string SessionA = "m4a-bar-a";
@@ -65,7 +64,7 @@ public sealed class QuickbarPersistenceTests
             Assert.Equal(0, M4AKit.Count(db, $"SELECT COUNT(*) FROM player_quickbar_slots WHERE player_name = '{M4AKit.KeyOf(SessionB)}'"));
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await using (WireLoopbackServer again = await M4AKit.StartAsync(db))
         {
             await using HeadlessPlayScene back = await M4AKit.JoinAsync(again, SessionA);

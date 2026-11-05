@@ -21,7 +21,6 @@ namespace Dream.Tests.Integration;
 // then CreateAuthoritativeHost) and every client joining over loopback TCP:
 // fracture a generated world, --worlds export, host the export, join and match, fracture it,
 // restart, join and match, --worlds reset-terrain, restart, join and match.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class StoredWorldEndToEndTests(ITestOutputHelper output)
 {
     private const string ExportName = "exported";
@@ -43,7 +42,7 @@ public sealed class StoredWorldEndToEndTests(ITestOutputHelper output)
             Assert.True(script.Fractures > 0);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         long sourceOverrides = Scalar(db.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides WHERE world_id = 1 AND kind = 0;");
         Assert.True(sourceOverrides > 0);
 
@@ -71,7 +70,7 @@ public sealed class StoredWorldEndToEndTests(ITestOutputHelper output)
             Assert.True(script.Fractures > 0);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         long storedOverrides = Scalar(db.DatabasePath, $"SELECT COUNT(*) FROM terrain_cell_overrides WHERE world_id = {exportedId};");
         Assert.True(storedOverrides > 0);
         await JoinAndMatchAsync(db, "fracture-joiner", expectRubble: true);
@@ -90,7 +89,7 @@ public sealed class StoredWorldEndToEndTests(ITestOutputHelper output)
         // After the reset the hosted map is the exported base again, except the kept cells.
         SqliteWorldCatalog catalog = new(db.Schema);
         WorldTerrainSource exported = catalog.ReadTerrainSource(new WorldId(exportedId));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         Map exportedBase = new(MapSources.ForWorld(exported.Record.Descriptor, exported.Seed, exported.StoredChunks), physics: null, headless: true);
         Assert.Equal(exportedBase.GeometryCells.Keys.Count(exportedBase.IsSourceCell) - kept, sourceCellsAfterReset);
     }
@@ -100,7 +99,7 @@ public sealed class StoredWorldEndToEndTests(ITestOutputHelper output)
     // of source cells still standing in the server's map.
     private async Task<int> JoinAndMatchAsync(StoredWorldDb db, string sessionId, bool? expectRubble)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         DedicatedServerHost host = Bootstrap(db, ExportName, out List<string> log);
         Assert.Contains(log, line => line.Contains("stored terrain: chunks=", StringComparison.Ordinal));
         await using WireLoopbackServer server = await WireLoopbackServer.StartAsync(host);
@@ -151,11 +150,11 @@ public sealed class StoredWorldEndToEndTests(ITestOutputHelper output)
 
     private static (int Exit, string Out, string Err) Cli(StoredWorldDb db, params string[] args)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         StringWriter stdout = new();
         StringWriter stderr = new();
         int exit = WorldCli.Run(args, () => new SqliteWorldCatalog(db.Schema), stdout, stderr);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         return (exit, stdout.ToString(), stderr.ToString());
     }
 }

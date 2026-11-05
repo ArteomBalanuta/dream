@@ -18,7 +18,6 @@ namespace Dream.Tests.Integration;
 // of an admin), the admin's reply follows the committed write, the roles and sanctions of connected accounts
 // are read again on a slow cadence, and a full server does not lock a player out of their own seat. Real
 // DedicatedServerService over loopback TCP and real SQLite, like M8EndToEndLoopbackTests.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class AdminAccountSanctionLoopbackTests
 {
     private const string Admin = "m8a-adm";
@@ -203,6 +202,8 @@ public sealed class AdminAccountSanctionLoopbackTests
         Assert.True(server.Host.TryGetConnectionContext(server.ConnectionFor(admin).ConnectionId, out ServerRoutingContext? adminContext));
         Assert.True(adminContext!.IsAdmin);
 
+        // The joined accounts' rows are written by the persistence queue; wait for them to exist.
+        Flush(server);
         // Another process changes the database: the admin is demoted, one player banned, another muted.
         Assert.True(accounts.TrySetRole(NameOf(Admin), 0));
         Assert.True(accounts.TrySetBan(NameOf("m8a-bee"), DateTime.UtcNow.AddMinutes(30), "banned elsewhere"));
@@ -279,7 +280,7 @@ public sealed class AdminAccountSanctionLoopbackTests
         await UntilAsync(server, () => SystemLines(admin).Contains($"Banned {NameOf(Alt)}."), "the ban once the lock ended");
         Assert.DoesNotContain("The change could not be saved.", SystemLines(admin));
         Assert.Equal(1L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE banned_until_utc IS NOT NULL;")));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
     }
 
     // Fails the next ban write; everything else is the real repository.
