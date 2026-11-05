@@ -1,0 +1,92 @@
+# Work log: worn equipment visuals
+
+- Purpose: make every equippable item visibly change the character, not only the two hands.
+- Status: on `integrate/worn-visuals` from master `04a8fbfe`. Not pushed, not merged.
+- Method: the swarm workflow in `CLAUDE.md` (architect -> three parallel implementers -> integrator ->
+  fix loops), with the discipline in the `software-engineering` skill.
+
+## The gap this closed
+
+Before this wave only the two hands rendered. All twenty armour items shared nine flat per-slot ids
+(`worn.head`, `worn.body`, `worn.back`, ...), **nothing in the renderer read `worn.*` at all**, and the
+replicated `VisualKey` carried only `"<mainHand>|<offHand>"`, so armour was not even on the wire. Held
+items were only differentiated per archetype: three swords, two axes, two bows, two staffs and two
+lanterns each shared one mesh.
+
+Inventory **icons were already per-item** (69 sprites in `dream/ui/items/`), so the 2D half was done and
+no icon work was needed. The gap was purely on-character 3D.
+
+## What landed
+
+- **Wire** (`PlayerEquipmentVisuals`, `PlayerInventoryService`, `TransportEnvelope`): the player
+  `VisualKey` widens from `"main|off"` to nine positional fields
+  `main|off|head|body|hands|feet|legs|back|companion`, trailing empties trimmed, so a player wearing
+  nothing still formats to exactly `"main|off"` and is byte-identical to v19. Each field is validated
+  alone and must carry its slot's prefix, so a boot on the head is unreachable from the wire. An unknown
+  worn id draws nothing (unlike a held id, which falls back to a stick: a wrong box on the head is worse
+  than no box). Protocol 19 -> 20.
+- **Content** (`items.json`): 29 per-item worn ids and 6 new held ids, so no two items share a mesh.
+  Also fixed `potion.health` / `potion.mana`, which carried a stale `"visualId": "worn.ring"`.
+- **Catalog and renderer**: new `ArmourMeshCatalog` (21 models) and `WornArmourRenderer`, mirroring the
+  proven `WeaponMeshCatalog` / `HeldWeaponRenderer` path — boxes drawn as batched unit-cube draws off one
+  shared mesh, so a new item costs no GL object and no asset. `PlayerPoseLayers` gained
+  `TryGetNodeMatrix`, with `TryGetArmMatrix` reimplemented on top of it.
+- **Client**: one `PlayerEquipmentVisuals Equipment` replaces the two per-hand fields; `ReadEquipment`
+  now carries worn ids from the inventory snapshot (the local player's appearance has never come from a
+  VisualKey); the loopback gallery cycles the whole worn catalog so every mesh can be inspected with no
+  content, vendor or starter-kit dependency.
+
+## Decisions, and the evidence behind them
+
+- **Oversize-and-enclose, not a regenerated base figure.** `gen_char_player.py` bakes a full outfit into
+  the player mesh — hood, bone mask, kettle helm, left-only pauldron, gorget, **a cloak**, knee cops. So
+  worn pieces are authored to fully contain the baked geometry at their node, making it an interior
+  surface. The honest cost: an *unequipped* character still reads as armoured. Regenerating an undressed
+  base figure is the correct long-term answer and is queued as its own wave; it would have coupled an
+  asset-pipeline change, two byte gates and an A3 re-measure into a rendering wave.
+- **Neck and rings get ids but no 3D.** Measured from a real capture (`actorbox 706,475,734,576`), the
+  whole character is **28 x 101 pixels**. A helm gets ~14x12 px; a ring is under 2. Drawing them would be
+  dishonest work.
+- **The starter-kit armour grant was added, then reverted.** It was meant to let a new player see the
+  feature. But **all 47 gear kinds already drop** (`loot.json`), so armour is reachable in normal play,
+  and the gallery covers inspection. The grant silently gave new players armour (an unasked-for balance
+  change) and broke ~30 tests re-expecting armor values, stat totals, kit counts and pinned bytes, plus
+  pushed `EquipmentSqliteActionTests` into `BackpackFull`. Reverted; it bought nothing.
+- **Procedural boxes, not generated GLB attachments.** At 28 px a loft-smooth attachment buys nothing
+  visible, and a GLB attachment would need a normalisation and parenting story the loader does not expose
+  (`PlayerModelAssetDefinition` normalises by a model's own authored height, meaningless for a helmet).
+
+## Verification
+
+- Measured serialized on a quiet machine: master `04a8fbfe` Failed 35 / Passed 7632 / Total 7676; the
+  branch Failed 112 / Total 7790. All 35 master failures also fail on the branch, so exactly **76 were
+  this wave's**, all protocol-version fallout. All 76 are fixed and verified green under two filtered
+  runs (156 and 45 tests, 0 failed).
+- **Those totals are partial runs.** Two `StatSheetTests` grids walked the raised attribute ceiling and
+  stalled the suite, so ~290 tests never executed for anyone. A peer session fixed that
+  (`fix/suite-hang`) and a complete run puts master at **~40 failures**, not 35. See `master-is-green`.
+  The 76 attribution is unaffected, since both sides were truncated identically.
+- Visual: `artifacts/captures/` holds the before, the gallery at noon and midnight, and the cloak
+  iterations. Emissive pieces (ember wisp, gossamer wings) verified at midnight.
+
+## Findings worth keeping
+
+- **The sed that bumped protocol literals missed every escaped form.** `protocolVersion":19` matches raw
+  string literals but not `protocolVersion\":19`, which is how they appear in C# source.
+- **Three tests had silently stopped testing anything.** `JoinAcceptedWorldDescriptorCodecTests`,
+  `WaveBTesterWorldsLoopbackTests` and `StoredWorldJoinLoopbackTests` derive a bad frame with
+  `Replace("\"protocolVersion\":19", "...\":6")`. After the bump the *search* pattern went stale, the
+  replace became a no-op, the frame was never downgraded, and the tests still passed. Fixed.
+- **Never run two suites at once in this repo.** Concurrent runs produce ~35 spurious failures, always in
+  the persistence and world-lease families, and frequently leave a `testhost.exe` hung holding a lock on
+  `dream.Tests.dll`, after which every later build fails with MSB3027.
+- **Protocol v20 is contended.** The inventory.drop wave also bumps 19 -> 20. Whoever merges second must
+  renumber to 21 *and* rewrite their paragraph of the version comment; a fixture in
+  `ProtocolVersionMismatchClientTests` fakes a newer server and would then need pushing to 22.
+
+## Open
+
+- The v20 collision above is unresolved and is the user's call.
+- Cloak sway is deferred: the walk clip deliberately holds the torso steady, and 1-2 px of sway is
+  invisible at this zoom.
+- An undressed base figure, so "no armour" reads as no armour, is a separate wave.
