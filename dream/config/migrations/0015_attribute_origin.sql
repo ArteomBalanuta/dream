@@ -17,14 +17,29 @@
 -- as 1000. Attributes and level cannot tell that character from one created at the 1000 origin, so
 -- neither a ">= 1000" test nor any point-budget arithmetic can separate them. created_utc can: a row
 -- created before a39702e6 (2026-11-04T19:44:37Z, committed 21:44:37 +02:00) cannot have been created at
--- 1000, and is left exactly as stored. created_utc is TEXT in strftime('%Y-%m-%dT%H:%M:%fZ') form, so it
--- compares lexicographically; the comparison is >= so a row created at the cutoff instant migrates.
+-- 1000, and is left exactly as stored.
 --
--- Erring late is deliberate. A 1000-origin character that is spared keeps its stats but reads as ~3960
--- points overspent against the 10 origin, so its stats become unspendable until an operator fixes
--- them: bad, but reversible. A legacy character that is wrongly migrated has ~990 points of real
--- investment destroyed in place, recoverable only from the automatic .v0014-to-v0015 backup.
--- Unspendable-but-intact beats silently destroyed.
+-- created_utc is TEXT, compared lexicographically (BINARY collation). Rows written by the server are in
+-- SqliteSchemaBootstrapper.FormatUtc's round-trip "O" form ('2026-11-04T19:44:37.1234567Z', 7 fractional
+-- digits); rows that took the column default are in strftime('%Y-%m-%dT%H:%M:%fZ') form
+-- ('2026-11-04T19:44:37.123Z'). Both share the YYYY-MM-DDTHH:MM:SS prefix. The cutoff literal below is
+-- that prefix with no trailing 'Z': byte 19 of a fractional row is '.' (0x2E) and of a whole-second
+-- row 'Z' (0x5A), and either sorts above the shorter literal, so the whole cutoff second migrates and
+-- every earlier second is spared. (With a trailing 'Z' the literal would sort ABOVE every fractional
+-- row in the cutoff second and spare them.)
+--
+-- Erring late is deliberate, but it costs on both sides. A 1000-origin character that is wrongly spared
+-- (reachable: a server whose clock was behind at creation, since the 1000 origin existed for under 24
+-- hours, so any skew beyond that misses the window) keeps 1000 in each attribute. It reads as ~3960
+-- points overspent, so its stats are unspendable, AND it is the very bug this migration exists to fix:
+-- 5050 hp, 2005-4010 damage, the 5.0 attack-speed cap, effectively unkillable (StatRules.MaxEnemyBase
+-- is 50, so the worst enemy bite is ~52), for that character and anyone sharing a world with it, PvP
+-- included. An operator can still fix it by hand. A legacy character that is wrongly migrated has ~990
+-- points of real investment destroyed in place per clamped attribute, recoverable only from the
+-- automatic {db}.v0014-to-v0015.*.bak. That asymmetric half is reachable too: a pre-a39702e6 row whose
+-- created_utc was written by a host whose clock ran ahead, or a hand-written dev/fixture row with a
+-- far-future stamp, is migrated. Destroying a legacy character's investment is judged worse than
+-- leaving a broken-but-intact character for an operator to fix.
 --
 -- Within a migrated row the per-attribute ">= 1000" CASE is still kept, so an attribute below 1000
 -- (a spend-free 10, say) is not driven negative or floored. A stored 2000 becomes 1010: it is 1000
@@ -50,4 +65,4 @@ SET strength = CASE WHEN strength >= 1000 THEN strength - 990 ELSE strength END,
     vitality = CASE WHEN vitality >= 1000 THEN vitality - 990 ELSE vitality END,
     energy   = CASE WHEN energy   >= 1000 THEN energy   - 990 ELSE energy   END
 WHERE (strength >= 1000 OR agility >= 1000 OR vitality >= 1000 OR energy >= 1000)
-  AND created_utc >= '2026-11-04T19:44:37Z';
+  AND created_utc >= '2026-11-04T19:44:37';

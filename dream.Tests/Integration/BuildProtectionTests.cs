@@ -177,7 +177,7 @@ public sealed class BuildProtectionTests
 
     // "A brand-new character is not a god", pinned end to end. This deliberately does NOT go through
     // StartRigAsync: that seeds TestStatBaseline profiles, and seeding is what hid the 1000 origin
-    // (a39702e6) for 122 commits. Here SessionA is created by the real profile path on join, so whatever
+    // (a39702e6) undetected: every assertion that touched it derived its expectation from the constant. Here SessionA is created by the real profile path on join, so whatever
     // PersistedPlayerProfile.CreateDefault hands out is what is measured.
     [Fact]
     public async Task ABrandNewProfileBackedCharacter_IsNotAGod_AndOneSwingDoesNotDestroyAPlacedCube()
@@ -193,8 +193,11 @@ public sealed class BuildProtectionTests
         Assert.Equal(PlayerStatRules.NewCharacterAttribute, player.BaseStats.Agility);
         Assert.Equal(PlayerStatRules.NewCharacterAttribute, player.BaseStats.Vitality);
 
-        // The profile's own numbers (base stats, before the worn starter kit, which adds +2 Strength and
-        // +0.25 attack speed). Symbolic first: they follow the formulas from the constant.
+        // The profile's own numbers: derived from BASE stats, before the worn starter kit (+2 Strength,
+        // +0.25 attack speed). player.Defense and player.Health.MaxHealth are effective-stat reads
+        // (Defense from post-gear Agility, MaxHealth from DerivedStats); they equal the naked values here
+        // only because the kit adds no Agility or Vitality. Symbolic first: they follow the formulas from
+        // the constant.
         int n = PlayerStatRules.NewCharacterAttribute;
         PlayerCombatDerivedStats naked = player.BaseStats.Derive(level: player.Level);
         Assert.Equal(50 + (n * 5), naked.MaxHealth);
@@ -215,6 +218,11 @@ public sealed class BuildProtectionTests
         // still far below a 100 hp cube's worth of one-shot (the kit's single-digit bonus is meaningful).
         Assert.InRange(player.DerivedStats.MinDamage, 25, 49);
         Assert.InRange(player.DerivedStats.MaxDamage, 50, 99);
+        // Exact: the hammer's +2 Strength reaches the sheet (the Strength term of the geared numbers).
+        Assert.Equal(5 + (2 * (n + 2)), player.DerivedStats.MinDamage);
+        Assert.Equal(10 + (4 * (n + 2)), player.DerivedStats.MaxDamage);
+        Assert.Equal(29, player.DerivedStats.MinDamage);
+        Assert.Equal(58, player.DerivedStats.MaxDamage);
         Assert.Equal(100, player.DerivedStats.MaxHealth);
 
         // Attack speed is nowhere near the cap (at the 1000 origin it sat pinned on it, so Agility and gear
