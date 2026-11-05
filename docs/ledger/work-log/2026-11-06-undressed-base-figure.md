@@ -129,7 +129,7 @@ stays hot, the body is dark.
 Measured: base 0.2780 (az 35 p10 0.0077 p90 0.2857, binding; az 145 p10 0.0083 p90 0.4918). `BASE_SPREAD_MIN`
 0.64 -> 0.25, from the art, with a comment that the number follows the art. Worn set 0.3906 (az 35 p10 0.0084 p90
 0.4063; az 145 p10 0.0135 p90 0.4041): `WORN_SET_SPREAD_MIN` 0.50 is NOT reached and was NOT moved or worked around;
-that check is red pending the owner's decision. GLB 253588 -> 258436 bytes.
+that check was red pending the owner's decision; it was then set to 0.36 from the corrected art (commit 506280fa) and check_char is 0 problems. GLB 253588 -> 258436 bytes.
 
 ## Held items: the same albedo-as-pixel defect (fix/held-item-palette)
 
