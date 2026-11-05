@@ -6,6 +6,7 @@ using Dream.Tests.Support;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
+using Dream.Server.Persistence;
 using Dream.Server.Hosting;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
@@ -51,8 +52,13 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
 
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db, string? world = null, ServerConnectionOptions? options = null)
     {
-        DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(
-            ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath, start: new ServerStartOptions(world)));
+        // A new profile-backed character is created at Strength 1000, so player.min_damage
+        // (5 + strength * 2) is 2005 and max_damage (10 + strength * 4) 4010. These tests were written for
+        // the baseline's Strength 10 (25-50 per hit): a wolf, a dire wolf or a cube falls to the first
+        // swing otherwise. A row that already exists (a restart) is left as the earlier phase stored it.
+        ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath, start: new ServerStartOptions(world));
+        TestStatBaseline.SeedMissingProfiles(bundle.Schema, WorldSessionRuntime.ResolveJoinPlayerName(Session, $"Name {Session}"));
+        DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(bundle);
         WireLoopbackServer server = await WireLoopbackServer.StartAsync(host, options);
         server.Runtime.LootContent = SureVest();
         return server;
@@ -465,6 +471,19 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
         using MigrationTestDatabase db = new();
         await using WireLoopbackServer server = await StartAsync(db);
         await using HeadlessPlayScene client = await HeadlessPlayScene.JoinAsync(server, Session);
+
+        // The server keeps the owner's base stats out of the actor snapshot (OwnerOnlyProgress) and sends
+        // them as ServerPlayerProgress on the 16-tick vitals cadence, the first one just after the join.
+        // Until it lands the client's local combatant holds the bare default sheet, so an equipment push
+        // would recompute max health from Vitality 10 (100) while the join gave it the server's value.
+        // That window is real but closes by itself, so the test starts from a client that has the stats
+        // the way a playing one does.
+        for (int steps = 0; client.Applied.OfType<ServerPlayerProgress>().Count() == 0; steps++)
+        {
+            Assert.True(steps < 4 * WorldSessionRuntime.VitalsIntervalTicks, "no ServerPlayerProgress followed the join");
+            await StepAsync(server, client);
+        }
+
         PlayerCombatant player = client.World.Player.Combatant;
         Vector3 position = client.World.Player.GetWorldPosition();
         int health = player.Health.CurrentHealth;
