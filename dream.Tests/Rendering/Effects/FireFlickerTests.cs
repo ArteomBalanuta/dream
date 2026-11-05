@@ -53,13 +53,39 @@ public class FireFlickerTests
         Assert.True(values.Max() - values.Min() > 0.30f, $"{kind}: range {values.Max() - values.Min():F3}");
     }
 
-    // Pins "not a bulb": half a second later the flicker has decorrelated (four incommensurate
-    // octaves plus gusts); a slow steady pulse would still be strongly correlated.
-    [Fact]
-    public void Autocorrelation_AtHalfASecond_IsLow()
+    // Pins "not a bulb" with two metrics that the previous torch signal (1 + 0.08 * (0.6 sin 11.3t +
+    // 0.4 sin 17.9t)) genuinely fails and the shipped one passes. Measured over 20000 frames at 60 Hz
+    // (seeds 7, 1, 12345; the old signal is seed-independent to three decimals):
+    //                                  old two-sine    shipped
+    //   CV of peak-to-peak intervals      0.23           0.41 - 0.46     (regular vs irregular beat)
+    //   max autocorrelation, lag 1-10 s   0.978          0.80 - 0.83     (quasi-periodic recurrence vs none)
+    // (Lag-0.5 s autocorrelation does NOT separate them: 0.284 old, 0.06 - 0.07 new, both under 0.5.)
+    [Theory]
+    [InlineData(7)]
+    [InlineData(1)]
+    [InlineData(12345)]
+    public void TheFlicker_IsIrregular_AndDoesNotRecur(int seed)
     {
-        float[] values = Series(FireFlickerKind.HeldTorch, 7);
-        Assert.True(Autocorrelation(values, 30) < 0.5, $"lag 0.5 s correlation {Autocorrelation(values, 30):F3}");
+        float[] shipped = Series(FireFlickerKind.HeldTorch, seed);
+        Assert.True(Autocorrelation(shipped, 30) < 0.5, $"lag 0.5 s correlation {Autocorrelation(shipped, 30):F3}");
+
+        float[] old = new float[Samples];
+        double phase = seed * 0.6180339887;
+        for (int i = 0; i < Samples; i++)
+        {
+            double t = i / 60.0;
+            old[i] = (float)(1 + (0.08 * ((0.6 * Math.Sin((t * 11.3) + phase)) + (0.4 * Math.Sin((t * 17.9) + (phase * 2.3))))));
+        }
+
+        double shippedCv = PeakIntervalCv(shipped);
+        double oldCv = PeakIntervalCv(old);
+        Assert.True(oldCv < 0.30, $"old signal CV {oldCv:F3}");
+        Assert.True(shippedCv > 0.35, $"shipped CV {shippedCv:F3}");
+
+        double shippedRecurrence = MaxAutocorrelation(shipped, 60, 600);
+        double oldRecurrence = MaxAutocorrelation(old, 60, 600);
+        Assert.True(oldRecurrence > 0.95, $"old signal recurrence {oldRecurrence:F3}");
+        Assert.True(shippedRecurrence < 0.90, $"shipped recurrence {shippedRecurrence:F3}");
     }
 
     [Fact]
@@ -170,10 +196,83 @@ public class FireFlickerTests
         Assert.Equal(FireFlicker.Sample(FireFlickerKind.Brazier, Position, 4.2, 0).Intensity, FireFlicker.IntensityOf(in brazier, 4.2));
     }
 
+    // The halo's size and the light's intensity are both driven by the one clock value the frame
+    // carries (FxFrameInputs.ClockSeconds = the presentation clock the lights flicker on).
+    [Fact]
+    public void ABrazierHalo_AndItsLight_AreDrivenByTheSameClock()
+    {
+        Vector3 centre = new(10.5f, 3.5f, 5.5f);
+        Vector3 camera = new(10f, 3f, 12f);
+        FxViewBasis basis = new(Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ);
+
+        (float HalfSize, float LightIntensity) Frame(double clock)
+        {
+            PointLight light = LampLightIndex.CreateLight(centre, clock);
+            FxSimulation simulation = new(1u);
+            FxFrameInputs inputs = new(1f / 60f, camera, -Vector3.UnitZ, camera, 1f, basis, clock);
+            simulation.Advance(in inputs, [light]);
+            FxInstance[] instances = new FxInstance[FxLimits.MaxInstances];
+            int count = simulation.WriteInstances(instances);
+            FxInstance halo = instances.Take(count).Single(i => i.Frame == (float)FxFrame.Halo);
+            return (halo.HalfSize, light.Color.X / LampLightIndex.LampColor.X);
+        }
+
+        (float halfA, float lightA) = Frame(3.1);
+        (float halfB, float lightB) = Frame(3.1);
+        Assert.Equal(halfA, halfB);
+        Assert.Equal(lightA, lightB);
+
+        // The halo size is a function of the light's own intensity: same clock, same flicker.
+        Assert.Equal(1.25f * (1f + (0.35f * (lightA - 1f))), halfA, 4);
+
+        bool moved = false;
+        for (double clock = 3.2; clock < 6.0; clock += 0.13)
+        {
+            (float half, float light) = Frame(clock);
+            Assert.Equal(1.25f * (1f + (0.35f * (light - 1f))), half, 4);
+            moved |= MathF.Abs(half - halfA) > 1e-3f && MathF.Abs(light - lightA) > 1e-3f;
+        }
+
+        Assert.True(moved, "advancing the clock must change halo size and light intensity together");
+    }
+
     private static FxSimulation.FxLightClass Classify(float radius)
     {
         FxSimulation.TryClassify(radius, out FxSimulation.FxLightClass lightClass);
         return lightClass;
+    }
+
+    private static double MaxAutocorrelation(float[] values, int fromLag, int toLag)
+    {
+        double best = double.MinValue;
+        for (int lag = fromLag; lag <= toLag; lag++)
+        {
+            best = Math.Max(best, Autocorrelation(values, lag));
+        }
+
+        return best;
+    }
+
+    // Coefficient of variation of the gaps between successive local maxima.
+    private static double PeakIntervalCv(float[] values)
+    {
+        List<double> gaps = [];
+        int previous = -1;
+        for (int i = 1; i < values.Length - 1; i++)
+        {
+            if (values[i] > values[i - 1] && values[i] >= values[i + 1])
+            {
+                if (previous >= 0)
+                {
+                    gaps.Add((i - previous) / 60.0);
+                }
+
+                previous = i;
+            }
+        }
+
+        double mean = gaps.Average();
+        return Math.Sqrt(gaps.Sum(g => (g - mean) * (g - mean)) / gaps.Count) / mean;
     }
 
     private static double Autocorrelation(float[] values, int lag)

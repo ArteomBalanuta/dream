@@ -58,7 +58,9 @@ public partial class PlayScene
             presentation.Camera.Front,
             _runtime.Player.GetWorldPosition(),
             sky.StarVisibility,
-            basis);
+            basis,
+            // The clock the lights flicker on, so a halo breathes with its own light.
+            _clientPresentationTimeSeconds);
         _fxLastNight = sky.StarVisibility;
         flashes.Advance(deltaSeconds);
         simulation.Advance(in inputs, _render.Lights.Lights);
