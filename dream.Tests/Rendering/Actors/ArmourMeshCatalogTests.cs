@@ -322,6 +322,24 @@ public class ArmourMeshCatalogTests
         Assert.True(panels.Select(p => MathF.Round(p.Center.Z, 2)).Distinct().Count() >= 3, $"{id} panels share a depth");
     }
 
+    [Theory]
+    [InlineData("worn.back.hooded-cloak", 3)]
+    [InlineData("worn.back.grave-mantle", 2)]
+    public void LongCloaks_HaveAScallopedHem(string id, int minFolds)
+    {
+        // The hem is several side-by-side boxes whose bottoms differ, so the lower outline steps
+        // instead of running as one straight line. Folds are the boxes reaching the lowest tier.
+        (Vector3 min, _) = Union(Model(id));
+        float[] bottoms = [.. Model(id).Parts
+            .Where(p => p.Center.Z <= -0.30f && PartBounds(p).Item1.Y < min.Y + 0.25f)
+            .Select(p => MathF.Round(PartBounds(p).Item1.Y, 2))];
+        Assert.True(bottoms.Length >= minFolds, $"{id} has {bottoms.Length} hem boxes");
+        Assert.True(bottoms.Distinct().Count() >= minFolds, $"{id} hem bottoms are level");
+        Assert.True(bottoms.Max() - bottoms.Min() >= 0.05f, $"{id} hem steps only {bottoms.Max() - bottoms.Min()}");
+        // Every fold still covers the baked hem.
+        Assert.All(bottoms, b => Assert.True(b < BakedCloakHem, $"{id} fold bottom {b}"));
+    }
+
     [Fact]
     public void TheFourBackItems_DifferStronglyInSilhouette()
     {
