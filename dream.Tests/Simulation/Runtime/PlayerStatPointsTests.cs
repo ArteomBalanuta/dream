@@ -13,14 +13,19 @@ namespace Dream.Tests.Simulation.Runtime;
 // M2-A: stat points are derived from the level and the base stats, spent through
 // PlayerStatSpendIntent, and checked by the server on every server (not only with dev commands).
 // Since the stats sheet merge the four attributes (Strength, Agility, Vitality, Energy) take points
-// and Attack Speed does not (it comes from Agility); caps are PlayerCombatStats' (1000).
+// and Attack Speed does not (it comes from Agility); caps are PlayerCombatStats' (10000, AttributeCeiling).
+// Points are measured from the creation value (PlayerStatRules.NewCharacterAttribute, 1000), so every
+// character here is built from that origin; a combatant a host has not loaded a profile into still holds
+// the unseeded 10, below the origin, which counts as nothing spent and so cannot show a budget at all.
 public class PlayerStatPointsTests
 {
     private const string SessionA = "session-a";
     private const string SessionB = "session-b";
 
-    // A stored character starts at Agility 10 and Energy 10 (PersistedPlayerProfile.CreateDefault).
-    private static PlayerCombatStats Stats(int strength = 10, float attackSpeed = 2f, int vitality = 10, int agility = 10, int energy = 10) =>
+    private const int Origin = PlayerStatRules.NewCharacterAttribute;
+
+    // A new character as it is created: every attribute at 1000 (PersistedPlayerProfile.CreateDefault), 0 spent.
+    private static PlayerCombatStats Stats(int strength = Origin, float attackSpeed = 2f, int vitality = Origin, int agility = Origin, int energy = Origin) =>
         new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality, Agility = agility, Energy = energy };
 
     [Theory]
@@ -37,17 +42,20 @@ public class PlayerStatPointsTests
     [Fact]
     public void PointsAvailable_CountsStrengthVitalityAndEveryFiveHundredthsOfAttackSpeed()
     {
-        // 3 + 2 + 4 steps (2.0 -> 2.2) = 9 spent of 10 earned at level 3.
-        Assert.Equal(1, PlayerStatRules.PointsAvailable(3, Stats(13, 2.2f, 12)));
+        // 3 + 2 + 4 steps (2.0 -> 2.2) = 9 spent of 10 earned at level 3 (5 * (3 - 1)), from the 1000 origin.
+        Assert.Equal(1, PlayerStatRules.PointsAvailable(3, Stats(Origin + 3, 2.2f, Origin + 2)));
     }
 
     [Fact]
     public void PointsAvailable_IsZeroNotNegative_ForAnOverBudgetCharacter()
     {
-        PlayerCombatStats freeSliders = Stats(50, 5f, 50);
+        // Spent from the 1000 origin: 50 + 50 + 60 steps (2.0 -> 5.0 at 0.05) = 160, over the 20 that level 5 earns
+        // (5 * (5 - 1)). Values near 50 would sit below the origin and count as nothing spent.
+        PlayerCombatStats freeSliders = Stats(Origin + 50, 5f, Origin + 50);
         Assert.Equal(0, PlayerStatRules.PointsAvailable(1, freeSliders));
         Assert.Equal(0, PlayerStatRules.PointsAvailable(5, freeSliders));
-        Assert.True(PlayerStatRules.PointsSpent(freeSliders) > 20);
+        Assert.Equal(160, PlayerStatRules.PointsSpent(freeSliders));
+        Assert.True(PlayerStatRules.PointsSpent(freeSliders) > PlayerStatRules.PointsEarned(5));
     }
 
     [Fact]
@@ -57,7 +65,7 @@ public class PlayerStatPointsTests
         Assert.False(host.DevCommandsAllowed);
         PlayerCombatant a = Combatant(host, SessionA);
         a.ApplyBaseStats(Stats());
-        a.ApplyProgression(3, 0);
+        a.ApplyProgression(3, 0); // 10 points: 4 + 1 + 2 + 3
 
         Assert.True(Spend(host, SessionA, 1, StatId.Strength, 4).Accepted);
         Assert.True(Spend(host, SessionA, 2, StatId.Vitality, 1).Accepted);
@@ -65,10 +73,10 @@ public class PlayerStatPointsTests
         AuthoritativeActionResult energy = Spend(host, SessionA, 4, StatId.Energy, 3);
 
         Assert.True(energy.Accepted, energy.Rejection?.Reason);
-        Assert.Equal(14, a.BaseStats.Strength);
-        Assert.Equal(11, a.BaseStats.Vitality);
-        Assert.Equal(12, a.BaseStats.Agility);
-        Assert.Equal(13, a.BaseStats.Energy);
+        Assert.Equal(Origin + 4, a.BaseStats.Strength);
+        Assert.Equal(Origin + 1, a.BaseStats.Vitality);
+        Assert.Equal(Origin + 2, a.BaseStats.Agility);
+        Assert.Equal(Origin + 3, a.BaseStats.Energy);
         Assert.Equal(0, PlayerStatRules.PointsAvailable(a.Level, a.BaseStats));
         Assert.Equal(
             PlayerCombatStatsSnapshot.From(a.BaseStats),
@@ -80,7 +88,8 @@ public class PlayerStatPointsTests
     {
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
-        a.ApplyProgression(2, 0);
+        a.ApplyBaseStats(Stats());
+        a.ApplyProgression(2, 0); // 5 points
         PlayerCombatStatsSnapshot before = PlayerCombatStatsSnapshot.From(a.BaseStats);
 
         AuthoritativeActionResult result = Spend(host, SessionA, 1, StatId.Strength, 6);
@@ -92,8 +101,8 @@ public class PlayerStatPointsTests
         // Two spends that together pass the budget: the second is the one refused.
         Assert.True(Spend(host, SessionA, 2, StatId.Strength, 3).Accepted);
         Assert.False(Spend(host, SessionA, 3, StatId.Vitality, 3).Accepted);
-        Assert.Equal(13, a.BaseStats.Strength);
-        Assert.Equal(10, a.BaseStats.Vitality);
+        Assert.Equal(Origin + 3, a.BaseStats.Strength);
+        Assert.Equal(Origin, a.BaseStats.Vitality);
     }
 
     [Theory]
@@ -104,6 +113,7 @@ public class PlayerStatPointsTests
     {
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
+        a.ApplyBaseStats(Stats());
         a.ApplyProgression(5, 0);
         Assert.True(Spend(host, SessionA, 1, StatId.Strength, 5).Accepted);
         PlayerCombatStatsSnapshot before = PlayerCombatStatsSnapshot.From(a.BaseStats);
@@ -119,10 +129,11 @@ public class PlayerStatPointsTests
     {
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
+        a.ApplyBaseStats(Stats());
         a.ApplyProgression(int.MaxValue, 0);
 
         Assert.False(Spend(host, SessionA, 1, StatId.Strength, int.MaxValue).Accepted);
-        Assert.Equal(10, a.BaseStats.Strength);
+        Assert.Equal(Origin, a.BaseStats.Strength);
     }
 
     [Theory]
@@ -135,6 +146,7 @@ public class PlayerStatPointsTests
     {
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
+        a.ApplyBaseStats(Stats());
         a.ApplyProgression(10, 0);
         PlayerCombatStatsSnapshot before = PlayerCombatStatsSnapshot.From(a.BaseStats);
 
@@ -149,8 +161,10 @@ public class PlayerStatPointsTests
     {
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
-        // Enough levels that the budget is not what stops the spends below (5 * 799 points).
-        a.ApplyProgression(800, 0);
+        // Enough levels that the budget is not what stops the spends below. The most any one case needs is
+        // an attribute at the 10000 ceiling, 9000 above the 1000 origin, plus a point or two: level 2000 earns
+        // 5 * 1999 = 9995.
+        a.ApplyProgression(2000, 0);
 
         // One under the cap: the over-cap spend is refused, not clamped.
         a.ApplyBaseStats(Stats(strength: PlayerCombatStats.MaxStrength - 1));
@@ -182,7 +196,8 @@ public class PlayerStatPointsTests
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
         a.ApplyProgression(2, 0);
-        a.ApplyBaseStats(Stats(30, 3f, 20));
+        // Spent from the 1000 origin: 30 + 20 + 20 steps (2.0 -> 3.0) = 70, against 5 earned at level 2 and 15 at level 4.
+        a.ApplyBaseStats(Stats(Origin + 30, 3f, Origin + 20));
         PlayerCombatStatsSnapshot kept = PlayerCombatStatsSnapshot.From(a.BaseStats);
 
         Assert.Equal(0, PlayerStatRules.PointsAvailable(a.Level, a.BaseStats));
@@ -201,6 +216,7 @@ public class PlayerStatPointsTests
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
         PlayerCombatStatsSnapshot bBefore = StatsOf(host, SessionB);
+        a.ApplyBaseStats(Stats());
         a.ApplyProgression(10, 0);
 
         // B is level 1 with no points; A's 45 points are not B's.
@@ -209,7 +225,7 @@ public class PlayerStatPointsTests
 
         // A's spend lands on A only.
         Assert.True(Spend(host, SessionA, 1, StatId.Strength, 5).Accepted);
-        Assert.Equal(15, a.BaseStats.Strength);
+        Assert.Equal(Origin + 5, a.BaseStats.Strength);
         Assert.Equal(bBefore, StatsOf(host, SessionB));
     }
 
