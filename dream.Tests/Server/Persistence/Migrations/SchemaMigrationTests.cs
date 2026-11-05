@@ -57,8 +57,9 @@ public sealed class SchemaMigrationTests
         Assert.Equal("quickbar_mana", migrations[12].Name);
         Assert.IsType<SqlScriptMigration>(migrations[13]);
         Assert.Equal(14, migrations[13].Version);
-        Assert.Equal(15, migrations[14].Version);
         Assert.Equal("party_quests_admin", migrations[13].Name);
+        Assert.Equal(15, migrations[14].Version);
+        Assert.Equal("attribute_origin", migrations[14].Name);
         Assert.Equal(15, MigrationTestDatabase.ShippedLatestVersion);
     }
 

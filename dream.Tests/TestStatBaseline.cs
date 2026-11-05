@@ -16,7 +16,8 @@ namespace Dream.Tests;
 // swung for 2005-4010 and one-shot a 100 hp cube, so these helpers were what kept the harnesses
 // meaningful. The start is back at PlayerStatRules.NewCharacterAttribute = 10 (the ceiling stays 10000
 // as gear headroom), so Profile(...) is now byte-identical to PersistedPlayerProfile.CreateDefault(...)
-// and PinTo is a no-op on a profile-backed character.
+// and PinTo is a no-op on a profile-backed character with no spends (one that has spent points
+// is pinned back to the baseline).
 //
 // These numbers are the tests' own, on purpose. They must not be wired to the shipping default: the
 // point of pinning them is that changing what players start with does not silently rewrite what these
@@ -56,7 +57,7 @@ public static class TestStatBaseline
     }
 
     // Writes baseline profile rows before a server is started, so the join finds them and
-    // GetOrCreate never makes a new character at the ceiling. This is how an integration test
+    // GetOrCreate finds a row instead of creating one with the shipping default. This is how an integration test
     // states the stats its combat, spend or byte expectations were written against.
     public static void SeedProfiles(SqliteSchemaBootstrapper schema, params string[] playerNames)
     {

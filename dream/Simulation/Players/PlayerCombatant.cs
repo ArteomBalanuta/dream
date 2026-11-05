@@ -35,9 +35,10 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
     // Share of incoming damage taken, from player.damage_taken_factor, evaluated for MitigationArmor.
     // Cached: it is evaluated only when MitigationArmor differs from the armor it was last evaluated for
     // (never per hit, and not on the client's per-snapshot ApplyBaseStats). 1.0 only at MitigationArmor 0,
-    // which a default character is not: the shipping default of Agility 1000 gives Defense 250, so a
-    // naked character takes 100 / (100 + 250) = 28.6% of incoming damage (the unseeded test sheet's
-    // Agility 10 gives Defense 2, ~2% mitigation). Defense is not clamped (Agility / 4, up to 2500).
+    // which a default character barely escapes: the shipping default of Agility 10 gives Defense 2, so a
+    // naked character takes 100 / (100 + 2) = ~98% of incoming damage (the unseeded test sheet is the
+    // same Agility 10, since UnseededAttribute equals the shipping default). Defense is not clamped
+    // (Agility / 4, up to 2500).
     public double DamageTakenFactor { get; private set; } = 1.0;
 
     private int _factorArmor;

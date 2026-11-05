@@ -58,6 +58,11 @@ public sealed class MasterMpGapTests
             // The worn starter kit adds attack speed on top of the base 2.0; the cap used to hide that. Recover it
             // from the pre-spend value so the derived-value check below holds exactly.
             gearAttackSpeed = attackSpeedBefore - PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed, PlayerStatRules.NewCharacterAttribute);
+            // Pins the recovered gear term to the shipped starter kit: EquipFirstOccupiedSlotIfNone main-hands the
+            // builder hammer (items.json: AttackSpeed Flat 0.25) and off-hands the torch (no modifiers). This is the
+            // only place the starter kit's tempo is pinned end to end; without it, worn gear that stopped reaching
+            // the sheet would make gearAttackSpeed compute 0 and every check below would still pass.
+            Assert.Equal(0.25f, gearAttackSpeed, 4);
 
             ServerActionMessage agility = await M4AKit.ActAsync(server, a, new PlayerStatSpendIntent(StatId.Agility, 4), a);
             Assert.True(agility.Result.Accepted, agility.Result.Rejection?.Reason);

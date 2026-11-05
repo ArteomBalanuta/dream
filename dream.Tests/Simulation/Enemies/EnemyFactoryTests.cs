@@ -179,8 +179,8 @@ public sealed class EnemyFactoryTests
     }
 
     // The enemy base ceiling is a damage ceiling, because `enemy.attack_damage = strength + 2`. It must
-    // stay far below the player stat ceiling (1000 since the character sheet landed): clamping an enemy
-    // with the player cap turns a tampered or corrupt row's bite from 52 into 1002, which one-shots any
+    // stay far below the player stat ceiling (10000): clamping an enemy
+    // with the player cap turns a tampered or corrupt row's bite from 52 into 10002, which one-shots any
     // player through a base max health of 100 regardless of gear. The shipped templates top out at
     // Strength 40 (Wolf 10, DireWolf 16, AshenProwler 24, GraveHowler 40), so 50 keeps real headroom.
     // Do not widen this to the player ceiling, and do not re-pin it upward to make a failure go away.

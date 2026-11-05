@@ -9,10 +9,27 @@
 -- 990 = 1000 - 10, so 1000 + n becomes 10 + n and (attr - Start) is bit-identical across the
 -- migration: every genuine spend is preserved exactly. That identity is the whole point of this script.
 --
--- The >= 1000 guard protects characters stored before a39702e6. Subtracting unconditionally and
--- flooring at 10 would delete a legacy character's spends (a stored 14 would become 10 and lose 4
--- earned points). A character that genuinely spent its way to 1000 under the old 10 origin would have
--- needed 990 points, i.e. level 199, which no stored character has.
+-- Which rows move is decided by creation time, not by the attribute values. Before commit 1f422512 the
+-- attribute ceiling (PlayerCombatStats.MaxStrength/MaxVitality/MaxAgility/MaxEnergy) was 1000 and the
+-- property setters clamp, so a character created before a39702e6 -- when the schema default and the
+-- origin were both 10, and before the point budget of 751c9fd9 existed at all -- could sit at exactly
+-- 1000 without a single point of the new origin behind it: every over-cap free-slider write was stored
+-- as 1000. Attributes and level cannot tell that character from one created at the 1000 origin, so
+-- neither a ">= 1000" test nor any point-budget arithmetic can separate them. created_utc can: a row
+-- created before a39702e6 (2026-11-04T19:44:37Z, committed 21:44:37 +02:00) cannot have been created at
+-- 1000, and is left exactly as stored. created_utc is TEXT in strftime('%Y-%m-%dT%H:%M:%fZ') form, so it
+-- compares lexicographically; the comparison is >= so a row created at the cutoff instant migrates.
+--
+-- Erring late is deliberate. A 1000-origin character that is spared keeps its stats but reads as ~3960
+-- points overspent against the 10 origin, so its stats become unspendable until an operator fixes
+-- them: bad, but reversible. A legacy character that is wrongly migrated has ~990 points of real
+-- investment destroyed in place, recoverable only from the automatic .v0014-to-v0015 backup.
+-- Unspendable-but-intact beats silently destroyed.
+--
+-- Within a migrated row the per-attribute ">= 1000" CASE is still kept, so an attribute below 1000
+-- (a spend-free 10, say) is not driven negative or floored. A stored 2000 becomes 1010: it is 1000
+-- above the old origin and 1010 is 1000 above the new one, so the spend is preserved. Migrations are
+-- versioned and run once per database, so the script need not be idempotent.
 --
 -- Deliberately not done:
 --   * No health backfill. player.max_health (50 + vitality * 5) lives in the combat_formulas table and
@@ -32,4 +49,5 @@ SET strength = CASE WHEN strength >= 1000 THEN strength - 990 ELSE strength END,
     agility  = CASE WHEN agility  >= 1000 THEN agility  - 990 ELSE agility  END,
     vitality = CASE WHEN vitality >= 1000 THEN vitality - 990 ELSE vitality END,
     energy   = CASE WHEN energy   >= 1000 THEN energy   - 990 ELSE energy   END
-WHERE strength >= 1000 OR agility >= 1000 OR vitality >= 1000 OR energy >= 1000;
+WHERE (strength >= 1000 OR agility >= 1000 OR vitality >= 1000 OR energy >= 1000)
+  AND created_utc >= '2026-11-04T19:44:37Z';

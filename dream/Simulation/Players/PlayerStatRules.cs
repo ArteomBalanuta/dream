@@ -17,15 +17,19 @@ public static class PlayerStatRules
     // writes it. It is 10, not 1000, and the reason is itemisation as much as combat. Every formula
     // that consumes an attribute (player.min_damage = 5 + strength * 2, player.max_health =
     // 50 + vitality * 5, Defense = agility / 4, attack speed + 0.01 * agility) is tuned for attributes
-    // around 10, and so is all of the gear: every attribute bonus in content/items.json is
-    // single-digit (+1/+2/+4/+8 flats; rolled Strength 4-9, Vitality 0-6, Armor 1-11). At an origin
-    // of 10 a +8 ring is a real upgrade; at 1000 it is a 0.8% rounding error. Rescaling the
+    // around 10, and so is all of the gear: the attribute bonuses in content/items.json are small
+    // (Strength flats +1/+2/+4/+8; the largest rolled maxima are Strength 19, Armor 19, Energy 14,
+    // Agility 12, Vitality 9). At an origin of 10 a +8 ring is a real upgrade; at 1000 it is a 0.8%
+    // rounding error. Rescaling the
     // coefficients by 1/100 would have repaired combat while leaving every item meaningless, so the
     // origin moved back instead. PlayerCombatStats.AttributeCeiling (10000) is kept deliberately as
     // gear and level headroom above it. Migration 0015_attribute_origin.sql moves stored characters
-    // onto this origin (subtracting 990 only where an attribute is >= 1000, which leaves characters
-    // stored before a39702e6 untouched: an unconditional subtract floored at 10 would turn a legacy
-    // stored 14 into 10 and silently delete 4 earned points) so their PointsSpent is unchanged.
+    // onto this origin, subtracting 990 so PointsSpent is unchanged, and only for characters created
+    // at or after a39702e6 (created_utc >= 2026-11-04T19:44:37Z). Before 1f422512 the attribute
+    // ceiling was 1000 and the setters clamp, so an older character could sit at exactly 1000 without
+    // having spent anything; attributes and level cannot tell it from a 1000-origin character, so
+    // creation time decides. Erring late is deliberate: a spared 1000-origin character is intact but
+    // unspendable until fixed, while a wrongly migrated legacy one would lose ~990 points in place.
     public const int NewCharacterAttribute = 10;
 
     // The origin the point count measures from: deliberately the same number a new character is

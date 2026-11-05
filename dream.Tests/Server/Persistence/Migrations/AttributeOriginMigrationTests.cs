@@ -6,8 +6,10 @@ using Xunit;
 namespace Dream.Tests.Server.Persistence.Migrations;
 
 // Migration 0015 moves characters stored on the 1000 attribute origin (commit a39702e6) onto the 10
-// origin by subtracting 990 from any attribute at or above 1000, so PointsSpent is unchanged and a
-// pre-a39702e6 character, whose attributes sit near 10, is left alone.
+// origin by subtracting 990 from any attribute at or above 1000, so PointsSpent is unchanged. Only rows
+// created at or after a39702e6 (2026-11-04T19:44:37Z) move: before 1f422512 the ceiling was 1000 and the
+// setters clamp, so an older character can sit at exactly 1000 having spent nothing, and creation time
+// is the only thing that separates it from a 1000-origin character.
 public sealed class AttributeOriginMigrationTests
 {
     private static MigrationTestDatabase V14With(string values)
@@ -75,6 +77,52 @@ public sealed class AttributeOriginMigrationTests
         database.Schema.EnsureSchema();
 
         Assert.Equal("10/12/14/11", Stats(database, "hero"));
+    }
+
+    [Fact]
+    public void A1000CharacterCreatedAfterTheCutoff_IsMigratedToTens()
+    {
+        using MigrationTestDatabase database = V14With("('hero', 'Hero', 1000, 1000, 1000, 1000)");
+        database.ExecuteScript("UPDATE player_profiles SET created_utc = '2026-11-04T19:44:38Z' WHERE player_name = 'hero';");
+        SqliteConnection.ClearAllPools();
+
+        database.Schema.EnsureSchema();
+
+        Assert.Equal("10/10/10/10", Stats(database, "hero"));
+    }
+
+    [Fact]
+    public void A1000CharacterCreatedBeforeTheCutoff_IsUntouched_SoAClampedLegacyCharacterKeepsItsInvestment()
+    {
+        using MigrationTestDatabase database = V14With("('legacy', 'Legacy', 1000, 12, 1000, 10)");
+        database.ExecuteScript("UPDATE player_profiles SET created_utc = '2026-11-04T19:44:36Z' WHERE player_name = 'legacy';");
+        SqliteConnection.ClearAllPools();
+
+        database.Schema.EnsureSchema();
+
+        Assert.Equal("1000/12/1000/10", Stats(database, "legacy"));
+    }
+
+    [Fact]
+    public void ACharacterCreatedExactlyAtTheCutoff_IsMigrated()
+    {
+        using MigrationTestDatabase database = V14With("('edge', 'Edge', 1000, 1000, 1005, 1000)");
+        database.ExecuteScript("UPDATE player_profiles SET created_utc = '2026-11-04T19:44:37Z' WHERE player_name = 'edge';");
+        SqliteConnection.ClearAllPools();
+
+        database.Schema.EnsureSchema();
+
+        Assert.Equal("10/10/15/10", Stats(database, "edge"));
+    }
+
+    [Fact]
+    public void AStored2000CreatedAfterTheCutoff_Becomes1010_BecauseTheSpendIsPreserved()
+    {
+        using MigrationTestDatabase database = V14With("('hero', 'Hero', 2000, 1000, 1000, 1000)");
+
+        database.Schema.EnsureSchema();
+
+        Assert.Equal("1010/10/10/10", Stats(database, "hero"));
     }
 
     [Fact]
