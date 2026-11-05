@@ -183,6 +183,7 @@ public sealed class InventoryScene : IDisposable
     public InventoryScene()
     {
         InventoryUiState.Reset();
+        ClassicHud.Reset();
         Assert.True(UiSpriteTable.TryLoad(AssetPaths.UiDirectory, out UiSpriteTable? table, out string error), error);
         Table = table!;
         Canvas = new InventoryFakeCanvas(Table);

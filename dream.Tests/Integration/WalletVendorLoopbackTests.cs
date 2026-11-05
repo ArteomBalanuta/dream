@@ -22,7 +22,6 @@ namespace Dream.Tests.Integration;
 // pays gold, the vendor replicates as an actor, and every trade is checked by the server again (range,
 // stock, gold, the item named). The wallet is a delta inside each action's own write, so a write that fails
 // leaves gold and item together, and the gold survives a restart.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class WalletVendorLoopbackTests
 {
     private const string Session = "vendor-e2e";
@@ -218,7 +217,7 @@ public sealed class WalletVendorLoopbackTests
         }
 
         // A restart: the wallet row is in the database and the rejoining client is told it.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await using WireLoopbackServer again = await StartAsync(db);
         await using HeadlessPlayScene back = await HeadlessPlayScene.JoinAsync(again, Session);
         Assert.Equal(goldAtTheEnd, back.Inventory!.Value.Gold);
@@ -262,7 +261,7 @@ public sealed class WalletVendorLoopbackTests
 
         // After a restart the character has the rows' state: the old gold and no extra item. Nothing was
         // duplicated and no gold was lost without the item to show for it.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         db.ExecuteScript("DROP TRIGGER fail_wallet;");
         await using WireLoopbackServer again = await StartAsync(db);
         await using HeadlessPlayScene back = await HeadlessPlayScene.JoinAsync(again, Session);

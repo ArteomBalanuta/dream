@@ -27,7 +27,6 @@ namespace Dream.Tests.Integration;
 // equipped and reduces the next bite, the player dies, waits, respawns at the spawn with the item, and
 // the item survives a restart and a --worlds copy. The other tests here pin how a push interleaves with
 // the messages around it: an inventory result, a world resync and a world transfer (plan risk 10).
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
 {
     private const string Session = "dire-e2e";
@@ -270,14 +269,14 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
             await client.LeaveAsync();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await RestartAndCheckAsync(db, world: null, worn);
 
         StringWriter stdout = new();
         StringWriter stderr = new();
         int exit = WorldCli.Run(["copy", "1", "dire-copy"], () => new SqliteWorldCatalog(db.Schema), stdout, stderr, id => WorldHostLease.TryAcquire(db.DatabasePath, id));
         Assert.True(exit == 0, stderr.ToString());
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await RestartAndCheckAsync(db, "dire-copy", worn);
     }
 

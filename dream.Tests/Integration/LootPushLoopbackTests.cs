@@ -14,7 +14,6 @@ namespace Dream.Tests.Integration;
 // Wave I2 (I-D18 to I-D20): a kill's loot reaches the killer as an InventoryPushMessage over a real
 // connection, before that tick's snapshot, to the killer only, and never as an action result (kills happen
 // inside the tick golden, which hashes every result). A full backpack sends a notice and no snapshot.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class LootPushLoopbackTests
 {
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db)

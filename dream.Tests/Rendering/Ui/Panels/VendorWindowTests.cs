@@ -257,6 +257,31 @@ public sealed class VendorWindowTests : IDisposable
     }
 
     [Fact]
+    public void ClassicHudOnThisThread_IgnoresATradeAndADialogueAnotherThreadBound()
+    {
+        // A PlayScene test running at the same time binds ClassicHud.Trade and Quests with a window open.
+        // They were process-wide, so the character window disappeared from this thread's HUD.
+        Thread other = new(() =>
+        {
+            TradeHudState trade = new();
+            trade.Open(TradeHudStage.Open, "Bob", default, 0, false, false, default, 0, false, false);
+            ClassicHud.Trade = trade;
+            QuestHudState quests = new();
+            quests.OpenDialogue(5, "Elder", "Hello", null);
+            ClassicHud.Quests = quests;
+        });
+        other.Start();
+        other.Join();
+
+        InventoryFakeCanvas plain = new(_scene.Table);
+        ClassicHud.Build(plain, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _actions);
+
+        Assert.True(plain.HasText("Character"));
+        Assert.Null(ClassicHud.Trade);
+        Assert.Null(ClassicHud.Quests);
+    }
+
+    [Fact]
     public void AClickInAVendorRowGap_SendsNoPickupForAGroundLabelBehindTheWindow()
     {
         OpenVendor(new VendorStockLine("tool.torch", "Torch", 12), new VendorStockLine("tool.field-blade", "Field Blade", 300));

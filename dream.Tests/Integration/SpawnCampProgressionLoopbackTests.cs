@@ -26,7 +26,6 @@ namespace Dream.Tests.Integration;
 // content (the test assembly's default has no camps). The camps replicate to the client, a server-side
 // level-up reaches the client's panel, a point is spent through the HUD's own path (SpendAction,
 // ToInventoryIntent, QueuePlayerAction), and the stats survive a rejoin and a restart.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class SpawnCampProgressionLoopbackTests
 {
     private const string Session = "camp-progress";
@@ -144,7 +143,7 @@ public sealed class SpawnCampProgressionLoopbackTests
         }
 
         // A restart keeps them too, and the camps are restored rather than doubled.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await using (WireLoopbackServer restarted = await StartAsync(db))
         {
             await using HeadlessPlayScene client = await HeadlessPlayScene.JoinAsync(restarted, Session);
@@ -169,7 +168,7 @@ public sealed class SpawnCampProgressionLoopbackTests
             await client.LeaveAsync();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         SqlitePlayerProfileRepository profiles = new(db.Schema);
         PersistedPlayerProfile old = profiles.TryGet($"Name {Session}")!.Value;
         profiles.Save(old with { Stats = old.Stats with { Level = 1, Experience = 1500 } });

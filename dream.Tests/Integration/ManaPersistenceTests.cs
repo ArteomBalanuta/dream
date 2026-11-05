@@ -12,7 +12,6 @@ namespace Dream.Tests.Integration;
 // checkpoints, restored on join (clamped to the maximum, which is what lets migration 0013's backfill
 // leave returning characters at full mana), reset when a seat changes hands, refilled by a respawn and
 // frozen while dead. Real server, real database, shipped content.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class ManaPersistenceTests
 {
     private const string SessionA = "m4a-mana-a";
@@ -38,7 +37,7 @@ public sealed class ManaPersistenceTests
             Assert.Equal(spentTo, M4AKit.Count(db, $"SELECT current_energy FROM player_world_state WHERE player_name = '{keyA}'"));
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await using (WireLoopbackServer again = await M4AKit.StartAsync(db))
         {
             await using HeadlessPlayScene back = await M4AKit.JoinAsync(again, SessionA);
@@ -68,9 +67,9 @@ public sealed class ManaPersistenceTests
             M4AKit.Flush(server);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         db.ExecuteScript($"UPDATE player_world_state SET current_energy = 1000000 WHERE player_name = '{keyA}'");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
 
         await using (WireLoopbackServer again = await M4AKit.StartAsync(db))
         {

@@ -42,7 +42,6 @@ namespace Dream.Tests.Integration;
 // ClientActionSequenceTracker is one counter, advanced past every command it sends
 // (PlayScene.RunPredictionTick) and every result it receives. So it is a harness property, not a client
 // bug; this class drives the scene's own tracker the way Update does.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class M3EndToEndLoopbackTests
 {
     private const string SessionA = "m3e2e-a";
@@ -476,7 +475,7 @@ public sealed class M3EndToEndLoopbackTests
             Flush(server);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         Assert.Equal(0, Count(db, "SELECT COUNT(*) FROM item_instances WHERE state = 'Ground'"));
         Assert.Equal(goldAtTheEnd, Count(db, $"SELECT COALESCE(SUM(gold), 0) FROM player_wallets WHERE player_name = '{keyA}'"));
 

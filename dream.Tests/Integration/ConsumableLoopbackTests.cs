@@ -155,7 +155,6 @@ internal static class M4AKit
 // Potions end to end (M4 workstream A): bought from the shipped vendor, used through ItemUseIntent over
 // a real connection. The answer is an InventoryChangedResult (the host orders loot pushes against that
 // payload); mana and cooldowns reach the owner alone as ServerPlayerVitals.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class ConsumableLoopbackTests
 {
     private const string SessionA = "m4a-pot-a";

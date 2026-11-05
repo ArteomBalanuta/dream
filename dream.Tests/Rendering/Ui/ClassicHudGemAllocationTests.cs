@@ -13,6 +13,7 @@ namespace Dream.Tests.Rendering.Ui;
 // Classic HUD iteration 2 verification: the plan's gate "0 B per frame on the surface test, with the gem
 // animating". The health changes every frame, so the eased level, the surface phase and the glint all
 // move, and the real UiBatch records the frame.
+[Collection(TimingSensitiveCollection.Name)]
 public sealed class ClassicHudGemAllocationTests : IDisposable
 {
     private sealed class Backend(UiSpriteTable table, UiBatch batch) : IClassicHudBackend
@@ -38,7 +39,11 @@ public sealed class ClassicHudGemAllocationTests : IDisposable
         }
     }
 
-    public ClassicHudGemAllocationTests() => InventoryUiState.Reset();
+    public ClassicHudGemAllocationTests()
+    {
+        InventoryUiState.Reset();
+        ClassicHud.Reset();
+    }
 
     public void Dispose() => InventoryUiState.Reset();
 
@@ -76,6 +81,18 @@ public sealed class ClassicHudGemAllocationTests : IDisposable
         for (int i = 0; warm.ElapsedMilliseconds < 1500 || i < 400; i++)
         {
             Draw(100 - (i % 2));
+        }
+
+        // The measured health values take branches that 100 and 99 never reach (the first low-health frame
+        // allocates once, so a measurement that started there read 264 B only when no earlier test in the
+        // process had touched it). Draw each value before measuring, ending on the high one so the first
+        // measured change is still a change.
+        foreach (int hp in new[] { 30, 90 })
+        {
+            for (int i = 0; i < 400; i++)
+            {
+                Draw(hp);
+            }
         }
 
         long worst = 0;

@@ -124,12 +124,21 @@ public class StatSheetTests
                         sheet.SetBase(BlockOf(strength, attackSpeed, vitality));
                         sheet.SetSource(0, modifiers);
 
-                        string at = $"strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}";
-                        Assert.True((float)legacy.Strength == sheet.Effective[StatId.Strength], $"Strength differs ({legacy.Strength} vs {sheet.Effective[StatId.Strength]}) at {at}");
-                        Assert.True((float)legacy.Vitality == sheet.Effective[StatId.Vitality], $"Vitality differs ({legacy.Vitality} vs {sheet.Effective[StatId.Vitality]}) at {at}");
-                        Assert.True(
-                            BitConverter.SingleToInt32Bits(legacy.AttackSpeed) == BitConverter.SingleToInt32Bits(sheet.Effective[StatId.AttackSpeed]),
-                            $"AttackSpeed differs ({legacy.AttackSpeed} vs {sheet.Effective[StatId.AttackSpeed]}) at {at}");
+                        // Messages are built only on failure: formatting them eagerly cost ~30M x 4 strings per run.
+                        if ((float)legacy.Strength != sheet.Effective[StatId.Strength])
+                        {
+                            Assert.Fail($"Strength differs ({legacy.Strength} vs {sheet.Effective[StatId.Strength]}) at strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}");
+                        }
+
+                        if ((float)legacy.Vitality != sheet.Effective[StatId.Vitality])
+                        {
+                            Assert.Fail($"Vitality differs ({legacy.Vitality} vs {sheet.Effective[StatId.Vitality]}) at strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}");
+                        }
+
+                        if (BitConverter.SingleToInt32Bits(legacy.AttackSpeed) != BitConverter.SingleToInt32Bits(sheet.Effective[StatId.AttackSpeed]))
+                        {
+                            Assert.Fail($"AttackSpeed differs ({legacy.AttackSpeed} vs {sheet.Effective[StatId.AttackSpeed]}) at strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}");
+                        }
                     }
                 }
             }
@@ -172,12 +181,20 @@ public class StatSheetTests
                         EquipInMainHand(combatant, definition);
 
                         PlayerCombatStats legacy = LegacyToolStats.Combine(combatant.BaseStats, tool);
-                        string at = $"strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}";
-                        Assert.True(legacy.Strength == combatant.Stats.Strength, $"Strength differs ({legacy.Strength} vs {combatant.Stats.Strength}) at {at}");
-                        Assert.True(legacy.Vitality == combatant.Stats.Vitality, $"Vitality differs ({legacy.Vitality} vs {combatant.Stats.Vitality}) at {at}");
-                        Assert.True(
-                            BitConverter.SingleToInt32Bits(legacy.AttackSpeed) == BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed),
-                            $"AttackSpeed differs ({legacy.AttackSpeed} vs {combatant.Stats.AttackSpeed}) at {at}");
+                        if (legacy.Strength != combatant.Stats.Strength)
+                        {
+                            Assert.Fail($"Strength differs ({legacy.Strength} vs {combatant.Stats.Strength}) at strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}");
+                        }
+
+                        if (legacy.Vitality != combatant.Stats.Vitality)
+                        {
+                            Assert.Fail($"Vitality differs ({legacy.Vitality} vs {combatant.Stats.Vitality}) at strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}");
+                        }
+
+                        if (BitConverter.SingleToInt32Bits(legacy.AttackSpeed) != BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed))
+                        {
+                            Assert.Fail($"AttackSpeed differs ({legacy.AttackSpeed} vs {combatant.Stats.AttackSpeed}) at strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}");
+                        }
                     }
                 }
             }
