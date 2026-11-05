@@ -78,6 +78,46 @@ public sealed class HeldWeaponRenderer : IDisposable
         }
     }
 
+    // The eight corners of every box of the held items, as Draw would place them. Like
+    // WornArmourRenderer.AppendCorners, for the capture's actorbox: a blade raised overhead is on screen
+    // and outside the authored bounds. No GL.
+    public static void AppendCorners(
+        AnimatedModelInstance instance,
+        PlayerPoseLayers layers,
+        in PlayerEquipmentVisuals equipment,
+        Matrix4 modelMatrix,
+        List<Vector3> corners)
+    {
+        if (equipment.MainHand is { } main)
+        {
+            AppendHeld(instance, layers, main, offHand: false, modelMatrix, corners);
+        }
+
+        if (equipment.OffHand is { } off)
+        {
+            AppendHeld(instance, layers, off, offHand: true, modelMatrix, corners);
+        }
+    }
+
+    private static void AppendHeld(
+        AnimatedModelInstance instance, PlayerPoseLayers layers, string visualId, bool offHand,
+        Matrix4 modelMatrix, List<Vector3> corners)
+    {
+        if (!layers.TryGetArmMatrix(instance, offHand, out Matrix4 arm))
+        {
+            return;
+        }
+
+        WeaponModel model = WeaponMeshCatalog.Resolve(visualId);
+        float scale = model.Grip == WeaponGrip.Shield ? ShieldScale : HandScale;
+        Matrix4 attach = Matrix4.CreateScale(scale) * CreateGrip(model.Grip, offHand) * arm * modelMatrix;
+        WeaponPart[] parts = model.PartArray;
+        for (int i = 0; i < parts.Length; i++)
+        {
+            WornArmourRenderer.AppendBoxCorners(parts[i].ToMatrix() * attach, corners);
+        }
+    }
+
     private void DrawHeld(
         Shader shader,
         Camera camera,
