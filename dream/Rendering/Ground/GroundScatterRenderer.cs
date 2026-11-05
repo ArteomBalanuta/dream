@@ -113,6 +113,7 @@ public sealed class GroundScatterRenderer
             _cellVisible[c] = CellVisible(in cell, LandmarkDrawDistance, focus, in frustum);
         }
 
+        AnimatedModel? drawnModel = null;
         try
         {
             int cursor = 0;
@@ -162,6 +163,7 @@ public sealed class GroundScatterRenderer
                     Shader shader = _render.GetShader(terrain ? TerrainShaderName : ActorShaderName);
                     (terrain ? _terrainWind : _actorWind).Set(GroundWind.Uniform(info.Class, info.Height));
                     model.Wind = GroundWind.Uniform(info.Class, info.Height);
+                    drawnModel = model;
                     model.BeginRender(shader, view, projection, enableCulling: false);
                     model.RenderPreparedInstanced(shader, _matrices, count);
                     model.EndRender();
@@ -178,6 +180,11 @@ public sealed class GroundScatterRenderer
             // Never leak the sway: the cube and enemy programs also draw the terrain and every actor.
             _terrainWind.Reset();
             _actorWind.Reset();
+            // ModelAssets hands out shared models: an exception mid-draw must not leave a sway on one.
+            if (drawnModel != null)
+            {
+                drawnModel.Wind = Vector2.Zero;
+            }
         }
     }
 

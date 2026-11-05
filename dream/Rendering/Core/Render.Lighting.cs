@@ -9,8 +9,10 @@ public partial class Render
 {
     private FrameLighting _frameLighting = FrameLighting.ReferenceNoon;
 
-    // The wrapped shader clock for this frame: the pin, else the scene's clock (BoundaryMist.TimeSeconds).
-    private float FxClockSeconds() => BoundaryMistField.WrapTime(FxClockPin.Seconds ?? _boundaryMist.TimeSeconds);
+    // The UNWRAPPED shader clock for this frame: the pin, else the scene's clock (BoundaryMist.TimeSeconds).
+    // FrameLightingBuffer reduces it per consumer (sway: 20 pi s, clouds: 64 cells); the mist's own 6400 s
+    // wrap (BoundaryMistField.WrapTime) is periodic for the mist noise only and must not be applied here.
+    private double FxClockSeconds() => FxClockPin.Seconds ?? _boundaryMist.TimeSeconds;
 
     // The FrameLighting uniform buffer. Created with the shaders, disposed with them.
     private FrameLightingBuffer? _frameLightingBuffer;
@@ -104,8 +106,9 @@ public partial class Render
     }
 }
 
-// DREAM_FX_CLOCK: pins the clock that clouds, wind (FrameLighting.FrameTime.x) and the boundary mist read, so
-// captures are reproducible. Read once. Unset, blank or non-finite means the live clock.
+// DREAM_FX_CLOCK: pins the clock that clouds, wind (FrameLighting.FrameTime) and the boundary mist read. It does NOT
+// pin the fire: the FX simulation and the torch/halo/flame/ember light collectors read the presentation clock
+// directly, so a capture under the pin still has moving torch flicker, flame and embers. Read once. Unset, blank or non-finite means the live clock.
 internal static class FxClockPin
 {
     public const string EnvironmentVariable = "DREAM_FX_CLOCK";

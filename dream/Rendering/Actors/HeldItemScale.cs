@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Actors;
 
@@ -46,24 +47,43 @@ public static class HeldItemScale
         _ => 0.80f
     };
 
-    // The Y extent of the item's mesh in model units, measured once. Each part contributes
-    // Center.Y +/- Size.Y / 2; part rotations are ignored (a pitched limb is a little shorter along
-    // Y, a rolled box a little taller, and either is a few percent on one small part).
+    // The Y extent of the item's mesh in model units AS DRAWN, measured once: the eight corners of every
+    // part go through the part's own matrix (size, pitch, roll, centre), so a rolled box counts at its
+    // rotated height (the buckler's 45 degree plate is 0.32 * (sin 45 + cos 45) = 0.45 tall, not 0.32).
+    // A model with no parts has no extent; it is reported as exactly its target length, i.e. scale 1,
+    // rather than as -infinity (which would make Resolve NaN and the item invisible).
     public static float AuthoredLengthModelUnits(string visualId)
     {
         string key = WeaponMeshCatalog.IsKnown(visualId) ? visualId : WeaponMeshCatalog.GenericVisualId;
         return AuthoredLengths.GetOrAdd(key, static id =>
         {
-            float min = float.MaxValue;
-            float max = float.MinValue;
-            foreach (WeaponPart part in WeaponMeshCatalog.Resolve(id).Parts)
-            {
-                min = MathF.Min(min, part.Center.Y - (part.Size.Y * 0.5f));
-                max = MathF.Max(max, part.Center.Y + (part.Size.Y * 0.5f));
-            }
-
-            return max - min;
+            float extent = RotatedExtentModelUnits(WeaponMeshCatalog.Resolve(id).Parts);
+            return extent > 0f ? extent : TargetLengthMetres(id) * ModelUnitsPerMetre;
         });
+    }
+
+    // The Y extent of the parts after their own rotations, in model units; 0 when there are no parts.
+    public static float RotatedExtentModelUnits(IEnumerable<WeaponPart> parts)
+    {
+        float min = float.MaxValue;
+        float max = float.MinValue;
+        foreach (WeaponPart part in parts)
+        {
+            Matrix4 toModel = part.ToMatrix();
+            for (int corner = 0; corner < 8; corner++)
+            {
+                Vector3 unit = new(
+                    (corner & 1) == 0 ? -0.5f : 0.5f,
+                    (corner & 2) == 0 ? -0.5f : 0.5f,
+                    (corner & 4) == 0 ? -0.5f : 0.5f);
+                float y = Vector3.TransformPosition(unit, toModel).Y;
+                min = MathF.Min(min, y);
+                max = MathF.Max(max, y);
+            }
+        }
+
+        float extent = max - min;
+        return float.IsFinite(extent) && extent > 0f ? extent : 0f;
     }
 
     // The uniform scale applied about the grip (or a shield's centre) to the authored mesh.

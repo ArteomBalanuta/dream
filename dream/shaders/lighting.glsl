@@ -5,7 +5,8 @@
 // the world range holds world-space directions and the camera position; the view-model range
 // holds eye-space directions with the camera at the origin.
 // uCloudParams: x coverage, y softness, z shadow strength, w scroll speed (clouds.glsl).
-// uFrameTime: x wrapped clock seconds, y global gust (wind in cubeVertex.glsl), zw 0.
+// uFrameTime: x sway clock seconds (wind in cubeVertex.glsl; wrapped at 20 pi), yz cloud drift in noise cells (clouds.glsl), w 0.
+// uCameraPosition is the FOG origin (the isometric focus), not the eye; the sky takes the real eye as its own uniform.
 // uLightingParams: x exposure, y actor brightness floor, z actor ambient scale (enemyFragment.glsl), w 0.
 layout(std140) uniform FrameLighting {
     vec4 uSunDirection; vec4 uSunColor; vec4 uMoonDirection; vec4 uMoonColor;

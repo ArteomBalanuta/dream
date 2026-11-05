@@ -4,6 +4,9 @@
 // uCloudParams and uFrameTime from the FrameLighting block. Mirrored in C# by Rendering/Sky/CloudLayer.cs,
 // which a test compares against the constants below.
 // uCloudParams: x coverage 0..1, y softness 0..1, z shadow strength 0..1, w scroll speed (world units/s).
+// uFrameTime.yz: the drift in noise cells, already reduced modulo CloudPeriodCells on the CPU (CloudLayer.ScrollCells),
+// so no clock is wrapped here and the sheet never jumps. That reduction is only seamless because the lattice
+// hash below wraps at the same period.
 const float CloudPlaneY = 60.0;
 const vec2 CloudDirection = vec2(0.8, 0.6);   // unit: the way the clouds drift
 const float CloudCellsPerUnit = 0.008;        // base noise frequency, cells per world unit
@@ -14,6 +17,7 @@ const float CloudAmplitudeSum = 1.875;        // 1 + 0.5 + 0.25 + 0.125 (4 octav
 // 0.35 covers roughly 30-35 % of the plane, but the mapping is a threshold on stretched noise, not a percentage.
 const float CloudContrast = 2.0;            // fBm clusters near 0.5; stretch it so coverage is about the fraction covered
 const float CloudSoftnessScale = 0.5;         // half-width of the threshold ramp at softness 1
+const float CloudPeriodCells = 64.0;          // the lattice repeats every 64 cells at every octave (each octave stretch divides 64)
 
 float dreamCloudHash(vec2 p)
 {
@@ -27,10 +31,10 @@ float dreamCloudValueNoise(vec2 p)
     vec2 cell = floor(p);
     vec2 f = fract(p);
     vec2 u = f * f * (3.0 - 2.0 * f);
-    float a = dreamCloudHash(cell);
-    float b = dreamCloudHash(cell + vec2(1.0, 0.0));
-    float c = dreamCloudHash(cell + vec2(0.0, 1.0));
-    float d = dreamCloudHash(cell + vec2(1.0, 1.0));
+    float a = dreamCloudHash(mod(cell, CloudPeriodCells));
+    float b = dreamCloudHash(mod(cell + vec2(1.0, 0.0), CloudPeriodCells));
+    float c = dreamCloudHash(mod(cell + vec2(0.0, 1.0), CloudPeriodCells));
+    float d = dreamCloudHash(mod(cell + vec2(1.0, 1.0), CloudPeriodCells));
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
@@ -38,7 +42,7 @@ float dreamCloudValueNoise(vec2 p)
 float dreamCloudCover(vec2 planeXZ)
 {
     if (uCloudParams.x <= 0.0) { return 0.0; }
-    vec2 p = (planeXZ - CloudDirection * (uCloudParams.w * uFrameTime.x)) * CloudCellsPerUnit;
+    vec2 p = planeXZ * CloudCellsPerUnit - uFrameTime.yz;
     float sum = 0.0;
     float amplitude = 1.0;
     for (int i = 0; i < 4; i++)

@@ -27,6 +27,7 @@ public sealed class SkyRenderer : IDisposable
         "uMoon",
         "uMoonDiscColor",
         "uStarVisibility",
+        "uEyePosition",
     ];
 
     private const int LocationInverseViewProjection = 0;
@@ -37,6 +38,7 @@ public sealed class SkyRenderer : IDisposable
     private const int LocationMoon = 5;
     private const int LocationMoonColor = 6;
     private const int LocationStarVisibility = 7;
+    private const int LocationEyePosition = 8;
 
     private readonly int[] _locations = new int[UniformNames.Length];
     private Shader? _shader;
@@ -89,6 +91,8 @@ public sealed class SkyRenderer : IDisposable
         Upload(_locations[LocationMoon], new Vector4(sky.MoonDirection, sky.MoonDiscAngularRadius));
         Upload(_locations[LocationMoonColor], sky.MoonDiscColor);
         Upload(_locations[LocationStarVisibility], sky.StarVisibility);
+        // The real camera position (the view's inverse translation), not the fog origin the lighting block carries.
+        Upload(_locations[LocationEyePosition], Matrix4.Invert(view).Row3.Xyz);
 
         GL.BindVertexArray(_vertexArray);
         GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
