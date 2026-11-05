@@ -17,6 +17,10 @@ namespace Dream.Tests;
 //   Wave9SessionLeakLoopbackTests.
 // - Set a process-wide environment variable: PvpFlagTests, ServerBootstrapDevCommandsTests,
 //   WorldClockPersistenceTests (see also ProcessEnvironmentCollection).
+// - Allocation gates: ClassicHudGemAllocationTests and ClassicHudAdversarialTests assert a warm HUD
+//   frame allocates 0 B. The counter is per thread, but the runtime's tiered-JIT state (call counts,
+//   the instrumented PGO tier, boxes of shared generics) is per process, and another test running new
+//   code resets its delay and charges bytes to the frame being measured.
 // - Process-wide physics leak tracker and forced full collections: PhysicsIntegratorTeardownTests.
 // - Checkpoint timing and file state: CheckpointPersistenceTests, IncrementalCheckpointTests,
 //   Wave9FrozenCubeCheckpointTests.

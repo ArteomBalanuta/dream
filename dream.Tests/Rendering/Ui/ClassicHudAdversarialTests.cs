@@ -15,6 +15,7 @@ namespace Dream.Tests.Rendering.Ui;
 // real builder, router, panels and (where it matters) the real UiBatch. Each test names the thing
 // that goes wrong at the table (a resize in a drag, a lost window, an item that vanishes, a name that
 // is a format string) and pins that the HUD stays up and sends nothing it should not.
+[Collection(TimingSensitiveCollection.Name)]
 public sealed class ClassicHudAdversarialTests : IDisposable
 {
     private sealed class Backend : IClassicHudBackend
@@ -67,6 +68,7 @@ public sealed class ClassicHudAdversarialTests : IDisposable
     public ClassicHudAdversarialTests()
     {
         InventoryUiState.Reset();
+        ClassicHud.Reset();
         Assert.True(UiSpriteTable.TryLoad(AssetPaths.UiDirectory, out UiSpriteTable? table, out string error), error);
         _table = table!;
         _backend = new Backend(_table);
