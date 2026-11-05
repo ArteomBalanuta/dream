@@ -9,7 +9,7 @@ The player had ONE flat speed of 6 m/s and a sprint clip authored for 9 m/s that
 ## The workstreams
 
 - **WS-1 `feat/grounded-movement`** (`83fdb1e6`) - the tuning tiers, the motor acceleration ramp, the `sprintHeld` wire field, LeftShift/Z bindings, the `PathFollower` recalibration, `GameSettings`, and `HudCapturePointerPlan` + `PlayScene.Capture` (`Shift = 2048`, so `keysnap:w+shift:N` works). Merged first because it publishes the tuning constants the other two compile against.
-- **WS-3 `feat/enemy-gaits`** (`28f1fcd5`) - `EnemyClipSet` with a Sprint/gallop clip and a speed-driven `Resolve`, observed-speed measurement in `EnemyVisualState`, the `patrolSpeed` content field, the wolf's real `AnimalArmature|Death` clip, a forged `gallop` for the hound, `enemies.json`. Merged second because it is independent of the other two.
+- **WS-3 `feat/enemy-gaits`** (`28f1fcd5`) - `EnemyClipSet` with a Sprint/gallop clip and a speed-driven `Resolve`, observed-speed measurement in `EnemyVisualState`, the `patrolSpeed` content field, the wolf's real `AnimalArmature|Death` clip (wired and correct, but LATENT - see fix loop 2, F7), a forged `gallop` for the hound, `enemies.json`. Merged second because it is independent of the other two.
 - **WS-2 `feat/player-gaits`** (`66ad572b`, `65c30f81`) - a new authored `run` clip, a retuned `sprint`, a regenerated `player-grim.glb`, three-tier selection in `PlayerAnimationStateMachine`, three-tier `FootstepCadence`. Merged last because it carries a byte-exact regenerated GLB, the worst thing to resolve in a conflict.
 
 The three file sets were fully disjoint and all three merges were conflict-free.
@@ -47,7 +47,7 @@ Grounding traversal was the explicit ask: at 6 m/s the character skated, and no 
 
 6.4 would have made it strictly faster than a sprinting player on open ground. With no stamina system in the game, that is not difficulty, it is an unescapable trap: the player has no resource to spend and no mechanic to break line of sight with, so the outcome is decided the moment it aggros. At exactly 6.0 it matches sprint, which means it holds its distance forever without ever closing - the same dread, sustained indefinitely, but still beatable with terrain and cubes. The ceiling for any future enemy is therefore the sprint speed, and breaking it needs a stamina system first.
 
-### 3. The run tier must also run C2's directional sector table
+### 3. The run tier must also run C2's directional sector table (extended in fix loop 2, F2/F3)
 
 C2's directional clips (`walk-back`, `walk-strafe-left`, `walk-strafe-right`) fixed the strafe moonwalk, and they were selected in the walk tier because at the time the walk tier was the only tier. Now that the default cruise is the RUN tier, a run that skipped the sector table would silently retire that fix at exactly the speed the player actually moves at - the bug would have come back everywhere except while deliberately walking.
 
@@ -60,6 +60,8 @@ So `PlayerAnimationStateMachine.Update` runs `ResolveWalkClip` first in every ti
         : sector;
 
 The strafe and back sectors keep their directional clips in the run tier and are played faster, and the sector hysteresis keeps holding the sector's own name.
+
+Fix loop 2 found this decision only half-delivered and extended it: the SPRINT tier bypassed the table entirely, and the three directional sectors divided their playback by the tier's reference instead of the walk's, so the stated goal was met in one sector out of four. See F2 and F3 below; the code in this section is now superseded by the shape recorded there.
 
 ### 4. `PinnedTicksBeforeNudge` in `PathFollower` was recalibrated off `DefaultGroundAcceleration`
 
@@ -90,6 +92,73 @@ Before the ramp both sides were at cruise instantly and the translation was exac
 ## Integration note
 
 One cross-workstream seam needed resolving; it was not a conflict in any file. `EnemyInterpolationReplicationIntegrationTests` drove the player 3 ticks in 10 to fake an average 1.8 m/s, because the player's single flat 6.0 m/s speed outran the wolf's 5.0 m/s chase and the wolf lost aggro. Both halves of that premise died in this wave: the cruise is now 4.3 and already below the wolf, and the motor ramps, so a 3-tick burst never escapes the ramp. Merged unchanged, the player moved centimetres and the wolf died 1.87 m from its spawn against an assert wanting it past 7.5 m. The player now moves every tick and is catchable by construction rather than by duty cycle; every assert in the test is unchanged. The test was verified green on `feat/enemy-gaits` alone first, so this was a merge interaction and not a defect in either branch.
+
+## Fix loop 2: gait legibility
+
+A reviewer read the wave's animation, audio and enemy-gait code against what it claims and found six places where the GAITS ARE WRONG ON SCREEN even though every speed number is right. Fixed on `fix/gaits-loop2`.
+
+### F1 - the footstep strides disagreed with the authored clip cadences
+
+`FootstepCadence` said its strides were "grounded on real cadence". They were grounded on a *cadence figure someone picked*, and against the generator every tier's audio was slower than its legs:
+
+| Tier | clip cycle | visible footfalls/s at playback 1.0 | audio footfalls/s, as shipped | drift |
+| --- | --- | --- | --- | --- |
+| Walk | 0.80 s | 2.50 | 1.6 / 0.85 = 1.88 | -25% |
+| Run | 0.62 s | 3.23 | 4.3 / 1.50 = 2.87 | -11% |
+| Sprint | 0.44 s | 4.55 | 6.0 / 2.00 = 3.00 | **-52%** |
+
+A stride is not a free number. Each gait is a five-key cycle with two footfalls, so at the authored rate the body covers `referenceSpeed * cycle / 2` metres between footfalls and that distance IS the stride: **0.64 / 1.333 / 1.32**. The clips were kept and the strides re-derived, not the other way round - the clip cadences were authored and inspected on screen, the stride numbers never were.
+
+Walk and sprint landing a centimetre apart is the arithmetic, not a mistake: the sprint cycle is 1.8x faster but the sprint speed is 3.75x the walk's, so the ground per footfall is nearly identical and only the RATE differs (2.5 steps/s walking against 4.5 sprinting).
+
+**Why it shipped, and the guard that now stops it.** `TheAnimationTiersMatchTheAuthoritativeTuning` ties the tier SPEEDS to `PlayerSimulationTuning`, and it passed. Nothing tied the strides to the CLIPS, and that is a different axis entirely - the speed-parity guard structurally cannot see this class of drift. `FootstepCadenceTests.TheStridesMatchTheAuthoredClipCadence` now reads each cycle length back off the SHIPPED `player-grim.glb` (not out of `gen_char_player.py`) and asserts `stride == referenceSpeed * cycle / FootfallsPerCycle`, so re-timing a clip without re-deriving its stride fails.
+
+### F2 - the directional sectors played walk clips at playback 1.0 in the run tier
+
+In the run tier, a resolved sector of `walk-strafe-left`, `walk-strafe-right` or `walk-back` set `clip = sector` and then `speed = HorizontalSpeed / ReferenceSpeed(Run)` = 4.3 / 4.3 = **1.0**. Those three clips are walk-cadence and this wave did not re-time them, so they skated about 2.7x at the ordinary cruise: decision 3's stated goal - the moonwalk fix applying at the speed the player actually moves at - was met for **one of four sectors**. Not a regression (it was 3.75x before the wave) but not the fix either.
+
+A directional clip's playback now divides by `ReferenceWalkSpeed`, which runs into `MaxPlaybackSpeed` 1.6 and gets the legs 1.6x faster. The forward sector still divides by the tier's own reference, because its clip is authored for that tier's speed and playback 1.0 is correct there and only there.
+
+The twist bookkeeping is untouched and must stay that way: walk and run pass the within-sector RESIDUAL under `MaxLegTwistRadians`, only the forward sprint passes the RAW delta under `MaxSprintLegTwistRadians`. A tier passing the wrong one makes the legs double-count the turn, which looks fine from the front and wrong from the side.
+
+### F3 - decision: YOU CANNOT SPRINT SIDEWAYS
+
+The sprint tier bypassed the sector table altogether and played the forward sprint cycle with the legs yawed up to 90 degrees. Before this wave `SprintSpeedThreshold` was 9 m/s against a 6 m/s cap, so that branch was **dead code**; the wave made it reachable, and nobody has ever looked at sprinting sideways or backwards.
+
+Rather than ship a never-inspected pose for a capture to judge later, the sprint is now gated on the forward sector: when the table resolves to anything other than the forward `WalkClip`, the sprint falls through to the run tier's handling and keeps the directional clip (with F2's walk-referenced, clamped playback). The sprint keeps its single clip and its raw-delta / `MaxSprintLegTwistRadians` treatment ONLY in the forward sector. The yawed-leg state is gone by construction.
+
+This also fixes the nit in the old branch: it never updated `_walkClip`, so the sector hysteresis resumed from a stale sector after a long sprint. Running the table on every tier keeps the sector current on every path, and `ALongSprint_LeavesTheSectorUpToDate_NotStale` is the guard.
+
+### F4 - the enemy snap guard was a distance, not a speed
+
+`EnemyVisualState.ObserveMotion` discarded steps over `MaxStepDistance = 3 m`. A distance is not a speed: at 60 fps a 2.9 m step is a **174 m/s** sample and at 144 fps a 0.5 m step is 72 m/s. With `SpeedSmoothing 0.5` one 174 m/s sample stays above the 3.0 m/s gait threshold for about six frames (174, 87, 43, 22, 11, 5.4, 2.7), and `ResolveSprinting`'s latch then holds the gallop until it falls below 2.6: **a visible gallop flash on a walking wolf**.
+
+It is reachable. When `ClientScenePresenter.ApplyEnemySample` has just called `entry.Buffer.Clear()` (teleport, respawn, coalesced death), `TryGetEnemyRenderPose` fails and `EnemyRenderer.ResolveRenderPose` falls back to `actor.Position`, which is snapshot-quantised rather than interpolated - so for those frames the measurement is a train of spikes and zeros, and a chasing enemy can oscillate across the 3.0 boundary even with the 0.4 m/s hysteresis band.
+
+The gate is now the implied SPEED: `MaxObservedSpeed = 12 m/s`, twice the fastest `SprintReferenceSpeed` in the catalog, so nothing an enemy actually does is discarded and no snap can reach the gait threshold through the EMA. The EMA weight is deliberately left alone - it is frame-rate dependent, but it matches the presenter's on purpose.
+
+`ObserveMotion_DiscardsASpikeSampleUnderTheOldDistanceGate_SoTheGallopDoesNotFlash` proves it, and it discriminates: against the old distance-only guard it fails with `Expected "AnimalArmature|Walk", Actual "AnimalArmature|Gallop"`.
+
+### F5 - the two command coalescers disagreed about `SprintHeld`
+
+`LatestPlayerCommandInbox.Merge` ORed `SprintHeld`, copying `JumpPressed`'s treatment; `ClientOutboundCommandQueue.Merge` takes the newer frame's value. Sprint is HELD STATE, not an edge, so the newer value is correct and is what the client predicted - OR-ing it made a coalesced pair in which sprint was *released* simulate one extra sprint tick server-side. Small (about 0.027 m, inside the smooth band), but two coalescers disagreeing about one field is the kind of thing that grows. The inbox now takes the newer value; the one-shot presses are still ORed, which is right for them. `BufferedPlayerCommandInbox.HasSameMovement` already treated sprint as movement correctly and is untouched.
+
+### F6 - two small ones
+
+- **The walk pose was unphotographable.** `PlayScene.Update`'s `HandleWalkToggle` has always asked `CaptureKeyHeld(Keys.Z)`, but `PlayScene.Capture`'s key switch had no `Keys.Z` case, so it could only ever answer false: a capture could photograph the sprint pose and not the walk one. `HudCaptureKeys.Z = 4096`, the names `z`/`walk`, and the switch case are wired exactly as `Shift`/`sprint` was, so `keysnap:w+walk:N` works.
+- **M7, the walk throttle fought the path follower.** `ApplyWalkThrottle` runs after `_clickMove.SteerTick`, so it scaled click-move axes too, putting the follower at 1.6 m/s = 0.025 m/tick against `PathFollower.PinnedStepMetres` 0.02 - a 25% margin, so any mild slowdown while walk-toggled read as pinned and fired the nudge, the exact fight decision 4 was meant to end. **Decision: the walk toggle does not apply while a click goal is active.** The toggle is a keyboard-movement affordance and click-move carries its own speed intent, so the two never need to compose. `PathFollower` is untouched.
+
+### F7 - the wolf's death clip is latent, not a visible fix
+
+The WS-3 bullet above reads as though the wave made wolves die properly. It did not, and the record now says so: the `AnimalArmature|Death` clip is **wired and correct, latent until something draws corpses**. `EnemyActor.IsActive => Combatant.Health.IsAlive`, `EnemyRenderer.DrawAtRenderTick` skips `!actor.IsActive`, `ClientScenePresenter.ApplyEnemySample` drops dead enemies and `RemoteEnemyStateApplier` removes them - so nothing draws a corpse today and the clip cannot be seen.
+
+Worth knowing before something does: `EnemyVisualState.ApplyClip` calls `PlayLoop` unconditionally, so the first code that draws a corpse will **loop the death animation** - a wolf dying over and over - unless it plays the clip in a hold mode the way `PlayerAnimationStateMachine` does with `PlayerClipMode.Hold`.
+
+### What fix loop 2 did NOT do
+
+- `FootstepCadence.MaxStepDistance` has the same distance-not-speed shape as F4, but the cadence accumulator only gains one extra step from a spike rather than switching gait, so it was left alone rather than widened into a second behaviour change.
+- M7 has no test: `ApplyWalkThrottle` is a private method on `PlayScene`, which has no test harness, so the change is covered by reading alone.
+- `LatestPlayerCommandInboxTests.Enqueue_AccumulatesLookDeltaAndPreservesOneShotInputsUntilDrain` still asserts the OR-ed sprint and therefore fails against F5. That file belonged to a parallel workstream in this loop and was deliberately not edited; the new contract is covered by `LatestInboxSprintCoalescingTests` and the stale expectation needs flipping during integration.
 
 ## Verification
 

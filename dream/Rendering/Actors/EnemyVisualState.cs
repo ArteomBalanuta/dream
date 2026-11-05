@@ -23,9 +23,20 @@ public sealed class EnemyVisualState
     // so the two gaits respond alike.
     private const float SpeedSmoothing = 0.5f;
 
-    // A step longer than this is a teleport or a snap to a fresh snapshot, not motion; counting it
-    // would spike the speed into the sprint gait for a frame. FootstepCadence.MaxStepDistance.
-    private const float MaxStepDistance = 3f;
+    // A sample faster than this is a teleport or a snap to a fresh snapshot, not motion. The gate
+    // is a SPEED, not a distance: the first pass discarded steps over 3 m, which at 60 fps let a
+    // 2.9 m step through as a 174 m/s sample, and with SpeedSmoothing 0.5 one such sample stays
+    // above the 3.0 m/s gait threshold for about six frames (174, 87, 43, 22, 11, 5.4, 2.7) while
+    // ResolveSprinting's latch holds the gallop until it falls below 2.6: a gallop flash on a
+    // walking wolf. The spikes are real - when ClientScenePresenter.ApplyEnemySample has just
+    // cleared the interpolation buffer (teleport, respawn, coalesced death) EnemyRenderer falls
+    // back to the snapshot-quantised actor.Position, so the measurement becomes a train of spikes
+    // and zeros.
+    //
+    // Twice the fastest SprintReferenceSpeed in EnemyVisualCatalog (the hound's 6.0): fast enough
+    // that nothing an enemy actually does is discarded, slow enough that a snap cannot reach the
+    // gait threshold through the EMA. EnemyVisualStateCacheTests ties it to the catalog.
+    public const float MaxObservedSpeed = 12f;
 
     private Vector3 _lastObservedPosition;
     private bool _hasObservedPosition;
@@ -50,14 +61,13 @@ public sealed class EnemyVisualState
             return;
         }
 
-        float distance = step.Length;
-        if (distance > MaxStepDistance)
+        float sample = step.Length / deltaSeconds;
+        if (!float.IsFinite(sample) || sample > MaxObservedSpeed)
         {
             // A snap: keep the last speed rather than let the jump become a gallop for a frame.
             return;
         }
 
-        float sample = distance / deltaSeconds;
         ObservedSpeed += (sample - ObservedSpeed) * SpeedSmoothing;
     }
 

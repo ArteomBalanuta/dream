@@ -63,7 +63,11 @@ internal enum HudCaptureKeys : int
     Q = 512,
     R = 1024,
     // Held sprint, so a capture can photograph the sprint pose (keysnap:w+shift:N).
-    Shift = 2048
+    Shift = 2048,
+    // The walk toggle (Z), so a capture can photograph the walk pose too (keysnap:w+walk:N).
+    // PlayScene.Update's HandleWalkToggle has always asked CaptureKeyHeld(Keys.Z) for it; without
+    // this flag that call could only ever answer false and the walk pose was unphotographable.
+    Z = 4096
 }
 
 // A parsed capture step: the verb and up to two numbers (slots, a menu row, frames).
@@ -103,7 +107,7 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
     }
 
     // w+a, space, noclip (the 0 key), b or building (B), g or combat (G), q and r (the potion hotkeys), ctrl,
-    // shift or sprint (held sprint): unknown names fail the whole token.
+    // shift or sprint (held sprint), z or walk (the walk toggle): unknown names fail the whole token.
     public static bool TryParseKeys(string text, out HudCaptureKeys keys)
     {
         keys = HudCaptureKeys.None;
@@ -123,6 +127,7 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 "q" => HudCaptureKeys.Q,
                 "r" => HudCaptureKeys.R,
                 "shift" or "sprint" => HudCaptureKeys.Shift,
+                "z" or "walk" => HudCaptureKeys.Z,
                 _ => HudCaptureKeys.None
             };
             if (one == HudCaptureKeys.None)

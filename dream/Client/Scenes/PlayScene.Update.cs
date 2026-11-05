@@ -191,9 +191,16 @@ public partial class PlayScene
     // Last step of a tick's command assembly, after the click steering and the keyboard projection
     // have both read the axes. Scaling must never land on exactly zero: a zero ForwardAxis is the
     // "not walking / send stalled" mark that ProjectKeyboardAxes and ClickMoveController test.
+    //
+    // Click-move is exempt. The throttle runs after _clickMove.SteerTick, so it used to scale the
+    // follower's axes too, which put the body at 1.6 m/s = 0.025 m/tick against
+    // PathFollower.PinnedStepMetres 0.02: a 25% margin, so any mild slowdown while walk-toggled
+    // read as pinned and fired the nudge - the exact fight the earlier step recalibration ended.
+    // The walk toggle is a keyboard-movement affordance and a click goal carries its own speed
+    // intent, so while a goal is active the toggle simply does not apply.
     private PlayerCommandFrame ApplyWalkThrottle(PlayerCommandFrame command)
     {
-        if (!_walkToggleEnabled)
+        if (!_walkToggleEnabled || _clickMove.Goal != ClickGoalKind.None)
         {
             return command;
         }
