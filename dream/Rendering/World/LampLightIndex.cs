@@ -1,3 +1,4 @@
+using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -43,7 +44,9 @@ public sealed class LampLightIndex
     // collector's capacity).
     public int LastLampCount { get; private set; }
 
-    public void Collect(in GeometryRenderExport export, Vector3 cameraPosition, LightCollector lights)
+    // clockSeconds: the presentation clock; when given each lamp flickers (FireFlicker, phase from its
+    // position). Null leaves the base light.
+    public void Collect(in GeometryRenderExport export, Vector3 cameraPosition, LightCollector lights, double? clockSeconds = null)
     {
         ArgumentNullException.ThrowIfNull(lights);
         long version = export.StaticContentVersion;
@@ -60,7 +63,7 @@ public sealed class LampLightIndex
             Vector3 center = _staticLampCenters[i];
             if (IsWithinCollectDistance(center, cameraPosition))
             {
-                lights.Add(CreateLight(center));
+                lights.Add(CreateLight(center, clockSeconds));
                 lampCount++;
             }
         }
@@ -73,7 +76,7 @@ public sealed class LampLightIndex
                 Cube cube = dynamicCubes[i];
                 if (cube.MaterialId == GeometryMaterialId.Lamp && IsWithinCollectDistance(cube.Position, cameraPosition))
                 {
-                    lights.Add(CreateLight(cube.Position));
+                    lights.Add(CreateLight(cube.Position, clockSeconds));
                     lampCount++;
                 }
             }
@@ -82,9 +85,15 @@ public sealed class LampLightIndex
         LastLampCount = lampCount;
     }
 
-    public static PointLight CreateLight(Vector3 center)
+    public static PointLight CreateLight(Vector3 center, double? clockSeconds = null)
     {
-        return new PointLight(center, LampRadius, LampColor);
+        if (clockSeconds is not { } clock)
+        {
+            return new PointLight(center, LampRadius, LampColor);
+        }
+
+        FireFlickerSample fire = FireFlicker.Sample(FireFlickerKind.Lamp, center, clock, 0);
+        return new PointLight(center + fire.Offset, LampRadius * fire.RadiusScale, LampColor * fire.Intensity);
     }
 
     // The light position of a lamp cell: its cube center while intact, the centroid of its solid

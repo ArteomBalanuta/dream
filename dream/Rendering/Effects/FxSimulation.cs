@@ -13,7 +13,8 @@ public readonly record struct FxFrameInputs(
     Vector3 CameraFront,
     Vector3 PlayerPosition,
     float NightFactor,
-    FxViewBasis Basis = default);
+    FxViewBasis Basis = default,
+    double ClockSeconds = double.NaN);
 
 // The effects pass's state: a particle pool (hit sparks, death bursts, torch embers, ambient dust)
 // and a small list of light halos rebuilt from the frame's point lights. Pure CPU and client only;
@@ -35,13 +36,9 @@ public sealed class FxSimulation
     public const float HaloNightStrength = 1f;
     public const float HaloDayStrength = 0.12f;
 
-    // The three incommensurate sines of the held torch halo's own flicker, and its peak. The peak
-    // multiplies the light colour the FX collector was handed - which already carries the LIGHT's
-    // own flicker - so HeldLightCatalog needs it to know where the halo's red channel clips.
-    internal const float TorchHaloFlickerFast = 0.07f;
-    internal const float TorchHaloFlickerMid = 0.05f;
-    internal const float TorchHaloFlickerSlow = 0.03f;
-    internal const float TorchHaloFlickerPeak = 1f + TorchHaloFlickerFast + TorchHaloFlickerMid + TorchHaloFlickerSlow;
+    // The halo has no flicker of its own: the light colour the FX collector is handed already carries
+    // FireFlicker's intensity, so the halo's packed byte holds one flicker factor (peak 1 + A), which
+    // is what HeldLightCatalog's clipping ceilings assume.
     public const float DepthBiasLamp = 0.9f;
     // Enough that the carrier's body does not cut the glow with a hard edge.
     public const float DepthBiasHeld = 0.4f;
@@ -58,8 +55,7 @@ public sealed class FxSimulation
     private const int MaxEmberLamps = 8;
     private const float TorchEmbersPerSecond = 5f;
     private const float LampEmbersPerSecond = 0.5f;
-    private const float RadiusTolerance = 0.01f;
-    private const float ClockWrap = 4096f;
+    private const double ClockWrap = 4096.0;
     private const float FlameDepthBias = 0.55f;
     private const float FlashDepthBias = 0.4f;
     private const float TorchHaloHalfSize = 0.7f;
@@ -86,10 +82,12 @@ public sealed class FxSimulation
     private static readonly Vector3 HeatBirth = new(1f, 0.62f, 0.2f);
     private static readonly Vector3 HeatMid = new(0.95f, 0.33f, 0.07f);
     private static readonly Vector3 HeatEnd = new(0.42f, 0.07f, 0.015f);
-    // Internal, not private: HeldLightCatalog derives the largest torch intensity whose halo does
-    // not clip from this tint and the two flicker peaks, so the arithmetic lives in one place.
+    // Internal, not private: HeldLightCatalog derives the largest torch and brazier intensities whose
+    // halos do not clip from these tints and the one flicker peak, so the arithmetic lives in one
+    // place. The lamp tint's red was 0.30 and is 0.26: a brazier (3.0) at 0.30 reached 0.959 of the
+    // byte before any flicker headroom; at 0.26 its peak with a 25 % flicker is 0.975.
     internal static readonly Vector3 HeldHaloTint = new(0.375f, 0.27f, 0.157f);
-    private static readonly Vector3 LampHaloTint = new(0.3f, 0.22f, 0.13f);
+    internal static readonly Vector3 LampHaloTint = new(0.26f, 0.22f, 0.13f);
 
     private readonly FxParticlePool _pool = new(FxLimits.ParticleCapacity);
     private readonly FxInstance[] _halos = new FxInstance[FxLimits.HaloBudget];
@@ -100,7 +98,7 @@ public sealed class FxSimulation
     private Vector3 _viewCentre;
     private Vector3 _playerPosition;
     private float _nightFactor;
-    private float _clock;
+    private double _clock;
     private FxViewBasis _basis;
     // The lights nearest the view centre, nearest first, which light the dust.
     private readonly PointLight[] _dustLights = new PointLight[DustLightCount];
@@ -168,10 +166,19 @@ public sealed class FxSimulation
         _viewCentre = ViewCentre(in inputs);
         _nightFactor = Math.Clamp(inputs.NightFactor, 0f, 1f);
         _basis = inputs.Basis;
-        _clock += dt;
-        if (_clock >= ClockWrap)
+        // The presentation clock when the frame supplies one, so halo, light, flame and shadow are in
+        // phase; otherwise (tests, tools) the simulation counts its own.
+        if (double.IsFinite(inputs.ClockSeconds))
         {
-            _clock -= ClockWrap;
+            _clock = inputs.ClockSeconds;
+        }
+        else
+        {
+            _clock += dt;
+            if (_clock >= ClockWrap)
+            {
+                _clock -= ClockWrap;
+            }
         }
 
         StepParticles(dt);
@@ -355,31 +362,29 @@ public sealed class FxSimulation
             float distance = MathF.Sqrt(viewSquared);
             float cull = Smooth((HaloMaxViewDistance - distance) / HaloFadeDistance);
             float fade = strength * cull;
-            float phi = i * 2.4f;
-            float flicker;
+            // The one flicker, the same value the light itself carries. A placed fire re-derives it
+            // from its position (seed 0); a held torch's seed is its actor id, which a PointLight does
+            // not carry, so it is read back from the light's own colour instead.
+            float flicker = FireIntensity(in light, lightClass, _clock);
             float halfSize;
             Vector3 tint;
             Vector3 position;
             if (lamp)
             {
-                float hash = light.Position.X * 12.9898f + light.Position.Z * 78.233f;
-                float slowPhi = (hash - MathF.Floor(hash)) * MathHelper.TwoPi;
-                flicker = 1f + 0.04f * MathF.Sin(1.7f * _clock + slowPhi) + 0.025f * MathF.Sin(2.9f * _clock + 1.3f * slowPhi);
-                halfSize = LampHaloHalfSize;
+                halfSize = LampHaloHalfSize * (1f + 0.35f * (flicker - 1f));
                 tint = LampHaloTint;
                 position = light.Position;
             }
             else
             {
-                flicker = torch
-                    ? 1f + TorchHaloFlickerFast * MathF.Sin(7.3f * _clock + phi) + TorchHaloFlickerMid * MathF.Sin(13.1f * _clock + 1.7f * phi) + TorchHaloFlickerSlow * MathF.Sin(23.9f * _clock + 0.6f * phi)
-                    : 1f;
                 halfSize = (torch ? TorchHaloHalfSize : LanternHaloHalfSize) * (1f + 0.5f * (flicker - 1f));
                 tint = HeldHaloTint;
                 position = fxPosition + Vector3.UnitY * HeldHaloLift;
             }
 
-            float gain = fade * flicker;
+            // light.Color already carries the flicker; multiplying it again would put two flicker
+            // factors in the packed byte and break the ceilings in HeldLightCatalog.
+            float gain = fade;
             _halos[_haloCount++] = new FxInstance
             {
                 Position = position,
@@ -442,28 +447,30 @@ public sealed class FxSimulation
         }
     }
 
-    // Lamp, torch and lantern lights all reach the collector with their catalog radius, so the
-    // radius is the tag. Anything else (debug rings, future lights) gets no halo.
-    private static bool TryClassify(float radius, out FxLightClass lightClass)
+    // Lamp, torch and lantern lights reach the collector with their catalog radius times a FireFlicker
+    // radius scale (at most +-8.75 %), so the radius is the tag to within that: FireFlicker's bands
+    // (the nearest class radius within its tolerance). The lantern burns steady, so its band is tight:
+    // a death flash (radius 5.5) must not read as a lantern. Anything else gets no halo.
+    internal static bool TryClassify(float radius, out FxLightClass lightClass)
     {
-        if (MathF.Abs(radius - LampLightIndex.LampRadius) < RadiusTolerance)
+        lightClass = FxLightClass.None;
+        if (FireFlicker.TryClassifyRadius(radius, out FireFlickerKind kind))
         {
-            lightClass = FxLightClass.Lamp;
-        }
-        else if (MathF.Abs(radius - HeldLightCatalog.TorchRadius) < RadiusTolerance)
-        {
-            lightClass = FxLightClass.Torch;
-        }
-        else if (MathF.Abs(radius - HeldLightCatalog.LanternRadius) < RadiusTolerance)
-        {
-            lightClass = FxLightClass.Lantern;
-        }
-        else
-        {
-            lightClass = FxLightClass.None;
+            lightClass = kind switch
+            {
+                FireFlickerKind.HeldTorch => FxLightClass.Torch,
+                FireFlickerKind.HeldLantern => FxLightClass.Lantern,
+                _ => FxLightClass.Lamp
+            };
         }
 
         return lightClass != FxLightClass.None;
+    }
+
+    // The fire's current flicker intensity for a classified light, in phase with the light itself.
+    internal static float FireIntensity(in PointLight light, FxLightClass lightClass, double clock)
+    {
+        return lightClass == FxLightClass.None ? 1f : FireFlicker.IntensityOf(in light, clock);
     }
 
     private void WriteParticle(ref FxParticle p, ref FxInstance instance)
@@ -706,7 +713,7 @@ public sealed class FxSimulation
         return x * x * (3f - 2f * x);
     }
 
-    private enum FxLightClass : byte
+    internal enum FxLightClass : byte
     {
         None,
         Lamp,

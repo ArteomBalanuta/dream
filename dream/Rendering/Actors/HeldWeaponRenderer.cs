@@ -22,10 +22,9 @@ public sealed class HeldWeaponRenderer : IDisposable
     public const float ShieldOffsetX = 0.31f;
     public const float ShieldOffsetY = -0.55f;
 
-    // The models are authored to the blocky character's proportions; at the isometric zoom that left a
-    // blade a few pixels wide, so everything held is drawn larger (about the grip, or the shield's centre).
-    public const float HandScale = 1.7f;
-    public const float ShieldScale = 1.5f;
+    // Held items are scaled per item by HeldItemScale.Resolve (about the grip, or a shield's centre)
+    // so each comes out at its documented real-world length: 1 m is 1.408 model units, and the
+    // authored figure is 2.68 units = 1.904 m.
 
     private StaticMeshBuffer? _cube;
     private bool _disposed;
@@ -109,7 +108,7 @@ public sealed class HeldWeaponRenderer : IDisposable
         }
 
         WeaponModel model = WeaponMeshCatalog.Resolve(visualId);
-        float scale = model.Grip == WeaponGrip.Shield ? ShieldScale : HandScale;
+        float scale = HeldItemScale.Resolve(visualId);
         Matrix4 attach = Matrix4.CreateScale(scale) * CreateGrip(model.Grip, offHand) * arm * modelMatrix;
         WeaponPart[] parts = model.PartArray;
         for (int i = 0; i < parts.Length; i++)
@@ -135,7 +134,7 @@ public sealed class HeldWeaponRenderer : IDisposable
         }
 
         WeaponModel model = WeaponMeshCatalog.Resolve(visualId);
-        float scale = model.Grip == WeaponGrip.Shield ? ShieldScale : HandScale;
+        float scale = HeldItemScale.Resolve(visualId);
         Matrix4 attach = Matrix4.CreateScale(scale) * CreateGrip(model.Grip, offHand) * arm * modelMatrix;
 
         if (!prepared)

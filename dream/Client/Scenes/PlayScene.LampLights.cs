@@ -13,6 +13,6 @@ public partial class PlayScene
 
     partial void CollectLampLights(LightCollector lights, in WorldSessionPresentationState presentation)
     {
-        _lampLights.Collect(presentation.VisibleWorld, presentation.Camera.Position, lights);
+        _lampLights.Collect(presentation.VisibleWorld, presentation.Camera.Position, lights, _clientPresentationTimeSeconds);
     }
 }

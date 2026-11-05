@@ -5,8 +5,9 @@ using Dream.Simulation.Inventory;
 namespace Dream.Rendering.Lighting;
 
 // The point light each HeldLightKind casts (wave T2). Colors are linear RGB already multiplied by
-// intensity, as PointLight expects. The torch flickers a little, driven only by client time and a
-// per-player seed, so it is deterministic and costs no state; the lantern burns steady.
+// intensity, as PointLight expects. The torch flickers (FireFlicker: four octaves plus gusts, in
+// intensity, radius and a small positional wobble), driven only by client time and a per-player
+// seed, so it is deterministic and costs no state; the lantern burns steady.
 public static class HeldLightCatalog
 {
     // Raised from 1.6 toward the brazier's 3.0 but held under MaxUnclippedTorchIntensity. The actor
@@ -16,29 +17,37 @@ public static class HeldLightCatalog
     // 0.262-0.338 at 2.1 against 0.286-0.369 at 2.3, a factor of 0.916 - and neither reaches A3's
     // 0.45, which is why M1 is captured at a BRAZIER 1.2-2.0 m away, a light this constant does not
     // touch. What the torch does carry is A1's bright tail, which is thin.
-    // It stops there because of the fire halo, NOT because of the brazier: the halo packs
-    // light.Color * HeldHaloTint * gain into a byte, and TWO flickers are already in that product -
-    // the light's own (TryCreate returns color * Flicker, peak 1.08) and the halo's (peak 1.15).
-    // Peak red at 2.1 is 2.1 * 0.375 * 1.08 * 1.15 = 0.979, just under the byte; at 2.3 it was
-    // 1.071, so the red channel pinned flat at flicker peaks and the halo stopped responding to its
-    // own flicker - the exact failure the ceiling exists to avoid.
-    // The RADIUS stays 8: BrazierRadius and LampRadius are both 10, and that radius is what
-    // FxSimulation.TryClassify matches for the fire halo, so drifting the torch onto it would give
-    // every torch a brazier halo.
+    //
+    // The ceiling. The fire halo packs light.Color * HeldHaloTint * fade into ONE BYTE, so its red
+    // channel is TorchIntensity * HeldHaloTint.X * flicker. There is exactly one flicker factor in
+    // that product: the light's colour already carries FireFlicker's intensity (peak 1 + A), and the
+    // halo does NOT multiply a second, independent flicker on top (it used to, which is why the
+    // amplitude had to stay at 0.08). With A = 0.25 the peak red is 2.1 * 0.375 * 1.25 = 0.984, under
+    // the byte; the largest intensity that still fits is MaxUnclippedTorchIntensity (2.133), and
+    // the largest amplitude at 2.1 is 0.269. Gusts only reduce the flicker, so 1 + A really is the peak.
+    //
+    // The RADIUS now flickers by +-8.75 % around 8 (7.30 .. 8.70), so FxSimulation.TryClassify can no
+    // longer match it exactly: it takes the NEAREST class centre (lantern 6, torch 8, lamp and
+    // brazier 10) within ClassifyTolerance. The torch's band and the brazier's (9.125 .. 10.875) are
+    // 0.425 apart, so a torch never reads as a brazier.
     public const float TorchIntensity = 2.1f;
     public const float TorchRadius = 8f;
     public const float LanternIntensity = 1.1f;
     public const float LanternRadius = 6f;
 
-    // Peak deviation of the torch's flicker from 1 (intensity only; the radius stays fixed).
-    public const float TorchFlickerAmplitude = 0.08f;
+    // Peak deviation of the torch's flicker from 1.
+    public const float TorchFlickerAmplitude = FireFlicker.TorchAmplitude;
 
-    // The largest TorchIntensity whose fire halo's red channel still fits in a byte at both
-    // flickers' peaks. DERIVED here instead of written into the comment above, so raising one of
-    // the three constants it depends on cannot silently re-break the clipping it guards against:
-    // HeldLightCatalogTests pins TorchIntensity <= this.
+    // The largest TorchIntensity whose fire halo's red channel still fits in a byte at the flicker's
+    // peak. DERIVED, so raising one of the constants it depends on cannot silently re-break the
+    // clipping: HeldLightCatalogTests pins TorchIntensity <= this.
     public static readonly float MaxUnclippedTorchIntensity =
-        1f / (FxSimulation.HeldHaloTint.X * (1f + TorchFlickerAmplitude) * FxSimulation.TorchHaloFlickerPeak);
+        1f / (FxSimulation.HeldHaloTint.X * (1f + TorchFlickerAmplitude));
+
+    // The same for the authored brazier (PlacedLightIndex.BrazierColor.X is its intensity), whose
+    // halo uses the lamp tint.
+    public static readonly float MaxUnclippedBrazierIntensity =
+        1f / (FxSimulation.LampHaloTint.X * (1f + FireFlicker.BrazierAmplitude));
 
     public static readonly Vector3 TorchColor = new Vector3(1.0f, 0.62f, 0.32f) * TorchIntensity;
     public static readonly Vector3 LanternColor = new Vector3(1.0f, 0.80f, 0.55f) * LanternIntensity;
@@ -63,21 +72,15 @@ public static class HeldLightCatalog
         }
     }
 
-    // Intensity multiplier at the client time: two incommensurate sines, phase-shifted by the seed
-    // so neighbouring torches do not pulse in step. Always within 1 ± TorchFlickerAmplitude.
+    // Intensity multiplier at the client time, within 1 +- TorchFlickerAmplitude; the seed keeps
+    // neighbouring torches out of step.
     public static float Flicker(HeldLightKind kind, double timeSeconds, int seed)
     {
-        if (kind != HeldLightKind.Torch)
-        {
-            return 1f;
-        }
-
-        double phase = (seed & 0xFFFF) * 0.6180339887;
-        double wave = 0.6 * Math.Sin(timeSeconds * 11.3 + phase) + 0.4 * Math.Sin(timeSeconds * 17.9 + phase * 2.3);
-        return 1f + TorchFlickerAmplitude * (float)wave;
+        return Sample(kind, Vector3.Zero, timeSeconds, seed).Intensity;
     }
 
-    // The light of the kind at the anchor; false for None.
+    // The light of the kind at the anchor; false for None. The light's radius and position carry the
+    // flicker (radius scale and the flame's wobble), its colour the intensity.
     public static bool TryCreate(HeldLightKind kind, Vector3 position, double timeSeconds, int seed, out PointLight light)
     {
         if (!TryResolve(kind, out Vector3 color, out float radius))
@@ -86,7 +89,16 @@ public static class HeldLightCatalog
             return false;
         }
 
-        light = new PointLight(position, radius, color * Flicker(kind, timeSeconds, seed));
+        FireFlickerSample sample = Sample(kind, position, timeSeconds, seed);
+        light = new PointLight(position + sample.Offset, radius * sample.RadiusScale, color * sample.Intensity);
         return true;
+    }
+
+    private static FireFlickerSample Sample(HeldLightKind kind, Vector3 position, double timeSeconds, int seed)
+    {
+        FireFlickerKind fire = kind == HeldLightKind.Torch ? FireFlickerKind.HeldTorch : FireFlickerKind.HeldLantern;
+        // A zero seed would fall back to the position hash; a player id is never 0 in play, and the
+        // fallback is still deterministic.
+        return FireFlicker.Sample(fire, position, timeSeconds, seed);
     }
 }

@@ -50,9 +50,10 @@ public sealed class HeldLightCatalogTests
             Assert.Equal(1f, HeldLightCatalog.Flicker(HeldLightKind.Lantern, time, seed: 7));
         }
 
+        Assert.Equal(0.25f, HeldLightCatalog.TorchFlickerAmplitude);
         Assert.InRange(min, 1f - HeldLightCatalog.TorchFlickerAmplitude - 1e-5f, 1f);
         Assert.InRange(max, 1f, 1f + HeldLightCatalog.TorchFlickerAmplitude + 1e-5f);
-        Assert.True(max - min > 0.05f, "The torch should visibly flicker.");
+        Assert.True(max - min > 0.30f, "The torch should visibly flicker.");
         // Different seeds are out of step.
         Assert.NotEqual(
             HeldLightCatalog.Flicker(HeldLightKind.Torch, 1.0, seed: 1),
@@ -60,55 +61,64 @@ public sealed class HeldLightCatalogTests
     }
 
     [Fact]
-    public void TryCreate_PlacesTheLight_WithTheFlickeredColor()
+    public void TryCreate_PlacesTheLight_WithTheFlickeredColorRadiusAndPosition()
     {
         Vector3 position = new(3f, 4f, 5f);
         Assert.True(HeldLightCatalog.TryCreate(HeldLightKind.Torch, position, 2.5, 11, out PointLight light));
-        Assert.Equal(position, light.Position);
-        Assert.Equal(HeldLightCatalog.TorchRadius, light.Radius);
-        AssertClose(HeldLightCatalog.TorchColor * HeldLightCatalog.Flicker(HeldLightKind.Torch, 2.5, 11), light.Color);
+        FireFlickerSample sample = FireFlicker.Sample(FireFlickerKind.HeldTorch, position, 2.5, 11);
+        AssertClose(position + sample.Offset, light.Position);
+        Assert.Equal(HeldLightCatalog.TorchRadius * sample.RadiusScale, light.Radius, 5);
+        AssertClose(HeldLightCatalog.TorchColor * sample.Intensity, light.Color);
+        Assert.Equal(HeldLightCatalog.Flicker(HeldLightKind.Torch, 2.5, 11), sample.Intensity);
+
+        Assert.True(HeldLightCatalog.TryCreate(HeldLightKind.Lantern, position, 2.5, 11, out PointLight lantern));
+        Assert.Equal(position, lantern.Position);
+        Assert.Equal(HeldLightCatalog.LanternRadius, lantern.Radius);
+        Assert.Equal(HeldLightCatalog.LanternColor, lantern.Color);
     }
 
-    // The fire halo packs light.Color * HeldHaloTint * gain into a byte, and BOTH flickers are in
-    // that product: the PointLight the FX collector is handed already carries the light's own
-    // flicker (TryCreate returns color * Flicker, peak 1 + TorchFlickerAmplitude), and the halo
-    // multiplies by its own on top. At 2.3 the peak red was 1.071, so the channel pinned flat at
-    // flicker peaks and the halo stopped responding to its own flicker. These pin the derivation,
-    // not one number, so raising any single constant fails here instead of in a capture.
+    // The fire halo packs light.Color * tint * fade into a byte. The halo has no flicker of its own,
+    // so exactly one factor (peak 1 + A) is in that product. These pin the derivation, not one
+    // number, so raising any single constant fails here instead of in a capture.
     [Fact]
     public void TheTorch_StaysUnderTheIntensityAtWhichItsHaloClips()
     {
-        float lightPeak = 1f + HeldLightCatalog.TorchFlickerAmplitude;
-        float haloPeak = FxSimulation.TorchHaloFlickerPeak;
+        float peak = 1f + HeldLightCatalog.TorchFlickerAmplitude;
+        Assert.Equal(1f / (FxSimulation.HeldHaloTint.X * peak), HeldLightCatalog.MaxUnclippedTorchIntensity, 4);
+        Assert.Equal(2.1333f, HeldLightCatalog.MaxUnclippedTorchIntensity, 3);
 
-        Assert.Equal(1.08f, lightPeak, 4);
-        Assert.Equal(1.15f, haloPeak, 4);
-        Assert.Equal(1f / (FxSimulation.HeldHaloTint.X * lightPeak * haloPeak), HeldLightCatalog.MaxUnclippedTorchIntensity, 4);
-        Assert.Equal(2.1471f, HeldLightCatalog.MaxUnclippedTorchIntensity, 3);
-
-        float peakRed = HeldLightCatalog.TorchIntensity * FxSimulation.HeldHaloTint.X * lightPeak * haloPeak;
-        Assert.True(
-            HeldLightCatalog.TorchIntensity <= HeldLightCatalog.MaxUnclippedTorchIntensity,
-            $"TorchIntensity {HeldLightCatalog.TorchIntensity} clips the halo's red channel at " +
-            $"{peakRed:F3}; the ceiling is {HeldLightCatalog.MaxUnclippedTorchIntensity:F3}.");
-        Assert.True(peakRed <= 1f, $"peak halo red {peakRed:F3} saturates");
-        // The 2.3 that shipped on the branch would have failed this.
+        float peakRed = HeldLightCatalog.TorchIntensity * FxSimulation.HeldHaloTint.X * peak;
+        Assert.True(HeldLightCatalog.TorchIntensity <= HeldLightCatalog.MaxUnclippedTorchIntensity);
+        Assert.True(peakRed <= 0.99f, $"peak torch halo red {peakRed:F3}");
         Assert.True(2.3f > HeldLightCatalog.MaxUnclippedTorchIntensity);
     }
 
-    // The literals the halo's flicker is built from, so TorchHaloFlickerPeak cannot drift from the
-    // sines FxSimulation actually sums.
     [Fact]
-    public void TheHaloFlickerPeak_IsTheSumOfItsOwnSines()
+    public void TheBrazier_StaysUnderTheIntensityAtWhichItsHaloClips()
     {
-        Assert.Equal(
-            1f + FxSimulation.TorchHaloFlickerFast + FxSimulation.TorchHaloFlickerMid + FxSimulation.TorchHaloFlickerSlow,
-            FxSimulation.TorchHaloFlickerPeak,
-            5);
-        string source = ReadRepoFile("dream", "Rendering", "Effects", "FxSimulation.cs");
-        Assert.Contains("TorchHaloFlickerFast * MathF.Sin", source, StringComparison.Ordinal);
-        Assert.Contains("TorchHaloFlickerMid * MathF.Sin", source, StringComparison.Ordinal);
-        Assert.Contains("TorchHaloFlickerSlow * MathF.Sin", source, StringComparison.Ordinal);
+        float peak = 1f + FireFlicker.BrazierAmplitude;
+        Assert.Equal(1f / (FxSimulation.LampHaloTint.X * peak), HeldLightCatalog.MaxUnclippedBrazierIntensity, 4);
+        float peakRed = PlacedLightIndex.BrazierColor.X * FxSimulation.LampHaloTint.X * peak;
+        Assert.True(PlacedLightIndex.BrazierColor.X <= HeldLightCatalog.MaxUnclippedBrazierIntensity);
+        Assert.True(peakRed <= 0.99f, $"peak brazier halo red {peakRed:F3}");
+        Assert.True(PlacedLightIndex.BrazierColor.X * FxSimulation.LampHaloTint.X * (1f + FireFlicker.BrazierAmplitude) <= 1.0f);
+        Assert.True(HeldLightCatalog.TorchColor.X * FxSimulation.HeldHaloTint.X * (1f + HeldLightCatalog.TorchFlickerAmplitude) <= 1.0f);
+    }
+
+    [Fact]
+    public void TheTorchRadius_FlickersButStaysATorchToTheFxClassifier()
+    {
+        float min = float.MaxValue;
+        float max = float.MinValue;
+        for (int frame = 0; frame < 20000; frame++)
+        {
+            Assert.True(HeldLightCatalog.TryCreate(HeldLightKind.Torch, new Vector3(1f, 2f, 3f), frame / 60.0, 5, out PointLight light));
+            min = MathF.Min(min, light.Radius);
+            max = MathF.Max(max, light.Radius);
+        }
+
+        Assert.InRange(min, 7.29f, 7.45f);
+        Assert.InRange(max, 8.55f, 8.71f);
     }
 
     private static string ReadRepoFile(params string[] parts)

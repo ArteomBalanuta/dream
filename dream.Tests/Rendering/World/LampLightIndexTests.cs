@@ -169,8 +169,8 @@ public class LampLightIndexTests
 
         Assert.Equal(LightCollector.Capacity, lights.Count);
         Assert.True(lights.Dropped > 0);
-        Assert.Equal(HeldLightAnchor.FirstPerson(camera, front, Vector3.UnitX, Vector3.UnitY), lights.Lights[0].Position);
-        Assert.Equal(HeldLightCatalog.TorchRadius, lights.Lights[0].Radius);
+        Assert.True((HeldLightAnchor.FirstPerson(camera, front, Vector3.UnitX, Vector3.UnitY) - lights.Lights[0].Position).Length < 0.04f);
+        Assert.InRange(lights.Lights[0].Radius, 7.29f, 8.71f);
     }
 
     [Fact]

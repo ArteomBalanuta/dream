@@ -35,8 +35,8 @@ public sealed class PlaySceneHeldLightsTests
 
         Assert.Equal(3, lights.Count);
         PointLight localLight = lights.Lights[0];
-        Assert.Equal(HeldLightAnchor.FirstPerson(CameraPosition, CameraFront, CameraRight, CameraUp), localLight.Position);
-        Assert.Equal(HeldLightCatalog.TorchRadius, localLight.Radius);
+        Assert.True((HeldLightAnchor.FirstPerson(CameraPosition, CameraFront, CameraRight, CameraUp) - localLight.Position).Length < 0.04f, "the torch flame wobbles by at most ~0.03");
+        Assert.InRange(localLight.Radius, 7.29f, 8.71f);
 
         PointLight lantern = lights.Lights[1];
         Assert.Equal(HeldLightAnchor.Body(remotes[0].Pose.Position, remotes[0].Pose.Facing), lantern.Position);
@@ -44,8 +44,8 @@ public sealed class PlaySceneHeldLightsTests
         Assert.Equal(HeldLightCatalog.LanternColor, lantern.Color);
 
         PointLight torch = lights.Lights[2];
-        Assert.Equal(HeldLightAnchor.Body(remotes[2].Pose.Position, remotes[2].Pose.Facing), torch.Position);
-        Assert.Equal(HeldLightCatalog.TorchRadius, torch.Radius);
+        Assert.True((HeldLightAnchor.Body(remotes[2].Pose.Position, remotes[2].Pose.Facing) - torch.Position).Length < 0.04f, "the torch flame wobbles by at most ~0.03");
+        Assert.InRange(torch.Radius, 7.29f, 8.71f);
     }
 
     [Fact]

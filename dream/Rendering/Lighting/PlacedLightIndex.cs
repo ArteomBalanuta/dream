@@ -1,3 +1,4 @@
+using Dream.Rendering.Effects;
 using Dream.Rendering.World;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -23,8 +24,9 @@ namespace Dream.Rendering.Lighting;
 // the terrain under a brazier moves its flame with the surface; that is replicated content too.
 //
 // Radius. BrazierRadius deliberately equals LampLightIndex.LampRadius: FxSimulation.TryClassify tags
-// a light by radius, so a brazier inherits the lamp's fire halo and drifting embers, which is the
-// right behaviour for a burning bowl. A different radius would give it no FX at all.
+// a light by its NEAREST class radius (within 0.95), and a flickering brazier's radius moves by
+// +-8.75 % (9.125 .. 10.875) around it, so a brazier inherits the lamp's fire halo and drifting
+// embers, which is the right behaviour for a burning bowl. A radius far from 10 would give it no FX.
 public sealed class PlacedLightIndex
 {
     public const float BrazierRadius = LampLightIndex.LampRadius;
@@ -85,7 +87,9 @@ public sealed class PlacedLightIndex
 
     // sunIntensity: the frame's sun intensity (0 = night); scales every brazier and drops them once the
     // factor is negligible, so a daylight frame carries no halo or embers for them either.
-    public void Collect(in GeometryRenderExport export, Vector3 cameraPosition, LightCollector lights, float sunIntensity = 0f)
+    // clockSeconds: the presentation clock; when given each brazier flickers (FireFlicker, phase from its
+    // position) in intensity, radius and flame position. Null leaves the base light, as tests expect.
+    public void Collect(in GeometryRenderExport export, Vector3 cameraPosition, LightCollector lights, float sunIntensity = 0f, double? clockSeconds = null)
     {
         ArgumentNullException.ThrowIfNull(lights);
         long version = export.StaticContentVersion;
@@ -109,7 +113,17 @@ public sealed class PlacedLightIndex
             PlacedLight placed = _placements[i];
             if (Vector3.DistanceSquared(placed.Position, cameraPosition) <= CollectDistanceSquared)
             {
-                lights.Add(new PointLight(placed.Position, placed.Radius, placed.Color * strength));
+                if (clockSeconds is { } clock)
+                {
+                    FireFlickerSample fire = FireFlicker.Sample(FireFlickerKind.Brazier, placed.Position, clock, 0);
+                    lights.Add(new PointLight(
+                        placed.Position + fire.Offset, placed.Radius * fire.RadiusScale, placed.Color * (strength * fire.Intensity)));
+                }
+                else
+                {
+                    lights.Add(new PointLight(placed.Position, placed.Radius, placed.Color * strength));
+                }
+
                 count++;
             }
         }
