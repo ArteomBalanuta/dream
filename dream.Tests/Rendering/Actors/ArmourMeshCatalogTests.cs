@@ -311,7 +311,10 @@ public class ArmourMeshCatalogTests
         return (0.2126f * c.X) + (0.7152f * c.Y) + (0.0722f * c.Z);
     }
 
-    private static bool IsLight(ArmourMaterial material) => Luma(material) >= 0.30f;
+    // A glowing material is the light facet of its piece: its emissive is added after the gain, so it is bright by
+    // construction, while its lit body is kept dark on purpose (a bright body clips; see the palette test).
+    private static bool IsLight(ArmourMaterial material) =>
+        Luma(material) >= 0.30f || ArmourMeshCatalog.Emissive(material) != Vector3.Zero;
 
     private static bool IsDark(ArmourMaterial material) => Luma(material) <= 0.18f;
 
@@ -699,11 +702,17 @@ public class ArmourMeshCatalogTests
             Assert.Equal(material is ArmourMaterial.Arcane or ArmourMaterial.Ember, glows);
         }
 
-        // Sampled from gen_char_player.py's palette, not WeaponMaterial.Steel (0.46, 0.48, 0.52).
-        Assert.Equal(new Vector4(0.36f, 0.39f, 0.46f, 1f), ArmourMeshCatalog.BaseColor(ArmourMaterial.Steel));
-        Assert.Equal(new Vector4(0.086f, 0.102f, 0.157f, 1f), ArmourMeshCatalog.BaseColor(ArmourMaterial.ClothCold));
-        Assert.Equal(new Vector4(0.118f, 0.125f, 0.141f, 1f), ArmourMeshCatalog.BaseColor(ArmourMaterial.ClothAsh));
-        Assert.Equal(new Vector4(0.353f, 0.118f, 0.102f, 1f), ArmourMeshCatalog.BaseColor(ArmourMaterial.ClothRed));
+        // Albedo, not final pixel colour: the shader multiplies by a gain of up to ~2.2 with no tonemap, so a lit
+        // channel above ~0.45 clips to a flat patch. Pieces differ by value and material, not by saturation.
+        Assert.Equal(new Vector4(0.30f, 0.315f, 0.345f, 1f), ArmourMeshCatalog.BaseColor(ArmourMaterial.Steel));
+        Assert.Equal(new Vector4(0.07f, 0.078f, 0.10f, 1f), ArmourMeshCatalog.BaseColor(ArmourMaterial.ClothCold));
+        Assert.Equal(new Vector4(0.17f, 0.162f, 0.145f, 1f), ArmourMeshCatalog.BaseColor(ArmourMaterial.ClothAsh));
+        Assert.Equal(new Vector4(0.20f, 0.055f, 0.045f, 1f), ArmourMeshCatalog.BaseColor(ArmourMaterial.ClothRed));
+        foreach (ArmourMaterial material in Enum.GetValues<ArmourMaterial>())
+        {
+            Vector4 c = ArmourMeshCatalog.BaseColor(material);
+            Assert.True(MathF.Max(c.X, MathF.Max(c.Y, c.Z)) <= 0.44f, $"{material} albedo {c} would clip under the actor gain");
+        }
     }
 
     [Fact]
