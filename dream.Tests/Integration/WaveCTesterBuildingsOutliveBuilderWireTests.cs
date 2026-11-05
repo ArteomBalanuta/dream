@@ -7,6 +7,7 @@ using Dream.Client.World;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
+using Dream.Server.Persistence;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
@@ -36,7 +37,7 @@ public sealed class WaveCTesterBuildingsOutliveBuilderWireTests(ITestOutputHelpe
         GeometryCellKey brokenCell;
         GeometryCellKey standingCell;
         string ownerA;
-        await using (WireLoopbackServer server = await StartAsync(database))
+        await using (WireLoopbackServer server = await StartAsync(database, seedBaseline: true))
         {
             server.Runtime.Enemies.Clear();
             await using WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
@@ -284,9 +285,21 @@ public sealed class WaveCTesterBuildingsOutliveBuilderWireTests(ITestOutputHelpe
     private static Vector3 Position(WireLoopbackServer server, string session) =>
         Assert.Single(server.Runtime.CaptureActorSnapshots(), actor => actor.SessionId == session).Position;
 
-    private static async Task<WireLoopbackServer> StartAsync(TempDatabase database)
+    // seedBaseline is true only for the first start. A new profile-backed character is created at
+    // Strength 1000, so player.min_damage (5 + strength * 2) is 2005 against a 100 hp cube and A's first
+    // swing breaks the cube it was meant to hit many times (the loop above waits for rubble over up to
+    // 1500 ticks of attacks, and the second cube must still be standing). The baseline's Strength 10
+    // gives 25-50 per hit. Later starts must not seed: A's profile row is deleted between phases and
+    // seeding would bring A back, which is the very thing the test is about.
+    private static async Task<WireLoopbackServer> StartAsync(TempDatabase database, bool seedBaseline = false)
     {
-        return await WireLoopbackServer.StartAsync(ServerBootstrap.CreateAuthoritativeHost(database.OpenBundle()));
+        ServerPersistenceBundle bundle = database.OpenBundle();
+        if (seedBaseline)
+        {
+            TestStatBaseline.SeedMissingProfiles(bundle.Schema, [$"Name {SessionA}", $"Name {SessionB}"]);
+        }
+
+        return await WireLoopbackServer.StartAsync(ServerBootstrap.CreateAuthoritativeHost(bundle));
     }
 
     private static async Task TickAsync(WireLoopbackServer server, int ticks)

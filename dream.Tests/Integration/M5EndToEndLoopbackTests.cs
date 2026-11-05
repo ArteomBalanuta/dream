@@ -10,6 +10,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui.Panels;
 using Dream.Server;
+using Dream.Server.Persistence;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
@@ -55,8 +56,13 @@ public sealed class M5EndToEndLoopbackTests
 
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db)
     {
-        DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(
-            ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath, start: new ServerStartOptions(null)));
+        // A new profile-backed character is created at Strength 1000, so player.min_damage
+        // (5 + strength * 2) is 2005 and max_damage (10 + strength * 4) 4010. These tests were written for
+        // the baseline's Strength 10 (25-50 per hit): a wolf, a dire wolf or a cube falls to the first
+        // swing otherwise. A row that already exists (a restart) is left as the earlier phase stored it.
+        ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath, start: new ServerStartOptions(null));
+        TestStatBaseline.SeedMissingProfiles(bundle.Schema, KeyOf(SessionA), KeyOf(SessionB), KeyOf(SessionC));
+        DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(bundle);
         WireLoopbackServer server = await WireLoopbackServer.StartAsync(host);
         server.Runtime.EnemyContent = ContentCatalog.Shipped;
         server.Runtime.SpawnContentNpcs();
@@ -502,6 +508,12 @@ public sealed class M5EndToEndLoopbackTests
     public async Task Party_CubeAccess_FollowsTheFlag_AndEndsWhenTheMateLeaves()
     {
         using MigrationTestDatabase db = new();
+        // The mate's hit must leave the cube standing for the refusal after the mate leaves to mean
+        // anything. At a new character's Strength 1000 that hit is 2005-4010 (5 + strength * 2 up to
+        // 10 + strength * 4) against a 100 hp cube and breaks it; the baseline's Strength 10 is 25-50.
+        // The rig builds its own bundle, so the tables are created first (EnsureSchema is idempotent).
+        db.Schema.EnsureSchema();
+        TestStatBaseline.SeedMissingProfiles(db.Schema, M4BRig.KeyOf(M4BRig.SessionA), M4BRig.KeyOf(M4BRig.SessionB));
         await using M4BRig rig = await M4BRig.StartAsync(db);
         WorldSessionRuntime runtime = rig.Runtime;
         Assert.False(runtime.PartyCubeAccess);

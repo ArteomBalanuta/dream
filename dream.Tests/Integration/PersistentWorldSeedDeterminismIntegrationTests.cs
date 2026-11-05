@@ -301,10 +301,29 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         // standing. Whether that cube broke depends on the world's random seed (see the restart
         // test above), so a later phase cannot assume the cell is empty.
         public PersistentScriptedServer(ServerPersistenceBundle bundle, bool allowOccupiedBuildCell = false)
-            : this(ServerBootstrap.CreateAuthoritativeHost(bundle), allowOccupiedBuildCell)
+            : this(CreateHostOnBaseline(bundle), allowOccupiedBuildCell)
         {
             Assert.Equal(bundle.SimulationSeed, Seed);
         }
+
+        // The script was written for a character that needs several hits: a cube has 100 hp and the
+        // scripted enemy 400. A profile-backed join of a new character reads Strength 1000, and the
+        // player.min_damage formula (5 + strength * 2) makes the first swing 2005 and the maximum
+        // (10 + strength * 4) 4010, so the first hit destroys whatever is in reach and no later damage
+        // roll ever happens. At the baseline's Strength 10 the range is 25-50: 2-4 hits on a cube.
+        // The stored profile is keyed by the joined display name. It is seeded on every construction
+        // because WipeWorldStateKeepingMetadata empties the player tables before a replay phase; a row
+        // that survived a plain restart is left as the earlier phase stored it.
+        private static DedicatedServerHost CreateHostOnBaseline(ServerPersistenceBundle bundle)
+        {
+            SeedBaseline(bundle);
+            return ServerBootstrap.CreateAuthoritativeHost(bundle);
+        }
+
+        // For a test that builds the host itself and hands it to the DedicatedServerHost constructor,
+        // which cannot seed: call this on the bundle before CreateAuthoritativeHost.
+        internal static void SeedBaseline(ServerPersistenceBundle bundle) =>
+            TestStatBaseline.SeedMissingProfiles(bundle.Schema, Sessions.Select(session => $"Name {session}").ToArray());
 
         public PersistentScriptedServer(DedicatedServerHost host, bool allowOccupiedBuildCell = false)
         {

@@ -20,6 +20,17 @@ public sealed class BuildProtectionTests
 {
     private const string StrangerRefusal = "That belongs to someone else.";
 
+    // The tests expect an owned cube to survive one hit and break on a later one. A profile-backed new
+    // character is created at Strength 1000, so player.min_damage (5 + strength * 2) is 2005 against
+    // a 100 hp cube and the first swing breaks it. The baseline's Strength 10 gives 25-50 per hit.
+    // The rig builds its own bundle, so the tables are created here first (EnsureSchema is idempotent).
+    private static Task<M4BRig> StartRigAsync(MigrationTestDatabase db)
+    {
+        db.Schema.EnsureSchema();
+        TestStatBaseline.SeedMissingProfiles(db.Schema, M4BRig.KeyOf(M4BRig.SessionA), M4BRig.KeyOf(M4BRig.SessionB));
+        return M4BRig.StartAsync(db);
+    }
+
     private static WorldObjectRegistry Registry(WorldSessionRuntime runtime) =>
         (WorldObjectRegistry)typeof(WorldSessionRuntime).GetField("_worldObjects", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(runtime)!;
 
@@ -61,7 +72,7 @@ public sealed class BuildProtectionTests
     public async Task AStranger_CannotDamageAPlacedCube_TheOwnerCan_AndTheOwnerCanBreakIt()
     {
         using MigrationTestDatabase db = new();
-        await using M4BRig rig = await M4BRig.StartAsync(db);
+        await using M4BRig rig = await StartRigAsync(db);
         (int X, int Y, int Z) cell = await PlaceCubeAsync(rig);
         WorldObjectRecord record = RecordAt(rig, cell);
         Assert.Equal(M4BRig.KeyOf(M4BRig.SessionA), record.OwnerPlayerName);
@@ -96,7 +107,7 @@ public sealed class BuildProtectionTests
     public async Task AStranger_IsRefused_EvenWhenTheRegistryLostTheOwner_BecauseTheRecordIsRepairedBeforeTheGate()
     {
         using MigrationTestDatabase db = new();
-        await using M4BRig rig = await M4BRig.StartAsync(db);
+        await using M4BRig rig = await StartRigAsync(db);
         (int X, int Y, int Z) cell = await PlaceCubeAsync(rig);
         WorldObjectRecord record = RecordAt(rig, cell);
         int full = record.Health.MaxHealth;
@@ -119,7 +130,7 @@ public sealed class BuildProtectionTests
     public async Task ACubeWithNoOwner_CanBeDamagedByAnyone()
     {
         using MigrationTestDatabase db = new();
-        await using M4BRig rig = await M4BRig.StartAsync(db);
+        await using M4BRig rig = await StartRigAsync(db);
         int y = (int)MathF.Floor(rig.Target(rig.A).EyePosition.Y);
         Cube? cube = rig.Runtime.Map.TryAddCube(new Vector3(20.5f, y + 0.5f, 22.5f), isStatic: true, withPhysics: false);
         Assert.NotNull(cube);
@@ -139,7 +150,7 @@ public sealed class BuildProtectionTests
         using MigrationTestDatabase db = new();
         (int X, int Y, int Z) cell;
         int full;
-        await using (M4BRig first = await M4BRig.StartAsync(db))
+        await using (M4BRig first = await StartRigAsync(db))
         {
             cell = await PlaceCubeAsync(first);
             full = RecordAt(first, cell).Health.MaxHealth;

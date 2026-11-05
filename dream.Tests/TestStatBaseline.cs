@@ -4,14 +4,16 @@ using Dream.Simulation.Players;
 
 namespace Dream.Tests;
 
-// The modest attribute baseline the stat-mechanics tests measure against.
+// The modest attribute baseline the combat and stat-mechanics tests measure against.
 //
-// A new character is created at PlayerStatRules.NewCharacterAttribute, which is also each
-// attribute's ceiling (PlayerCombatStats.MaxStrength and friends), so it has no headroom: a spend
-// cannot raise anything, and PointsAvailable is 0 because the character already reads as far over
-// budget. A test about the point system, about armor from Agility, or about what a spend does to a
-// stored row therefore has to say what the character starts at rather than take whatever new
-// characters are handed today.
+// A new character is created at PlayerStatRules.NewCharacterAttribute (1000 in each attribute,
+// against a ceiling of 10000, so there is plenty of point headroom). That is not why this helper
+// exists. It exists for damage and armour magnitude: the player.min_damage formula is
+// 5 + strength * 2 and player.max_damage is 10 + strength * 4, so a fresh character swings for
+// 2005-4010, which one-shots a 100 hp cube or a 400 hp enemy. Combat harnesses written around
+// "it takes several hits" (cube fracture sequences, hit-roll divergence, damage-then-checkpoint)
+// would never see a second damage roll. At this baseline's Strength 10 the range is 25-50, which is
+// 2-4 hits on a cube, and armour and health stay in the modest range their numbers were derived in.
 //
 // These numbers are the tests' own, on purpose. They are not the shipping default and must not be
 // wired to it: the point of pinning them is that changing what players start with does not silently
@@ -62,6 +64,24 @@ public static class TestStatBaseline
         foreach (string playerName in playerNames)
         {
             profiles.Save(Profile(playerName, now));
+        }
+    }
+
+    // As SeedProfiles, but leaves a row that already exists alone. A harness that restarts the server
+    // on the same database calls this before every start: the first call writes the baseline, and a
+    // later one must not overwrite the health, stats or deletion the earlier phase left behind.
+    public static void SeedMissingProfiles(SqliteSchemaBootstrapper schema, params string[] playerNames)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        ArgumentNullException.ThrowIfNull(playerNames);
+        using SqlitePlayerProfileRepository profiles = new(schema);
+        DateTime now = DateTime.UtcNow;
+        foreach (string playerName in playerNames)
+        {
+            if (profiles.TryGet(playerName) == null)
+            {
+                profiles.Save(Profile(playerName, now));
+            }
         }
     }
 
