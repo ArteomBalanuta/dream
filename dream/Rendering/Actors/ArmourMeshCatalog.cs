@@ -258,31 +258,41 @@ public static class ArmourMeshCatalog
         // ---- Back (torso frame): the cloaks sit strictly outside the baked cloak (half-width 0.326,
         // back -0.36, hem -0.475, top 0.836): half-width >= 0.36, back <= -0.38, hem <= -0.50, top >= 0.84.
 
-        // Short and ragged: three strips of different lengths, a leather yoke and a steel clasp.
+        // Every cloak is a TAPERED STACK, never one plank: narrow at the shoulders (<= 0.54), widest near the
+        // hem, each box further back and pitched a little more than the one above (positive pitch swings
+        // the bottom edge backwards), so the lengths take different light and the hem hangs away from
+        // the body. Hem boxes are inset or split into tabs so the bottom outline is not a square line.
+
+        // Short and ragged: a leather yoke, a stepped body and three tabs of different lengths.
         Add("worn.back.travel-cloak", ArmourMount.Back,
-            Box(0f, 0.17f, -0.40f, 0.46f, 1.44f, 0.05f, Ash),
-            Box(0.31f, 0.27f, -0.40f, 0.14f, 1.24f, 0.05f, Ash),
-            Box(-0.31f, 0.20f, -0.40f, 0.14f, 1.38f, 0.05f, Ash),
-            Box(0f, 0.84f, -0.20f, 0.62f, 0.10f, 0.34f, Leather),
+            Box(0f, 0.84f, -0.24f, 0.52f, 0.10f, 0.30f, Leather),
+            Box(0f, 0.50f, -0.36f, 0.54f, 0.50f, 0.12f, Ash, pitch: 2f),
+            Box(0f, 0.02f, -0.40f, 0.64f, 0.50f, 0.10f, Ash, pitch: 5f),
+            Box(0f, -0.30f, -0.44f, 0.26f, 0.36f, 0.08f, Ash, pitch: 9f),
+            Box(0.29f, -0.33f, -0.43f, 0.20f, 0.44f, 0.08f, Ash, pitch: 8f),
+            Box(-0.29f, -0.27f, -0.43f, 0.20f, 0.32f, 0.08f, Ash, pitch: 8f),
             Box(0f, 0.90f, -0.22f, 0.10f, 0.04f, 0.10f, Steel));
 
-        // Long, to the calf, with a flared hem and a raised standing collar (not a hood).
+        // Long, to the calf: a stepped trapezoid, an inset skirt and a raised standing collar (not a hood).
         Add("worn.back.hooded-cloak", ArmourMount.Back,
-            Box(0f, -0.10f, -0.41f, 0.84f, 2.00f, 0.06f, Cold),
-            Box(0f, -0.98f, -0.46f, 0.96f, 0.16f, 0.08f, Cold),
-            Box(0f, 0.86f, -0.20f, 0.80f, 0.12f, 0.40f, Cold),
-            Box(0f, 1.02f, -0.26f, 0.48f, 0.30f, 0.08f, Ash),
-            Box(0.26f, 0.98f, -0.16f, 0.08f, 0.24f, 0.28f, Ash),
-            Box(-0.26f, 0.98f, -0.16f, 0.08f, 0.24f, 0.28f, Ash),
-            Box(0f, 1.185f, -0.26f, 0.44f, 0.03f, 0.10f, Bone));
+            Box(0f, 0.78f, -0.30f, 0.50f, 0.24f, 0.22f, Cold),
+            Box(0f, 0.45f, -0.34f, 0.58f, 0.46f, 0.16f, Ash, pitch: 3f),
+            Box(0f, -0.06f, -0.38f, 0.70f, 0.56f, 0.14f, Cold, pitch: 5f),
+            Box(0f, -0.62f, -0.44f, 0.80f, 0.56f, 0.12f, Ash, pitch: 7f),
+            Box(0f, -0.98f, -0.48f, 0.68f, 0.24f, 0.12f, Cold, pitch: 10f),
+            Box(0f, 1.00f, -0.28f, 0.46f, 0.30f, 0.14f, Ash, pitch: -10f),
+            Box(0f, 1.175f, -0.30f, 0.44f, 0.03f, 0.12f, Bone));
 
-        // A broad flat mantle across the shoulders, layered, over a short back panel.
+        // A broad shoulder mantle, layered and drooping at the points, over a short tapered back panel.
         Add("worn.back.grave-mantle", ArmourMount.Back,
-            Box(0f, 0.84f, -0.12f, 1.36f, 0.10f, 0.56f, Cold),
-            Box(0f, 0.15f, -0.40f, 0.80f, 1.34f, 0.05f, Cold),
-            Box(0f, 0.68f, -0.12f, 1.12f, 0.10f, 0.50f, Ash),
-            Box(0f, 0.905f, -0.12f, 0.90f, 0.03f, 0.40f, Bone),
-            Box(0f, -0.49f, -0.43f, 0.80f, 0.05f, 0.04f, Red));
+            Box(0f, 0.84f, -0.10f, 0.64f, 0.10f, 0.50f, Cold),
+            Box(0.40f, 0.80f, -0.10f, 0.36f, 0.10f, 0.50f, Cold, roll: -18f),
+            Box(-0.40f, 0.80f, -0.10f, 0.36f, 0.10f, 0.50f, Cold, roll: 18f),
+            Box(0f, 0.66f, -0.12f, 0.84f, 0.10f, 0.46f, Ash),
+            Box(0f, 0.905f, -0.10f, 0.50f, 0.03f, 0.38f, Bone),
+            Box(0f, 0.30f, -0.34f, 0.52f, 0.56f, 0.10f, Cold, pitch: 3f),
+            Box(0f, -0.22f, -0.40f, 0.76f, 0.56f, 0.08f, Ash, pitch: 6f),
+            Box(0f, -0.50f, -0.43f, 0.60f, 0.05f, 0.10f, Red));
 
         // Not cloth: two thin glowing planes splayed from the shoulder blades, bone spars and a dark root.
         Add("worn.back.gossamer-wings", ArmourMount.Back,

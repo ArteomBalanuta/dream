@@ -289,6 +289,39 @@ public class ArmourMeshCatalogTests
         Assert.True(max.X > BakedCloakHalfWidth);
     }
 
+    [Theory]
+    [MemberData(nameof(CloakIds))]
+    public void EveryCloak_TapersFromNarrowShouldersToAWiderHem(string id)
+    {
+        // A cloak is a stack of hanging panels (centre z <= -0.30). A single broad slab reads as a
+        // billboard at the isometric angle, so the highest panel must be narrow and everything below
+        // it must be clearly wider, and no single box may be broader than the mantle's 1.2 shoulders.
+        ArmourPart[] panels = [.. Model(id).Parts.Where(p => p.Center.Z <= -0.30f)];
+        Assert.True(panels.Length >= 3, $"{id} has only {panels.Length} hanging panels");
+
+        ArmourPart top = panels.OrderByDescending(p => p.Center.Y).First();
+        (Vector3 topMin, Vector3 topMax) = PartBounds(top);
+        float topWidth = topMax.X - topMin.X;
+        Assert.True(topWidth <= 0.62f, $"{id} top panel is {topWidth} wide");
+
+        float lowerMin = float.MaxValue;
+        float lowerMax = float.MinValue;
+        foreach (ArmourPart panel in panels.Where(p => p != top))
+        {
+            (Vector3 min, Vector3 max) = PartBounds(panel);
+            lowerMin = MathF.Min(lowerMin, min.X);
+            lowerMax = MathF.Max(lowerMax, max.X);
+        }
+
+        Assert.True(lowerMax - lowerMin >= topWidth + 0.12f, $"{id} hem {lowerMax - lowerMin} vs shoulders {topWidth}");
+
+        // No oversized box: none is broader than the mantle shoulders.
+        Assert.All(Model(id).Parts, p => Assert.True(p.Size.X <= 1.2f, $"{id} has a {p.Size.X} wide box"));
+
+        // The panels hang at more than one depth, so the lengths do not merge into one flat plane.
+        Assert.True(panels.Select(p => MathF.Round(p.Center.Z, 2)).Distinct().Count() >= 3, $"{id} panels share a depth");
+    }
+
     [Fact]
     public void TheFourBackItems_DifferStronglyInSilhouette()
     {
