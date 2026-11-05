@@ -293,6 +293,66 @@ Two tests in `Wave9StarveInputChangeTests` encoded the old model and were adjust
 
 `dream` and `dream.Tests` build with 0 errors and no new warnings. Blast radius `ClientPredictionReconciler|ClientReplayReconciliation|SnapVelocityHandoff|Correction|ClickSoak|PlayerMotor|CommandInbox`: **114 passed, 0 failed, 2 skipped**. A wider replication sweep (`Replication|Reconcil|Starv|Wave12Delta|Snapshot|Prediction`): **576 passed, 0 failed, 4 skipped**. `check_sources.py`: 0 problems, 428 names scanned. The three Wave9 failures above were confirmed as this loop's by re-running them against `84eb1c34`'s reconciler, where they pass.
 
+## Fix loop 4: the first trustworthy full suite, and the two tests it caught
+
+Every earlier run of this wave was either filtered, truncated by its own `head` pipe, or
+overlapped a peer's test processes. The first full suite that ran alone on the integration
+branch reports **44 failed, 7933 passed, 47 skipped, 8024 total** in 2 h 31 m. All 44 are
+accounted for:
+
+| | count | verdict |
+| --- | --- | --- |
+| Attribute-ceiling fallout from `1f422512`, 13 classes | 32 | pre-existing on master |
+| Persistence/integration | 9 | pre-existing on master |
+| `CubeRestFreezerTests.Tick_WithAFrozenCarpetAndAWalkingPlayer_AllocatesNothing` | 1 | contention - passes in isolation |
+| `WolfReachTests.AWolfWithNoTarget_WalksBackToItsHome_...` | 1 | this wave - fixed below |
+| `CheckpointLeaveRaceLoopbackTests.LeaveRightAfterACapture_...` | 1 | this wave - fixed below |
+
+The baseline was measured in a **separate clean worktree** detached at `04a8fbfe`, which
+matters: the first attempt materialised master with `git checkout 04a8fbfe -- .` inside the
+integration worktree, which left this wave's *added* test files in place, failed the build with
+one `CS0117`, and let `--no-build` re-run the branch's own binary - handing back a "baseline"
+that matched the branch exactly. The clean worktree built with 0 errors and failed **9** of the
+10 persistence/integration tests, so master's real baseline is **41**, not the ~27 recorded
+earlier in this wave.
+
+### The wolf walked home at the wrong speed, and the test was right to notice
+
+`ReturnHome` moved from `MoveSpeed` to `PatrolSpeed` in WS-3, deliberately: an enemy that
+returns home at its chase speed never reads as prowling. The leash test still asserted the
+400-440 tick window that 2.8 m/s gave it, and measured 823. 18.03 m at the 1.4 m/s patrol speed
+and 64 ticks/s is 824 ticks, so the production number was right and the expectation was stale.
+
+The fixture now passes `patrolSpeed: 1.4f` explicitly rather than leaning on the
+`MoveSpeed * 0.5f` fallback, so it states the speed it tests, and the 810-840 window is tight
+enough to pin *which* speed `ReturnHome` uses - a revert to the chase speed lands near 412 and
+fails. The never-got-home loop guard went 1000 -> 2000 so a speed regression reports as the
+range assert instead of as a misleading "the wolf never got home".
+
+### The checkpoint-leave race was the only test this wave broke
+
+It sends 12 forward ticks and asserted A moved more than 0.5 m. A flat 6 m/s covered 1.13 m in
+those ticks; the ramped motor reaches its 4.3 m/s cruise only after 15.3 ticks, so 12 ticks from
+rest cover about 0.34 m, and it measured 0.35. The assert exists to prove the move command
+landed, not to measure distance, so it keeps the tick count - adding ticks under the held write
+lock would move the very race the test exercises - and asks for a quarter metre, which still
+fails on a move that is dropped entirely.
+
+This is the same family as fix loop 1's 18 re-expressed tests. These two were missed because
+WS-1's filtered suite never ran integration tests and no full suite was trustworthy until now.
+
+### Verification
+
+`dream.Tests` builds with 0 errors. `WolfReachTests|CheckpointLeaveRaceLoopbackTests|
+PlayerAnimationStateMachineTests|FootstepCadenceTests|CubeRestFreezerTests`: **100 passed,
+0 failed**. The checkpoint test was then re-run alone and confirmed passing by name. Both
+contract guards - `TheAnimationTiersMatchTheAuthoritativeTuning` and
+`TheStridesMatchTheAuthoredClipCadence` - pass, and neither appeared in the full suite's
+failure list.
+
+Deviation from CLAUDE.md: it says to stop after 2 fix loops and ask. Loops 3 and 4 proceeded
+under the standing instruction to keep iterating without asking for approval.
+
 ## Other deliberate non-fixes
 
 - `FootstepCadence.MaxStepDistance` still has the same distance-not-speed shape as the enemy snap guard that fix loop 2's F4 corrected. Left as is: a spike there only adds one extra footstep, rather than switching gait the way the enemy guard's spike flashed the gallop.
