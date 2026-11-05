@@ -13,10 +13,10 @@ namespace Dream.Tests.Multiplayer.Diagnostics;
 public class AuthoritativeActionFlowTests
 {
     // Effective attack speed is the sheet's attack speed plus AttackSpeedPerAgility per point of Agility,
-    // so the expectations keep the sheet total and the Agility term apart. At the starting Agility of 10
+    // so the expectations keep the sheet total and the Agility term apart. At the unseeded Agility of 10 (PlayerCombatStats.UnseededAttribute)
     // the term is 0.1. The base stats on the wire (PlayerStatsUpdateResult.Stats) carry no Agility term.
     private static float WithStartingAgility(float sheetAttackSpeed)
-        => sheetAttackSpeed + (PlayerStatRules.AttackSpeedPerAgility * PlayerStatRules.StartAgility);
+        => sheetAttackSpeed + (PlayerStatRules.AttackSpeedPerAgility * PlayerCombatStats.UnseededAttribute);
 
     [Fact]
     public void PlayerActionHandler_WhenSessionNotJoined_ReturnsRejectedServerActionMessage()

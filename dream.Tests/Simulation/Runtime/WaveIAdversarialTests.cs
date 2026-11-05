@@ -536,7 +536,7 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
         // NaN means no *gear* armor. Defense survives it, so the factor is 100 / (100 + 2), and an 18 hit
         // still applies as 18 because 18 * 100 / 102 = 17.65 rounds away from zero.
         Assert.Equal(0, combatant.EffectiveArmor);
-        Assert.Equal(PlayerStatRules.Defense(PlayerStatRules.StartAgility), combatant.MitigationArmor);
+        Assert.Equal(PlayerStatRules.Defense(PlayerCombatStats.UnseededAttribute), combatant.MitigationArmor);
         Assert.Equal(100.0 / 102.0, combatant.DamageTakenFactor, 12);
         Assert.Equal(18, combatant.MitigateDamage(18));
         // And the gear-free floor does reduce a hit big enough to clear the rounding: 1000 -> 980.

@@ -12,9 +12,9 @@ public class PlayerCombatantCombatStatTests
 {
     // Effective attack speed is the sheet's attack speed plus AttackSpeedPerAgility per point of
     // Agility, so every expectation below is written as "the gear total plus that term" rather than as
-    // the resulting decimal. A default character has Agility 10, so the term is 0.1.
+    // the resulting decimal. An unseeded combatant has Agility 10 (PlayerCombatStats.UnseededAttribute), so the term is 0.1.
     private static float WithDefaultAgility(float sheetAttackSpeed)
-        => sheetAttackSpeed + (PlayerStatRules.AttackSpeedPerAgility * PlayerStatRules.StartAgility);
+        => sheetAttackSpeed + (PlayerStatRules.AttackSpeedPerAgility * PlayerCombatStats.UnseededAttribute);
 
     [Fact]
     public void Constructor_Seeds_Default_Derived_Stats()
