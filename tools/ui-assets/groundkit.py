@@ -69,11 +69,14 @@ def _accent(t: int) -> dict:
 
 
 BUDGETS: dict[str, dict] = {
-    "grass": _cover(400), "pebbles": _cover(400), "twigs": _cover(400), "leaves": _cover(400), "bones": _cover(400),
+    "grass": _b(400, 44_000, 128),              # was _cover(400) = 40_000: blade grain is PNG entropy; grass_tuft_tall_01 measured 41_460
+    "pebbles": _cover(400), "twigs": _cover(400), "bones": _cover(400),
+    "leaves": _b(400, 44_000, 128),             # was _cover(400) = 40_000: leaf_heap_02 measured 40_568 with the clump breakup
     "flower": _cover(600), "item": _cover(600), "mushroom": _cover(1200),
     "root": _cover(3000),                       # a cover-layer asset with the 3000-triangle root budget
-    "bush": _accent(4000), "sapling": _accent(4000), "stump": _accent(3000), "log": _accent(3000), "rock": _accent(2500),
-    "tree": _b(12000, 450_000, 512),
+    "bush": _accent(4000), "sapling": _accent(4000), "stump": _accent(3000), "log": _accent(3000),
+    "rock": _b(2500, 160_000, 256),             # was _accent(2500) = 140_000: facet and grain detail is PNG entropy; boulder_03 measured 147_076
+    "tree": _b(12000, 560_000, 512),   # was 450_000: the bark and leaf breakup is PNG entropy; the largest tree (elm) measured 487_336
 }
 for _k in CLASSES:
     if _k.startswith("decal."):
@@ -145,6 +148,209 @@ def sheet_normals(nrm: np.ndarray, lean: float = SHEET_UP_LEAN) -> np.ndarray:
     return n.astype(np.asarray(nrm).dtype)
 
 
+# ---------------------------------------------------------------------------------------------- detail
+# The baked atlases are ALBEDO: the final pixel is (ambient + lights) * albedo with no tonemap and a clamp, and the gain
+# reaches about 2.17 beside a brazier, so a channel over ~0.40 clips to a flat patch (WeaponMeshCatalog.cs:101-106). Detail
+# is therefore added by MODULATING DOWNWARD ONLY: what the bake produced is the per-class ceiling and the field is a
+# multiplier in [1 - d, 1]. And a texel's EFFECTIVE albedo is byte / 255 * baseColorFactor, not byte / 255.
+DETAIL_LEVELS = 3   # the field takes this many values: every extra level of noise is bytes of PNG the family budgets pay for
+ALBEDO_CEILING = 0.41   # what the bake is capped to, before encoding; the gate (check_props albedo_clip_max) is 0.42
+DETAIL_D = {"bark": 0.26, "leafmass": 0.22, "blades": 0.30, "stone": 0.24, "thatch": 0.18, "mud": 0.16, "grain": 0.20, "cap": 0.20}
+# kind per ground class (GroundAsset.cs enum); a cylindrical rectangle (a trunk, a stem, a branch) is bark / blades instead
+_CLASS_KIND = {"tree": "leafmass", "sapling": "bark", "bush": "leafmass", "grass": "blades", "flower": "blades", "mushroom": "cap",
+               "root": "bark", "rock": "stone", "pebbles": "stone", "stump": "bark", "log": "bark", "twigs": "bark",
+               "leaves": "leafmass", "bones": "stone", "item": "grain"}
+_CYL_KIND = {"tree": "bark", "bush": "bark", "flower": "blades", "mushroom": "cap"}
+# kind per world prop; "cottage" is the reference of what good looks like and is left alone
+PROP_KIND = {"rust_barrel": "bark", "dead_oak": "bark", "bramble": "bark", "slate_rocks": "stone", "tombstone": "stone",
+             "bone_pile": "stone", "rune_flask": "stone", "brazier": "stone", "well": "stone", "cart": "grain", "fence": "grain",
+             "fence_broken": "grain", "crates": "grain", "sacks": "thatch", "woodpile": "bark", "signpost": "grain",
+             "scarecrow": "thatch", "inn": "mud", "hovel": "mud", "ruined_wall": "stone", "standing_stones": "stone"}
+
+
+# props whose atlas is mostly one flat, saturated or glazed material need a deeper field to read (measured: 5.6 - 5.8 / 255 at 1.0)
+PROP_STRENGTH = {"rust_barrel": 1.6, "bramble": 1.6, "rune_flask": 1.6}
+
+
+
+
+CLASS_STRENGTH: dict[str, float] = {"grass": 0.8}   # per class multiplier on the detail depth: grass sits at its 40_000 byte budget
+ASSET_STRENGTH: dict[str, float] = {"grass_wiry_01": 0.5, "flower_hemlock_umbel": 0.6}   # wiry: azimuth ceiling .41, a synthetic key must still read above it (grain dilutes the key); umbel: forbidden-hue share .0018 at 1.0, .0007 at .6
+
+
+def detail_kind(cls: str, cyl: bool) -> str | None:
+    if cls.startswith("decal."):
+        return None
+    return _CYL_KIND.get(cls, _CLASS_KIND[cls]) if cyl else _CLASS_KIND[cls]
+
+
+def _seed_rng(*parts) -> np.random.Generator:
+    import hashlib
+    h = hashlib.sha256(".".join(str(p) for p in parts).encode("utf-8")).digest()
+    return np.random.default_rng(int.from_bytes(h[:8], "little"))
+
+
+def _smooth(t):
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _vnoise(h: int, w: int, cy: float, cx: float, rng, wrap: bool = False) -> np.ndarray:
+    """Smooth value noise in [0, 1] with feature size cy x cx pixels; wrap: periodic across the width (a cylinder)."""
+    ny = int(np.ceil(h / cy)) + 2
+    nx = max(2, int(round(w / cx))) if wrap else int(np.ceil(w / cx)) + 2
+    g = rng.random((ny, nx))
+    ys = np.arange(h) / cy
+    xs = np.arange(w) / ((w / nx) if wrap else cx)
+    iy, ix = np.floor(ys).astype(int), np.floor(xs).astype(int)
+    fy, fx = _smooth(ys - iy)[:, None], _smooth(xs - ix)[None, :]
+    ix1 = (ix + 1) % nx if wrap else ix + 1
+    ix = ix % nx if wrap else ix
+    a, b = g[iy][:, ix], g[iy][:, ix1]
+    c, d = g[iy + 1][:, ix], g[iy + 1][:, ix1]
+    return ((a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy).astype(np.float32)
+
+
+def _worley(h: int, w: int, cell: float, rng, wrap: bool = False):
+    """Jittered-grid cellular noise: (F1, F2 in pixels, a random value per nearest cell in [0, 1])."""
+    ny = int(np.ceil(h / cell)) + 2
+    nx = max(2, int(round(w / cell))) if wrap else int(np.ceil(w / cell)) + 2
+    cw = (w / nx) if wrap else cell
+    jy, jx, val = rng.random((ny, nx)), rng.random((ny, nx)), rng.random((ny, nx))
+    ys, xs = np.arange(h, dtype=np.float32) + 0.5, np.arange(w, dtype=np.float32) + 0.5
+    cy_i = np.floor(ys / cell).astype(int)[:, None]
+    cx_i = np.floor(xs / cw).astype(int)[None, :]
+    f1 = np.full((h, w), 1e9, np.float32)
+    f2 = np.full((h, w), 1e9, np.float32)
+    v = np.zeros((h, w), np.float32)
+    for oy in (-1, 0, 1):
+        for ox in (-1, 0, 1):
+            gy = np.broadcast_to(np.clip(cy_i + oy + 1, 0, ny - 1), (h, w))
+            gx = np.broadcast_to((cx_i + ox) % nx if wrap else np.clip(cx_i + ox + 1, 0, nx - 1), (h, w))
+            py = (cy_i + oy + jy[gy, gx]) * cell
+            px = (cx_i + ox + jx[gy, gx]) * cw
+            dist = np.hypot(ys[:, None] - py, xs[None, :] - px).astype(np.float32)
+            closer = dist < f1
+            f2 = np.where(closer, f1, np.minimum(f2, dist))
+            v = np.where(closer, val[gy, gx], v)
+            f1 = np.where(closer, dist, f1)
+    return f1, f2, v
+
+
+def _norm01(x: np.ndarray) -> np.ndarray:
+    lo, hi = np.percentile(x, 2), np.percentile(x, 98)
+    return np.clip((x - lo) / max(float(hi - lo), 1e-6), 0.0, 1.0).astype(np.float32)
+
+
+def _speckle(h: int, w: int, rng) -> np.ndarray:
+    n = rng.random((h, w)).astype(np.float32)
+    return (n + 0.5 * (np.roll(n, 1, 0) + np.roll(n, 1, 1))) / 2.0   # 1-2 px grain
+
+
+def detail(kind: str, shape: tuple, rng, cyl: bool = False, strength: float = 1.0) -> np.ndarray:
+    """A multiplicative field in [1 - d, 1] (d = DETAIL_D[kind] * strength, at most 0.5) of shape (h, w), a pure function of the rng.
+    Rows run along the part (v), columns around it (u; wraps when cyl)."""
+    h, w = shape
+    d = min(DETAIL_D[kind] * strength, 0.5)
+    if kind == "bark":
+        # vertical ridges about 2 px apart whose lines wander with a low-frequency warp, and sparse furrows
+        warp = (_vnoise(h, w, 14.0, 9.0, rng, cyl) - 0.5) * 5.0
+        cols = np.arange(w, dtype=np.float32)[None, :] + warp
+        ridge = 0.5 + 0.5 * np.sin(cols * (np.pi * 2.0 / 2.3) + _vnoise(h, w, 18.0, 3.0, rng, cyl) * 6.0)
+        furrow = _vnoise(h, w, 22.0, 2.0, rng, cyl)
+        raw = 0.50 * ridge + 0.35 * (furrow > 0.5) * furrow + 0.15 * _speckle(h, w, rng)
+    elif kind == "leafmass":
+        f1, f2, v = _worley(h, w, 6.0, rng, cyl)
+        seam = np.clip((f2 - f1) / 2.2, 0.0, 1.0)          # dark seams between clumps
+        raw = 0.45 * seam + 0.40 * v + 0.15 * _speckle(h, w, rng)
+    elif kind == "blades":
+        # per-blade value jitter: narrow columns, long along the blade, each with its own level
+        jit = _vnoise(h, w, 5.0, 1.6, rng, cyl)
+        lvl = rng.random(max(2, int(np.ceil(w / 2.0))))[np.arange(w) // 2][None, :]
+        # mostly per-texel grain: smooth fields on a thin stem or blade correlate with the way each side faces by chance (azimuth gate)
+        raw = 0.25 * jit + 0.20 * lvl + 0.55 * _speckle(h, w, rng)
+        if cyl:   # a stem: only structure that is constant around it (along its length) or independent per texel, never per column
+            raw = 0.15 * _vnoise(h, w, 3.0, 1e6, rng) + 0.85 * _speckle(h, w, rng)
+    elif kind == "stone":
+        f1, f2, v = _worley(h, w, 11.0, rng, cyl)
+        crack = np.clip((f2 - f1) / 1.6, 0.0, 1.0)         # fractured planar facets, each a flat tone
+        raw = 0.25 * v + 0.20 * crack + 0.55 * _speckle(h, w, rng)
+    elif kind == "thatch":
+        streak = _vnoise(h, w, 20.0, 1.3, rng, cyl)
+        raw = 0.60 * streak + 0.25 * _vnoise(h, w, 4.0, 9.0, rng, cyl) + 0.15 * _speckle(h, w, rng)
+    elif kind == "mud":
+        raw = 0.50 * _vnoise(h, w, 6.0, 6.0, rng, cyl) + 0.25 * _vnoise(h, w, 2.5, 2.5, rng, cyl) + 0.25 * _speckle(h, w, rng)
+    elif kind == "grain":
+        seam = (np.arange(w)[None, :] % 11 != 0) * 1.0     # plank joints every 11 px
+        raw = 0.45 * _vnoise(h, w, 26.0, 1.8, rng, cyl) + 0.30 * seam + 0.25 * _speckle(h, w, rng)
+    elif kind == "cap":
+        f1, f2, v = _worley(h, w, 4.0, rng, cyl)
+        raw = 0.35 * np.clip((f2 - f1) / 1.4, 0.0, 1.0) + 0.30 * v + 0.35 * _speckle(h, w, rng)
+    else:
+        raise KeyError(kind)
+    raw = np.broadcast_to(raw, (h, w))
+    return (1.0 - d * (1.0 - np.round(_norm01(raw) * (DETAIL_LEVELS - 1)) / (DETAIL_LEVELS - 1))).astype(np.float32)
+
+
+def _lichen(shape: tuple, rng, cyl: bool) -> np.ndarray:
+    """Sparse blotches 6-10 px wide, in [0, 1]: where bark greys out."""
+    h, w = shape
+    return np.clip((_vnoise(h, w, 8.0, 8.0, rng, cyl) - 0.62) * 6.0, 0.0, 1.0).astype(np.float32)
+
+
+def apply_detail(atlas: np.ndarray, rects, kinds, seed: str, strength: float = 1.0) -> np.ndarray:
+    """atlas: uint8 RGBA from the bake. kinds: one detail kind (or None) per rectangle. Returns a copy with every rectangle multiplied
+    by its field (never brighter) and its gutter re-extended from the new edge. Deterministic in `seed`."""
+    out = atlas.copy()
+    g = C.GUTTER
+    for i, (r, kind) in enumerate(zip(rects, kinds)):
+        if kind is None:
+            continue
+        rng = _seed_rng(seed, i, kind)
+        f = detail(kind, (r.h, r.w), rng, r.cyl, strength)
+        rgb = out[r.y:r.y + r.h, r.x:r.x + r.w, :3].astype(np.float32) * f[..., None]
+        # the pits of a surface collect grey: dark detail pulls the chroma in a little, so the grain does not raise the saturation the
+        # gates cap (8-bit rounding of dark texels does it too)
+        pit = np.clip((1.0 - f) / max(DETAIL_D[kind] * strength, 1e-6), 0.0, 1.0)[..., None] * 0.35
+        luma_ = (rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
+        rgb = rgb * (1 - pit) + luma_ * pit   # a mix with grey keeps the hue; luma <= max, so the brightest channel never rises
+        if kind == "bark":   # lichen: desaturate toward the luma, still downward only
+            lich = _lichen((r.h, r.w), _seed_rng(seed, i, "lichen"), r.cyl)[..., None] * 0.6
+            grey = np.minimum(rgb, (rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None])
+            rgb = rgb * (1 - lich) + grey * lich
+        out[r.y:r.y + r.h, r.x:r.x + r.w, :3] = np.round(rgb).astype(np.uint8)
+        pad = np.pad(out[r.y:r.y + r.h, r.x:r.x + r.w, :3], ((g, g), (g, g), (0, 0)), mode="edge")
+        out[r.y - g:r.y + r.h + g, r.x - g:r.x + r.w + g, :3] = pad
+    return out
+
+
+CAP_MOVED_EPS = 0.02   # a texel counts as moved by the cap when its brightest channel changes by more than this (effective albedo)
+
+
+def cap_peak(eff: np.ndarray, covered: np.ndarray, ceiling: float = ALBEDO_CEILING):
+    """eff: effective albedo (float, HxWx3). Scale so the 99.5th percentile of the covered texels sits at the ceiling, then clip the
+    rare outlier at it. A no-op when the atlas is already under it. Returns (capped, report): the report says how much the cap had to
+    do, because a cap that quietly flattens the brightest texels would undo the detail there. precap_albedo_max is the brightest
+    effective albedo the bake produced, cap_scale the uniform darkening (1 = untouched) and moved_fraction the share of covered
+    texels the cap changed by more than CAP_MOVED_EPS; check_props gates all three on the pre-cap bake."""
+    top = float(np.percentile(eff[covered].max(axis=1), 99.5))
+    s = min(1.0, ceiling / max(top, 1e-9))
+    out = np.minimum(eff * s, ceiling)
+    moved = (eff.max(axis=2) - out.max(axis=2))[covered] > CAP_MOVED_EPS
+    return out, {"precap_albedo_max": float(eff[covered].max()), "cap_scale": float(s), "moved_fraction": float(moved.mean())}
+
+
+def cap_ground_atlas(atlas: np.ndarray, gain: float = GROUND_ALBEDO_GAIN):
+    """Keep the effective albedo (byte / 255 * gain) of a baked atlas at or under ALBEDO_CEILING. -> (atlas, cap report)."""
+    cov = atlas[..., 3] > 0
+    eff = atlas[..., :3].astype(np.float64) / 255.0 * gain
+    if float(eff[cov].max()) <= ALBEDO_CEILING:
+        return atlas, {"precap_albedo_max": float(eff[cov].max()), "cap_scale": 1.0, "moved_fraction": 0.0}
+    out = atlas.copy()
+    capped, report = cap_peak(eff, cov)
+    out[..., :3] = np.round(np.clip(capped / gain, 0.0, 1.0) * 255.0).astype(np.uint8)
+    return out, report
+
+
 # ---------------------------------------------------------------------------------------------- build
 def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
     """gen_props.build_asset for a GroundSpec. Pure: no clock, environment or filesystem."""
@@ -155,6 +361,10 @@ def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
     seed = f"ground.{family}.{stem}"
     atlas = C.bake_albedo(split, None, None, uvs, rects, spec.atlas, materials=[p.mat for p in parts], seed=seed,
                           wear=wear, grime=grime, rust=rust, dust=dust)
+    kinds = [detail_kind(spec.cls, r.cyl) for r in rects]
+    cap = None
+    if any(kinds):
+        atlas, cap = cap_ground_atlas(apply_detail(atlas, rects, kinds, seed, ASSET_STRENGTH.get(stem, CLASS_STRENGTH.get(spec.cls, 1.0))))
     png, scale, enc = encode_ground_atlas(atlas)
     k = GP.WORLD_UNITS_PER_U / GP.UNITS_PER_U
     arrays = []
@@ -181,7 +391,7 @@ def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
     bounds = (float(horiz.max()), footprint, float(p64[:, 1].max()))
     nodes = [G.GltfNode(name=stem, parent=None)]
     return dict(name=stem, family=family, nodes=nodes, primitives=prims, materials=mats, atlas=atlas, encoded=enc, scale=scale,
-                rects=rects, parts=parts, meshes=split, uvs=uvs, disc=disc, spec=spec, bounds=bounds)
+                rects=rects, parts=parts, meshes=split, uvs=uvs, disc=disc, spec=spec, bounds=bounds, cap=cap)
 
 
 def glb_bytes(asset: dict) -> bytes:

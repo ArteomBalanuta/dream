@@ -578,6 +578,24 @@ def _merge_arrays(items):
     return np.vstack(pos), np.vstack(nrm), np.vstack(uvs), np.vstack(idx).astype(np.uint32)
 
 
+def _detail_and_cap(name: str, atlas: np.ndarray, rects):
+    """Surface detail (groundkit.apply_detail, downward only) and the albedo ceiling, before the atlas is encoded. The effective albedo
+    of a prop texel is lift * linear(byte); groundkit.ALBEDO_CEILING caps it, so a clipped-flat texel cannot happen under a brazier."""
+    K = importlib.import_module("groundkit")   # lazily: groundkit imports this module
+    kind = K.PROP_KIND.get(name)
+    if kind:
+        atlas = K.apply_detail(atlas, rects, [kind] * len(rects), "prop." + name, K.PROP_STRENGTH.get(name, 1.0))
+    cov = atlas[..., 3] > 0
+    lin = U.srgb_to_linear(atlas[..., :3].astype(np.float32) / 255.0).astype(np.float64) * ALBEDO_LIFT
+    if float(lin[cov].max()) <= K.ALBEDO_CEILING:
+        return atlas, {"precap_albedo_max": float(lin[cov].max()), "cap_scale": 1.0, "moved_fraction": 0.0}
+    out = atlas.copy()
+    capped, report = K.cap_peak(lin, cov)
+    capped = capped / ALBEDO_LIFT
+    out[..., :3] = np.round(np.clip(U.linear_to_srgb(capped), 0.0, 1.0) * 255.0).astype(np.uint8)
+    return out, report
+
+
 def build_asset(name: str) -> dict:
     """Pure function of the source: nothing here reads the clock, the environment or the filesystem."""
     spec = PROPS[name]
@@ -589,6 +607,7 @@ def build_asset(name: str) -> dict:
     wear, grime, rust, dust = spec.age
     atlas = C.bake_albedo(split, None, None, uvs, rects, spec.atlas, materials=[p.mat for p in baked], seed="prop." + name,
                           wear=wear, grime=grime, rust=rust, dust=dust)
+    atlas, cap = _detail_and_cap(name, atlas, rects)
     png, scale, enc = P.encode_atlas(atlas, ALBEDO_LIFT)
 
     k = spec.scale * WORLD_UNITS_PER_U / UNITS_PER_U
@@ -619,7 +638,7 @@ def build_asset(name: str) -> dict:
         disc = denc
     nodes = [G.GltfNode(name=name, parent=None)]
     return dict(name=name, nodes=nodes, primitives=prims, materials=mats, atlas=atlas, encoded=enc, scale=scale, rects=rects,
-                parts=baked, meshes=split, uvs=uvs, disc=disc, spec=spec)
+                parts=baked, meshes=split, uvs=uvs, disc=disc, spec=spec, cap=cap)
 
 
 def glb_bytes(asset: dict) -> bytes:

@@ -73,6 +73,14 @@ GATES = {
     "footprint_pad": 0.15,       # ... plus this much (world units)
     "footprint_floor": 0.35,     # and must fill at least this share of it
     "ember_max": 0.35,           # emissive factor ceiling (the night look budget)
+    "hf_min": 0.027,             # FLOOR on the mean |4-neighbour luma gradient| of the shipped texture over the used uv area (7.0 / 255)
+    "albedo_clip_max": 0.42,     # CEILING on byte / 255 * baseColorFactor over the used texels: above it the lit pixel clips flat
+    # The cap (groundkit.cap_peak) keeps the shipped albedo under that ceiling whatever the bake does, so albedo_clip_max alone could never
+    # fire. These three gate the bake BEFORE the cap, so that an over-bright bake is a failure and not a silent darkening / flattening:
+    "precap_albedo_max": 0.75,   # CEILING on the brightest effective albedo the bake produced: measured max .718 (tree_leaning_birch), rounded up
+    "cap_scale_min": 0.55,       # FLOOR on the uniform darkening the cap applied (1 = it did nothing): measured min .59 (props/bramble)
+    # moved_fraction (the share of texels the cap changed) is reported in atlas_detail_table.md but not gated: a uniform darkening moves every
+    # texel, so today's assets sit anywhere from 0 to 100 % and no threshold could pass them and still mean something; cap_scale_min bounds it.
 }
 # An override is a claim that the art needs it: say why, with the measured value, and keep it as tight as the
 # measurement allows.
@@ -153,6 +161,52 @@ def texel_samples(a: dict):
 
 
 AZIMUTHS = [math.tau * k / 16 for k in range(16)]
+
+
+def used_mask(a: dict) -> np.ndarray:
+    """The used uv area: the interior of every part rectangle (the gutter and the unallocated atlas are not part of it). Not only the
+    texels a triangle lands on: the rest of a rectangle is filled by the bake and is sampled by mip levels and filtering, and it is the
+    area the 3.3 - 4.1 / 255 flora measurement in the brief was taken over (a triangle-only mask reads 6 - 9 on the same atlases)."""
+    tex = a["spec"].atlas
+    mask = np.zeros((tex, tex), dtype=bool)
+    for r in a["rects"]:
+        mask[r.y:r.y + r.h, r.x:r.x + r.w] = True
+    return mask
+
+
+def hf_gradient(enc: np.ndarray, mask: np.ndarray) -> float:
+    """Mean absolute 4-neighbour luma gradient (|d/dx| and |d/dy| over every pair of used texels) of the SHIPPED texture bytes. The
+    check_art.high_frequency laplacian reads about three times this; the floor is calibrated on the gradient (props/cottage 7.0/255)."""
+    y = luma(enc)
+    gx = np.abs(y[:, 1:] - y[:, :-1])[mask[:, 1:] & mask[:, :-1]]
+    gy = np.abs(y[1:] - y[:-1])[mask[1:] & mask[:-1]]
+    both = np.concatenate([gx, gy])
+    return float(both.mean()) if len(both) else 0.0
+
+
+def albedo_max(enc: np.ndarray, scale: float, mask: np.ndarray) -> float:
+    """Largest EFFECTIVE albedo over the used texels: the texture byte times the material's baseColorFactor, not the byte alone."""
+    return float(enc[..., :3][mask].max()) / 255.0 * float(scale) if mask.any() else 0.0
+
+
+def detail_metrics(a: dict) -> dict:
+    mask = used_mask(a)
+    cap = a.get("cap") or {"precap_albedo_max": 0.0, "cap_scale": 1.0, "moved_fraction": 0.0}
+    return {"hf": hf_gradient(a["encoded"], mask), "albedo_max": albedo_max(a["encoded"], a["scale"], mask), **cap}
+
+
+def detail_errors(name: str, m: dict, c: dict) -> list[str]:
+    errs = []
+    if m["hf"] < c["hf_min"]:
+        errs.append(f"{name}: texture gradient {m['hf']:.4f} < {c['hf_min']} (a near-flat atlas: no grain, striation or breakup)")
+    if m["albedo_max"] > c["albedo_clip_max"]:
+        errs.append(f"{name}: effective albedo {m['albedo_max']:.3f} > {c['albedo_clip_max']} (byte * baseColorFactor clips under the brazier)")
+    if m["precap_albedo_max"] > c["precap_albedo_max"]:
+        errs.append(f"{name}: the bake reaches effective albedo {m['precap_albedo_max']:.3f} before the cap, over {c['precap_albedo_max']}: "
+                    "fix the art; the cap would only darken and flatten it")
+    if m["cap_scale"] < c["cap_scale_min"]:
+        errs.append(f"{name}: the cap had to darken the whole atlas to {m['cap_scale']:.2f} of the bake (floor {c['cap_scale_min']})")
+    return errs
 
 
 def azimuth_leak(samples) -> float:
@@ -359,7 +413,7 @@ def job(name: str):
     samples = texel_samples(a)
     rq, rl = rect_metrics(a["atlas"], a["rects"])
     m = {"rect_quad": rq, "rect_lowfreq": rl, "azimuth": azimuth_leak(samples), "azimuth_keyed": azimuth_leak(with_key(samples)),
-         **palette(a["atlas"], a["rects"]),
+         **palette(a["atlas"], a["rects"]), **detail_metrics(a),
          "tris": sum(len(p.indices) for p in a["primitives"]), "verts": sum(len(p.positions) for p in a["primitives"]), "bytes": len(glb)}
     keep = {k: a[k] for k in ("meshes", "uvs", "rects", "encoded", "atlas", "primitives", "materials", "spec")}
     return name, glb, m, keep
@@ -395,6 +449,7 @@ def metric_errors(name: str, m: dict) -> list[str]:
         errs.append(f"{name}: mean V {m['mean_v']:.3f} > {c['mean_v_max']}")
     # One branch per ceiling, not one or-ed condition: with the three sharing a condition the self-test only
     # mutated tris, so the verts and bytes ceilings could have stopped measuring without anything going red.
+    errs += detail_errors(name, m, c)
     if m["tris"] > c["tris_max"]:
         errs.append(f"{name}: {m['tris']} triangles over the {c['tris_max']} budget")
     if m["verts"] > c["verts_max"]:
@@ -410,11 +465,13 @@ def metric_errors(name: str, m: dict) -> list[str]:
 def self_test() -> list[str]:
     errs = []
     base = {"rect_quad": 0.05, "rect_lowfreq": 0.2, "azimuth": 0.02, "sat_p95": 0.2, "forbidden_hue": 0.0, "chrome": 0.0,
-            "v_p99": 0.3, "mean_v": 0.1, "tris": 1000, "verts": 1000, "bytes": 1000}
+            "v_p99": 0.3, "mean_v": 0.1, "tris": 1000, "verts": 1000, "bytes": 1000, "hf": 0.05, "albedo_max": 0.3,
+            "precap_albedo_max": 0.3, "cap_scale": 1.0, "moved_fraction": 0.0}
     if metric_errors("selftest", base):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95,
-             "mean_v": 0.7, "tris": 10 ** 6, "verts": 10 ** 6, "bytes": 10 ** 9}
+             "mean_v": 0.7, "tris": 10 ** 6, "verts": 10 ** 6, "bytes": 10 ** 9, "hf": 0.004, "albedo_max": 0.7,
+             "precap_albedo_max": 5.0, "cap_scale": 0.01}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}):
             errs.append(f"self-test: gate {k} did not fail its negative")
@@ -438,6 +495,36 @@ def self_test() -> list[str]:
     rq, rl = rect_metrics(rgba, [C.Rect(0, 0, 64, 64)])
     if rq <= GATES["rect_quad_max"] and rl <= GATES["rect_lowfreq_max"]:
         errs.append(f"self-test: a lit ramp passed the rectangle gates (quad {rq:.2f}, low {rl:.2f})")
+    # the detail gates against real textures: a smooth ramp has no gradient to speak of, and a bright one clips
+    ramp8 = np.zeros((64, 64, 4), np.uint8)
+    ramp8[..., :3] = np.tile(np.linspace(40, 90, 64, dtype=np.uint8), (64, 1))[..., None]
+    full = np.ones((64, 64), bool)
+    if hf_gradient(ramp8, full) >= GATES["hf_min"]:
+        errs.append("self-test: a smooth ramp reads as detailed; hf_gradient has stopped measuring")
+    noise8 = ramp8.copy()
+    noise8[..., :3] = np.random.default_rng(5).integers(40, 90, (64, 64, 1), dtype=np.uint8)
+    if hf_gradient(noise8, full) < GATES["hf_min"]:
+        errs.append("self-test: noise reads as flat; hf_gradient has stopped measuring")
+    if hf_gradient(noise8, np.zeros((64, 64), bool)) != 0.0:
+        errs.append("self-test: hf_gradient counts texels outside the used mask")
+    bright = np.full((8, 8, 4), 255, np.uint8)
+    if not detail_errors("x", {"hf": 1.0, "precap_albedo_max": 0.3, "cap_scale": 1.0, "albedo_max": albedo_max(bright, 0.6, np.ones((8, 8), bool))}, GATES):
+        errs.append("self-test: byte * baseColorFactor over the ceiling passed albedo_clip_max")
+    if detail_errors("x", {"hf": 1.0, "precap_albedo_max": 0.3, "cap_scale": 1.0, "albedo_max": albedo_max(bright, 0.3, np.ones((8, 8), bool))}, GATES):
+        errs.append("self-test: byte * baseColorFactor under the ceiling failed albedo_clip_max")
+    if albedo_max(bright, 0.6, np.zeros((8, 8), bool)) != 0.0:
+        errs.append("self-test: albedo_max counts texels outside the used mask")
+    # the pre-cap gates THROUGH the real pipeline: a bake far over the ceiling is capped (albedo_clip_max alone would pass it) and
+    # must still fail on what the cap had to do
+    bright = np.zeros((64, 64, 4), np.uint8)
+    bright[..., :3] = 235
+    bright[..., 3] = 255
+    atlas, rep = GP._detail_and_cap("selftest", bright, [C.Rect(8, 8, 48, 48)])
+    capped_eff = float(U.srgb_to_linear(atlas[..., :3].astype(np.float32) / 255.0).max()) * GP.ALBEDO_LIFT
+    if capped_eff > GATES["albedo_clip_max"]:
+        errs.append(f"self-test: the real cap left effective albedo {capped_eff:.3f} over the ceiling")
+    if not detail_errors("selftest", {"hf": 1.0, "albedo_max": capped_eff, **rep}, GATES):
+        errs.append(f"self-test: an over-bright bake ({rep}) passed through the real cap without failing a pre-cap gate")
     # the seam gate against the old unwrap
     spec = GP.PROPS["rust_barrel"]
     parts = [p for p in spec.build() if p.mesh is not None]
@@ -461,7 +548,59 @@ def self_test() -> list[str]:
 # main ------------------------------------------------------------------------------------------------
 
 
+def table_job(args):
+    """Worker for --table: one asset, built with the detail on (baseline False) or exactly as master built it (baseline True)."""
+    import importlib
+    family, name, baseline = args
+    K = importlib.import_module("groundkit")
+    saved = (K.detail_kind, GP._detail_and_cap)
+    try:
+        if baseline:
+            K.detail_kind = lambda *a: None
+            GP._detail_and_cap = lambda n, atlas, rects: (atlas, None)
+        if family == "props":
+            a = GP.build_asset(name)
+        else:
+            mod = importlib.import_module("gen_ground_flora" if family == "flora" else "gen_ground_stone")
+            a = K.build_ground_asset(family, name, mod.ASSETS[name])
+        return detail_metrics(a)
+    finally:
+        K.detail_kind, GP._detail_and_cap = saved
+
+
+def write_table(path: Path) -> None:
+    """--table PATH: the per-asset evidence for hf_min and the pre-cap gates, for every flora, stone and prop atlas. 'before' is the bake
+    exactly as master produced it (no detail, no cap); 'after' is what ships."""
+    import importlib
+    jobs = [("props", n) for n in NAMES]
+    for fam, mod in (("flora", "gen_ground_flora"), ("stone", "gen_ground_stone")):
+        jobs += [(fam, n) for n in importlib.import_module(mod).ASSETS]
+    with ProcessPoolExecutor(max_workers=4) as pool:
+        before = list(pool.map(table_job, [(f, n, True) for f, n in jobs]))
+        after = list(pool.map(table_job, [(f, n, False) for f, n in jobs]))
+    rows = ["# Atlas detail: per-asset measurements", "",
+            "Generated by `python tools/ui-assets/tests/check_props.py --table tools/ui-assets/atlas_detail_table.md`; do not edit by hand.", "",
+            "- hf: mean absolute 4-neighbour luma gradient of the shipped texture bytes over the used uv rectangles, in /255 (floor `hf_min` = 7.0).",
+            "- albedo: largest effective albedo, texture byte / 255 * baseColorFactor (ceiling `albedo_clip_max` = 0.42).",
+            "- before: the bake as master built it (no detail field, no cap). after: what ships.",
+            "- precap: the brightest effective albedo the bake produced before the cap; cap scale: the uniform darkening the cap applied; moved: the share of",
+            "  texels the cap changed by more than 0.02. `precap_albedo_max` and `cap_scale_min` gate the first two; moved is reported only.", "",
+            "| family | asset | hf before | hf after | albedo before | albedo after | precap | cap scale | moved |",
+            "|---|---|---|---|---|---|---|---|---|"]
+    for (f, n), b, a in zip(jobs, before, after):
+        rows.append(f"| {f} | {n} | {b['hf'] * 255:.2f} | {a['hf'] * 255:.2f} | {b['albedo_max']:.3f} | {a['albedo_max']:.3f} | "
+                    f"{a['precap_albedo_max']:.3f} | {a['cap_scale']:.2f} | {a['moved_fraction']:.1%} |")
+    rows += ["", f"{len(jobs)} assets; min hf after {min(a['hf'] for a in after) * 255:.2f}, max albedo after {max(a['albedo_max'] for a in after):.3f}, "
+             f"max precap {max(a['precap_albedo_max'] for a in after):.3f}, min cap scale {min(a['cap_scale'] for a in after):.2f}, "
+             f"max moved {max(a['moved_fraction'] for a in after):.1%}.", ""]
+    path.write_text("\n".join(rows), encoding="utf-8", newline="\n")
+    print(f"check_props: wrote {path}")
+
+
 def main() -> int:
+    if "--table" in sys.argv:
+        write_table(Path(sys.argv[sys.argv.index("--table") + 1]))
+        return 0
     fast, meas = "--fast" in sys.argv, "--measure" in sys.argv
     errs: list[str] = [] if meas else self_test()
     only = [x for x in sys.argv[1:] if not x.startswith("--")]
@@ -485,7 +624,7 @@ def main() -> int:
         if src.startswith("sprite:") and src[7:] not in sprite_names:
             errs.append(f"{n}: claims the unused sprite {src[7:]!r}, which iso_manifest.json does not list")
         print(f"  {n:16s} tris {m['tris']:6d} bytes {m['bytes']:8d} quad {m['rect_quad']:.2f} low {m['rect_lowfreq']:.2f} "
-              f"az {m['azimuth']:.2f} (keyed {m['azimuth_keyed']:.2f}) satp95 {m['sat_p95']:.2f} vp99 {m['v_p99']:.2f}")
+              f"az {m['azimuth']:.2f} (keyed {m['azimuth_keyed']:.2f}) satp95 {m['sat_p95']:.2f} vp99 {m['v_p99']:.2f} hf {m['hf'] * 255:.2f} albedo {m['albedo_max']:.3f}")
         if m["azimuth_keyed"] <= cfg(n)["azimuth_max"]:
             errs.append(f"{n}: the azimuth gate is blind on this prop: a synthetic key reads {m['azimuth_keyed']:.3f}, under the {cfg(n)['azimuth_max']} ceiling")
     # every shipped file belongs to a generated prop, and the catalog names exactly the generated set
