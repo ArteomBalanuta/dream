@@ -23,7 +23,6 @@ namespace Dream.Tests.Integration;
 // world is 100 x 8 x 100 (ServerStartOptions' NewWorldSize), its camps stand at their absolute homes with the
 // tiered enemies, the warden gives the tier quests, and a 56 m world on the same build keeps the four old camps
 // and four quests. The join is measured, not pinned.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
 {
     private const string Session = "frontier-e2e";
@@ -228,7 +227,7 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
         }
 
         // A restart opens the stored 100 m world and puts every camp member back at its camp's absolute home.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await using (WireLoopbackServer again = await StartAsync(db, Frontier, npcs: true))
         {
             await using HeadlessPlayScene a = await HeadlessPlayScene.JoinAsync(again, Session);
@@ -255,7 +254,7 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
             M6EndToEndLoopbackTests.Flush(first);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         Assert.True(Program.TrySelectProcessMode(["--server"], out _, out ServerStartOptions bare, out _));
         Assert.Equal(100, bare.NewWorldSize);
         await using WireLoopbackServer server = await StartAsync(db, bare, npcs: true);

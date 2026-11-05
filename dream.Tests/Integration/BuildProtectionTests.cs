@@ -15,7 +15,6 @@ namespace Dream.Tests.Integration;
 // A stranger's attack is refused before any damage or write; the owner's goes through; a cube with no owner
 // (terrain, or one whose builder was deleted) stays open to everyone, which the existing terrain and
 // BuildingsOutliveBuilder suites keep proving; the owner is stored, so protection survives a restart.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class BuildProtectionTests
 {
     private const string StrangerRefusal = "That belongs to someone else.";
@@ -158,7 +157,7 @@ public sealed class BuildProtectionTests
             first.Flush();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         Assert.Equal(M4BRig.KeyOf(M4BRig.SessionA), db.Scalar("SELECT owner_player_name FROM placed_cube_instances;"));
 
         await using M4BRig rig = await M4BRig.JoinAsync(await M4BRig.StartServerAsync(db));

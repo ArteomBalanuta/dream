@@ -15,7 +15,6 @@ namespace Dream.Tests.Integration;
 // Combat text, end to end over loopback TCP with a real PlayScene (no GL) as the client. Counts the
 // DamageAppliedEvents the client's event hub sees for each local hit: the floating number system
 // spawns one number per event, so this is the number of numbers per hit.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class CombatTextLoopbackTests(ITestOutputHelper output)
 {
     private const string Session = "combat-text";

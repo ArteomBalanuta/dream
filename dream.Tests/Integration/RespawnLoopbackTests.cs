@@ -14,7 +14,6 @@ namespace Dream.Tests.Integration;
 // Wave I2: dying, waiting and respawning over real connections. A hand-written client that keeps sending
 // movement, attacks and build and combat actions while dead changes nothing and is told no; the other
 // client sees the dead player stay put and then return at the spawn with full health.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class RespawnLoopbackTests
 {
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db)

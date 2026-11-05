@@ -23,7 +23,6 @@ namespace Dream.Tests.Integration;
 // a client equips all four slots with intents, and the client's effective stats, computed from the
 // snapshot alone as PlayScene does, equal the server's. Then the gear has to survive a restart, a
 // --worlds copy and a full export, each followed by a join.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class RolledItemEndToEndTests(ITestOutputHelper output)
 {
     private const string Session = "rolled-e2e";
@@ -121,7 +120,7 @@ public sealed class RolledItemEndToEndTests(ITestOutputHelper output)
 
     private static string[] StoredRolls(MigrationTestDatabase db, long worldId)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         using SqliteConnection connection = db.Schema.CreateOpenConnection();
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "SELECT item_instance_id || '=' || rolled_modifiers FROM item_instances WHERE world_id = $w AND rolled_modifiers IS NOT NULL ORDER BY item_instance_id;";
@@ -138,7 +137,7 @@ public sealed class RolledItemEndToEndTests(ITestOutputHelper output)
 
     private static long WorldIdOf(MigrationTestDatabase db, string name)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         return Convert.ToInt64(db.Scalar($"SELECT world_id FROM worlds WHERE name = '{name}';"), System.Globalization.CultureInfo.InvariantCulture);
     }
 

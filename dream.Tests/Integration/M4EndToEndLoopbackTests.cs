@@ -35,7 +35,6 @@ namespace Dream.Tests.Integration;
 // Not covered here: the B and G mode keys through PlayScene.Update (Update does not run without a window;
 // QuickbarInputTests pin the remap itself) and the owner-only cube rule (BuildProtectionTests, on the
 // server side).
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class M4EndToEndLoopbackTests
 {
     private const string SessionA = "m4e2e-a";
@@ -549,7 +548,7 @@ public sealed class M4EndToEndLoopbackTests
             Flush(server);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
 
         await using (WireLoopbackServer again = await StartAsync(db))
         {

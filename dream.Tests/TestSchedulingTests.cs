@@ -31,6 +31,22 @@ public class TestSchedulingTests
             method => method.GetCustomAttributes<FactAttribute>(inherit: true).Any());
     }
 
+    // The same drift guard in one failure that names every stale entry: a class that was renamed or
+    // deleted would otherwise only cost scheduling quality and go unnoticed (this is how the lists
+    // went stale once).
+    [Fact]
+    public void No_Scheduled_Name_Is_Stale()
+    {
+        List<string> stale = TestScheduling.SplitClasses
+            .Concat(TestScheduling.RealTimeClasses)
+            .Concat(TestScheduling.LongestFirst)
+            .Distinct(StringComparer.Ordinal)
+            .Where(name => typeof(TestSchedulingTests).Assembly.GetType(name) == null)
+            .ToList();
+
+        Assert.True(stale.Count == 0, "TestScheduling names classes that no longer exist: " + string.Join(", ", stale));
+    }
+
     // A class in a named collection shares it with other classes (TimingSensitive, RenderThreadAffinity,
     // a fixture), so splitting it would break what the collection guarantees; Split skips such
     // classes, and this keeps the list honest.

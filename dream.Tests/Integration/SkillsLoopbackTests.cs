@@ -215,7 +215,6 @@ internal sealed class M4BRig : IAsyncDisposable
 // database. The resolver's shapes (arc, wall, caps) are pinned in SkillResolutionTests; these cover what only
 // the runtime and the wire can show: the order of the checks, that a rejection spends nothing, the cooldown on
 // the session, spawn protection, and the kill paying the caster.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class SkillsLoopbackTests
 {
     [Fact]

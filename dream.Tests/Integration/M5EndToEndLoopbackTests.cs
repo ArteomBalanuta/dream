@@ -36,7 +36,6 @@ namespace Dream.Tests.Integration;
 // Trade: a swap of items and gold survives a restart and conserves gold; any change cancels (a move, loot
 // gold, an offer edit after a lock, walking off, death, a disconnect, 120 s); a failed write leaves the rows
 // whole with both sides paused and nothing duplicated; hostile input is refused.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class M5EndToEndLoopbackTests
 {
     private const string SessionA = "m5e2e-a";
@@ -643,7 +642,7 @@ public sealed class M5EndToEndLoopbackTests
         }
 
         // ---- a restart: each item once, with its new owner, and the gold as traded ----
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await using WireLoopbackServer again = await StartAsync(db);
         HeadlessPlayScene[] back = await JoinAsync(again, SessionA, SessionB);
         await using HeadlessPlayScene backA = back[0];
@@ -982,7 +981,7 @@ public sealed class M5EndToEndLoopbackTests
             }
 
             // A restart reloads the true rows: the original owners, the original gold, no duplicate.
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(db.Schema);
             db.ExecuteScript("DROP TRIGGER IF EXISTS fail_wallet; DROP TRIGGER IF EXISTS fail_slots;");
             await using WireLoopbackServer again = await StartAsync(db);
             HeadlessPlayScene[] back = await JoinAsync(again, SessionA, SessionB);

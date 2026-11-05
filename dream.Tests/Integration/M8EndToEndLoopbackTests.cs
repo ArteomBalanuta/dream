@@ -28,7 +28,6 @@ namespace Dream.Tests.Integration;
 //  - the message of the day follows the join reply, and the player cap refuses with "Server is full.";
 //  - other players receive a level and nothing else of a player's progress, and the owner's HUD is right;
 //  - a kick is not a lost connection (the client does not retry it), a dropped socket is.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class M8EndToEndLoopbackTests
 {
     private const string Admin = "m8-adm";
@@ -157,6 +156,8 @@ public sealed class M8EndToEndLoopbackTests
         Assert.False(context!.IsAdmin);
         Assert.Equal(0, context.Standing.Role);
 
+        // The account row is written by the persistence queue after the join; wait for it as GrantAdminAsync does.
+        Flush(server);
         Assert.True(new SqliteAccountRepository(db.Schema).TrySetRole(NameOf(Bee), 1));
         await CommandAsync(player, "/announce still a player until I rejoin");
         await UntilAsync(server, () => SystemLines(player).Contains(DedicatedServerHost.PermissionDeniedText), "the refusal");
@@ -288,7 +289,7 @@ public sealed class M8EndToEndLoopbackTests
             Assert.Null(RejectionOf(other));
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.Schema);
         await using (WireLoopbackServer restarted = await StartAsync(db))
         {
             JoinRejectedMessage stillBanned = await restarted.ConnectAndGetJoinRejectionAsync(Bee, NameOf(Bee), TokenOf(Bee));

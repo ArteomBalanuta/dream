@@ -17,7 +17,6 @@ namespace Dream.Tests.Integration;
 
 // Wave I tester, over real TCP with a real PlayScene (no GL): a death that lands while the client is
 // still receiving the join's world.
-[Collection(TimingSensitiveCollection.Name)]
 public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
 {
     private const string Session = "adv-transfer";
