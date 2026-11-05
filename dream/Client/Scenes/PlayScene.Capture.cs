@@ -800,11 +800,20 @@ public partial class PlayScene
     // The local player's projected screen bbox, so an actor crop is the renderer's own number instead of
     // a hand-typed guess at where the figure is (acceptance M7; check_look.py --actor-from-log reads it).
     //
-    // The box is the player model's authored bounds under the same model matrix the renderer builds
-    // (PlayerRenderState.Create): the authored extent scaled by VisualScale, the feet at the body centre
-    // plus BodyCenterToFootOffset, rotated by the yaw the facing resolves to. Two known limits, stated
-    // rather than hidden: the authored extent is used centred on the position, so an off-centre arm can
-    // fall up to ~5 cm outside it, and the pose layers (a swung leg, a raised arm) are not in it.
+    // The box is the UNION of two things, so it is never smaller than the figure drawn:
+    //  1. the player model's authored bounds under the same model matrix the renderer builds
+    //     (PlayerRenderState.Create): the authored extent scaled by VisualScale, the feet at the body
+    //     centre plus BodyCenterToFootOffset, rotated by the yaw the facing resolves to; and
+    //  2. the eight corners of every box of every worn and held piece, exactly as the renderers place
+    //     them last draw (LocalPlayerRenderer.TryAppendDrawnEquipmentCorners, from the real skeleton
+    //     pose, so a swung leg's boot and a raised blade are in it). Armour is separate geometry
+    //     attached at render time and stands outside the authored bounds (a hooded cloak panel at
+    //     z -0.385, a grave mantle at x +-0.41), so the authored box alone clips exactly the pieces A3
+    //     measures. An unequipped actor adds nothing and keeps the authored box.
+    // Remaining limit, stated rather than hidden: the authored extent is centred on the position, so an
+    // off-centre arm can fall up to ~5 cm outside it, and the pose layers (a swung limb of the authored
+    // mesh itself) are not in it. Boxes are projected corner by corner, so they are the AABB of the
+    // drawn boxes, not of the rendered pixels.
     //
     // When the figure is not there to be measured the line says so and gives no numbers. A missing box is
     // a loud failure; a clamped-to-nothing box would be a silently wrong measurement.
@@ -833,38 +842,23 @@ public partial class PlayScene
         LocalPlayerRenderPose pose = _runtime.LocalRenderPose;
         Vector3 facing = pose.Facing.LengthSquared > 0.0001f ? pose.Facing.Normalized() : PlayerModelAssetDefinition.AuthoredForwardAxis;
         float yaw = MathF.Atan2(facing.X, facing.Z) - MathF.Atan2(PlayerModelAssetDefinition.AuthoredForwardAxis.X, PlayerModelAssetDefinition.AuthoredForwardAxis.Z);
-        float cos = MathF.Cos(yaw);
-        float sin = MathF.Sin(yaw);
         Vector3 feet = pose.Position + PlayerModelAssetDefinition.BodyCenterToFootOffset;
-        float halfW = size.Width * 0.5f;
-        float halfD = size.Depth * 0.5f;
+
+        List<Vector3> equipment = new(64);
+        Vector3 drawnFeet = feet;
+        if (_render.LocalPlayers.TryAppendDrawnEquipmentCorners(equipment, out Matrix4 drawnModel))
+        {
+            drawnFeet = drawnModel.Row3.Xyz;
+        }
+
+        List<Vector3> points = BuildActorPoints(feet, yaw, size, equipment, drawnFeet);
+        int equipmentCorners = equipment.Count;
 
         Matrix4 viewProjection = camera.GetViewMatrix() * _render.ProjectionMatrix;
         Vector2i viewport = _render.ViewportSize;
-        float x0 = float.MaxValue;
-        float y0 = float.MaxValue;
-        float x1 = float.MinValue;
-        float y1 = float.MinValue;
-        int behind = 0;
-        for (int corner = 0; corner < 8; corner++)
-        {
-            float lx = (corner & 1) == 0 ? -halfW : halfW;
-            float lz = (corner & 2) == 0 ? -halfD : halfD;
-            float ly = (corner & 4) == 0 ? 0f : size.Height;
-            Vector3 world = feet + new Vector3((lx * cos) + (lz * sin), ly, (lz * cos) - (lx * sin));
-            if (!TryProjectToScreen(viewProjection, world, viewport, out Vector2 screen, out bool inFront) || !inFront)
-            {
-                behind++;
-                continue;
-            }
+        ProjectBounds(points, viewProjection, viewport, out float x0, out float y0, out float x1, out float y1, out int behind);
 
-            x0 = MathF.Min(x0, screen.X);
-            y0 = MathF.Min(y0, screen.Y);
-            x1 = MathF.Max(x1, screen.X);
-            y1 = MathF.Max(y1, screen.Y);
-        }
-
-        if (behind == 8)
+        if (behind == points.Count)
         {
             Console.WriteLine("[hud-capture] actorbox none: the player is behind the camera");
             return;
@@ -889,7 +883,7 @@ public partial class PlayScene
         bool underBar = y1 > barTop;
         Console.WriteLine(
             $"[hud-capture] actorbox {cx0},{cy0},{cx1},{cy1} (viewport {viewport.X}x{viewport.Y}, bar top {barTop:0}, " +
-            $"{cx1 - cx0}x{cy1 - cy0} px, cornersBehindCamera {behind}, clippedByViewport {clipped}, clippedByBar {underBar}, " +
+            $"{cx1 - cx0}x{cy1 - cy0} px, cornersBehindCamera {behind}/{points.Count}, equipmentCorners {equipmentCorners}, clippedByViewport {clipped}, clippedByBar {underBar}, " +
             $"feet {feet.X:0.00},{feet.Y:0.00},{feet.Z:0.00}, model {size.Width:0.00}x{size.Height:0.00}x{size.Depth:0.00} m, yaw {MathHelper.RadiansToDegrees(yaw):0})");
     }
 
@@ -999,6 +993,63 @@ public partial class PlayScene
 
         at = playerScreen + (d * t);
         return true;
+    }
+
+    // Everything the actor draws, as world points: the authored box's eight corners, then every worn and
+    // held box corner the renderer placed last draw (nothing extra for an unequipped actor). The equipment
+    // corners were placed under the last drawn model matrix, so they move by however far the feet have
+    // moved since (feet minus drawnFeet). Pure, so a test can hold the logged box to "contains every
+    // equipped piece" without a window.
+    internal static List<Vector3> BuildActorPoints(
+        Vector3 feet, float yaw, WorldAssetDimensions size, IReadOnlyList<Vector3> equipmentCorners, Vector3 drawnFeet)
+    {
+        float cos = MathF.Cos(yaw);
+        float sin = MathF.Sin(yaw);
+        float halfW = size.Width * 0.5f;
+        float halfD = size.Depth * 0.5f;
+        List<Vector3> points = new(8 + equipmentCorners.Count);
+        for (int corner = 0; corner < 8; corner++)
+        {
+            float lx = (corner & 1) == 0 ? -halfW : halfW;
+            float lz = (corner & 2) == 0 ? -halfD : halfD;
+            float ly = (corner & 4) == 0 ? 0f : size.Height;
+            points.Add(feet + new Vector3((lx * cos) + (lz * sin), ly, (lz * cos) - (lx * sin)));
+        }
+
+        Vector3 moved = feet - drawnFeet;
+        for (int i = 0; i < equipmentCorners.Count; i++)
+        {
+            points.Add(equipmentCorners[i] + moved);
+        }
+
+        return points;
+    }
+
+    // The screen bounds of a set of world points: the min and max of those in front of the camera, and
+    // how many were behind it (all of them behind means no box). Pure, so a test can hold the box to
+    // "never smaller than what is drawn" without a window.
+    internal static void ProjectBounds(
+        IReadOnlyList<Vector3> points, Matrix4 viewProjection, Vector2i viewport,
+        out float x0, out float y0, out float x1, out float y1, out int behind)
+    {
+        x0 = float.MaxValue;
+        y0 = float.MaxValue;
+        x1 = float.MinValue;
+        y1 = float.MinValue;
+        behind = 0;
+        for (int i = 0; i < points.Count; i++)
+        {
+            if (!TryProjectToScreen(viewProjection, points[i], viewport, out Vector2 screen, out bool inFront) || !inFront)
+            {
+                behind++;
+                continue;
+            }
+
+            x0 = MathF.Min(x0, screen.X);
+            y0 = MathF.Min(y0, screen.Y);
+            x1 = MathF.Max(x1, screen.X);
+            y1 = MathF.Max(y1, screen.Y);
+        }
     }
 
     private static bool TryProjectToScreen(Matrix4 viewProjection, Vector3 world, Vector2i size, out Vector2 screen, out bool inFront)

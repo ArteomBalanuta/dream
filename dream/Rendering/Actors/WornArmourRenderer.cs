@@ -105,6 +105,85 @@ public sealed class WornArmourRenderer : IDisposable
     public static Matrix4 CreateSideAttach(float side, float offsetX) =>
         Matrix4.CreateScale(side, 1f, 1f) * Matrix4.CreateTranslation(side * offsetX, 0f, 0f);
 
+    // The eight corners of every box of every worn piece, as Draw would place them (node override,
+    // side attach, model matrix), appended to corners. The capture's actorbox unions these with the
+    // authored bounds, because worn pieces stand outside the authored model. Nothing is appended for an
+    // empty slot or an id the catalog does not know, exactly as Draw draws nothing for it. No GL.
+    public static void AppendCorners(
+        AnimatedModelInstance instance,
+        PlayerPoseLayers layers,
+        in PlayerEquipmentVisuals equipment,
+        Matrix4 modelMatrix,
+        List<Vector3> corners)
+    {
+        if (!equipment.HasWorn)
+        {
+            return;
+        }
+
+        AppendSingle(instance, layers, equipment.Head, PlayerBodyNode.Head, modelMatrix, corners);
+        AppendSingle(instance, layers, equipment.Body, PlayerBodyNode.Torso, modelMatrix, corners);
+        AppendSingle(instance, layers, equipment.Back, PlayerBodyNode.Torso, modelMatrix, corners);
+        AppendSingle(instance, layers, equipment.Companion, PlayerBodyNode.Torso, modelMatrix, corners);
+        AppendPair(instance, layers, equipment.Hands, PlayerBodyNode.LeftArm, PlayerBodyNode.RightArm, ArmOffsetX, modelMatrix, corners);
+        AppendPair(instance, layers, equipment.Legs, PlayerBodyNode.LeftLeg, PlayerBodyNode.RightLeg, 0f, modelMatrix, corners);
+        AppendPair(instance, layers, equipment.Feet, PlayerBodyNode.LeftLeg, PlayerBodyNode.RightLeg, 0f, modelMatrix, corners);
+    }
+
+    // The corners of one model's boxes under attach (the matrix DrawModel is given).
+    public static void AppendModelCorners(ArmourModel model, Matrix4 attach, List<Vector3> corners)
+    {
+        ArmourPart[] parts = model.PartArray;
+        for (int i = 0; i < parts.Length; i++)
+        {
+            AppendBoxCorners(parts[i].ToMatrix() * attach, corners);
+        }
+    }
+
+    // The unit cube the batch draws is centred on the origin, so its corners are (+-0.5)^3.
+    public static void AppendBoxCorners(Matrix4 boxToWorld, List<Vector3> corners)
+    {
+        for (int corner = 0; corner < 8; corner++)
+        {
+            Vector3 local = new(
+                (corner & 1) == 0 ? -0.5f : 0.5f,
+                (corner & 2) == 0 ? -0.5f : 0.5f,
+                (corner & 4) == 0 ? -0.5f : 0.5f);
+            corners.Add(Vector3.TransformPosition(local, boxToWorld));
+        }
+    }
+
+    private static void AppendSingle(
+        AnimatedModelInstance instance, PlayerPoseLayers layers, string? visualId, PlayerBodyNode node,
+        Matrix4 modelMatrix, List<Vector3> corners)
+    {
+        if (ArmourMeshCatalog.Resolve(visualId) is { } model &&
+            layers.TryGetNodeMatrix(instance, node, out Matrix4 nodeMatrix))
+        {
+            AppendModelCorners(model, nodeMatrix * modelMatrix, corners);
+        }
+    }
+
+    private static void AppendPair(
+        AnimatedModelInstance instance, PlayerPoseLayers layers, string? visualId,
+        PlayerBodyNode left, PlayerBodyNode right, float offsetX, Matrix4 modelMatrix, List<Vector3> corners)
+    {
+        if (ArmourMeshCatalog.Resolve(visualId) is not { } model)
+        {
+            return;
+        }
+
+        if (layers.TryGetNodeMatrix(instance, left, out Matrix4 leftMatrix))
+        {
+            AppendModelCorners(model, CreateSideAttach(+1f, offsetX) * leftMatrix * modelMatrix, corners);
+        }
+
+        if (layers.TryGetNodeMatrix(instance, right, out Matrix4 rightMatrix))
+        {
+            AppendModelCorners(model, CreateSideAttach(-1f, offsetX) * rightMatrix * modelMatrix, corners);
+        }
+    }
+
     private void DrawModel(
         Shader shader,
         Camera camera,
