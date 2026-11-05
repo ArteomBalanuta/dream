@@ -94,13 +94,13 @@ public class SeatUseCadenceAndStarvationTests
     }
 
     [Fact]
-    public void SecondaryWalkingForward_StopsWithinMaxCommandRepeatTicks_AfterItsCommandsStop()
+    public void SecondaryWalkingForward_ComesToRestWithinItsBrakingDistance_AfterItsCommandsStop()
     {
         AssertWalkingSeatStopsAfterStarvation(walkingSession: SecondarySession, steadySession: PrimarySession);
     }
 
     [Fact]
-    public void PrimarySeatWalkingForward_StopsWithinMaxCommandRepeatTicks_AfterItsCommandsStop()
+    public void PrimarySeatWalkingForward_ComesToRestWithinItsBrakingDistance_AfterItsCommandsStop()
     {
         AssertWalkingSeatStopsAfterStarvation(walkingSession: PrimarySession, steadySession: SecondarySession);
     }
@@ -137,7 +137,29 @@ public class SeatUseCadenceAndStarvationTests
 
     // Walks a seat forward for 10 ticks, then stops sending its commands while the other seat keeps
     // sending idle ones. The walker keeps repeating its last command for MaxCommandRepeatTicks ticks
-    // and then stands still; before NETR-3 it walked on until it disconnected.
+    // and then comes to rest; before NETR-3 it walked on until it disconnected.
+    //
+    // Character-gaits wave: the premise "it stands still on the tick after the repeats run out"
+    // died with the instant-velocity motor. PlayerMotor now ramps, so a seat that loses its input
+    // brakes instead of teleporting to zero, and the old assert measured 0.0526 m of coast. The
+    // safety property these tests exist to protect is that a starved seat does not drift
+    // indefinitely, not that it halts within one tick, so the contract is re-expressed as: after
+    // the repeats stop the seat travels no further than its braking distance, and is then exactly
+    // at rest forever.
+    //
+    // Derivation at 64 Hz, MoveSpeed (run cruise) 4.3 m/s, DefaultGroundAcceleration 18 m/s^2,
+    // DefaultGroundDeceleration 24 m/s^2:
+    //   time to cruise      4.3 / 18         = 0.2389 s = 15.3 ticks, inside the 10 commanded +
+    //                                          16 repeated ticks, so the seat is at full cruise
+    //                                          when the repeats run out
+    //   braking time        4.3 / 24         = 0.1792 s = 11.5 ticks -> at rest no later than 12
+    //                                          ticks after the last repeat
+    //   braking distance    4.3^2 / (2 * 24) = 0.385 m
+    // Floor friction brakes the body harder than the motor alone, so the measured figures are
+    // shorter (0.289 m, at rest 9 ticks after the last repeat). The asserts use the motor-only
+    // bounds above so they do not encode Bullet's friction coefficient; they still discriminate,
+    // because a body that kept gliding at cruise would cover 0.067 m per tick for the rest of the
+    // run (~3.6 m) and would never satisfy the exact-rest assert.
     private static void AssertWalkingSeatStopsAfterStarvation(string walkingSession, string steadySession)
     {
         using RuntimeAuthoritativeSessionHost host = CreateHost();
@@ -162,15 +184,28 @@ public class SeatUseCadenceAndStarvationTests
         }
 
         int lastRepeatTick = walkTicks + WorldSessionRuntime.MaxCommandRepeatTicks;
+        const float BrakingDistance = 0.385f;
+        const int BrakingTicks = 12;
         Assert.True(
             HorizontalDistance(positions[lastRepeatTick - 1], positions[lastRepeatTick]) > 0.01f,
             "The starved seat should keep repeating its last command for MaxCommandRepeatTicks ticks.");
-        for (int tick = lastRepeatTick + 2; tick <= totalTicks; tick++)
+
+        // (a) It never travels further than the braking distance after the repeats stop.
+        for (int tick = lastRepeatTick + 1; tick <= totalTicks; tick++)
         {
-            float moved = HorizontalDistance(positions[lastRepeatTick + 1], positions[tick]);
+            float moved = HorizontalDistance(positions[lastRepeatTick], positions[tick]);
             Assert.True(
-                moved < 1e-3f,
-                $"The starved seat moved {moved} m by tick {tick}; it should stand still after {WorldSessionRuntime.MaxCommandRepeatTicks} repeated ticks.");
+                moved <= BrakingDistance,
+                $"The starved seat moved {moved} m by tick {tick}; braking from the run cruise may carry it at most {BrakingDistance} m past tick {lastRepeatTick}.");
+        }
+
+        // (b) And it is *exactly* at rest from the tick that distance implies: not a slow glide
+        // inside the bound, a stop. This is the assert that fails if the body keeps moving at all.
+        int restTick = lastRepeatTick + BrakingTicks;
+        for (int tick = restTick + 1; tick <= totalTicks; tick++)
+        {
+            Assert.Equal(positions[restTick].X, positions[tick].X);
+            Assert.Equal(positions[restTick].Z, positions[tick].Z);
         }
     }
 

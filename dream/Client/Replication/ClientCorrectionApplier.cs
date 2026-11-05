@@ -87,12 +87,34 @@ public static class ClientCorrectionApplier
                 : null;
             // The client map lets a snap discard a replayed path that runs into a solid cell; the
             // starved ticks pair the position with the prediction it stands for (W9-2).
+            long discardedBefore = reconciler.DiscardedReplays;
             ClientReconciliationResult result = reconciler.Reconcile(acknowledged, actor.Value.Position, runtime.Map, actor.Value.StarvedTicks);
             if (result.Kind == ClientReconciliationKind.Snap)
             {
-                // SetWorldPosition teleports the body and zeroes its velocity, so the predicted
-                // momentum from before the snap does not carry the player on past it.
+                // SetWorldPosition teleports the body and zeroes its velocity. Keeping the
+                // momentum used to be free: the old motor set the commanded velocity outright, so
+                // the tick after a snap was back at full speed. PlayerMotor now ramps from the
+                // body's own horizontal velocity (RampGroundVelocity), so a zeroed body needs v/a
+                // to recover -- 0.24 s at the 4.3 m/s cruise, 0.33 s at the 6.0 m/s sprint -- and
+                // falls v^2/2a behind a server that never stopped: 0.51 m at cruise, 1.00 m at
+                // sprint, on every snap. It also reads HorizontalSpeed ~ 0 for those frames, so
+                // the local figure replays idle -> walk -> run, the stride restart
+                // GaitHysteresisSpeed exists to prevent.
+                //
+                // The replayed snap position already contains the unacknowledged travel, so the
+                // pre-snap horizontal velocity is the state that belongs with it and is restored.
+                // Vertical velocity is not: a snap may be a respawn or a teleport, and the fall it
+                // was in does not survive it. A snap whose replay was discarded (a teleport, or a
+                // path that ran into a solid cell: see ClientPredictionReconciler) lands on the
+                // server position alone, with no unacknowledged travel on it, and keeps nothing.
+                BulletSharp.Math.Vector3 preSnapVelocity = runtime.Player.PhysicsBody.LinearVelocity;
+                bool replayDiscarded = reconciler.DiscardedReplays != discardedBefore;
                 runtime.Player.SetWorldPosition(result.SnapPosition);
+                if (!replayDiscarded)
+                {
+                    runtime.Player.PhysicsBody.LinearVelocity =
+                        new BulletSharp.Math.Vector3(preSnapVelocity.X, 0f, preSnapVelocity.Z);
+                }
             }
         }
 

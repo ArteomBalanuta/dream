@@ -1,4 +1,6 @@
+using OpenTK.Mathematics;
 using Dream.Rendering.Models;
+using Dream.Simulation.Enemies;
 
 namespace Dream.Rendering.Actors;
 
@@ -11,6 +13,82 @@ public sealed class EnemyVisualState
     public string? CurrentClipName { get; private set; }
 
     public AnimatedModelInstance? Instance { get; private set; }
+
+    // How fast this enemy is actually moving on screen, in metres per second, smoothed. The client
+    // never simulates an enemy - RemoteEnemyStateApplier gives it an inert placeholder speed and
+    // only BehaviorState replicates - so the gait has to be measured from the pose that is drawn.
+    public float ObservedSpeed { get; private set; }
+
+    // The EMA weight ClientScenePresenter smooths the local player's speed with; the same one here
+    // so the two gaits respond alike.
+    private const float SpeedSmoothing = 0.5f;
+
+    // A sample faster than this is a teleport or a snap to a fresh snapshot, not motion. The gate
+    // is a SPEED, not a distance: the first pass discarded steps over 3 m, which at 60 fps let a
+    // 2.9 m step through as a 174 m/s sample, and with SpeedSmoothing 0.5 one such sample stays
+    // above the 3.0 m/s gait threshold for about six frames (174, 87, 43, 22, 11, 5.4, 2.7) while
+    // ResolveSprinting's latch holds the gallop until it falls below 2.6: a gallop flash on a
+    // walking wolf. The spikes are real - when ClientScenePresenter.ApplyEnemySample has just
+    // cleared the interpolation buffer (teleport, respawn, coalesced death) EnemyRenderer falls
+    // back to the snapshot-quantised actor.Position, so the measurement becomes a train of spikes
+    // and zeros.
+    //
+    // Twice the fastest SprintReferenceSpeed in EnemyVisualCatalog (the hound's 6.0): fast enough
+    // that nothing an enemy actually does is discarded, slow enough that a snap cannot reach the
+    // gait threshold through the EMA. EnemyVisualStateCacheTests ties it to the catalog.
+    public const float MaxObservedSpeed = 12f;
+
+    private Vector3 _lastObservedPosition;
+    private bool _hasObservedPosition;
+    private bool _sprinting;
+
+    // Records this frame's drawn position and folds the horizontal speed it implies into
+    // ObservedSpeed. Allocation-free; called once per enemy per frame by EnemyRenderer.
+    public void ObserveMotion(Vector3 position, float deltaSeconds)
+    {
+        if (!_hasObservedPosition)
+        {
+            _lastObservedPosition = position;
+            _hasObservedPosition = true;
+            return;
+        }
+
+        Vector3 step = position - _lastObservedPosition;
+        step.Y = 0f;
+        _lastObservedPosition = position;
+        if (!(deltaSeconds > 0f))
+        {
+            return;
+        }
+
+        float sample = step.Length / deltaSeconds;
+        if (!float.IsFinite(sample) || sample > MaxObservedSpeed)
+        {
+            // A snap: keep the last speed rather than let the jump become a gallop for a frame.
+            return;
+        }
+
+        ObservedSpeed += (sample - ObservedSpeed) * SpeedSmoothing;
+    }
+
+    // The speed the gait is chosen from: the observed speed, held on the side of the clip set's
+    // gait boundary this enemy is already on until it has crossed by GaitHysteresisSpeed. Returning
+    // a speed rather than a clip name keeps EnemyRenderState.Create a pure function of one speed,
+    // and the correction only ever lands inside the clamped playback band, so the stride rate the
+    // caller derives from it is the same one the raw speed would have given.
+    public float ResolveGaitSpeed(in EnemyClipSet clips, EnemyBehaviorState behaviorState)
+    {
+        if (behaviorState != EnemyBehaviorState.Chasing)
+        {
+            _sprinting = false;
+            return ObservedSpeed;
+        }
+
+        _sprinting = clips.ResolveSprinting(ObservedSpeed, _sprinting);
+        return _sprinting
+            ? MathF.Max(ObservedSpeed, clips.SprintSpeedThreshold)
+            : MathF.Min(ObservedSpeed, clips.SprintSpeedThreshold - clips.GaitHysteresisSpeed);
+    }
 
     // Binds the state to a model skeleton. Keeps the current instance when it already belongs
     // to that skeleton; otherwise takes one from the cache's pool (or creates one) and forgets the
@@ -53,6 +131,10 @@ public sealed class EnemyVisualState
         AnimatedModelInstance? instance = Instance;
         Instance = null;
         CurrentClipName = null;
+        // A recycled state must not measure its first step against the enemy that left.
+        ObservedSpeed = 0f;
+        _hasObservedPosition = false;
+        _sprinting = false;
         return instance;
     }
 }

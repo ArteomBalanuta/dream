@@ -28,7 +28,7 @@ import gen_char_player as P  # noqa: E402
 import gltfwrite as G  # noqa: E402
 import uiart as U  # noqa: E402
 
-REQUIRED_CLIPS = ("idle", "walk", "sprint", "die", "attack-melee-right", "holding-right-shoot",
+REQUIRED_CLIPS = ("idle", "walk", "run", "sprint", "die", "attack-melee-right", "holding-right-shoot",
                   "walk-back", "walk-strafe-left", "walk-strafe-right")
 ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right")
 # M3, the offline bimodal-lambert spread (p90 - p10 of HSV value over the silhouette, shaded through

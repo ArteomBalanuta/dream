@@ -4,17 +4,74 @@ using Dream.Simulation.Enemies;
 
 namespace Dream.Rendering.Actors;
 
-// The clips one enemy model carries, by behaviour. A model without a death clip (the wolf) names
-// its idle there, which is what the renderer did before a clip set existed.
-public readonly record struct EnemyClipSet(string Idle, string Move, string Attack, string Die)
+// The clips one enemy model carries, by behaviour, plus the two gaits a moving enemy picks between.
+// A model with only one gait names its Move clip as its Sprint, so the gait choice is a no-op there.
+//
+// The client cannot read an enemy's authored speed - RemoteEnemyStateApplier builds client-side
+// actors it never simulates - so the speed handed in here is MEASURED from the drawn pose
+// (EnemyVisualState.ObserveMotion). MoveReferenceSpeed and SprintReferenceSpeed are the speeds at
+// which each gait plays at rate 1.0; ResolvePlaybackSpeed scales the stride to the observed speed so
+// the feet do not skate, clamped so a stale or snapped pose cannot produce a blur or a freeze.
+public readonly record struct EnemyClipSet(
+    string Idle,
+    string Move,
+    string Attack,
+    string Die,
+    string Sprint,
+    float MoveReferenceSpeed = 1.4f,
+    float SprintReferenceSpeed = 5.0f,
+    float SprintSpeedThreshold = 3.0f,
+    float GaitHysteresisSpeed = 0.4f)
 {
-    public string Resolve(EnemyBehaviorState behaviorState) => behaviorState switch
+    // The band the playback rate is held inside. Below it a stride crawls into a freeze, above it
+    // the legs blur; both read worse than a slightly skating foot.
+    public const float MinPlaybackSpeed = 0.6f;
+    public const float MaxPlaybackSpeed = 1.6f;
+
+    // The clip for a behaviour alone, with no measured speed: a moving enemy walks. Kept because
+    // WolfAnimationResolver and a few callers have no pose to measure, and equals Resolve(state, 0f).
+    public string Resolve(EnemyBehaviorState behaviorState) => Resolve(behaviorState, 0f);
+
+    public string Resolve(EnemyBehaviorState behaviorState, float speed) => behaviorState switch
     {
-        EnemyBehaviorState.Chasing => Move,
+        EnemyBehaviorState.Chasing => speed >= SprintSpeedThreshold ? Sprint : Move,
         EnemyBehaviorState.Attacking => Attack,
         EnemyBehaviorState.Dead => Die,
         _ => Idle
     };
+
+    // The rate the resolved clip advances at. Only a moving enemy scales its stride; an idle, an
+    // attack and a death play as authored. The gait's reference speed divides out, so a wolf
+    // galloping at its authored chase speed plays at exactly 1.0 and one dragged along at half
+    // that plays at the clamp floor instead of sliding.
+    // Whether a moving enemy belongs on the sprint gait, given the gait it is already on. The
+    // boundary is one-sided: rising to SprintSpeedThreshold starts the sprint, and only falling
+    // GaitHysteresisSpeed below it returns to the walk. Without that band a measured speed that
+    // dithers across the threshold renames the clip every few frames, and a rename resets clip
+    // time (EnemyVisualState.ApplyClip -> PlayLoop), so the stride visibly stutters.
+    public bool ResolveSprinting(float speed, bool sprinting) =>
+        sprinting
+            ? speed > SprintSpeedThreshold - GaitHysteresisSpeed
+            : speed >= SprintSpeedThreshold;
+
+    public float ResolvePlaybackSpeed(EnemyBehaviorState behaviorState, float speed)
+    {
+        if (behaviorState != EnemyBehaviorState.Chasing)
+        {
+            return 1f;
+        }
+
+        bool sprinting = speed >= SprintSpeedThreshold;
+        float reference = sprinting ? SprintReferenceSpeed : MoveReferenceSpeed;
+        // No measurement at all (a caller with no pose to measure, the frame an enemy is first
+        // drawn) plays the clip as authored instead of at the slow end of the clamp.
+        if (!(speed > 0f) || !(reference > 0f) || !float.IsFinite(speed))
+        {
+            return 1f;
+        }
+
+        return Math.Clamp(speed / reference, MinPlaybackSpeed, MaxPlaybackSpeed);
+    }
 }
 
 // How one enemy kind looks on the client. TintOffset is added to 1 and multiplies the base colour
@@ -42,18 +99,39 @@ public static class EnemyVisualCatalog
     public const string DireWolfKey = "enemy.dire-wolf";
     public const string HoundKey = "enemy.hound";
 
+    // The gait boundary for every enemy: the wolf patrols at 1.4 m/s and chases at 5.0-6.0, so a
+    // threshold of 3.0 sits in the empty middle and nothing an enemy actually does lands in the
+    // band. The reference speeds are the shipped patrol and chase speeds of the plain wolf, which
+    // is the model both the wolf and the dire wolf draw.
+    private const float PatrolReferenceSpeed = 1.4f;
+    private const float ChaseReferenceSpeed = 5.0f;
+    private const float GaitThresholdSpeed = 3.0f;
+    private const float GaitHysteresisSpeed = 0.4f;
+
     public static readonly EnemyClipSet WolfClips = new(
         WolfAssetDefinition.IdleClip,
-        WolfAssetDefinition.MoveClip,
+        WolfAssetDefinition.WalkClip,
         WolfAssetDefinition.AttackClip,
-        // The wolf pack has no death clip; dying held the idle before the clip set existed.
-        WolfAssetDefinition.IdleClip);
+        // The pack carries a Death clip after all; it was aliased to the idle because nobody had
+        // read its animation list. ForgedActorAssetTests asserts all five names against the GLB.
+        WolfAssetDefinition.DieClip,
+        WolfAssetDefinition.GallopClip,
+        PatrolReferenceSpeed,
+        ChaseReferenceSpeed,
+        GaitThresholdSpeed,
+        GaitHysteresisSpeed);
 
     public static readonly EnemyClipSet HoundClips = new(
         BeastAssetDefinition.IdleClip,
         BeastAssetDefinition.MoveClip,
         BeastAssetDefinition.AttackClip,
-        BeastAssetDefinition.DieClip);
+        BeastAssetDefinition.DieClip,
+        BeastAssetDefinition.GallopClip,
+        PatrolReferenceSpeed,
+        // The hound is the GraveHowler's model and the howler chases at 6.0.
+        6.0f,
+        GaitThresholdSpeed,
+        GaitHysteresisSpeed);
 
     // Static so a Resolve never allocates a closure.
     private static readonly Func<float> WolfScale = static () => WolfAssetDefinition.VisualScale;

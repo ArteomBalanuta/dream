@@ -236,15 +236,20 @@ public sealed class ClientCommandTickStream
         return lag > _ackLagBaseline + AckStallMarginTicks;
     }
 
-    // What a tick without fresh input repeats: the held axes, facing and primary use, without the
-    // presses (jump, freeze, noclip toggle, mode request) or look deltas the source already used.
+    // What a tick without fresh input repeats: the held axes, sprint, facing and primary use,
+    // without the presses (jump, freeze, noclip toggle, mode request) or look deltas the source
+    // already used.
     private static PlayerCommandFrame HoldWithoutOneShots(PlayerCommandFrame frame)
     {
         PlayerMoveIntent move = frame.MoveIntent;
         return frame with
         {
             RequestedMode = PlayerModeSwitchIntent.None,
-            MoveIntent = new PlayerMoveIntent(move.ForwardAxis, move.StrafeAxis, move.VerticalAxis),
+            MoveIntent = new PlayerMoveIntent(
+                move.ForwardAxis,
+                move.StrafeAxis,
+                move.VerticalAxis,
+                SprintHeld: move.SprintHeld),
             LookIntent = new PlayerLookIntent(0f, 0f, frame.LookIntent.Facing)
         };
     }

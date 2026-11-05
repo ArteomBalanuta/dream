@@ -522,6 +522,24 @@ public sealed class HudCapturePointerPlanTests : IDisposable
         Assert.Equal((HudCaptureVerb.WaitIdle, 600), (idle.Verb, idle.A));
     }
 
+    // F6: the two gait modifiers a capture has to be able to hold. Shift was wired when the sprint
+    // tier landed; Z was not, so PlayScene.Update's CaptureKeyHeld(Keys.Z) - which has always been
+    // there - could only ever answer false and a capture could photograph the sprint pose but not
+    // the walk one. keysnap:w+walk:N is the token that needs to work.
+    [Theory]
+    [InlineData("shift", (int)HudCaptureKeys.Shift)]
+    [InlineData("sprint", (int)HudCaptureKeys.Shift)]
+    [InlineData("z", (int)HudCaptureKeys.Z)]
+    [InlineData("walk", (int)HudCaptureKeys.Z)]
+    public void TheGaitModifiers_AreHoldableByName(string name, int expected)
+    {
+        Assert.True(HudCaptureStepSpec.TryParse($"keysnap:w+{name}:40", out HudCaptureStepSpec step));
+
+        Assert.Equal(HudCaptureVerb.KeySnap, step.Verb);
+        Assert.Equal((int)HudCaptureKeys.W | expected, step.A);
+        Assert.Equal(40, step.B);
+    }
+
     [Theory]
     [InlineData("enemyclick")]
     [InlineData("enemyclick:middle")]
@@ -529,10 +547,10 @@ public sealed class HudCapturePointerPlanTests : IDisposable
     [InlineData("holdmove:1:2:3:4")]
     [InlineData("holdmove:1:2:3:4:0")]
     [InlineData("holdmove:-1:2:3:4:10")]
-    [InlineData("keys:z:10")]
+    [InlineData("keys:e:10")]
     [InlineData("keys:w:0")]
     [InlineData("keys::10")]
-    [InlineData("keysnap:z:10")]
+    [InlineData("keysnap:e:10")]
     [InlineData("keysnap:w:0")]
     [InlineData("keysnap:w:2001")]
     [InlineData("keysnap::10")]

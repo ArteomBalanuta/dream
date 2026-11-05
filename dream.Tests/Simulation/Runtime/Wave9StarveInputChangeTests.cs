@@ -54,7 +54,7 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
     // LastCommandTick: the last tick that popped a frame for the walker.
     private readonly record struct ServerSample(ulong Tick, ulong Ack, int StarvedTicks, Vector3 Position, ulong LastCommandTick = 0);
 
-    private readonly record struct Correction(ulong Tick, ulong Ack, Vector3 Error, ClientReconciliationKind Kind);
+    private readonly record struct Correction(ulong Tick, ulong Ack, Vector3 Error, ClientReconciliationKind Kind, int StarvedTicks = 0);
 
     // S1: idle at the ack, walking from the next tick, four ticks starved by the network.
     [Theory]
@@ -71,24 +71,66 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
 
         Assert.Equal(StallTicks, server[StartTick + StallTicks - 1].StarvedTicks);
 
-        List<Correction> fixedCorrections = Reconcile(predicted, server, Forward, snapshotIntervalTicks, recordMovement: true, out float fixedMax);
-        List<Correction> legacyCorrections = Reconcile(predicted, server, Forward, snapshotIntervalTicks, recordMovement: false, out float legacyMax);
+        List<Correction> fixedDivergences = [];
+        List<Correction> legacyDivergences = [];
+        List<Correction> fixedCorrections = Reconcile(predicted, server, Forward, snapshotIntervalTicks, recordMovement: true, out float fixedMax, fixedDivergences);
+        List<Correction> legacyCorrections = Reconcile(predicted, server, Forward, snapshotIntervalTicks, recordMovement: false, out float legacyMax, legacyDivergences);
         float walked = Horizontal(predicted[^1].Position - predicted[0].Position);
         output.WriteLine(
             $"walker {(walkerIsPrimary ? "primary" : "secondary")} @{64 / snapshotIntervalTicks} Hz, walked {walked:F2} m: "
             + $"max error {fixedMax:F4} m with movement recorded ({fixedCorrections.Count} corrections), "
-            + $"{legacyMax:F4} m without ({legacyCorrections.Count}: {Describe(legacyCorrections)})");
+            + $"{legacyMax:F4} m without ({legacyCorrections.Count}: {Describe(legacyCorrections)}); "
+            + $"starved-snapshot comparison fixed [{Describe(Starved(fixedDivergences))}] legacy [{Describe(Starved(legacyDivergences))}]");
 
         Assert.True(walked > 1f, $"only walked {walked} m");
         Assert.True(fixedMax <= ClientPredictionReconciler.DefaultDeadbandDistance, $"max error {fixedMax} m: {Describe(fixedCorrections)}");
         Assert.Empty(fixedCorrections);
         if (snapshotIntervalTicks == 2)
         {
-            // Without the movement, the client's walked sample for the starved snapshot: pulled
-            // back, then forward again.
-            Assert.True(HasBackAndForthPair(legacyCorrections), Describe(legacyCorrections));
+            // Character-gaits wave: this used to assert a back-and-forth PAIR of corrections from
+            // the legacy comparison. That premise died with the instant-velocity motor, and not
+            // just its number:
+            //   * _lastComparedSequence makes the first starved snapshot the only one compared
+            //     under its ack, so the artefact is exactly one tick wide;
+            //   * the client is idle at the ack and walking from the next tick, so with a ramp its
+            //     one divergent tick covers a * dt^2 = 18 / 64^2 = 0.0044 m (measured 0.0034 -
+            //     0.0037 m with floor friction), where the old motor jumped straight to 6 m/s and
+            //     covered 6 / 64 = 0.094 m;
+            //   * 0.0044 m is a ninth of DefaultDeadbandDistance (0.05 m), so the legacy
+            //     comparison no longer *emits* a correction at all -- and with no correction there
+            //     is nothing for the next ack to undo, which is the second half of the pair.
+            // No input change can produce a deadband-sized one-tick error any more, because
+            // velocity itself cannot change by more than GroundAcceleration * dt = 0.28 m/s in a
+            // tick. So the premise is re-expressed on the comparison error the fix actually
+            // changes, at the one starved snapshot that is compared: the legacy comparison is a
+            // full acceleration tick off and points backwards along the walk (it would pull the
+            // player back), the fixed one is on the server's own extrapolated step and is exact.
+            Correction legacyStarved = Assert.Single(Starved(legacyDivergences));
+            Assert.Equal(1, legacyStarved.StarvedTicks);
+            Assert.True(legacyStarved.Error.Length > 0.002f, $"legacy starved comparison only off by {legacyStarved.Error.Length} m");
+            Assert.True(
+                Vector3.Dot(legacyStarved.Error, facing) < 0f,
+                $"the legacy comparison should pull the walker back along {facing}: {legacyStarved.Error}");
+
+            // The fixed comparison models what the server did in that tick: the ack is the idle
+            // command, whose target speed is zero, so the motor's brake (character-gaits fix loop
+            // 3) leaves the body where it was. What is left is the body's own residual drift for
+            // that tick -- settling, or a slow slide on the spawn's slope, neither of which any
+            // motor model can derive from tuning constants: measured 0.00023 m on the primary
+            // seat's spawn and 0.00092 m on the secondary's. Either way a fiftieth of the
+            // deadband, and far inside the legacy comparison's error. (The bound used to be a
+            // tenth of the legacy error, which held only because the old extrapolation repeated
+            // the ack tick's displacement verbatim and so happened to carry that drift along.)
+            Assert.All(Starved(fixedDivergences), divergence =>
+                Assert.True(
+                    divergence.Error.Length < 0.002f
+                        && divergence.Error.Length < legacyStarved.Error.Length / 2f,
+                    $"fixed starved comparison off by {divergence.Error.Length} m"));
         }
     }
+
+    private static List<Correction> Starved(List<Correction> divergences) =>
+        divergences.Where(divergence => divergence.StarvedTicks > 0).ToList();
 
     // S2: walking, four ticks starved, the backlog arrives without its newest tick: the inbox
     // skips three and keeps one tick of debt, so the server is a tick ahead of its ack.
@@ -275,7 +317,12 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
     [InlineData("walk-strafe", true)]
     public void StarvedSnapshot_UsesTheClientSampleOnlyWhenItsCommandsMatch(string scenario, bool extrapolates)
     {
-        const float Step = 0.07f;
+        // The run cruise, so the repeated command's tier speed is the one the step implies: the
+        // extrapolation ramps the step's speed toward the ack command's tier (character-gaits fix
+        // loop 3), and a hand-picked 0.07 m/tick stands for 4.48 m/s, which the server would brake
+        // back to the 4.3 m/s cruise. The scenario is about which sample is compared, not about
+        // the tier, so the step is simply the cruise one.
+        const float Step = PlayerSimulationTuning.DefaultRunSpeed / SimulationClock.AuthoritativeTicksPerSecond;
         PlayerMoveIntent walk = new(1f, 0f);
         (PlayerMoveIntent atAck, PlayerMoveIntent after) = scenario switch
         {
@@ -337,13 +384,18 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
         Assert.True(result.Error.Length < 0.02f, $"error {result.Error.Length} m");
     }
 
+    // divergences, when given, collects every comparison with a non-zero error, not just the ones
+    // above the deadband that become corrections: with the character-gaits ramp a one-tick
+    // comparison artefact is smaller than the deadband but still measurable (see
+    // InputChangeDuringAStarve_IsNotCorrectedBackAndForth).
     private static List<Correction> Reconcile(
         IReadOnlyList<ServerSample> predicted,
         IReadOnlyList<ServerSample> server,
         Func<int, float> forward,
         int snapshotIntervalTicks,
         bool recordMovement,
-        out float maxError)
+        out float maxError,
+        List<Correction>? divergences = null)
     {
         ClientPredictionReconciler reconciler = new();
         List<Correction> corrections = [];
@@ -372,7 +424,12 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
             maxError = Math.Max(maxError, result.Error.Length);
             if (result.Kind != ClientReconciliationKind.None)
             {
-                corrections.Add(new Correction(snapshot.Tick, snapshot.Ack, result.Error, result.Kind));
+                corrections.Add(new Correction(snapshot.Tick, snapshot.Ack, result.Error, result.Kind, snapshot.StarvedTicks));
+            }
+
+            if (result.Error.Length > 1e-5f)
+            {
+                divergences?.Add(new Correction(snapshot.Tick, snapshot.Ack, result.Error, result.Kind, snapshot.StarvedTicks));
             }
         }
 

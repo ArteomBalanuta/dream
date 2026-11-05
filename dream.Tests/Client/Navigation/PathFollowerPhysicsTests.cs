@@ -18,7 +18,7 @@ public class PathFollowerPhysicsTests(ITestOutputHelper output)
     private static readonly PlayerSimulationTuning Tuning = new(
         EyeHeightOffset: 0.35f,
         MouseSensitivity: 2.5f,
-        MoveSpeed: 6f,
+        MoveSpeed: PlayerSimulationTuning.DefaultRunSpeed,
         NoclipSpeed: 150f,
         JumpVelocity: 5f);
 

@@ -255,6 +255,7 @@ public sealed class WolfReachTests
         for (int run = 0; run < 2; run++)
         {
             EnemyActor wolf = new(new EnemyCombatant(() => home), home, aggroRange: 10f, attackRange: 1.35f, moveSpeed: 2.8f,
+                patrolSpeed: 1.4f,
                 preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance, collisionRadius: WolfDefinition.CollisionRadius,
                 collisionHeight: WolfDefinition.CollisionHeight);
             wolf.SetPosition(new Vector3(25.5f, 1f, 20.5f));
@@ -263,7 +264,7 @@ public sealed class WolfReachTests
             {
                 wolf.Update(0.015625f, null, map);
                 n++;
-                Assert.True(n < 1000, "the wolf never got home");
+                Assert.True(n < 2000, "the wolf never got home");
             }
             while (wolf.BehaviorState == EnemyBehaviorState.Chasing);
 
@@ -283,8 +284,10 @@ public sealed class WolfReachTests
 
         Assert.Equal(arrivals[0], arrivals[1]);
         Assert.Equal(ticks[0], ticks[1]);
-        // 18.4 m at 2.8 m/s and 64 ticks/s is about 420 ticks.
-        Assert.InRange(ticks[0], 400, 440);
+        // 18.03 m at the 1.4 m/s PATROL speed and 64 ticks/s is about 824 ticks. The range is tight on
+        // purpose: it also pins WHICH speed ReturnHome walks at, because the 2.8 m/s chase speed would
+        // bring it home in about 412 and an enemy that went home at a run never reads as prowling.
+        Assert.InRange(ticks[0], 810, 840);
     }
 
     [Fact]

@@ -74,8 +74,22 @@ public readonly record struct ClientReconciliationResult(
 // movement (a fall) is not counted. The extrapolated step is the ack
 // tick's displacement (or the newest matching sample's), with gravity applied to its vertical part
 // per tick while the player is airborne: it does not see a landing, a wall, or a jump the server
-// had not simulated, and it is zero when the sample before the ack is missing. The motor stops
-// horizontal movement at once on an idle tick, so the idle part needs no deceleration.
+// had not simulated, and it is zero when the sample before the ack is missing.
+//
+// The motor ramps horizontal velocity (PlayerMotor.RampGroundVelocity), so neither half of the
+// extrapolation can use a fixed step: within the repeat window the server is still accelerating
+// toward its tier speed when the ack tick was mid-ramp, and past the window it brakes at
+// GroundDeceleration rather than stopping at once, coasting v^2/2a (0.35 m from the 4.3 m/s
+// cruise, 0.70 m from the 6.0 m/s sprint). The step's length over the tick is the body's
+// velocity, so the extrapolation ramps that speed per tick the way the motor does -- toward the
+// ack command's tier speed inside the window, toward zero past it. Bullet's floor friction brakes
+// about 0.06 m/s per tick harder than the motor alone, which no model built from tuning constants
+// can see, so the extrapolation still runs ahead of the server: measured over 28 starved ticks,
+// 0.08 m from a steady cruise, 0.10 m from a steady sprint and 0.25-0.34 m when the ack tick was
+// a standing start (where that deficit compounds over all 16 accelerating ticks), against 0.29 -
+// 0.69 m for the fixed step this replaced. All of them are a Smooth, none a Snap. Closing the
+// rest needs the server's own velocity in the snapshot, which is not worth a protocol change for
+// a sub-metre blend (character-gaits fix loop 3).
 public sealed class ClientPredictionReconciler
 {
     public const float DefaultDeadbandDistance = 0.05f;
@@ -88,6 +102,16 @@ public sealed class ClientPredictionReconciler
     private const float GravityAcceleration = 9.8f;
     private const float GravityStepPerTick =
         GravityAcceleration * SimulationClock.FixedDeltaSeconds * SimulationClock.FixedDeltaSeconds;
+    // The motor's ground ramp and movement tiers, read statically from the authoritative tuning
+    // the way Navigation.PathFollower reads them: the extrapolation has to ramp exactly as
+    // PlayerMotor.RampGroundVelocity does, and the reconciler is constructed with `new()`.
+    private static readonly float GroundAcceleration =
+        PlayerSimulationTuning.AuthoritativeDefault.GroundAcceleration;
+    private static readonly float GroundDeceleration =
+        PlayerSimulationTuning.AuthoritativeDefault.GroundDeceleration;
+    private static readonly float WalkSpeed = PlayerSimulationTuning.AuthoritativeDefault.WalkSpeed;
+    private static readonly float RunSpeed = PlayerSimulationTuning.AuthoritativeDefault.MoveSpeed;
+    private static readonly float SprintSpeed = PlayerSimulationTuning.AuthoritativeDefault.SprintSpeed;
 
     // One prediction tick: its command sequence, the intended position after it, and the movement
     // of the command it simulated (HasMove false when the caller did not give it, in which case the
@@ -310,8 +334,10 @@ public sealed class ClientPredictionReconciler
     // BufferedPlayerCommandInbox.ServerRepeatTicks). The client's sample that many ticks later is
     // that state when its commands for those ticks match (see the class comment). Otherwise, and
     // for ticks the client has not predicted yet, the newest sample whose commands still exactly
-    // match is extrapolated with its tick's displacement (its vertical part only once the repeat
-    // window has passed and the server idles), gravity applied while airborne. No allocation.
+    // match is extrapolated: its tick's displacement gives the direction and the horizontal speed,
+    // and that speed is ramped per tick as the motor ramps it (toward the ack command's tier speed
+    // while the server repeats it, toward zero once the server idles), while the vertical part
+    // keeps the tick's displacement with gravity applied while airborne. No allocation.
     private Vector3 PredictAfterStarvedTicks(int acknowledgedIndex, ulong acknowledgedSequence, int starvedTicks)
     {
         Sample acknowledged = _history[acknowledgedIndex];
@@ -392,6 +418,17 @@ public sealed class ClientPredictionReconciler
             && (!acknowledged.HasMove || acknowledged.Move.VerticalAxis == 0f);
         Vector3 position = from.Position;
         float stepY = step.Y;
+        // Samples hold post-tick positions, so the step's horizontal length over one tick IS the
+        // body's horizontal speed for that tick, and its direction is the one the server keeps
+        // (it repeats the same command, so the direction is fixed). A zero-length step leaves no
+        // direction to ramp along, so that case predicts no horizontal movement, as before.
+        Vector3 horizontal = new(step.X, 0f, step.Z);
+        float horizontalLength = horizontal.Length;
+        Vector3 direction = horizontalLength > 0f ? horizontal / horizontalLength : Vector3.Zero;
+        float speed = horizontalLength * SimulationClock.AuthoritativeTicksPerSecond;
+        // Without a recorded movement the sample is assumed to be what the server repeated, and
+        // its own speed is all there is to go on: hold it through the window, as before.
+        float tierSpeed = acknowledged.HasMove ? ResolveStarvedTargetSpeed(acknowledged.Move) : speed;
         for (ulong repeat = Math.Max(from.Sequence, acknowledgedSequence) - acknowledgedSequence + 1; repeat <= (ulong)starvedTicks; repeat++)
         {
             if (airborne)
@@ -399,12 +436,47 @@ public sealed class ClientPredictionReconciler
                 stepY -= GravityStepPerTick;
             }
 
-            position += repeat <= RepeatTicks
-                ? new Vector3(step.X, stepY, step.Z)
-                : new Vector3(0f, stepY, 0f);
+            // Inside the repeat window the server drives toward the ack command's tier; past it
+            // the inbox feeds an idle command, whose target speed is zero.
+            speed = RampSpeed(speed, repeat <= RepeatTicks ? tierSpeed : 0f);
+            float stepLength = speed * SimulationClock.FixedDeltaSeconds;
+            position += new Vector3(direction.X * stepLength, stepY, direction.Z * stepLength);
         }
 
         return position;
+    }
+
+    // One tick of PlayerMotor.RampGroundVelocity along a fixed direction: speeding up (or holding)
+    // accelerates, asking for a slower speed brakes, and the step never overshoots the target.
+    // Scalar, because the direction does not change while the server repeats one command.
+    private static float RampSpeed(float speed, float targetSpeed)
+    {
+        float delta = targetSpeed - speed;
+        float rate = targetSpeed >= speed ? GroundAcceleration : GroundDeceleration;
+        float step = rate * SimulationClock.FixedDeltaSeconds;
+        return step >= MathF.Abs(delta)
+            ? targetSpeed
+            : speed + (MathF.Sign(delta) * step);
+    }
+
+    // The tier speed the server ramps toward while it repeats the acknowledged command: the same
+    // resolution PlayerMotor.ResolveTargetSpeed does, from the move intent the sample recorded.
+    // The motor's own method takes a MovementCommand, which needs the camera the reconciler does
+    // not have; mirroring the three tiers is less coupling than rebuilding the command.
+    private static float ResolveStarvedTargetSpeed(PlayerMoveIntent move)
+    {
+        float throttle = MathF.Sqrt((move.ForwardAxis * move.ForwardAxis) + (move.StrafeAxis * move.StrafeAxis));
+        if (throttle <= 0f)
+        {
+            return 0f;
+        }
+
+        if (move.SprintHeld)
+        {
+            return SprintSpeed;
+        }
+
+        return MathF.Max(WalkSpeed, RunSpeed * Math.Clamp(throttle, 0f, 1f));
     }
 
     private int FindLatestSampleAtOrBefore(ulong sequence)

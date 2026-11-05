@@ -109,6 +109,9 @@ internal static class EnemyFactory
             aggroRange: template.AggroRange,
             attackRange: template.AttackRange,
             moveSpeed: moveSpeed,
+            // The chase speed is instance state (a row can carry its own); the patrol walk is not
+            // persisted and always comes from the template, capped at the chase speed it was given.
+            patrolSpeed: Math.Min(template.PatrolSpeed, moveSpeed),
             preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
             collisionRadius: WolfDefinition.CollisionRadius,
             collisionHeight: WolfDefinition.CollisionHeight,

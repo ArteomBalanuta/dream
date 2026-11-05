@@ -756,6 +756,33 @@ public class BufferedPlayerCommandInboxTests(ITestOutputHelper output)
         return popped;
     }
 
+    // Starting or stopping a sprint changes how far every tick of the same axes travels, so it is
+    // a movement change and not a one-shot press: the outbound queue must not fold a sprint tick
+    // into a run of walking ones, and the reconciler must not read it as "same as the ack".
+    [Fact]
+    public void HasSameMovement_IsFalse_WhenOnlySprintDiffers()
+    {
+        PlayerMoveIntent running = new(1f, 0f);
+        PlayerMoveIntent sprinting = running with { SprintHeld = true };
+
+        Assert.False(BufferedPlayerCommandInbox.HasSameMovement(running, sprinting));
+        Assert.False(BufferedPlayerCommandInbox.HasSameMovement(sprinting, running));
+        Assert.True(BufferedPlayerCommandInbox.HasSameMovement(sprinting, sprinting with { }));
+    }
+
+    // Sprint is held, not a press a tick consumes once, so it stays out of the one-shot set.
+    [Fact]
+    public void HasOneShotInput_IgnoresSprint()
+    {
+        PlayerCommandFrame sprinting = Frame(SessionA, 1, forward: 1f) with
+        {
+            MoveIntent = new PlayerMoveIntent(1f, 0f, SprintHeld: true)
+        };
+
+        Assert.False(BufferedPlayerCommandInbox.HasOneShotInput(sprinting));
+        Assert.False(BufferedPlayerCommandInbox.HasTimedInput(sprinting));
+    }
+
     private static PlayerCommandFrame Frame(
         PlayerSessionId session,
         ulong sequence,

@@ -12,7 +12,11 @@ has none - nothing holds a weapon in its jaws - so it gets a real skeleton and l
 Contract C3, held here: ONE skin; 22 joints against the limit of 32 (the engine's hard ceiling is 64, above
 which LoadSkinning silently returns null and the mesh draws in bind pose); every primitive carries JOINTS_0 and
 WEIGHTS_0 with rows summing to 1; inverseBindMatrices in exported space. Clips are bare names - idle, walk,
-attack, die - not the wolf pack's `AnimalArmature|Idle`.
+gallop, attack, die - not the wolf pack's `AnimalArmature|Idle`.
+
+The hound carries TWO gaits: `walk` is the trot it patrols at and `gallop` the bound it chases at, picked on
+the client from the speed its drawn pose is actually moving at (EnemyClipSet), because a client never knows an
+enemy's authored speed.
 
 Authoring. The skeleton and the meshes live in charforge's world: u, 16 u = 1 m, iso axes (x right, y forward,
 z up), origin at the foot point. The poses are charforge Poses - Euler degrees per joint, in ISO axes - and
@@ -276,9 +280,19 @@ def _gait(a: float):
                 hr_upper=(a * 0.9, 0.0, 0.0), hr_lower=(-a * 0.8, 0.0, 0.0))
 
 
+def _bound(a: float):
+    """One leg phase of a BOUNDING gait: the fore pair swings TOGETHER and the hind pair together, which is
+    what separates a gallop from _gait's diagonal trot - the pairing reads as the gait, not the amplitude.
+    The two sides are a few percent apart because a galloping animal runs on a lead leg; dead symmetry here
+    is what makes a four-legged run look mechanical."""
+    return dict(fl_upper=(a, 0.0, 0.0), fl_lower=(-a * 0.80, 0.0, 0.0), fr_upper=(a * 0.92, 0.0, 0.0),
+                fr_lower=(-a * 0.74, 0.0, 0.0), hl_upper=(-a, 0.0, 0.0), hl_lower=(a * 0.90, 0.0, 0.0),
+                hr_upper=(-a * 0.92, 0.0, 0.0), hr_lower=(a * 0.84, 0.0, 0.0))
+
+
 def clips(root_offset) -> list:
-    """idle, walk, attack, die - the bare names contract C5 asks for. `die` runs once in the engine, which
-    holds the last frame, so its final pose is the one the corpse keeps."""
+    """idle, walk, gallop, attack, die - the bare names contract C5 asks for. `die` runs once in the engine,
+    which holds the last frame, so its final pose is the one the corpse keeps."""
     breath = [_pose(spine1=(1.2, 0, 0), chest=(-0.8, 0, 0), head=(2.0, 0, 0), tail1=(-6.0, 0, 0),
                     tail2=(-4.0, 0, 8.0)),
               _pose(spine1=(-0.9, 0, 0), chest=(1.0, 0, 0), head=(-1.5, 0, 0), jaw=(4.0, 0, 0),
@@ -292,6 +306,20 @@ def clips(root_offset) -> list:
         walk_poses.append(_p(dict(_gait(a), spine1=(1.5, 0, 0), neck=(-3.0, 0, 0), head=(2.0, 0, 0),
                                   tail1=(-10.0, 0, a * 0.25)), (0.0, 0.0, dip)))
     walk = _anim("walk", [0.0, 0.17, 0.34, 0.51, 0.68], walk_poses, root_offset)
+
+    # The chase gait. A 0.42 s cycle against the walk's 0.68, the legs paired fore-and-hind instead of
+    # diagonally, the spine flexing and extending through the stride (`flex`, carried down spine2 and
+    # countered at the neck so the head stays level enough to read) and the root rising into the one
+    # suspended frame and dropping into the gather. The spine is what makes this a bound rather than a
+    # fast trot, so it moves three times as far as the walk's constant 1.5 degrees.
+    gallop_poses = []
+    for a, flex, dip in ((34.0, -10.0, -0.25), (10.0, 8.0, 0.85), (-34.0, 10.0, -0.25),
+                         (-10.0, -8.0, -0.80), (34.0, -10.0, -0.25)):
+        gallop_poses.append(_p(dict(_bound(a), spine1=(flex, 0, 0), spine2=(flex * 0.55, 0, 0),
+                                    neck=(-flex * 0.7, 0, 0), head=(3.0 - flex * 0.3, 0, 0),
+                                    jaw=(6.0, 0, 0), tail1=(-16.0, 0, a * 0.18),
+                                    tail2=(-8.0, 0, a * 0.12)), (0.0, 0.0, dip)))
+    gallop = _anim("gallop", [0.0, 0.11, 0.21, 0.32, 0.42], gallop_poses, root_offset)
 
     attack_poses = [
         _pose(neck=(0, 0, 0), head=(0, 0, 0), jaw=(0, 0, 0), spine1=(0, 0, 0)),
@@ -319,8 +347,8 @@ def clips(root_offset) -> list:
                     neck=(31.0, 0, 0), head=(-31.0, 0, 0), spine1=(12.0, 0, 70.0), tail1=(0, 0, 44.0),
                     jaw=(14.0, 0, 0)), (0.0, 0.0, -9.0))]
     die = _anim("die", [0.0, 0.22, 0.55, 0.95, 1.40], die_poses, root_offset)
-    return ([idle, walk, attack, die],
-            dict(idle=breath, walk=walk_poses, attack=attack_poses, die=die_poses))
+    return ([idle, walk, gallop, attack, die],
+            dict(idle=breath, walk=walk_poses, gallop=gallop_poses, attack=attack_poses, die=die_poses))
 
 
 # ---------------------------------------------------------------------------- build

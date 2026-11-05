@@ -12,6 +12,15 @@ namespace Dream.Tests.Simulation.Players;
 
 public class PlayerMotorTests
 {
+    // One authoritative tick at 64 Hz.
+    private const float TickSeconds = 1f / 64f;
+
+    private static float HorizontalSpeed(RigidBody body)
+    {
+        TkVector3 velocity = body.LinearVelocity.ToOpenTK();
+        return new TkVector3(velocity.X, 0f, velocity.Z).Length;
+    }
+
     [Fact]
     public void Update_WhenDisablingNoclipWhileInsideFloor_SnapsBodyBackAboveFloor()
     {
@@ -65,8 +74,139 @@ public class PlayerMotorTests
             tuning,
             0.016f);
 
+        // Exiting noclip zeroes the body velocity, and the ground motor ramps up from there rather
+        // than snapping, so hold the same direction until it has reached cruise. What this is
+        // testing is that the vertical lean is flattened away instead of eating the horizontal
+        // speed: a direction that is 99% downward still cruises on the ground plane.
+        for (int tick = 0; tick < 32; tick++)
+        {
+            motor.Update(body, GetBodyPosition(body), new MovementCommand(noclipForward), tuning, 0.016f);
+        }
+
         TkVector3 velocity = body.LinearVelocity.ToOpenTK();
         Assert.InRange(MathF.Abs(velocity.Z), tuning.MoveSpeed * 0.95f, tuning.MoveSpeed * 1.05f);
+    }
+
+    [Fact]
+    public void Update_FromRest_RampsToRunCruise()
+    {
+        using PhysicsIntegrator physics = new();
+        PhysicsFactory factory = new();
+        RigidBody body = factory.CreatePlayerBody(new BulletSharp.Math.Vector3(5f, 1.5f, 5f));
+        physics.RegisterPlayerBody(body, PhysicsBodyOwnership.IntegratorOwned);
+        PlayerMotor motor = new(physics);
+        PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
+        MovementCommand command = new(-TkVector3.UnitZ);
+
+        motor.Update(body, GetBodyPosition(body), command, tuning, TickSeconds);
+
+        // One tick of 18 m/s^2 is 0.28 m/s. A motor that assigns the target velocity outright is
+        // already at the full cruise here.
+        Assert.InRange(HorizontalSpeed(body), 0f, 0.5f);
+
+        for (int tick = 1; tick < 16; tick++)
+        {
+            motor.Update(body, GetBodyPosition(body), command, tuning, TickSeconds);
+        }
+
+        Assert.InRange(HorizontalSpeed(body), 4.0f, 4.3f);
+    }
+
+    [Fact]
+    public void Update_WithSprintHeld_ReachesSprintSpeed()
+    {
+        using PhysicsIntegrator physics = new();
+        PhysicsFactory factory = new();
+        RigidBody body = factory.CreatePlayerBody(new BulletSharp.Math.Vector3(5f, 1.5f, 5f));
+        physics.RegisterPlayerBody(body, PhysicsBodyOwnership.IntegratorOwned);
+        PlayerMotor motor = new(physics);
+        PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
+        MovementCommand command = new(-TkVector3.UnitZ, Sprint: true);
+
+        for (int tick = 0; tick < 32; tick++)
+        {
+            motor.Update(body, GetBodyPosition(body), command, tuning, TickSeconds);
+        }
+
+        Assert.True(
+            HorizontalSpeed(body) >= 5.7f,
+            $"Expected a held sprint to pass 5.7 m/s, but the speed was {HorizontalSpeed(body)}.");
+    }
+
+    [Fact]
+    public void Update_WithWalkThrottle_SettlesAtWalkSpeed()
+    {
+        using PhysicsIntegrator physics = new();
+        PhysicsFactory factory = new();
+        RigidBody body = factory.CreatePlayerBody(new BulletSharp.Math.Vector3(5f, 1.5f, 5f));
+        physics.RegisterPlayerBody(body, PhysicsBodyOwnership.IntegratorOwned);
+        PlayerMotor motor = new(physics);
+        PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
+        // What the client's walk toggle emits: the same direction at 0.35 of the axis range.
+        MovementCommand command = new(-TkVector3.UnitZ, Throttle: 0.35f);
+
+        for (int tick = 0; tick < 32; tick++)
+        {
+            motor.Update(body, GetBodyPosition(body), command, tuning, TickSeconds);
+        }
+
+        Assert.InRange(HorizontalSpeed(body), 1.4f, 1.8f);
+    }
+
+    [Fact]
+    public void Update_WhenInputStops_RampsDownToRest()
+    {
+        using PhysicsIntegrator physics = new();
+        PhysicsFactory factory = new();
+        RigidBody body = factory.CreatePlayerBody(new BulletSharp.Math.Vector3(5f, 1.5f, 5f));
+        physics.RegisterPlayerBody(body, PhysicsBodyOwnership.IntegratorOwned);
+        PlayerMotor motor = new(physics);
+        PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
+        for (int tick = 0; tick < 32; tick++)
+        {
+            motor.Update(body, GetBodyPosition(body), new MovementCommand(-TkVector3.UnitZ), tuning, TickSeconds);
+        }
+
+        motor.Update(body, GetBodyPosition(body), new MovementCommand(TkVector3.Zero), tuning, TickSeconds);
+
+        // Braking at 24 m/s^2 takes a tick off the cruise, not all of it.
+        float afterOneTick = HorizontalSpeed(body);
+        Assert.InRange(afterOneTick, 3.5f, 4.3f);
+
+        for (int tick = 0; tick < 16; tick++)
+        {
+            motor.Update(body, GetBodyPosition(body), new MovementCommand(TkVector3.Zero), tuning, TickSeconds);
+        }
+
+        Assert.InRange(HorizontalSpeed(body), 0f, 0.001f);
+    }
+
+    // Character-gaits fix loop 1 (M6). A zero-length tick ramps nothing, so it must leave the
+    // velocity alone; returning the target speed there bypassed the ramp outright and made the
+    // motor's output depend on whether one side happened to see a zero-dt tick, in the method
+    // whose contract is that a predicting client and the server stay bit-identical. Production
+    // only ever passes the fixed 1/64 s, so this is a guard, not a repair of observed drift.
+    [Fact]
+    public void RampGroundVelocity_WithAZeroLengthTick_LeavesTheVelocityAlone()
+    {
+        PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
+        TkVector3 cruising = new(1.5f, 0f, 0f);
+
+        Assert.Equal(
+            cruising,
+            PlayerMotor.RampGroundVelocity(cruising, TkVector3.UnitX, new MovementCommand(TkVector3.UnitX), tuning, 0f));
+        Assert.Equal(
+            cruising,
+            PlayerMotor.RampGroundVelocity(cruising, TkVector3.Zero, new MovementCommand(TkVector3.Zero), tuning, 0f));
+
+        // A normal tick still ramps: one tick of 18 m/s^2 is 0.28 m/s on top of the 1.5 m/s.
+        TkVector3 stepped = PlayerMotor.RampGroundVelocity(
+            cruising,
+            TkVector3.UnitX,
+            new MovementCommand(TkVector3.UnitX),
+            tuning,
+            TickSeconds);
+        Assert.Equal(1.5f + (tuning.GroundAcceleration * TickSeconds), stepped.X, 4);
     }
 
     [Fact]

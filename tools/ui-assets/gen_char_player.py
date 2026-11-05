@@ -537,10 +537,20 @@ def clip_strafe(n: dict, side: float) -> G.GltfAnimation:
                  1.5, 0.0, n, leg_yaw=90.0 * side)
 
 
+def clip_run(n: dict) -> G.GltfAnimation:
+    """The cruise gait, between the trudge and the sprint: a 0.62 s cycle, a long-but-controlled stride, the arms
+    driven harder than the walk's and a modest lean. This is the clip the player spends almost all of its time in
+    (the default ground speed is the run tier), so it is authored as a gait that can be watched for minutes, not
+    as a flat-out effort."""
+    t = [0.0, 0.155, 0.31, 0.465, 0.62]
+    return _gait("run", t, [30.0, 0.0, -30.0, 0.0, 30.0], 0.85, [0.0, 0.026, 0.0, 0.026, 0.0], 6.5, 4.0, n)
+
+
 def clip_sprint(n: dict) -> G.GltfAnimation:
-    """A run: a half-second cycle, a long stride, a forward lean and a bounce (never below the ground)."""
-    t = [0.0, 0.125, 0.25, 0.375, 0.5]
-    return _gait("sprint", t, [38.0, 0.0, -38.0, 0.0, 38.0], 0.9, [0.0, 0.035, 0.0, 0.035, 0.0], 10.0, 8.0, n)
+    """A true sprint, now that `run` holds the cruise: a 0.44 s cycle, a very long stride, the arms pumping almost
+    one-for-one with the legs, a hard forward lean and a real bounce (never below the ground)."""
+    t = [0.0, 0.11, 0.22, 0.33, 0.44]
+    return _gait("sprint", t, [42.0, 0.0, -42.0, 0.0, 42.0], 0.95, [0.0, 0.040, 0.0, 0.040, 0.0], 12.0, 9.0, n)
 
 
 def clip_melee(n: dict) -> G.GltfAnimation:
@@ -650,7 +660,7 @@ def build_asset():
             primitives.append(G.GltfPrimitive(positions=pos, normals=nrm, uvs=uvo, indices=idx, joints=None,
                                               weights=None, material=len(materials) - 1, node=index[node]))
     lift = _die_lift(nodes, primitives, index, back)
-    animations = [clip_idle(index), clip_walk(index), clip_sprint(index), clip_die(index, lift),
+    animations = [clip_idle(index), clip_walk(index), clip_run(index), clip_sprint(index), clip_die(index, lift),
                   clip_melee(index), clip_shoot(index), clip_walk_back(index), clip_strafe(index, 1.0),
                   clip_strafe(index, -1.0)]
     return dict(nodes=nodes, primitives=primitives, materials=materials, animations=animations,

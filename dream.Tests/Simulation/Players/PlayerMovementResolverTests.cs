@@ -140,7 +140,7 @@ public class PlayerMovementResolverTests
                             {
                                 foreach (bool button in flags)
                                 {
-                                    PlayerMoveIntent intent = new(forward, strafe, vertical, button, !button, button);
+                                    PlayerMoveIntent intent = new(forward, strafe, vertical, button, !button, button, SprintHeld: !button);
 
                                     MovementCommand resolved = PlayerMovementResolver.CreateMovementCommand(camera, noclip, intent);
                                     MovementCommand reference = CreateReferenceMovementCommand(camera, noclip, intent);
@@ -156,6 +156,49 @@ public class PlayerMovementResolverTests
         }
 
         Assert.Equal(yaws.Length * pitches.Length * flags.Length * axes.Length * axes.Length * axes.Length * flags.Length, comparisons);
+    }
+
+    // The walk tier rides the axis magnitude, which the direction normalization used to discard.
+    [Theory]
+    [InlineData(0.35f, 0f, 0.35f)]
+    [InlineData(0f, -0.35f, 0.35f)]
+    [InlineData(1f, 0f, 1f)]
+    // A diagonal is longer than 1 and must not throttle above full.
+    [InlineData(1f, 1f, 1f)]
+    [InlineData(0f, 0f, 0f)]
+    public void CreateMovementCommand_CarriesAxisMagnitudeAsThrottle(float forward, float strafe, float expected)
+    {
+        Camera camera = CreateCamera(new Vector3(0f, 0f, -1f));
+
+        MovementCommand command = PlayerMovementResolver.CreateMovementCommand(
+            camera,
+            noclipEnabled: false,
+            new PlayerMoveIntent(forward, strafe));
+
+        Assert.Equal(expected, command.Throttle, 5);
+        // The direction is still normalized, so only the throttle carries the magnitude.
+        if (expected > 0f)
+        {
+            Assert.Equal(1f, command.WorldDirection.Length, 5);
+        }
+    }
+
+    [Fact]
+    public void CreateMovementCommand_CarriesSprintHeld()
+    {
+        Camera camera = CreateCamera(new Vector3(0f, 0f, -1f));
+
+        MovementCommand sprinting = PlayerMovementResolver.CreateMovementCommand(
+            camera,
+            noclipEnabled: false,
+            new PlayerMoveIntent(1f, 0f, SprintHeld: true));
+        MovementCommand running = PlayerMovementResolver.CreateMovementCommand(
+            camera,
+            noclipEnabled: false,
+            new PlayerMoveIntent(1f, 0f));
+
+        Assert.True(sprinting.Sprint);
+        Assert.False(running.Sprint);
     }
 
     // Copy of the pre-move PlayerController maths; client prediction and server reconciliation depend on it staying bit-identical.
@@ -177,7 +220,11 @@ public class PlayerMovementResolverTests
             verticalDirection,
             intent.JumpPressed,
             intent.FreezePressed,
-            intent.ToggleNoclipPressed);
+            intent.ToggleNoclipPressed,
+            MathF.Min(
+                1f,
+                MathF.Sqrt((intent.ForwardAxis * intent.ForwardAxis) + (intent.StrafeAxis * intent.StrafeAxis))),
+            intent.SprintHeld);
     }
 
     private static Vector3 ReferenceFlatten(Vector3 direction)
@@ -202,6 +249,8 @@ public class PlayerMovementResolverTests
         Assert.Equal(expected.JumpPressed, actual.JumpPressed);
         Assert.Equal(expected.FreezePressed, actual.FreezePressed);
         Assert.Equal(expected.ToggleNoclipPressed, actual.ToggleNoclipPressed);
+        Assert.Equal(BitConverter.SingleToInt32Bits(expected.Throttle), BitConverter.SingleToInt32Bits(actual.Throttle));
+        Assert.Equal(expected.Sprint, actual.Sprint);
     }
 
     private static void AssertVectorEqual(Vector3 expected, Vector3 actual)
