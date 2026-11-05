@@ -191,3 +191,57 @@ Master at `04a8fbfe` is not green. The attribute-ceiling commit `1f422512` chang
 `StoredWorldJoinLoopbackTests.GeneratedWorldJoin_FrameSequenceAndBytes_EqualTheC0Capture` also fails on master and is baseline.
 
 `PersistenceWriteQueueLockRetryTests` (2) and `WorldTransferLoopbackTests` (1) failed during a full-suite run that overlapped other sessions' test processes and passed in isolation on both master and this branch; treat them as contention flakes, with the two 0-byte HUD allocation tests already known to be intermittent.
+
+## Fix loop 3: the client's starved-tick extrapolation still modelled the old motor
+
+One production bug, on `fix/gaits-loop3`. `ClientPredictionReconciler` was never touched by this wave, and its class comment still claimed the rationale the ramp destroyed:
+
+> "The motor stops horizontal movement at once on an idle tick, so the idle part needs no deceleration."
+
+### What the code actually did
+
+`PredictAfterStarvedTicks` derives ONE displacement from the two samples around the newest exactly-matching sample and then fills every remaining starved tick with it inside `BufferedPlayerCommandInbox.ServerRepeatTicks` (16) and with nothing but gravity past it. That is **constant velocity for 16 ticks, then an instantaneous stop**. Both halves were exactly right against the instant-velocity motor and both are wrong against the ramp:
+
+- inside the window the server is still accelerating at `GroundAcceleration` 18 m/s^2 (or braking at 24 after a tier drop) whenever the ack tick was mid-ramp, so the repeated step is short by `18 dt^2 n(n+1)/2 = 0.0043945 n(n+1)/2` m;
+- past the window the server brakes at `GroundDeceleration` 24 m/s^2 and coasts `dt sum(max(v - 0.375k, 0))` = **0.3523 m** from the 4.3 m/s cruise (12 ticks) and **0.7031 m** from the 6.0 m/s sprint (16 ticks), where the model predicted zero. (The continuous `v^2/2a` is 0.385 / 0.750; the discrete sum is lower by `v dt / 2`.)
+
+The 0.0043945 m per-tick quantum is the same number fix loop 1 measured independently as a 0.0044 m one-tick divergence, which corroborates the mechanism.
+
+**Why no test caught it.** The extrapolation only runs when the client's own sample at the target tick *cannot* be used, i.e. when the commands diverge mid-starve - an ordinary >78 ms uplink loss burst while the player keeps playing. In the designed send-stall path the client deliberately goes idle, matches, and its own sample carries the real ramp, which is why fix loop 1's scenarios all measured sub-deadband. It never reaches `DefaultSnapDistance`, so every occurrence is a `Smooth`: a sub-metre yank drained over `SmoothingSeconds` 0.1, visible rather than catastrophic. It also does not compound, because `_lastComparedSequence` returns `None` for a repeated ack.
+
+### The fix: model the ramp, motor-only
+
+Sample positions are post-tick positions, so the step's horizontal length over one tick **is** the body's horizontal velocity for that tick, and its direction is fixed (the server repeats one command). The extrapolation now carries a scalar speed and ramps it per tick exactly as `PlayerMotor.RampGroundVelocity` does - toward the ack command's tier speed while `repeat <= RepeatTicks`, toward zero past it, accelerating at `GroundAcceleration` and braking at `GroundDeceleration` - and steps `direction * speed * dt`. The `stepY` / gravity handling is untouched.
+
+The tier speed comes from `Sample.Move`, the `PlayerMoveIntent` the tick recorded: sprint -> `SprintSpeed`, else `max(WalkSpeed, MoveSpeed * clamp(|(ForwardAxis, StrafeAxis)|, 0, 1))`. That mirrors `PlayerMotor.ResolveTargetSpeed` in a private helper rather than calling it, because the motor's method takes a `MovementCommand`, which needs the camera the reconciler does not have. The tuning constants are read statically from `PlayerSimulationTuning.AuthoritativeDefault`, the way `Client/Navigation/PathFollower` already reads them, so no constructor or call site changes. A zero-length step still leaves no direction to ramp along and still predicts no horizontal movement.
+
+### The accepted residual, measured
+
+The motor is not the only thing braking. Bullet's floor friction takes about **0.061 m/s per tick** off the body on top of the motor: measured from rest, one acceleration tick moves the body 0.00344 m (0.220 m/s) where the motor alone gives 0.28125 m/s, and the steady tiers sit at 4.239 and 5.939 m/s rather than 4.3 and 6.0. The reconciler cannot derive that from tuning constants, so a faithful motor-only model overshoots. Measured against real physics (`PhysicsIntegrator` + `PlayerMotor`, 28 starved ticks = 16 repeats + 12 idle, horizontal distance from the ack sample):
+
+| Case | server travels | ramp model | error | old fixed-step model's error |
+| --- | --- | --- | --- | --- |
+| steady cruise | 1.3490 m | 1.4274 m | **0.0783 m** | 0.2893 m |
+| steady sprint | 2.0665 m | 2.1680 m | **0.1015 m** | 0.5818 m |
+| cruise, stall from rest | 0.7446 m | 0.9963 m | **0.2517 m** | 0.6896 m |
+| sprint, stall from rest | 0.7446 m | 1.0806 m | **0.3360 m** | 0.6896 m |
+
+Strictly better in every case - a 3.7x to 5.7x reduction - but **not within a few centimetres**. The architect's residual estimate (0.054 m cruise / 0.104 m sprint) only counted friction in the braking tail and holds for the steady cases; the stall-from-rest case is worse than predicted because friction eats ~22% of the acceleration and that deficit compounds over all 16 repeat ticks. The worst case is therefore **0.336 m, not the ~0.1 m the brief expected**, and it stays above the 0.05 m deadband in all four cases, so each is still a `Smooth`.
+
+**Decision: accept the residual and name it in the class comment.** An empirical coast-deceleration constant and shipping the server's velocity in `ActorSnapshot` were both considered and rejected as disproportionate to a sub-metre smooth; that judgement stands at 0.34 m as it did at 0.1 m, but the number is recorded here so the next loop can weigh the protocol change against the real figure rather than the estimate. If the stall-from-rest smooth is ever judged visible, shipping the velocity is the only fix that removes it, because the error is friction the client cannot predict, not a modelling mistake.
+
+### Tests
+
+Both new tests are in `dream.Tests/Client/Replication/ClientPredictionReconcilerTests.cs`, pure reconciler unit tests with diverged commands so the extrapolation is the path under test, and both fail against the restored fixed-step loop:
+
+- `Reconcile_StarvedPastTheRepeatWindow_WithDivergedCommands_ExtrapolatesTheIdleCoast` - steady cruise, 28 starved ticks: the prediction must land 0.3523 m past the end of the repeat window. Un-fixed: `Expected: 0.35 (rounded from 0.352299988) Actual: 0 (rounded from 4.76837158E-07)`.
+- `Reconcile_StarvedInsideTheRepeatWindow_FromAMidRampAck_KeepsAcceleratingTowardTheTier` - acknowledged four ticks after a standing start (1.125 m/s), 5 starved ticks, no idle part at all: the server covers 0.1538 m against the repeated step's 0.0879 m, and that 0.066 m gap is the first starve that crosses the deadband. Un-fixed: `Expected: 0.154 (rounded from 0.153808594) Actual: 0.088 (rounded from 0.087890625)`.
+
+Two tests in `Wave9StarveInputChangeTests` encoded the old model and were adjusted, not relaxed:
+
+- `StarvedSnapshot_UsesTheClientSampleOnlyWhenItsCommandsMatch` built its fake server path from a hand-picked `Step = 0.07 m/tick`, which is 4.48 m/s - a speed the motor brakes back to the cruise. The step is now the cruise step; the scenario is about which sample is compared, not about the tier, and the `error < 1e-4` assertion is unchanged.
+- `InputChangeDuringAStarve_IsNotCorrectedBackAndForth` asserted the fixed comparison was within a tenth of the legacy one. With an idle ack the tier speed is zero, so the model now brakes to a stop instead of repeating the ack tick's displacement - and that displacement was the body's residual drift (settling or a slow slide on the spawn's slope), which no motor model can derive. The error went from 0.00023 m to 0.00092 m on the secondary seat's spawn. The bound is now absolute (under 0.002 m, a twenty-fifth of the deadband) and still under half the legacy error, with the reason written down.
+
+### Verification
+
+`dream` and `dream.Tests` build with 0 errors and no new warnings. Blast radius `ClientPredictionReconciler|ClientReplayReconciliation|SnapVelocityHandoff|Correction|ClickSoak|PlayerMotor|CommandInbox`: **114 passed, 0 failed, 2 skipped**. A wider replication sweep (`Replication|Reconcil|Starv|Wave12Delta|Snapshot|Prediction`): **576 passed, 0 failed, 4 skipped**. `check_sources.py`: 0 problems, 428 names scanned. The three Wave9 failures above were confirmed as this loop's by re-running them against `84eb1c34`'s reconciler, where they pass.
