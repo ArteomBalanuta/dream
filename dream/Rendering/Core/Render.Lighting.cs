@@ -9,6 +9,19 @@ public partial class Render
 {
     private FrameLighting _frameLighting = FrameLighting.ReferenceNoon;
 
+    // DREAM_FX_CLOCK pins the clock that clouds and wind read (FrameLighting.FrameTime.x) so captures
+    // are reproducible. Read once. Unset, blank or non-finite means the live clock.
+    public const string FxClockEnvironmentVariable = "DREAM_FX_CLOCK";
+
+    private static readonly double? PinnedFxClockSeconds = ParsePinnedClock(Environment.GetEnvironmentVariable(FxClockEnvironmentVariable));
+
+    internal static double? ParsePinnedClock(string? text) =>
+        double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v)
+        && double.IsFinite(v) ? v : null;
+
+    // The wrapped shader clock for this frame: the pin, else the scene's clock (BoundaryMist.TimeSeconds).
+    private float FxClockSeconds() => BoundaryMistField.WrapTime(PinnedFxClockSeconds ?? BoundaryMist.TimeSeconds);
+
     // The FrameLighting uniform buffer. Created with the shaders, disposed with them.
     private FrameLightingBuffer? _frameLightingBuffer;
 
@@ -36,7 +49,7 @@ public partial class Render
         ArgumentNullException.ThrowIfNull(camera);
         Vector3 cameraPosition = FogOrigin ?? camera.Position;
         Matrix4 view = camera.GetViewMatrix();
-        _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view);
+        _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view, FxClockSeconds());
         SelectPointLights(cameraPosition, in view);
         _lightListBuffer?.Upload(in _selectedLights, in view);
         _boundaryMistBuffer?.Upload(BoundaryMist, camera.Position);

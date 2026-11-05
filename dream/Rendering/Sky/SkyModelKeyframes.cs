@@ -8,6 +8,8 @@ namespace Dream.Rendering.Sky;
 // SkyModelSettings while the twilight and day keyframes keep their authored values.
 internal readonly struct SkyKeyframe
 {
+    public const float DefaultCloudCoverage = 0.35f;
+
     public readonly float Time01;
     public readonly Vector3 Zenith;
     public readonly Vector3 Horizon;        // also the fog color
@@ -25,6 +27,7 @@ internal readonly struct SkyKeyframe
     public readonly float ActorAmbientScale; // not night-scaled: the ambient it multiplies already is
     public readonly float Stars;
     public readonly float NightScaled;      // 0 or 1; blended like everything else
+    public readonly float CloudCoverage;    // FrameLighting.CloudParams.x
 
     public SkyKeyframe(
         float hour,
@@ -32,7 +35,8 @@ internal readonly struct SkyKeyframe
         Vector3 sunColor, float sunIntensity, Vector3 sunDisc,
         Vector3 moonColor, float moonIntensity,
         Vector3 ambientSky, Vector3 ambientGround,
-        float exposure, float actorFloor, float actorAmbientScale, float stars, float nightScaled)
+        float exposure, float actorFloor, float actorAmbientScale, float stars, float nightScaled,
+        float cloudCoverage = DefaultCloudCoverage)
     {
         Time01 = hour / 24f;
         Zenith = zenith;
@@ -51,6 +55,7 @@ internal readonly struct SkyKeyframe
         ActorAmbientScale = actorAmbientScale;
         Stars = stars;
         NightScaled = nightScaled;
+        CloudCoverage = cloudCoverage;
     }
 }
 
@@ -80,6 +85,14 @@ internal static class SkyModelKeyframes
 {
     // Rec. 709 luma: the "brightness" the night floor is measured in.
     public static float Luminance(Vector3 c) => 0.2126f * c.X + 0.7152f * c.Y + 0.0722f * c.Z;
+
+    // Clouds (FrameLighting.CloudParams, shaders/clouds.glsl). Coverage is per keyframe: 0.35 by day,
+    // 0.45 at dusk and sunset (0.45), 0.30 at night, where clouds crossing the stars are the grim look.
+    public const float CloudSoftness = 0.35f;
+    public const float CloudShadowStrength = 0.55f;
+    public const float CloudScrollSpeed = 0.9f; // world units per second
+    public const float DuskCloudCoverage = 0.45f;
+    public const float NightCloudCoverage = 0.30f;
 
     public static readonly Vector3 NoonZenith = new(0.25f, 0.45f, 0.85f);
     public static readonly Vector3 NoonHorizon = new(0.62f, 0.74f, 0.88f);
@@ -136,6 +149,7 @@ internal static class SkyModelKeyframes
         FogColor = new Vector4(NoonHorizon, DayFogDensity),
         CameraPosition = new Vector4(0f, 0f, 0f, DayFogStart),
         Params = new Vector4(1f, DayActorFloor, DayActorAmbientScale, 0f),
+        CloudParams = new Vector4(SkyKeyframe.DefaultCloudCoverage, CloudSoftness, CloudShadowStrength, CloudScrollSpeed),
     };
 
     public static float NoonUpFacingLuminance() =>
@@ -162,7 +176,8 @@ internal static class SkyModelKeyframes
         moonColor: MoonTint, moonIntensity: NightMoonIntensity,
         ambientSky: NightAmbientSky, ambientGround: NightAmbientGround,
         exposure: 1f, actorFloor: 0.35f * SkyModelSettings.DefaultNightBrightness,
-        actorAmbientScale: NightActorAmbientScale, stars: 1f, nightScaled: 1f);
+        actorAmbientScale: NightActorAmbientScale, stars: 1f, nightScaled: 1f,
+        cloudCoverage: NightCloudCoverage);
 
     private static SkyKeyframe Day(float hour) => new(
         hour,
@@ -182,7 +197,8 @@ internal static class SkyModelKeyframes
             sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
             moonColor: MoonTint, moonIntensity: NightMoonIntensity * 0.6f,
             ambientSky: new Vector3(0.048f, 0.048f, 0.068f), ambientGround: new Vector3(0.021f, 0.020f, 0.032f),
-            exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f,
+            cloudCoverage: NightCloudCoverage),
         new(6f, // sunrise
             zenith: new Vector3(0.220f, 0.320f, 0.560f), horizon: new Vector3(0.950f, 0.540f, 0.270f),
             fogDensity: 0.062f, fogStart: 16f,
@@ -212,14 +228,16 @@ internal static class SkyModelKeyframes
             sunColor: new Vector3(1.00f, 0.50f, 0.24f), sunIntensity: 0.85f, sunDisc: new Vector3(1.00f, 0.55f, 0.25f),
             moonColor: MoonTint, moonIntensity: 0f,
             ambientSky: new Vector3(0.170f, 0.130f, 0.130f), ambientGround: new Vector3(0.110f, 0.075f, 0.060f),
-            exposure: 1f, actorFloor: 0.22f, actorAmbientScale: SunHorizonActorAmbientScale, stars: 0f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.22f, actorAmbientScale: SunHorizonActorAmbientScale, stars: 0f, nightScaled: 0f,
+            cloudCoverage: DuskCloudCoverage),
         new(19f, // dusk
             zenith: new Vector3(0.030f, 0.032f, 0.040f), horizon: new Vector3(0.090f, 0.090f, 0.090f),
             fogDensity: 0.060f, fogStart: 14f,
             sunColor: new Vector3(1.00f, 0.45f, 0.20f), sunIntensity: 0f, sunDisc: new Vector3(1.00f, 0.50f, 0.25f),
             moonColor: MoonTint, moonIntensity: NightMoonIntensity * 0.6f,
             ambientSky: new Vector3(0.048f, 0.047f, 0.068f), ambientGround: new Vector3(0.021f, 0.019f, 0.032f),
-            exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f),
+            exposure: 1f, actorFloor: 0.10f, actorAmbientScale: TwilightActorAmbientScale, stars: 0.4f, nightScaled: 0f,
+            cloudCoverage: DuskCloudCoverage),
         Night(20f),
     ];
 }

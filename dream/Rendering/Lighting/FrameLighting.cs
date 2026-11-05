@@ -7,7 +7,7 @@ namespace Dream.Rendering.Lighting;
 [StructLayout(LayoutKind.Explicit, Size = SizeInBytes)]
 public struct FrameLighting
 {
-    public const int SizeInBytes = 144;
+    public const int SizeInBytes = 176;
     public const int BindingPoint = 0;
     public const string BlockName = "FrameLighting";
 
@@ -20,6 +20,8 @@ public struct FrameLighting
     [FieldOffset(96)] public Vector4 FogColor;        // rgb (== sky horizon), w exp2 density per unit
     [FieldOffset(112)] public Vector4 CameraPosition; // xyz eye in fragPos space (set at upload), w fog start
     [FieldOffset(128)] public Vector4 Params;         // x exposure, y actor brightness floor, z actor ambient scale, w 0
+    [FieldOffset(144)] public Vector4 CloudParams;    // x coverage 0..1, y softness 0..1, z shadow strength 0..1, w scroll speed (world units/s)
+    [FieldOffset(160)] public Vector4 FrameTime;      // x wrapped clock seconds (set at upload), y global gust 0..1, z 0, w 0
 
     // The frozen legacy look: the pre-T1 point lights matched at the spawn point (5,0.5,5), direction =
     // normalize(lightPos(4,2,2) - spawn), a sun only about 25 degrees high. It is the renderer's value
@@ -36,5 +38,7 @@ public struct FrameLighting
         FogColor = new Vector4(0.62f, 0.74f, 0.88f, 0f),
         CameraPosition = Vector4.Zero,
         Params = new Vector4(1f, 0.35f, 3.25f, 0f),
+        CloudParams = Vector4.Zero,
+        FrameTime = Vector4.Zero,
     };
 }

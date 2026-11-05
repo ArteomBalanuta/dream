@@ -38,6 +38,7 @@ uniform vec3 uActorTintOffset;
 #include "pointLights.glsl"
 // The boundary mist wall: the final colour is mixed toward smoke at and near the map edge.
 #include "boundaryMist.glsl"
+#include "clouds.glsl"
 
 // Actors read brighter than terrain by day: the frame ambient is scaled by FrameLighting.Params.z
 // (uLightingParams.z, set per time of day by SkyModel), the direct light down, and the result never
@@ -65,7 +66,7 @@ void main()
 
     vec3 n = normalize(normal);
     // Point lights (pointLights.glsl) count as direct light: scaled like the sun, before the floor.
-    vec3 lit = (dreamAmbient(n) * uLightingParams.z + (dreamDirect(n) + dreamPointLights(n, fragPos)) * ActorDirectScale) * baseColor.rgb;
+    vec3 lit = (dreamAmbient(n) * uLightingParams.z + (dreamDirectShaded(n, fragPos) + dreamPointLights(n, fragPos)) * ActorDirectScale) * baseColor.rgb;
     lit = max(lit, baseColor.rgb * uLightingParams.y);
 
     vec3 emissive = material.emissiveFactor;

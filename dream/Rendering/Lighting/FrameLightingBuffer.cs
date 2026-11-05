@@ -7,7 +7,7 @@ namespace Dream.Rendering.Lighting;
 // The GL uniform buffer behind the FrameLighting block (shaders/lighting.glsl). One buffer holds
 // two ranges of FrameLighting.SizeInBytes each:
 // - the world range at offset 0: world-space directions, CameraPosition.xyz = the camera;
-// - the view-model range at ViewModelOffset (144 rounded up to GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT):
+// - the view-model range at ViewModelOffset (176 rounded up to GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT):
 //   the view model draws with view = identity, so its fragPos is in eye space. Its sun and moon
 //   directions are rotated into eye space, its camera sits at the origin, and its ambient never
 //   drops below ViewModelAmbientFloor so the hands stay visible at night.
@@ -67,9 +67,10 @@ public sealed class FrameLightingBuffer : IDisposable
     }
 
     // The world range: the frame's lighting with the camera position filled in (fog start kept).
-    public static FrameLighting ForWorld(in FrameLighting lighting, Vector3 cameraPosition)
+    public static FrameLighting ForWorld(in FrameLighting lighting, Vector3 cameraPosition, float clockSeconds = 0f)
     {
         FrameLighting world = lighting;
+        world.FrameTime = new Vector4(clockSeconds, lighting.FrameTime.Y, lighting.FrameTime.Z, lighting.FrameTime.W);
         world.CameraPosition = new Vector4(cameraPosition, lighting.CameraPosition.W);
         return world;
     }
@@ -88,10 +89,11 @@ public sealed class FrameLightingBuffer : IDisposable
     }
 
     // Writes both ranges and binds the world range.
-    public void Upload(in FrameLighting lighting, Vector3 cameraPosition, in Matrix4 view)
+    public void Upload(in FrameLighting lighting, Vector3 cameraPosition, in Matrix4 view, float clockSeconds = 0f)
     {
-        FrameLighting world = ForWorld(in lighting, cameraPosition);
-        FrameLighting viewModel = ForViewModel(in lighting, in view);
+        FrameLighting world = ForWorld(in lighting, cameraPosition, clockSeconds);
+        // Clouds and wind are world-space: the view model keeps the world CloudParams and FrameTime.
+        FrameLighting viewModel = ForViewModel(in world, in view);
 
         GL.BindBuffer(BufferTarget.UniformBuffer, _handle);
         GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero, FrameLighting.SizeInBytes, ref world);

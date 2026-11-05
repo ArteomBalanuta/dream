@@ -1,0 +1,75 @@
+// Cloud cover shared by the world fragment shaders (cloud shadows, via dreamDirectShaded) and the sky
+// (the cloud sheet). Pulled in with `#include "clouds.glsl"` AFTER `#include "lighting.glsl"`
+// (Shader.ResolveIncludes: one level only, so no #include or #version here); it reads
+// uCloudParams and uFrameTime from the FrameLighting block. Mirrored in C# by Rendering/Sky/CloudLayer.cs,
+// which a test compares against the constants below.
+// uCloudParams: x coverage 0..1, y softness 0..1, z shadow strength 0..1, w scroll speed (world units/s).
+const float CloudPlaneY = 60.0;
+const vec2 CloudDirection = vec2(0.8, 0.6);   // unit: the way the clouds drift
+const float CloudCellsPerUnit = 0.008;        // base noise frequency, cells per world unit
+const float CloudLacunarity = 2.0;
+const float CloudGain = 0.5;
+const float CloudAmplitudeSum = 1.875;        // 1 + 0.5 + 0.25 + 0.125 (4 octaves)
+const float CloudContrast = 2.0;            // fBm clusters near 0.5; stretch it so coverage is about the fraction covered
+const float CloudSoftnessScale = 0.5;         // half-width of the threshold ramp at softness 1
+
+float dreamCloudHash(vec2 p)
+{
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+float dreamCloudValueNoise(vec2 p)
+{
+    vec2 cell = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    float a = dreamCloudHash(cell);
+    float b = dreamCloudHash(cell + vec2(1.0, 0.0));
+    float c = dreamCloudHash(cell + vec2(0.0, 1.0));
+    float d = dreamCloudHash(cell + vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// 0 = clear, 1 = solid, for a point on the cloud plane (world XZ).
+float dreamCloudCover(vec2 planeXZ)
+{
+    if (uCloudParams.x <= 0.0) { return 0.0; }
+    vec2 p = (planeXZ - CloudDirection * (uCloudParams.w * uFrameTime.x)) * CloudCellsPerUnit;
+    float sum = 0.0;
+    float amplitude = 1.0;
+    for (int i = 0; i < 4; i++)
+    {
+        sum += amplitude * dreamCloudValueNoise(p);
+        p = p * CloudLacunarity + vec2(17.0, 31.0);
+        amplitude *= CloudGain;
+    }
+    float n = clamp((sum / CloudAmplitudeSum - 0.5) * CloudContrast + 0.5, 0.0, 1.0);
+    float w = clamp(uCloudParams.y, 0.0, 1.0) * CloudSoftnessScale + 0.0005;
+    float center = mix(1.0 + w, -w, clamp(uCloudParams.x, 0.0, 1.0));
+    return smoothstep(center - w, center + w, n);
+}
+
+// dreamDirect with the sun term dimmed by the cloud shadow over this fragment. The ray from fragPos
+// toward the sun is cut with the cloud plane and the cover there multiplies the SUN term only; the
+// moon and dreamAmbient are untouched. With coverage 0 the mask is exactly 1.0 and this is
+// bit-identical to dreamDirect (lighting.glsl), which stays the engine contract that
+// tools/ui-assets/enginelook.py restates and that boundaryMist.glsl and warMistFragment.glsl call.
+// (It lives here, not in lighting.glsl, because includes are one level deep: lighting.glsl cannot
+// pull in clouds.glsl.)
+//
+// Why GrimLookHistogramTests' CPU mirror needs no cloud term: cloud shadow multiplies the SUN term
+// only, and at that test's four hours (0, 20, 19, 5) sunIntensity is 0 or near 0 (SkyModel.cs), so
+// the dimmed term is already zero. If daytime coverage is ever gated there, the mirror must gain it.
+vec3 dreamDirectShaded(vec3 n, vec3 fragPos)
+{
+    float mask = 1.0;
+    if (uCloudParams.x > 0.0 && uSunDirection.y > 0.02)
+    {
+        vec3 onPlane = fragPos + uSunDirection.xyz * ((CloudPlaneY - fragPos.y) / uSunDirection.y);
+        mask = 1.0 - uCloudParams.z * dreamCloudCover(onPlane.xz);
+    }
+    return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * mask
+         + max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;
+}

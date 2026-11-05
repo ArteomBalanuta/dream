@@ -55,6 +55,8 @@ public static class SkyModel
             FogColor = new Vector4(k.Horizon, k.FogDensity),
             CameraPosition = new Vector4(0f, 0f, 0f, k.FogStart),
             Params = new Vector4(k.Exposure, k.ActorFloor * lightScale, k.ActorAmbientScale, 0f),
+            CloudParams = new Vector4(k.CloudCoverage, SkyModelKeyframes.CloudSoftness, SkyModelKeyframes.CloudShadowStrength, SkyModelKeyframes.CloudScrollSpeed),
+            FrameTime = Vector4.Zero, // filled at upload (FrameLightingBuffer)
         };
 
         return new SkyState
@@ -131,7 +133,8 @@ public static class SkyModel
         actorFloor: Lerp(a.ActorFloor, b.ActorFloor, s),
         actorAmbientScale: Lerp(a.ActorAmbientScale, b.ActorAmbientScale, s),
         stars: Lerp(a.Stars, b.Stars, s),
-        nightScaled: Lerp(a.NightScaled, b.NightScaled, s));
+        nightScaled: Lerp(a.NightScaled, b.NightScaled, s),
+        cloudCoverage: Lerp(a.CloudCoverage, b.CloudCoverage, s));
 
     // a + (b - a) * s returns a exactly when a == b, which keeps the noon plateau bit-exact.
     private static float Lerp(float a, float b, float s) => a + (b - a) * s;
