@@ -112,12 +112,19 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
                 Vector3.Dot(legacyStarved.Error, facing) < 0f,
                 $"the legacy comparison should pull the walker back along {facing}: {legacyStarved.Error}");
 
-            // The fixed comparison extrapolates the ack's own step, which is the idle one the
-            // server repeated, so it lands on the server's position; what is left is float noise
-            // in that step (measured 0.00023 m), an order of magnitude under the legacy error.
+            // The fixed comparison models what the server did in that tick: the ack is the idle
+            // command, whose target speed is zero, so the motor's brake (character-gaits fix loop
+            // 3) leaves the body where it was. What is left is the body's own residual drift for
+            // that tick -- settling, or a slow slide on the spawn's slope, neither of which any
+            // motor model can derive from tuning constants: measured 0.00023 m on the primary
+            // seat's spawn and 0.00092 m on the secondary's. Either way a fiftieth of the
+            // deadband, and far inside the legacy comparison's error. (The bound used to be a
+            // tenth of the legacy error, which held only because the old extrapolation repeated
+            // the ack tick's displacement verbatim and so happened to carry that drift along.)
             Assert.All(Starved(fixedDivergences), divergence =>
                 Assert.True(
-                    divergence.Error.Length < legacyStarved.Error.Length / 10f,
+                    divergence.Error.Length < 0.002f
+                        && divergence.Error.Length < legacyStarved.Error.Length / 2f,
                     $"fixed starved comparison off by {divergence.Error.Length} m"));
         }
     }
@@ -310,7 +317,12 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
     [InlineData("walk-strafe", true)]
     public void StarvedSnapshot_UsesTheClientSampleOnlyWhenItsCommandsMatch(string scenario, bool extrapolates)
     {
-        const float Step = 0.07f;
+        // The run cruise, so the repeated command's tier speed is the one the step implies: the
+        // extrapolation ramps the step's speed toward the ack command's tier (character-gaits fix
+        // loop 3), and a hand-picked 0.07 m/tick stands for 4.48 m/s, which the server would brake
+        // back to the 4.3 m/s cruise. The scenario is about which sample is compared, not about
+        // the tier, so the step is simply the cruise one.
+        const float Step = PlayerSimulationTuning.DefaultRunSpeed / SimulationClock.AuthoritativeTicksPerSecond;
         PlayerMoveIntent walk = new(1f, 0f);
         (PlayerMoveIntent atAck, PlayerMoveIntent after) = scenario switch
         {
