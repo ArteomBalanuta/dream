@@ -97,6 +97,9 @@ public static class TestScheduling
         "Dream.Tests.Integration.Wave9SessionLifecycleLoopbackTests",
         "Dream.Tests.Integration.Wave11SessionChurnLoopbackTests",
         "Dream.Tests.Multiplayer.Protocol.WorldTransferProtocolTests",
+        // Pure in-memory computation, no fixture, no mutable static state: a ~75 s grid test and a ~11 s
+        // one overlap when split (post-fix isolated, 2026-11-05).
+        "Dream.Tests.Simulation.Stats.StatSheetTests",
         // Unsealed from the serial TimingSensitive phase: loopback end-to-end and persistence tests that
         // measure no time and share no process-wide state (own GUID temp database, own ephemeral port).
         // Split so the longest one (M5EndToEndLoopbackTests, 86 s) does not become one collection.
