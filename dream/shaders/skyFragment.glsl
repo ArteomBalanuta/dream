@@ -4,13 +4,19 @@ in vec4 vFarPoint;
 
 out vec4 FragColor;
 
+// The FrameLighting block (world range) and the shared cloud field; the cloud sheet below reads
+// uCloudParams, uFrameTime and uCameraPosition from it. The disc uniforms below are named
+// uSunDiscColor / uMoonDiscColor because the block already owns uSunColor / uMoonColor.
+#include "lighting.glsl"
+#include "clouds.glsl"
+
 // SkyState, uploaded once per frame by SkyRenderer.
 uniform vec3 uZenithColor;
 uniform vec3 uHorizonColor;   // == FrameLighting.FogColor.rgb, so the sky meets the fog with no seam
 uniform vec4 uSun;            // xyz unit direction toward the sun, w disc angular radius (radians)
-uniform vec3 uSunColor;       // disc colour, 0 when the sun is below the horizon
+uniform vec3 uSunDiscColor;  // disc colour, 0 when the sun is below the horizon
 uniform vec4 uMoon;           // xyz unit direction toward the moon, w disc angular radius (radians)
-uniform vec3 uMoonColor;
+uniform vec3 uMoonDiscColor;
 uniform float uStarVisibility; // 0..1
 
 // Everything added on top of the gradient (stars, sun, glow, moon) fades in over this much
@@ -60,11 +66,23 @@ void main()
     color += vec3(stars(dir)) * (uStarVisibility * above);
 
     // The moon is opaque over the stars; the sun and its glow add light.
-    color = mix(color, uMoonColor, disc(dir, uMoon) * above * step(0.0001, dot(uMoonColor, uMoonColor)));
+    color = mix(color, uMoonDiscColor, disc(dir, uMoon) * above * step(0.0001, dot(uMoonDiscColor, uMoonDiscColor)));
 
     float sunCos = max(dot(dir, uSun.xyz), 0.0);
     float sunLight = pow(sunCos, SunGlowExponent) * SunGlowStrength + disc(dir, uSun);
-    color += uSunColor * (sunLight * above);
+    color += uSunDiscColor * (sunLight * above);
+
+    // The cloud sheet: the view ray cut with the cloud plane (the same plane the ground shadows use),
+    // drawn over the discs so clouds cross sun, moon and stars, lit by the frame's ambient and sun, and
+    // faded out with `above` so the sky still meets the fog with no seam. Coverage 0 leaves the sky untouched.
+    if (uCloudParams.x > 0.0 && dir.y > 0.001)
+    {
+        vec3 eye = uCameraPosition.xyz;
+        vec3 onPlane = eye + dir * ((CloudPlaneY - eye.y) / dir.y);
+        float cloud = dreamCloudCover(onPlane.xz) * 0.8;
+        vec3 cloudColor = uHorizonColor * 0.55 + dreamAmbient(vec3(0.0, 1.0, 0.0)) + uSunColor.rgb * (uSunDirection.w * 0.30);
+        color = mix(color, cloudColor, cloud * above);
+    }
 
     FragColor = vec4(color, 1.0);
 }

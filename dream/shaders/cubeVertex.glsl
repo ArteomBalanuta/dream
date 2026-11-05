@@ -17,6 +17,16 @@ uniform bool useSkinning;
 uniform bool useInstancing;
 uniform mat4 jointMatrices[64];
 
+// uFrameTime (the wrapped clock) comes from the FrameLighting block.
+#include "lighting.glsl"
+
+// Ambient sway, set per draw by GroundScatterRenderer for flora and zero for everything else.
+// This vertex shader is shared by the terrain, the actors and the scatter, so it is gated: x = the
+// sway amplitude / (asset height ^ y), y = the stiffness exponent. The tip of an asset (aPos.y = its
+// height) moves by the authored amplitude in world units; x == 0 (the default) costs one branch.
+uniform vec2 uWind;
+const vec2 WindDirection = vec2(0.8, 0.6);
+
 out vec2 texCoord0;
 out vec3 normal;
 out vec3 fragPos;
@@ -59,6 +69,17 @@ void main()
     mat3 resolvedNormalMatrix = useInstancing ? cofactorNormalMatrix(instanceModel) : normalMatrix;
 
     fragPos = vec3(resolvedModel * localPosition);
+    if (useInstancing && uWind.x > 0.0)
+    {
+        // The phase is a smooth function of the instance's world position (a gust rolling across the
+        // field), so every node of one asset sways together and neighbours differ.
+        vec3 root = instanceModel[3].xyz;
+        float phase = dot(root.xz, vec2(0.45, 0.3));
+        float t = uFrameTime.x;
+        float sway = 0.7 * sin(t * 1.7 + phase) + 0.3 * sin(t * 2.9 + phase * 1.7);
+        float weight = uWind.x * pow(max(aPos.y, 0.0), uWind.y);
+        fragPos.xz += WindDirection * (sway * weight);
+    }
     texCoord0 = aTexCoord0;
     normal = resolvedNormalMatrix * localNormal;
     
