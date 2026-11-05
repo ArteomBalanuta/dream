@@ -23,9 +23,9 @@ public sealed class SkyRenderer : IDisposable
         "uZenithColor",
         "uHorizonColor",
         "uSun",
-        "uSunColor",
+        "uSunDiscColor",
         "uMoon",
-        "uMoonColor",
+        "uMoonDiscColor",
         "uStarVisibility",
     ];
 

@@ -370,7 +370,7 @@ public class WaveT2PointLightTests
     public void Cube_Shader_Adds_Point_Lights_To_Ambient_And_Direct()
     {
         string source = File.ReadAllText(Path.Combine(ShaderDirectory(), "cubeFragment.glsl"));
-        Assert.Contains("vec3 lit = (dreamAmbient(n) + dreamDirect(n) + dreamPointLights(n, fragPos)) * baseColor.rgb;", source);
+        Assert.Contains("vec3 lit = (dreamAmbient(n) + dreamDirectShaded(n, fragPos) + dreamPointLights(n, fragPos)) * baseColor.rgb;", source);
         Assert.Contains("FragColor = vec4(dreamApplyBoundaryMist(dreamApplyFog(dreamExpose(lit) + emissive, fragPos), fragPos), baseColor.a);", source);
     }
 

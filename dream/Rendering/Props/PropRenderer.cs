@@ -88,6 +88,8 @@ public sealed class PropRenderer
             }
         }
 
+        // Props never sway this wave (a swaying cottage is wrong; gates and shutters want per-prop authoring).
+        // uWind is already 0 here: _ground.Draw resets it in a finally, and props draw non-instanced besides.
         Shader shader = _render.GetShader(ShaderName);
         int cursor = 0;
         while (cursor < placements.Count)

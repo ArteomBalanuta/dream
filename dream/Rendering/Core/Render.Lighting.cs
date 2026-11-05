@@ -9,6 +9,9 @@ public partial class Render
 {
     private FrameLighting _frameLighting = FrameLighting.ReferenceNoon;
 
+    // The wrapped shader clock for this frame: the pin, else the scene's clock (BoundaryMist.TimeSeconds).
+    private float FxClockSeconds() => BoundaryMistField.WrapTime(FxClockPin.Seconds ?? _boundaryMist.TimeSeconds);
+
     // The FrameLighting uniform buffer. Created with the shaders, disposed with them.
     private FrameLightingBuffer? _frameLightingBuffer;
 
@@ -20,7 +23,14 @@ public partial class Render
 
     // The map size, clock and switch of the boundary mist wall. The scene sets it each frame before
     // DrawWorld; the default (no map) uploads strength 0.
-    public BoundaryMistInput BoundaryMist { get; set; }
+    // Under DREAM_FX_CLOCK the setter swaps in the pinned clock (FxClockPin), so the animated void mist holds still.
+    public BoundaryMistInput BoundaryMist
+    {
+        get => _boundaryMist;
+        set => _boundaryMist = FxClockPin.Apply(value);
+    }
+
+    private BoundaryMistInput _boundaryMist;
 
     // Lighting the next world pass uploads. The scene sets it each frame before DrawWorld.
     public void SetFrameLighting(in FrameLighting lighting) => _frameLighting = lighting;
@@ -36,7 +46,7 @@ public partial class Render
         ArgumentNullException.ThrowIfNull(camera);
         Vector3 cameraPosition = FogOrigin ?? camera.Position;
         Matrix4 view = camera.GetViewMatrix();
-        _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view);
+        _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view, FxClockSeconds());
         SelectPointLights(cameraPosition, in view);
         _lightListBuffer?.Upload(in _selectedLights, in view);
         _boundaryMistBuffer?.Upload(BoundaryMist, camera.Position);
@@ -92,4 +102,23 @@ public partial class Render
             }
         }
     }
+}
+
+// DREAM_FX_CLOCK: pins the clock that clouds, wind (FrameLighting.FrameTime.x) and the boundary mist read, so
+// captures are reproducible. Read once. Unset, blank or non-finite means the live clock.
+internal static class FxClockPin
+{
+    public const string EnvironmentVariable = "DREAM_FX_CLOCK";
+
+    public static readonly double? Seconds = Parse(Environment.GetEnvironmentVariable(EnvironmentVariable));
+
+    public static double? Parse(string? text) =>
+        double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v)
+        && double.IsFinite(v) ? v : null;
+
+    // The boundary mist input with its clock replaced by the pin, when there is one; otherwise unchanged.
+    public static BoundaryMistInput Apply(BoundaryMistInput input, double? pinnedSeconds) =>
+        pinnedSeconds is { } pin ? input with { TimeSeconds = pin } : input;
+
+    public static BoundaryMistInput Apply(BoundaryMistInput input) => Apply(input, Seconds);
 }

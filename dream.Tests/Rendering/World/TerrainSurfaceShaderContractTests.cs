@@ -149,7 +149,7 @@ public class TerrainSurfaceShaderContractTests
         int lights = main.IndexOf("dreamPointLights(n, fragPos)", StringComparison.Ordinal);
         Assert.True(normalDecl >= 0 && normalDecl < bump && bump < lights);
         Assert.Matches(@"#ifdef DREAM_TERRAIN\s*[^#]*n = dreamTerrainBump\(n,[^;]*;\s*#endif", main);
-        Assert.Contains("dreamAmbient(n) + dreamDirect(n)", main);
+        Assert.Contains("dreamAmbient(n) + dreamDirectShaded(n, fragPos)", main);
     }
 
     [Fact]

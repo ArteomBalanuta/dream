@@ -27,13 +27,13 @@ public class FrameLightingContractTests
     ];
 
     [Fact]
-    public void The_Struct_Is_144_Bytes_Of_Nine_Std140_Vec4s()
+    public void The_Struct_Is_176_Bytes_Of_Eleven_Std140_Vec4s()
     {
         Assert.Equal(FrameLighting.SizeInBytes, Marshal.SizeOf<FrameLighting>());
-        Assert.Equal(144, FrameLighting.SizeInBytes);
+        Assert.Equal(176, FrameLighting.SizeInBytes);
 
         FieldInfo[] fields = OrderedFields();
-        Assert.Equal(9, fields.Length);
+        Assert.Equal(11, fields.Length);
         for (int i = 0; i < fields.Length; i++)
         {
             Assert.Equal(typeof(Vector4), fields[i].FieldType);
@@ -87,7 +87,7 @@ public class FrameLightingContractTests
         // Wave T2 C0: the material emissive is added after exposure and before fog. Wave T2a: point
         // lights count as direct light (scaled by ActorDirectScale) and are added before the floor.
         Assert.Matches(
-            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ \(dreamDirect\(n\) \+ dreamPointLights\(n, fragPos\)\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
+            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ \(dreamDirectShaded\(n, fragPos\) \+ dreamPointLights\(n, fragPos\)\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
             source);
     }
 
@@ -201,11 +201,11 @@ public class FrameLightingContractTests
     }
 
     [Theory]
-    [InlineData(144, 256, 256)]
-    [InlineData(144, 16, 144)]
-    [InlineData(144, 64, 192)]
-    [InlineData(144, 1, 144)]
-    [InlineData(144, 0, 144)]
+    [InlineData(176, 256, 256)]
+    [InlineData(176, 16, 176)]
+    [InlineData(176, 64, 192)]
+    [InlineData(176, 1, 176)]
+    [InlineData(176, 0, 176)]
     public void The_View_Model_Range_Starts_At_The_Aligned_Stride(int size, int alignment, int expected)
     {
         Assert.Equal(expected, FrameLightingBuffer.RoundUp(size, alignment));
@@ -325,6 +325,33 @@ public class FrameLightingContractTests
         Assert.Equal(new Vector4(floor, floor, floor, 0f), viewModel.AmbientGround);
         Assert.Equal(night.FogColor, viewModel.FogColor);
         Assert.Equal(night.Params, viewModel.Params);
+    }
+
+    [Fact]
+    public void Both_Ranges_Carry_The_Cloud_Params_And_The_Clock_Identically()
+    {
+        FrameLighting lighting = FrameLighting.ReferenceNoon;
+        lighting.CloudParams = new Vector4(0.35f, 0.35f, 0.55f, 0.9f);
+        lighting.FrameTime = new Vector4(0f, 0.25f, 0f, 0f);
+        Matrix4 view = Matrix4.LookAt(Spawn, Spawn + Vector3.UnitX, Vector3.UnitY);
+
+        FrameLighting world = FrameLightingBuffer.ForWorld(in lighting, Spawn, 123.5f);
+        FrameLighting viewModel = FrameLightingBuffer.ForViewModel(in world, in view);
+
+        Assert.Equal(lighting.CloudParams, world.CloudParams);
+        Assert.Equal(new Vector4(123.5f, 0.25f, 0f, 0f), world.FrameTime);
+        Assert.Equal(world.CloudParams, viewModel.CloudParams);
+        Assert.Equal(world.FrameTime, viewModel.FrameTime);
+        // The clock never rides in Params.
+        Assert.Equal(lighting.Params, world.Params);
+        Assert.Equal(0f, FrameLighting.ReferenceNoon.Params.W);
+        Assert.Equal(Vector4.Zero, FrameLighting.ReferenceNoon.CloudParams);
+    }
+
+    [Fact]
+    public void The_View_Model_Range_Offset_Is_256_On_Real_Hardware()
+    {
+        Assert.Equal(256, FrameLightingBuffer.RoundUp(FrameLighting.SizeInBytes, 256));
     }
 
     [Fact]

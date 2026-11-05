@@ -28,13 +28,32 @@ public sealed class GroundScatterRenderer
     private bool[] _cellVisible = [];
     private GroundAssetSet? _assets;
     private GroundAssetSet? _preloaded;
+    private readonly WindUniform _terrainWind;
+    private readonly WindUniform _actorWind;
 
     public GroundScatterRenderer(Render render)
     {
         _render = render;
+        _terrainWind = new WindUniform(wind => ApplyWind(_render.GetShader(TerrainShaderName), wind));
+        _actorWind = new WindUniform(wind => ApplyWind(_render.GetShader(ActorShaderName), wind));
     }
 
     public GroundScatterIndex Index => _index;
+
+    public const string WindUniformName = "uWind";
+
+    // Sets uWind on the program and on its alpha-mask variant (masked leaves draw with the variant).
+    private static void ApplyWind(Shader shader, Vector2 wind)
+    {
+        shader.Use();
+        shader.SetVector2(WindUniformName, wind);
+        if (shader.AlphaMaskVariant is { } maskProgram)
+        {
+            maskProgram.Use();
+            maskProgram.SetVector2(WindUniformName, wind);
+            shader.Use();
+        }
+    }
 
     // Instances and instanced draws the last Draw submitted (tests and diagnostics).
     public int LastDrawnCount { get; private set; }
@@ -94,58 +113,71 @@ public sealed class GroundScatterRenderer
             _cellVisible[c] = CellVisible(in cell, LandmarkDrawDistance, focus, in frustum);
         }
 
-        int cursor = 0;
-        while (cursor < blocks.Count)
+        try
         {
-            // Blocks are sorted by asset, so each asset is one contiguous run of blocks and one instanced draw.
-            int asset = blocks[cursor].Asset;
-            int end = cursor;
-            while (end < blocks.Count && blocks[end].Asset == asset)
+            int cursor = 0;
+            while (cursor < blocks.Count)
             {
-                end++;
-            }
-
-            GroundAsset info = assets[asset];
-            int count = 0;
-            for (int b = cursor; b < end; b++)
-            {
-                GroundScatterIndex.Block block = blocks[b];
-                if (!_cellVisible[block.Cell])
+                // Blocks are sorted by asset, so each asset is one contiguous run of blocks and one instanced draw.
+                int asset = blocks[cursor].Asset;
+                int end = cursor;
+                while (end < blocks.Count && blocks[end].Asset == asset)
                 {
-                    continue;
+                    end++;
                 }
 
-                for (int i = block.Start; i < block.Start + block.Count; i++)
+                GroundAsset info = assets[asset];
+                int count = 0;
+                for (int b = cursor; b < end; b++)
                 {
-                    GroundPlacement p = placements[i];
-                    if (!IsVisible(in p, info, focus, in frustum))
+                    GroundScatterIndex.Block block = blocks[b];
+                    if (!_cellVisible[block.Cell])
                     {
                         continue;
                     }
 
-                    if (count == _matrices.Length)
+                    for (int i = block.Start; i < block.Start + block.Count; i++)
                     {
-                        Array.Resize(ref _matrices, count * 2);
+                        GroundPlacement p = placements[i];
+                        if (!IsVisible(in p, info, focus, in frustum))
+                        {
+                            continue;
+                        }
+
+                        if (count == _matrices.Length)
+                        {
+                            Array.Resize(ref _matrices, count * 2);
+                        }
+
+                        _matrices[count++] =
+                            Matrix4.CreateScale(p.Scale) *
+                            Matrix4.CreateRotationY(MathHelper.DegreesToRadians(p.YawDegrees)) *
+                            Matrix4.CreateTranslation(p.Position);
                     }
-
-                    _matrices[count++] =
-                        Matrix4.CreateScale(p.Scale) *
-                        Matrix4.CreateRotationY(MathHelper.DegreesToRadians(p.YawDegrees)) *
-                        Matrix4.CreateTranslation(p.Position);
                 }
-            }
 
-            if (count > 0 && ModelAssets.TryGet(info.ModelPath, out AnimatedModel? model))
-            {
-                Shader shader = _render.GetShader(info.Layer <= GroundLayer.Cover ? TerrainShaderName : ActorShaderName);
-                model.BeginRender(shader, view, projection, enableCulling: false);
-                model.RenderPreparedInstanced(shader, _matrices, count);
-                model.EndRender();
-                LastDrawnCount += count;
-                LastDrawCalls++;
-            }
+                if (count > 0 && ModelAssets.TryGet(info.ModelPath, out AnimatedModel? model))
+                {
+                    bool terrain = info.Layer <= GroundLayer.Cover;
+                    Shader shader = _render.GetShader(terrain ? TerrainShaderName : ActorShaderName);
+                    (terrain ? _terrainWind : _actorWind).Set(GroundWind.Uniform(info.Class, info.Height));
+                    model.Wind = GroundWind.Uniform(info.Class, info.Height);
+                    model.BeginRender(shader, view, projection, enableCulling: false);
+                    model.RenderPreparedInstanced(shader, _matrices, count);
+                    model.EndRender();
+                    model.Wind = Vector2.Zero;
+                    LastDrawnCount += count;
+                    LastDrawCalls++;
+                }
 
-            cursor = end;
+                cursor = end;
+            }
+        }
+        finally
+        {
+            // Never leak the sway: the cube and enemy programs also draw the terrain and every actor.
+            _terrainWind.Reset();
+            _actorWind.Reset();
         }
     }
 

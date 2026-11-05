@@ -35,6 +35,7 @@ uniform Material material;
 #include "pointLights.glsl"
 // The boundary mist wall: the final colour is mixed toward smoke at and near the map edge.
 #include "boundaryMist.glsl"
+#include "clouds.glsl"
 
 #ifdef DREAM_TERRAIN
 // The terrain program (Shader.TerrainDefine): this file compiled a third time. The terrain tile
@@ -423,7 +424,7 @@ void main()
     // The bumped normal feeds the sun, moon and every point light below.
     n = dreamTerrainBump(n, terrainHx, terrainHy, terrainPosDx, terrainPosDy);
 #endif
-    vec3 lit = (dreamAmbient(n) + dreamDirect(n) + dreamPointLights(n, fragPos)) * baseColor.rgb;
+    vec3 lit = (dreamAmbient(n) + dreamDirectShaded(n, fragPos) + dreamPointLights(n, fragPos)) * baseColor.rgb;
     vec3 emissive = material.emissiveFactor;
     if (material.hasEmissiveTexture) {
         emissive *= texture(material.emissiveTexture, texCoord0 + material.emissiveUvScroll * uTime).rgb;
