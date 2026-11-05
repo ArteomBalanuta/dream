@@ -247,8 +247,8 @@ def _speckle(h: int, w: int, rng) -> np.ndarray:
 
 
 def detail(kind: str, shape: tuple, rng, cyl: bool = False, strength: float = 1.0) -> np.ndarray:
-    """A multiplicative field in [1 - d, 1] (d = DETAIL_D[kind] * strength, at most 0.5) of shape (h, w), a pure function of the rng.
-    Rows run along the part (v), columns around it (u; wraps when cyl)."""
+    """A multiplicative field of shape (h, w) with mean 1.0: a field in [1 - d, 1] (d = DETAIL_D[kind] * strength, at most 0.5) divided
+    by its own mean, a pure function of the rng. Rows run along the part (v), columns around it (u; wraps when cyl)."""
     h, w = shape
     d = min(DETAIL_D[kind] * strength, 0.5)
     if kind == "bark":
@@ -288,18 +288,22 @@ def detail(kind: str, shape: tuple, rng, cyl: bool = False, strength: float = 1.
     else:
         raise KeyError(kind)
     raw = np.broadcast_to(raw, (h, w))
-    return (1.0 - d * (1.0 - np.round(_norm01(raw) * (DETAIL_LEVELS - 1)) / (DETAIL_LEVELS - 1))).astype(np.float32)
+    f = 1.0 - d * (1.0 - np.round(_norm01(raw) * (DETAIL_LEVELS - 1)) / (DETAIL_LEVELS - 1))
+    return (f / f.mean()).astype(np.float32)   # mean 1: the detail modulates around the bake's own value, up and down
 
 
 def _lichen(shape: tuple, rng, cyl: bool) -> np.ndarray:
     """Sparse blotches 6-10 px wide, in [0, 1]: where bark greys out."""
     h, w = shape
-    return np.clip((_vnoise(h, w, 8.0, 8.0, rng, cyl) - 0.62) * 6.0, 0.0, 1.0).astype(np.float32)
+    return np.clip((_vnoise(h, w, 8.0, 8.0, rng, cyl) - 0.70) * 6.0, 0.0, 1.0).astype(np.float32)
 
 
-def apply_detail(atlas: np.ndarray, rects, kinds, seed: str, strength: float = 1.0) -> np.ndarray:
+def apply_detail(atlas: np.ndarray, rects, kinds, seed: str, strength: float = 1.0, space=None) -> np.ndarray:
     """atlas: uint8 RGBA from the bake. kinds: one detail kind (or None) per rectangle. Returns a copy with every rectangle multiplied
-    by its field (never brighter) and its gutter re-extended from the new edge. Deterministic in `seed`."""
+    by its mean-1 field (so the mean value of a rectangle is kept: the detail goes up and down around what the bake made) and its gutter
+    re-extended from the new edge. `space` = (to_linear, from_linear) when the texture bytes are sRGB and the field must modulate the
+    LIGHT, not the bytes (props: a field in the bytes is amplified about 2.2x in the linear albedo the engine samples).
+    The albedo ceiling is enforced afterwards, by cap_ground_atlas / cap_peak. Deterministic in `seed`."""
     out = atlas.copy()
     g = C.GUTTER
     for i, (r, kind) in enumerate(zip(rects, kinds)):
@@ -307,36 +311,58 @@ def apply_detail(atlas: np.ndarray, rects, kinds, seed: str, strength: float = 1
             continue
         rng = _seed_rng(seed, i, kind)
         f = detail(kind, (r.h, r.w), rng, r.cyl, strength)
-        rgb = out[r.y:r.y + r.h, r.x:r.x + r.w, :3].astype(np.float32) * f[..., None]
-        # the pits of a surface collect grey: dark detail pulls the chroma in a little, so the grain does not raise the saturation the
-        # gates cap (8-bit rounding of dark texels does it too)
-        pit = np.clip((1.0 - f) / max(DETAIL_D[kind] * strength, 1e-6), 0.0, 1.0)[..., None] * 0.35
-        luma_ = (rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
-        rgb = rgb * (1 - pit) + luma_ * pit   # a mix with grey keeps the hue; luma <= max, so the brightest channel never rises
-        if kind == "bark":   # lichen: desaturate toward the luma, still downward only
-            lich = _lichen((r.h, r.w), _seed_rng(seed, i, "lichen"), r.cyl)[..., None] * 0.6
-            grey = np.minimum(rgb, (rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None])
+        rgb = out[r.y:r.y + r.h, r.x:r.x + r.w, :3].astype(np.float32) / 255.0
+        if space:
+            rgb = space[0](rgb).astype(np.float32)
+        rgb = rgb * f[..., None]
+        if kind == "bark":   # lichen: sparse blotches that grey out (a mix toward the luma: hue kept, value about the same)
+            lich = _lichen((r.h, r.w), _seed_rng(seed, i, "lichen"), r.cyl)[..., None] * 0.35
+            grey = (rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
             rgb = rgb * (1 - lich) + grey * lich
-        out[r.y:r.y + r.h, r.x:r.x + r.w, :3] = np.round(rgb).astype(np.uint8)
+        if space:
+            rgb = space[1](np.clip(rgb, 0.0, 1.0)).astype(np.float32)
+        out[r.y:r.y + r.h, r.x:r.x + r.w, :3] = np.round(np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
         pad = np.pad(out[r.y:r.y + r.h, r.x:r.x + r.w, :3], ((g, g), (g, g), (0, 0)), mode="edge")
         out[r.y - g:r.y + r.h + g, r.x - g:r.x + r.w + g, :3] = pad
     return out
 
 
 CAP_MOVED_EPS = 0.02   # a texel counts as moved by the cap when its brightest channel changes by more than this (effective albedo)
+CAP_KNEE = 0.75        # share of the ceiling below which the cap leaves a texel alone
 
 
 def cap_peak(eff: np.ndarray, covered: np.ndarray, ceiling: float = ALBEDO_CEILING):
-    """eff: effective albedo (float, HxWx3). Scale so the 99.5th percentile of the covered texels sits at the ceiling, then clip the
-    rare outlier at it. A no-op when the atlas is already under it. Returns (capped, report): the report says how much the cap had to
-    do, because a cap that quietly flattens the brightest texels would undo the detail there. precap_albedo_max is the brightest
-    effective albedo the bake produced, cap_scale the uniform darkening (1 = untouched) and moved_fraction the share of covered
-    texels the cap changed by more than CAP_MOVED_EPS; check_props gates all three on the pre-cap bake."""
-    top = float(np.percentile(eff[covered].max(axis=1), 99.5))
-    s = min(1.0, ceiling / max(top, 1e-9))
-    out = np.minimum(eff * s, ceiling)
-    moved = (eff.max(axis=2) - out.max(axis=2))[covered] > CAP_MOVED_EPS
-    return out, {"precap_albedo_max": float(eff[covered].max()), "cap_scale": float(s), "moved_fraction": float(moved.mean())}
+    """eff: effective albedo (float, HxWx3). A soft knee on each texel's brightest channel: untouched up to CAP_KNEE * ceiling, then
+    compressed toward the ceiling (v' = k + (c - k) x / (1 + x), x = (v - k) / (c - k), slope 1 at the knee, never above c). The texel's
+    three channels are scaled by the same ratio, so its hue and its HSV saturation are exactly kept and only the light comes down; a
+    uniform scale of the whole atlas would crush every texel, the dark and the colourful ones with the bright. Returns (capped, report):
+    precap_albedo_max is the brightest effective albedo the bake produced, cap_scale the share of the mean value the cap kept (1 =
+    untouched) and moved_fraction the share of covered texels it changed by more than CAP_MOVED_EPS; check_props gates the first two."""
+    v = eff.max(axis=2)
+    knee = ceiling * CAP_KNEE
+    x = np.maximum(v - knee, 0.0) / (ceiling - knee)
+    v2 = np.where(v > knee, knee + (ceiling - knee) * x / (1.0 + x), v)
+    out = eff * (v2 / np.maximum(v, 1e-9))[..., None]
+    moved = (v - v2)[covered] > CAP_MOVED_EPS
+    kept = float(v2[covered].mean() / max(float(v[covered].mean()), 1e-9))
+    return out, {"precap_albedo_max": float(v[covered].max()), "cap_scale": kept, "moved_fraction": float(moved.mean())}
+
+
+def color_stats(eff: np.ndarray, mask: np.ndarray) -> dict:
+    """Mean value (brightest channel) and mean HSV saturation of an effective-albedo image over a mask (texels at value >= .02 for the
+    saturation: below that one 8-bit level swings it). These are what the detail must not change."""
+    px = eff[mask]
+    mx, mn = px.max(axis=1), px.min(axis=1)
+    lit = mx >= 0.02
+    sat = (mx - mn)[lit] / mx[lit]
+    return {"base_mean_v": float(mx.mean()), "base_mean_sat": float(sat.mean()) if lit.any() else 0.0}
+
+
+def rect_mask(rects, tex: int) -> np.ndarray:
+    m = np.zeros((tex, tex), dtype=bool)
+    for r in rects:
+        m[r.y:r.y + r.h, r.x:r.x + r.w] = True
+    return m
 
 
 def cap_ground_atlas(atlas: np.ndarray, gain: float = GROUND_ALBEDO_GAIN):
@@ -364,7 +390,13 @@ def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
     kinds = [detail_kind(spec.cls, r.cyl) for r in rects]
     cap = None
     if any(kinds):
-        atlas, cap = cap_ground_atlas(apply_detail(atlas, rects, kinds, seed, ASSET_STRENGTH.get(stem, CLASS_STRENGTH.get(spec.cls, 1.0))))
+        base = color_stats(atlas[..., :3].astype(np.float64) / 255.0 * GROUND_ALBEDO_GAIN, rect_mask(rects, spec.atlas))
+        # the bake is brought under the ceiling FIRST (a soft knee), the detail then modulates around that, and a second cap is the
+        # safety net for the texels the detail pushed back over it: the detail keeps its variance in the highlights instead of being
+        # compressed away there
+        atlas, cap = cap_ground_atlas(atlas)
+        atlas, _ = cap_ground_atlas(apply_detail(atlas, rects, kinds, seed, ASSET_STRENGTH.get(stem, CLASS_STRENGTH.get(spec.cls, 1.0))))
+        cap.update(base)
     png, scale, enc = encode_ground_atlas(atlas)
     k = GP.WORLD_UNITS_PER_U / GP.UNITS_PER_U
     arrays = []

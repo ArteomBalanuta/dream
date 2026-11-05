@@ -78,7 +78,12 @@ GATES = {
     # The cap (groundkit.cap_peak) keeps the shipped albedo under that ceiling whatever the bake does, so albedo_clip_max alone could never
     # fire. These three gate the bake BEFORE the cap, so that an over-bright bake is a failure and not a silent darkening / flattening:
     "precap_albedo_max": 0.75,   # CEILING on the brightest effective albedo the bake produced: measured max .718 (tree_leaning_birch), rounded up
-    "cap_scale_min": 0.55,       # FLOOR on the uniform darkening the cap applied (1 = it did nothing): measured min .59 (props/bramble)
+    "cap_scale_min": 0.80,       # FLOOR on the share of the mean value the cap kept (1 = it did nothing): measured min .85 (props/bramble)
+    "mean_v_floor": 0.05,        # FLOOR on the shipped mean value (effective albedo, brightest channel): no near-black atlas (calibrated below)
+    "mean_v_drop_max": 0.20,     # the shipped mean value may fall at most this share below the bake before any detail (master's bake): measured
+                             # worst -18.3 % (props/bramble), every drop over 5 % is on an asset whose bake was over the albedo ceiling on master
+    "mean_v_detail_drop_max": 0.07,   # ... and at most this share below what the cap alone leaves of it: the detail itself may not darken
+    "mean_sat_drop_max": 0.07,   # ... and the mean saturation likewise: the detail adds variance, not darkness or grey
     # moved_fraction (the share of texels the cap changed) is reported in atlas_detail_table.md but not gated: a uniform darkening moves every
     # texel, so today's assets sit anywhere from 0 to 100 % and no threshold could pass them and still mean something; cap_scale_min bounds it.
 }
@@ -190,9 +195,15 @@ def albedo_max(enc: np.ndarray, scale: float, mask: np.ndarray) -> float:
 
 
 def detail_metrics(a: dict) -> dict:
+    """hf, the albedo ceiling, the pre-cap report, and the colour the detail must not change: the mean value and mean saturation of the
+    SHIPPED effective albedo (byte * baseColorFactor) against the bake before any detail (base_*, recorded by the pipeline)."""
+    import importlib
     mask = used_mask(a)
-    cap = a.get("cap") or {"precap_albedo_max": 0.0, "cap_scale": 1.0, "moved_fraction": 0.0}
-    return {"hf": hf_gradient(a["encoded"], mask), "albedo_max": albedo_max(a["encoded"], a["scale"], mask), **cap}
+    eff = a["encoded"][..., :3].astype(np.float64) / 255.0 * float(a["scale"])
+    shipped = importlib.import_module("groundkit").color_stats(eff, mask)
+    cap = a.get("cap") or {"precap_albedo_max": 0.0, "cap_scale": 1.0, "moved_fraction": 0.0, **shipped}
+    return {"hf": hf_gradient(a["encoded"], mask), "albedo_max": albedo_max(a["encoded"], a["scale"], mask),
+            "eff_mean_v": shipped["base_mean_v"], "eff_mean_sat": shipped["base_mean_sat"], **cap}
 
 
 def detail_errors(name: str, m: dict, c: dict) -> list[str]:
@@ -204,6 +215,15 @@ def detail_errors(name: str, m: dict, c: dict) -> list[str]:
     if m["precap_albedo_max"] > c["precap_albedo_max"]:
         errs.append(f"{name}: the bake reaches effective albedo {m['precap_albedo_max']:.3f} before the cap, over {c['precap_albedo_max']}: "
                     "fix the art; the cap would only darken and flatten it")
+    if m["eff_mean_v"] < c["mean_v_floor"]:
+        errs.append(f"{name}: mean effective value {m['eff_mean_v']:.3f} < {c['mean_v_floor']} (a near-black atlas)")
+    if m["eff_mean_v"] < m["base_mean_v"] * (1.0 - c["mean_v_drop_max"]):
+        errs.append(f"{name}: mean value {m['eff_mean_v']:.3f} is more than {c['mean_v_drop_max']:.0%} below the bake's {m['base_mean_v']:.3f}")
+    if m["eff_mean_v"] < m["base_mean_v"] * m["cap_scale"] * (1.0 - c["mean_v_detail_drop_max"]):
+        errs.append(f"{name}: mean value {m['eff_mean_v']:.3f} is more than {c['mean_v_detail_drop_max']:.0%} below the {m['base_mean_v'] * m['cap_scale']:.3f} "
+                    "the bake keeps under the cap: the detail darkened it")
+    if m["eff_mean_sat"] < m["base_mean_sat"] * (1.0 - c["mean_sat_drop_max"]):
+        errs.append(f"{name}: mean saturation {m['eff_mean_sat']:.3f} is more than {c['mean_sat_drop_max']:.0%} below the bake's {m['base_mean_sat']:.3f}")
     if m["cap_scale"] < c["cap_scale_min"]:
         errs.append(f"{name}: the cap had to darken the whole atlas to {m['cap_scale']:.2f} of the bake (floor {c['cap_scale_min']})")
     return errs
@@ -466,12 +486,13 @@ def self_test() -> list[str]:
     errs = []
     base = {"rect_quad": 0.05, "rect_lowfreq": 0.2, "azimuth": 0.02, "sat_p95": 0.2, "forbidden_hue": 0.0, "chrome": 0.0,
             "v_p99": 0.3, "mean_v": 0.1, "tris": 1000, "verts": 1000, "bytes": 1000, "hf": 0.05, "albedo_max": 0.3,
-            "precap_albedo_max": 0.3, "cap_scale": 1.0, "moved_fraction": 0.0}
+            "precap_albedo_max": 0.3, "cap_scale": 1.0, "moved_fraction": 0.0,
+            "eff_mean_v": 0.15, "eff_mean_sat": 0.3, "base_mean_v": 0.15, "base_mean_sat": 0.3}
     if metric_errors("selftest", base):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95,
              "mean_v": 0.7, "tris": 10 ** 6, "verts": 10 ** 6, "bytes": 10 ** 9, "hf": 0.004, "albedo_max": 0.7,
-             "precap_albedo_max": 5.0, "cap_scale": 0.01}
+             "precap_albedo_max": 5.0, "cap_scale": 0.01, "eff_mean_sat": 0.01}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}):
             errs.append(f"self-test: gate {k} did not fail its negative")
@@ -508,12 +529,33 @@ def self_test() -> list[str]:
     if hf_gradient(noise8, np.zeros((64, 64), bool)) != 0.0:
         errs.append("self-test: hf_gradient counts texels outside the used mask")
     bright = np.full((8, 8, 4), 255, np.uint8)
-    if not detail_errors("x", {"hf": 1.0, "precap_albedo_max": 0.3, "cap_scale": 1.0, "albedo_max": albedo_max(bright, 0.6, np.ones((8, 8), bool))}, GATES):
+    if not detail_errors("x", {**base, "hf": 1.0, "albedo_max": albedo_max(bright, 0.6, np.ones((8, 8), bool))}, GATES):
         errs.append("self-test: byte * baseColorFactor over the ceiling passed albedo_clip_max")
-    if detail_errors("x", {"hf": 1.0, "precap_albedo_max": 0.3, "cap_scale": 1.0, "albedo_max": albedo_max(bright, 0.3, np.ones((8, 8), bool))}, GATES):
+    if detail_errors("x", {**base, "hf": 1.0, "albedo_max": albedo_max(bright, 0.3, np.ones((8, 8), bool))}, GATES):
         errs.append("self-test: byte * baseColorFactor under the ceiling failed albedo_clip_max")
     if albedo_max(bright, 0.6, np.zeros((8, 8), bool)) != 0.0:
         errs.append("self-test: albedo_max counts texels outside the used mask")
+    # the mean value / saturation gates, each alone (the cases above mutate one key, which can trip several at once)
+    low = {**base, "eff_mean_v": 0.04, "base_mean_v": 0.04}
+    if not any("near-black" in e for e in detail_errors("selftest", low, GATES)):
+        errs.append("self-test: a near-black atlas passed mean_v_floor")
+    if not any("darkened it" in e for e in detail_errors("selftest", {**base, "eff_mean_v": 0.13}, GATES)):
+        errs.append("self-test: a detail that cost 13 % of the value passed mean_v_detail_drop_max")
+    if not any("below the bake" in e and "value" in e for e in detail_errors("selftest", {**base, "cap_scale": 0.8, "eff_mean_v": 0.115}, GATES)):
+        errs.append("self-test: a 23 % drop from master's bake passed mean_v_drop_max")
+    if not any("saturation" in e for e in detail_errors("selftest", {**base, "eff_mean_sat": 0.25}, GATES)):
+        errs.append("self-test: a 17 % saturation drop passed mean_sat_drop_max")
+    # ... and THROUGH the real pipeline: a detail that darkens (a constant 0.4 field in place of groundkit.detail) on a real prop
+    import importlib
+    K = importlib.import_module("groundkit")
+    real = K.detail
+    K.detail = lambda kind, shape, rng, cyl=False, strength=1.0: np.full(shape, 0.4, np.float32)
+    try:
+        dark = detail_metrics(GP.build_asset("fence"))
+    finally:
+        K.detail = real
+    if not detail_errors("selftest_fence", dark, GATES):
+        errs.append(f"self-test: a darkening detail through the real prop pipeline passed every mean gate ({dark['eff_mean_v']:.3f} of {dark['base_mean_v']:.3f})")
     # the pre-cap gates THROUGH the real pipeline: a bake far over the ceiling is capped (albedo_clip_max alone would pass it) and
     # must still fail on what the cap had to do
     bright = np.zeros((64, 64, 4), np.uint8)
@@ -523,7 +565,7 @@ def self_test() -> list[str]:
     capped_eff = float(U.srgb_to_linear(atlas[..., :3].astype(np.float32) / 255.0).max()) * GP.ALBEDO_LIFT
     if capped_eff > GATES["albedo_clip_max"]:
         errs.append(f"self-test: the real cap left effective albedo {capped_eff:.3f} over the ceiling")
-    if not detail_errors("selftest", {"hf": 1.0, "albedo_max": capped_eff, **rep}, GATES):
+    if not detail_errors("selftest", {"hf": 1.0, "albedo_max": capped_eff, "eff_mean_v": rep["base_mean_v"] * rep["cap_scale"], "eff_mean_sat": rep["base_mean_sat"], **rep}, GATES):
         errs.append(f"self-test: an over-bright bake ({rep}) passed through the real cap without failing a pre-cap gate")
     # the seam gate against the old unwrap
     spec = GP.PROPS["rust_barrel"]
@@ -583,16 +625,28 @@ def write_table(path: Path) -> None:
             "- hf: mean absolute 4-neighbour luma gradient of the shipped texture bytes over the used uv rectangles, in /255 (floor `hf_min` = 7.0).",
             "- albedo: largest effective albedo, texture byte / 255 * baseColorFactor (ceiling `albedo_clip_max` = 0.42).",
             "- before: the bake as master built it (no detail field, no cap). after: what ships.",
-            "- precap: the brightest effective albedo the bake produced before the cap; cap scale: the uniform darkening the cap applied; moved: the share of",
-            "  texels the cap changed by more than 0.02. `precap_albedo_max` and `cap_scale_min` gate the first two; moved is reported only.", "",
-            "| family | asset | hf before | hf after | albedo before | albedo after | precap | cap scale | moved |",
-            "|---|---|---|---|---|---|---|---|---|"]
+            "- precap: the brightest effective albedo the bake produced before the cap; cap scale: the share of the mean value the cap kept (a soft knee that",
+            "  keeps each texel's hue and saturation); moved: the share of texels the cap changed by more than 0.02. `precap_albedo_max` and `cap_scale_min` gate the",
+            "  first two; moved is reported only.",
+            "- value / sat: mean value (brightest channel) and mean HSV saturation of the effective albedo over the used rectangles, master's bake vs shipped; d% is",
+            "  the change. Gated by `mean_v_floor`, `mean_v_drop_max` and `mean_sat_drop_max`. A star marks a drop over 5 %.", "",
+            "| family | asset | hf before | hf after | albedo before | albedo after | precap | cap scale | moved | value before | value after | value d% | sat before | sat after | sat d% |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+
+    def pct(x, y):
+        d = (y / max(x, 1e-9) - 1.0) * 100.0
+        return f"{d:+.1f}{'*' if d < -5.0 else ''}"
     for (f, n), b, a in zip(jobs, before, after):
         rows.append(f"| {f} | {n} | {b['hf'] * 255:.2f} | {a['hf'] * 255:.2f} | {b['albedo_max']:.3f} | {a['albedo_max']:.3f} | "
-                    f"{a['precap_albedo_max']:.3f} | {a['cap_scale']:.2f} | {a['moved_fraction']:.1%} |")
+                    f"{a['precap_albedo_max']:.3f} | {a['cap_scale']:.2f} | {a['moved_fraction']:.1%} | "
+                    f"{b['eff_mean_v']:.4f} | {a['eff_mean_v']:.4f} | {pct(b['eff_mean_v'], a['eff_mean_v'])} | "
+                    f"{b['eff_mean_sat']:.3f} | {a['eff_mean_sat']:.3f} | {pct(b['eff_mean_sat'], a['eff_mean_sat'])} |")
+    dv = [a['eff_mean_v'] / max(b['eff_mean_v'], 1e-9) - 1.0 for b, a in zip(before, after)]
+    ds = [a['eff_mean_sat'] / max(b['eff_mean_sat'], 1e-9) - 1.0 for b, a in zip(before, after)]
     rows += ["", f"{len(jobs)} assets; min hf after {min(a['hf'] for a in after) * 255:.2f}, max albedo after {max(a['albedo_max'] for a in after):.3f}, "
              f"max precap {max(a['precap_albedo_max'] for a in after):.3f}, min cap scale {min(a['cap_scale'] for a in after):.2f}, "
-             f"max moved {max(a['moved_fraction'] for a in after):.1%}.", ""]
+             f"max moved {max(a['moved_fraction'] for a in after):.1%}; mean value change worst {min(dv):+.1%}, mean saturation change worst {min(ds):+.1%}; "
+             f"min shipped mean value {min(a['eff_mean_v'] for a in after):.4f}.", ""]
     path.write_text("\n".join(rows), encoding="utf-8", newline="\n")
     print(f"check_props: wrote {path}")
 
