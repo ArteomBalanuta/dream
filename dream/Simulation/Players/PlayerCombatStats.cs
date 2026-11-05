@@ -4,8 +4,8 @@ namespace Dream.Simulation.Players;
 
 public sealed class PlayerCombatStats
 {
-    // The attribute ceiling sits an order of magnitude above what a new character is created with
-    // (PlayerStatRules.NewCharacterAttribute, 1000), and that gap is the point of it. While the
+    // The attribute ceiling sits three orders of magnitude above what a new character is created with
+    // (PlayerStatRules.NewCharacterAttribute, 10 -> 10000), and that gap is the point of it. While the
     // default and the ceiling were the same number, every flat Strength, Agility, Vitality and
     // Energy modifier on a piece of gear clamped away to nothing and no point could be spent: the
     // whole itemisation layer still computed and then moved no number at all. Keep this well above
@@ -24,11 +24,13 @@ public sealed class PlayerCombatStats
     public const int MaxEnergy = AttributeCeiling;
 
     // The unseeded sheet, which is NOT what a new character gets. A player's starting stats are
-    // PlayerStatRules.Start* (1000 each), written by PersistedPlayerProfile.CreateDefault and the
-    // player_profiles column defaults; the server applies that profile to the combatant on join.
-    // These values are only what a sheet holds before any profile or equipment reaches it, so they
-    // stay at the old modest baseline: a transient combatant should not arrive at the stat ceiling,
-    // and the combat tests measure damage, armor and health against these numbers.
+    // PlayerStatRules.Start* (10 each), written by PersistedPlayerProfile.CreateDefault; the server
+    // applies that profile to the combatant on join. (The player_profiles column defaults in
+    // 0001_baseline.sql are 10 for the attributes and 100 for hp, and no later migration altered
+    // them; they were never the 1000 an earlier version of this comment claimed.) These values are
+    // only what a sheet holds before any profile or equipment reaches it. UnseededAttribute now
+    // equals PlayerStatRules.Start*, so an unseeded transient sheet and a new character agree, and
+    // the combat tests measure damage, armor and health against these numbers.
     public const int UnseededAttribute = 10;
 
     private int _strength = UnseededAttribute;

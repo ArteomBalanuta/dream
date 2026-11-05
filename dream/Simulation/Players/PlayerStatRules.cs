@@ -14,10 +14,18 @@ public static class PlayerStatRules
     public const int PointsPerLevel = 5;
 
     // What a new character is created with, in every attribute. PersistedPlayerProfile.CreateDefault
-    // writes it, and it sits an order of magnitude below PlayerCombatStats.AttributeCeiling so gear
-    // bonuses and spent points still move the number. Characters stored before this keep the stats
-    // they have; this is the value for new ones, not a migration.
-    public const int NewCharacterAttribute = 1000;
+    // writes it. It is 10, not 1000, and the reason is itemisation as much as combat. Every formula
+    // that consumes an attribute (player.min_damage = 5 + strength * 2, player.max_health =
+    // 50 + vitality * 5, Defense = agility / 4, attack speed + 0.01 * agility) is tuned for attributes
+    // around 10, and so is all of the gear: every attribute bonus in content/items.json is
+    // single-digit (+1/+2/+4/+8 flats; rolled Strength 4-9, Vitality 0-6, Armor 1-11). At an origin
+    // of 10 a +8 ring is a real upgrade; at 1000 it is a 0.8% rounding error. Rescaling the
+    // coefficients by 1/100 would have repaired combat while leaving every item meaningless, so the
+    // origin moved back instead. PlayerCombatStats.AttributeCeiling (10000) is kept deliberately as
+    // gear and level headroom above it. Migration 0015_attribute_origin.sql moves stored characters
+    // onto this origin (subtracting the same amount from every attribute) so their PointsSpent is
+    // unchanged.
+    public const int NewCharacterAttribute = 10;
 
     // The origin the point count measures from: deliberately the same number a new character is
     // handed. While the two disagreed, a new character read as having spent thousands of points it
