@@ -174,4 +174,68 @@ public sealed class BuildProtectionTests
         Assert.True(owned.Accepted, owned.Rejection?.Reason);
         Assert.True(record.Health.CurrentHealth < full);
     }
+
+    // "A brand-new character is not a god", pinned end to end. This deliberately does NOT go through
+    // StartRigAsync: that seeds TestStatBaseline profiles, and seeding is what hid the 1000 origin
+    // (a39702e6) for 122 commits. Here SessionA is created by the real profile path on join, so whatever
+    // PersistedPlayerProfile.CreateDefault hands out is what is measured.
+    [Fact]
+    public async Task ABrandNewProfileBackedCharacter_IsNotAGod_AndOneSwingDoesNotDestroyAPlacedCube()
+    {
+        using MigrationTestDatabase db = new();
+        db.Schema.EnsureSchema();
+        await using M4BRig rig = await M4BRig.StartAsync(db);
+        PlayerCombatant player = rig.Combatant(rig.A);
+
+        // Created at the origin, nothing spent, nothing seeded.
+        Assert.Equal(1, player.Level);
+        Assert.Equal(PlayerStatRules.NewCharacterAttribute, player.BaseStats.Strength);
+        Assert.Equal(PlayerStatRules.NewCharacterAttribute, player.BaseStats.Agility);
+        Assert.Equal(PlayerStatRules.NewCharacterAttribute, player.BaseStats.Vitality);
+
+        // The profile's own numbers (base stats, before the worn starter kit, which adds +2 Strength and
+        // +0.25 attack speed). Symbolic first: they follow the formulas from the constant.
+        int n = PlayerStatRules.NewCharacterAttribute;
+        PlayerCombatDerivedStats naked = player.BaseStats.Derive(level: player.Level);
+        Assert.Equal(50 + (n * 5), naked.MaxHealth);
+        Assert.Equal(5 + (n * 2), naked.MinDamage);
+        Assert.Equal(10 + (n * 4), naked.MaxDamage);
+        Assert.Equal(PlayerStatRules.Defense(n), player.Defense);
+
+        // Literals: the DESIGNED values. They are written out on purpose, because a test that only follows
+        // the constant passes at any origin. At the 1000 origin these were 5050 hp, 2005-4010 damage and
+        // Defense 250, and a new character one-shot everything and could not be killed.
+        Assert.Equal(100, naked.MaxHealth);
+        Assert.Equal(100, player.Health.MaxHealth);
+        Assert.Equal(25, naked.MinDamage);
+        Assert.Equal(50, naked.MaxDamage);
+        Assert.Equal(2, player.Defense);
+
+        // What the character really swings with includes the starter kit: at least the naked numbers, and
+        // still far below a 100 hp cube's worth of one-shot (the kit's single-digit bonus is meaningful).
+        Assert.InRange(player.DerivedStats.MinDamage, 25, 49);
+        Assert.InRange(player.DerivedStats.MaxDamage, 50, 99);
+        Assert.Equal(100, player.DerivedStats.MaxHealth);
+
+        // Attack speed is nowhere near the cap (at the 1000 origin it sat pinned on it, so Agility and gear
+        // attack speed were inert).
+        Assert.True(player.Stats.AttackSpeed < PlayerCombatStats.MaxAttackSpeed,
+            $"attack speed {player.Stats.AttackSpeed} is at the cap {PlayerCombatStats.MaxAttackSpeed}");
+        Assert.True(player.Stats.AttackSpeed < PlayerCombatStats.MaxAttackSpeed - 1f,
+            $"attack speed {player.Stats.AttackSpeed} is within 1.0 of the cap");
+
+        // Behaviour: one real swing at a 100 hp player-placed cube leaves it standing.
+        (int X, int Y, int Z) cell = await PlaceCubeAsync(rig);
+        WorldObjectRecord record = RecordAt(rig, cell);
+        Assert.Equal(100, record.Health.MaxHealth);
+        AuthoritativeActionResult swing = await HitAsync(rig, rig.A);
+        Assert.True(swing.Accepted, swing.Rejection?.Reason);
+        CombatResolutionResult hit = Assert.IsType<CombatResolutionResult>(swing.Payload);
+        Assert.True(hit.DamageApplied > 0);
+        Assert.True(hit.DamageApplied < 100, $"one swing did {hit.DamageApplied} to a 100 hp cube");
+        Assert.False(hit.TargetDied);
+        Assert.NotNull(rig.Runtime.Map.TryGetCubeAtCell(cell.X, cell.Y, cell.Z));
+        Assert.Equal(100 - hit.DamageApplied, record.Health.CurrentHealth);
+        Assert.True(record.Health.CurrentHealth > 0);
+    }
 }
