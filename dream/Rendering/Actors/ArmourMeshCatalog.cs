@@ -69,9 +69,11 @@ public sealed class ArmourModel(string visualId, ArmourMount mount, ArmourPart[]
     internal ArmourPart[] PartArray => parts;
 }
 
-// The procedural meshes of the armour a player wears, by per-item visual id. The base figure is
-// already dressed (a hood, a kettle helm, a cloak, a backplate, knee cops), so every piece OVERSIZES
-// AND ENCLOSES the baked geometry at its node: the baked helm or cloak becomes an interior surface.
+// The procedural meshes of the armour a player wears, by per-item visual id. The base figure is a
+// plausible underlayer (tunic, breeches, boots, bare head and hands), so every piece SITS ON the body:
+// nothing encloses anything, and the contract in each section says which cover region the piece must
+// still cover and how far past the body it may stand (the fit ceiling). A piece that is wider than
+// about 1.6x the body at its node reads as a block, not as clothing.
 // At the shipped isometric zoom the whole figure is 28x101 pixels, so a piece differs by outline,
 // mass and value only; each has 3..8 boxes, a light top facet and a deep dark mass, because boxes
 // get no bake and no ambient occlusion. An id this catalog does not know draws nothing at all: a
@@ -137,62 +139,64 @@ public static class ArmourMeshCatalog
         const ArmourMaterial Red = ArmourMaterial.ClothRed;
         const ArmourMaterial Bone = ArmourMaterial.Bone;
 
-        // ---- Head: must contain y 0..0.56, |x| <= 0.23, |z| <= 0.20 (brim hw 0.204, hood apex 0.537).
+        // ---- Head: sits on a bare head, y 0..0.42, |x| <= 0.12, |z| <= 0.13. Main mass 0.34..0.38 wide,
+        // brim and crest proud of it, nothing wider than 1.6x the head's half-width (0.192).
 
-        // A soft cap: a wide dark brim, a hanging nape flap and a bone button.
+        // A soft cap: a dark crown, a brim, a hanging nape flap and a bone button.
         Add("worn.head.leather-cap", ArmourMount.Head,
-            Box(0f, 0.28f, 0f, 0.48f, 0.58f, 0.42f, Leather),
-            Box(0f, 0.12f, -0.20f, 0.52f, 0.30f, 0.12f, Cold),
-            Box(0f, 0.50f, 0f, 0.58f, 0.06f, 0.50f, Ash),
-            Box(0f, 0.61f, 0f, 0.14f, 0.06f, 0.14f, Bone));
+            Box(0f, 0.22f, 0f, 0.34f, 0.44f, 0.30f, Leather),
+            Box(0f, 0.12f, -0.16f, 0.36f, 0.26f, 0.06f, Cold),
+            Box(0f, 0.40f, 0f, 0.38f, 0.05f, 0.34f, Ash),
+            Box(0f, 0.49f, 0f, 0.10f, 0.05f, 0.10f, Bone));
 
-        // An open kettle: broad steel brim, cheek guards, a nasal bar and a mail aventail.
+        // An open kettle: a steel crown and brim, cheek guards, a nasal bar and a mail aventail.
         Add("worn.head.iron-helm", ArmourMount.Head,
-            Box(0f, 0.285f, 0f, 0.52f, 0.58f, 0.46f, Iron),
-            Box(0f, 0.57f, 0f, 0.40f, 0.10f, 0.36f, Steel),
-            Box(0f, 0.40f, 0f, 0.68f, 0.04f, 0.60f, Steel),
-            Box(0f, 0.22f, 0.25f, 0.06f, 0.30f, 0.06f, Steel),
-            Box(0.27f, 0.15f, 0.02f, 0.06f, 0.26f, 0.30f, Iron),
-            Box(-0.27f, 0.15f, 0.02f, 0.06f, 0.26f, 0.30f, Iron),
-            Box(0f, 0.10f, -0.25f, 0.48f, 0.26f, 0.08f, Cold));
+            Box(0f, 0.22f, 0f, 0.36f, 0.44f, 0.32f, Iron),
+            Box(0f, 0.46f, 0f, 0.30f, 0.08f, 0.28f, Steel),
+            Box(0f, 0.38f, 0f, 0.38f, 0.04f, 0.38f, Steel),
+            Box(0f, 0.22f, 0.17f, 0.05f, 0.26f, 0.04f, Steel),
+            Box(0.17f, 0.15f, 0.02f, 0.04f, 0.26f, 0.26f, Iron),
+            Box(-0.17f, 0.15f, 0.02f, 0.04f, 0.26f, 0.26f, Iron),
+            Box(0f, 0.10f, -0.18f, 0.36f, 0.24f, 0.06f, Cold));
 
-        // A closed bucket helm: tall, boxy, a visor slit, a breath bar and a red plume.
+        // A closed bucket helm: tall, a visor band, a breath plate and a red plume.
         Add("worn.head.greathelm", ArmourMount.Head,
-            Box(0f, 0.30f, 0f, 0.58f, 0.66f, 0.52f, Steel),
-            Box(0f, 0.34f, 0.27f, 0.46f, 0.07f, 0.04f, Iron),
-            Box(0f, 0.14f, 0.27f, 0.20f, 0.18f, 0.04f, Iron),
-            Box(0f, 0.65f, 0f, 0.50f, 0.04f, 0.46f, Steel),
-            Box(0f, 0.74f, -0.02f, 0.08f, 0.14f, 0.40f, Red),
-            Box(0f, 0.02f, 0f, 0.62f, 0.08f, 0.56f, Iron));
+            Box(0f, 0.23f, 0f, 0.38f, 0.48f, 0.34f, Steel),
+            Box(0f, 0.34f, 0.18f, 0.30f, 0.05f, 0.03f, Iron),
+            Box(0f, 0.14f, 0.18f, 0.14f, 0.16f, 0.03f, Iron),
+            Box(0f, 0.49f, 0f, 0.34f, 0.04f, 0.30f, Steel),
+            Box(0f, 0.58f, -0.02f, 0.06f, 0.14f, 0.32f, Red),
+            Box(0f, 0.02f, 0f, 0.36f, 0.06f, 0.34f, Iron));
 
-        // ---- Body: must contain y 0.18..0.80, |x| <= 0.26, z -0.20..+0.17; shoulders to 0.60.
+        // ---- Body: sits on the tunic. Chest y 0..0.86 to |x| <= 0.19, hip skirt to |x| <= 0.26 (y 0..0.30),
+        // z -0.14..+0.14. Main mass 0.42..0.46 wide, pauldrons at |x| 0.26..0.32, nothing past 0.416.
 
-        // A boiled-leather vest: laced front, a belt and a bone collar.
+        // A boiled-leather vest: a dark body, a belted skirt, a chest panel and a bone collar.
         Add("worn.body.leather-vest", ArmourMount.Torso,
-            Box(0f, 0.50f, -0.015f, 0.54f, 0.66f, 0.40f, Leather),
-            Box(0f, 0.48f, 0.19f, 0.18f, 0.50f, 0.03f, Cold),
-            Box(0f, 0.22f, 0f, 0.58f, 0.10f, 0.44f, Ash),
-            Box(0f, 0.84f, 0f, 0.30f, 0.04f, 0.26f, Bone));
+            Box(0f, 0.46f, 0f, 0.42f, 0.80f, 0.30f, Leather),
+            Box(0f, 0.15f, 0f, 0.52f, 0.30f, 0.32f, Ash),
+            Box(0f, 0.50f, 0.155f, 0.16f, 0.50f, 0.03f, Cold),
+            Box(0f, 0.88f, 0f, 0.30f, 0.05f, 0.24f, Bone));
 
         // A mail shirt: dark mesh, a steel mantle over the shoulders, a long skirt and sleeve stubs.
         Add("worn.body.chain-hauberk", ArmourMount.Torso,
-            Box(0f, 0.50f, -0.015f, 0.56f, 0.66f, 0.40f, Iron),
-            Box(0f, 0.80f, 0f, 0.74f, 0.07f, 0.46f, Steel),
-            Box(0f, 0.17f, 0f, 0.62f, 0.14f, 0.46f, Steel),
-            Box(0f, 0.30f, 0f, 0.60f, 0.06f, 0.44f, Cold),
-            Box(0.40f, 0.70f, 0f, 0.18f, 0.22f, 0.30f, Iron),
-            Box(-0.40f, 0.70f, 0f, 0.18f, 0.22f, 0.30f, Iron));
+            Box(0f, 0.46f, 0f, 0.44f, 0.80f, 0.32f, Iron),
+            Box(0f, 0.82f, 0f, 0.54f, 0.07f, 0.34f, Steel),
+            Box(0f, 0.15f, 0f, 0.52f, 0.30f, 0.34f, Steel),
+            Box(0f, 0.31f, 0f, 0.46f, 0.05f, 0.34f, Cold),
+            Box(0.30f, 0.72f, 0f, 0.14f, 0.22f, 0.26f, Iron),
+            Box(-0.30f, 0.72f, 0f, 0.14f, 0.22f, 0.26f, Iron));
 
         // A plate cuirass: a ridge, big pauldrons, a dark fauld and a red sash.
         Add("worn.body.plate-cuirass", ArmourMount.Torso,
-            Box(0f, 0.52f, 0f, 0.62f, 0.64f, 0.42f, Steel),
-            Box(0f, 0.52f, 0.215f, 0.08f, 0.56f, 0.04f, Iron),
-            Box(0.46f, 0.80f, 0f, 0.28f, 0.18f, 0.36f, Steel),
-            Box(-0.46f, 0.80f, 0f, 0.28f, 0.18f, 0.36f, Steel),
-            Box(0f, 0.22f, 0f, 0.58f, 0.12f, 0.46f, Iron),
-            Box(0f, 0.35f, 0.215f, 0.50f, 0.06f, 0.03f, Red));
+            Box(0f, 0.46f, 0f, 0.46f, 0.80f, 0.32f, Steel),
+            Box(0f, 0.50f, 0.17f, 0.06f, 0.56f, 0.03f, Iron),
+            Box(0.30f, 0.80f, 0f, 0.22f, 0.16f, 0.30f, Steel),
+            Box(-0.30f, 0.80f, 0f, 0.22f, 0.16f, 0.30f, Steel),
+            Box(0f, 0.15f, 0f, 0.52f, 0.30f, 0.34f, Iron),
+            Box(0f, 0.33f, 0.17f, 0.46f, 0.06f, 0.03f, Red));
 
-        // ---- Hands (one arm, centred on the arm's own axis): y -0.95..-0.55, |x| <= 0.11, |z| <= 0.11.
+        // ---- Hands (one arm, centred on the arm's own axis): cover y -0.95..-0.55, |x| <= 0.09, |z| <= 0.09.
 
         Add("worn.hands.leather-gloves", ArmourMount.Arms,
             Box(0f, -0.76f, 0f, 0.24f, 0.44f, 0.24f, Leather),
@@ -211,7 +215,7 @@ public static class ArmourMeshCatalog
             Box(0f, -0.54f, 0f, 0.40f, 0.14f, 0.40f, Steel),
             Box(0f, -0.95f, 0.06f, 0.22f, 0.08f, 0.20f, Iron));
 
-        // ---- Legs (one leg): y -0.75..-0.10, |x| <= 0.14, |z| <= 0.14 (cuisse, knee cop at -0.61).
+        // ---- Legs (one leg): cover y -0.75..-0.10, |x| <= 0.11, |z| <= 0.11.
 
         Add("worn.legs.leather-leggings", ArmourMount.Legs,
             Box(0f, -0.43f, 0f, 0.30f, 0.68f, 0.30f, Leather),
@@ -235,7 +239,7 @@ public static class ArmourMeshCatalog
             Box(0f, -0.20f, 0f, 0.30f, 0.28f, 0.30f, Iron),
             Box(0f, -0.58f, 0.15f, 0.30f, 0.18f, 0.14f, Steel));
 
-        // ---- Feet (one leg): y -1.30..-0.88, |x| <= 0.13, z -0.05..+0.22.
+        // ---- Feet (one leg): cover y -1.30..-0.88, |x| <= 0.132, z -0.05..+0.15.
 
         Add("worn.feet.leather-boots", ArmourMount.Feet,
             Box(0f, -1.09f, 0.07f, 0.28f, 0.44f, 0.34f, Leather),
@@ -255,45 +259,45 @@ public static class ArmourMeshCatalog
             Box(0f, -0.98f, 0.03f, 0.34f, 0.06f, 0.36f, Iron),
             Box(0f, -0.88f, 0.04f, 0.38f, 0.08f, 0.30f, Steel));
 
-        // ---- Back (torso frame): the cloaks sit strictly outside the baked cloak (half-width 0.326,
-        // back -0.36, hem -0.475, top 0.836): half-width >= 0.36, back <= -0.38, hem <= -0.50, top >= 0.84.
+        // ---- Back (torso frame): the torso back surface is at z >= -0.14 and the panels hang off it at
+        // z -0.18..-0.30. Above y 0.30 nothing is wider than 1.6x the torso (0.416); the hem may flare to 0.50.
 
-        // Every cloak is a TAPERED STACK, never one plank: narrow at the shoulders (<= 0.54), widest near the
+        // Every cloak is a TAPERED STACK, never one plank: narrow at the shoulders (<= 0.44), widest near the
         // hem, each box further back and pitched a little more than the one above (positive pitch swings
         // the bottom edge backwards), so the lengths take different light and the hem hangs away from
         // the body. Hem boxes are inset or split into tabs so the bottom outline is not a square line.
 
         // Short and ragged: a leather yoke, a stepped body and three tabs of different lengths.
         Add("worn.back.travel-cloak", ArmourMount.Back,
-            Box(0f, 0.84f, -0.24f, 0.52f, 0.10f, 0.30f, Leather),
-            Box(0f, 0.50f, -0.36f, 0.54f, 0.50f, 0.12f, Ash, pitch: 2f),
-            Box(0f, 0.02f, -0.40f, 0.64f, 0.50f, 0.10f, Ash, pitch: 5f),
-            Box(0f, -0.30f, -0.44f, 0.26f, 0.36f, 0.08f, Ash, pitch: 9f),
-            Box(0.29f, -0.33f, -0.43f, 0.20f, 0.44f, 0.08f, Ash, pitch: 8f),
-            Box(-0.29f, -0.27f, -0.43f, 0.20f, 0.32f, 0.08f, Ash, pitch: 8f),
-            Box(0f, 0.90f, -0.22f, 0.10f, 0.04f, 0.10f, Steel));
+            Box(0f, 0.84f, -0.20f, 0.38f, 0.10f, 0.12f, Leather),
+            Box(0f, 0.50f, -0.22f, 0.40f, 0.50f, 0.08f, Ash, pitch: 2f),
+            Box(0f, 0.02f, -0.25f, 0.70f, 0.50f, 0.08f, Ash, pitch: 5f),
+            Box(0f, -0.30f, -0.28f, 0.24f, 0.36f, 0.06f, Ash, pitch: 9f),
+            Box(0.29f, -0.33f, -0.27f, 0.22f, 0.44f, 0.06f, Ash, pitch: 8f),
+            Box(-0.29f, -0.27f, -0.27f, 0.22f, 0.32f, 0.06f, Ash, pitch: 8f),
+            Box(0f, 0.90f, -0.17f, 0.10f, 0.04f, 0.08f, Steel));
 
         // Long, to the calf: a stepped trapezoid, a hem of three folds of unequal length and a raised standing collar (not a hood).
         Add("worn.back.hooded-cloak", ArmourMount.Back,
-            Box(0f, 0.60f, -0.32f, 0.54f, 0.72f, 0.18f, Ash, pitch: 2f),
-            Box(0f, -0.06f, -0.38f, 0.70f, 0.56f, 0.14f, Cold, pitch: 5f),
-            Box(0f, -0.62f, -0.44f, 0.80f, 0.56f, 0.12f, Ash, pitch: 7f),
-            Box(-0.27f, -0.96f, -0.48f, 0.30f, 0.44f, 0.12f, Cold, pitch: 10f),
-            Box(0f, -1.02f, -0.50f, 0.28f, 0.44f, 0.12f, Ash, pitch: 12f),
-            Box(0.27f, -0.92f, -0.47f, 0.30f, 0.40f, 0.12f, Cold, pitch: 9f),
-            Box(0f, 1.00f, -0.28f, 0.46f, 0.30f, 0.14f, Ash, pitch: -10f),
-            Box(0f, 1.175f, -0.30f, 0.44f, 0.03f, 0.12f, Bone));
+            Box(0f, 0.60f, -0.22f, 0.40f, 0.72f, 0.08f, Ash, pitch: 2f),
+            Box(0f, -0.06f, -0.25f, 0.56f, 0.56f, 0.08f, Cold, pitch: 5f),
+            Box(0f, -0.62f, -0.28f, 0.70f, 0.56f, 0.08f, Ash, pitch: 7f),
+            Box(-0.26f, -0.96f, -0.30f, 0.26f, 0.44f, 0.08f, Cold, pitch: 10f),
+            Box(0f, -1.02f, -0.30f, 0.24f, 0.44f, 0.08f, Ash, pitch: 12f),
+            Box(0.26f, -0.92f, -0.29f, 0.26f, 0.40f, 0.08f, Cold, pitch: 9f),
+            Box(0f, 1.00f, -0.20f, 0.34f, 0.30f, 0.08f, Ash, pitch: -10f),
+            Box(0f, 1.175f, -0.20f, 0.32f, 0.03f, 0.08f, Bone));
 
         // A broad shoulder mantle, layered and drooping at the points, over a short tapered back panel.
         Add("worn.back.grave-mantle", ArmourMount.Back,
-            Box(0f, 0.84f, -0.10f, 0.64f, 0.10f, 0.50f, Cold),
-            Box(0.40f, 0.80f, -0.10f, 0.36f, 0.10f, 0.50f, Cold, roll: -18f),
-            Box(-0.40f, 0.80f, -0.10f, 0.36f, 0.10f, 0.50f, Cold, roll: 18f),
-            Box(0f, 0.66f, -0.12f, 0.84f, 0.10f, 0.46f, Ash),
-            Box(0f, 0.905f, -0.10f, 0.50f, 0.03f, 0.38f, Bone),
-            Box(0f, 0.30f, -0.34f, 0.52f, 0.56f, 0.10f, Cold, pitch: 3f),
-            Box(-0.19f, -0.29f, -0.39f, 0.38f, 0.62f, 0.08f, Ash, pitch: 6f),
-            Box(0.21f, -0.24f, -0.42f, 0.42f, 0.52f, 0.08f, Cold, pitch: 8f));
+            Box(0f, 0.84f, -0.08f, 0.50f, 0.10f, 0.40f, Cold),
+            Box(0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: -18f),
+            Box(-0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: 18f),
+            Box(0f, 0.66f, -0.10f, 0.66f, 0.10f, 0.36f, Ash),
+            Box(0f, 0.905f, -0.08f, 0.40f, 0.03f, 0.30f, Bone),
+            Box(0f, 0.30f, -0.22f, 0.40f, 0.56f, 0.08f, Cold, pitch: 3f),
+            Box(-0.17f, -0.29f, -0.26f, 0.30f, 0.62f, 0.08f, Ash, pitch: 6f),
+            Box(0.18f, -0.24f, -0.28f, 0.32f, 0.52f, 0.08f, Cold, pitch: 8f));
 
         // Not cloth: two thin glowing planes splayed from the shoulder blades, bone spars and a dark root.
         Add("worn.back.gossamer-wings", ArmourMount.Back,
