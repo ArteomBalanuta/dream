@@ -192,6 +192,53 @@ Master at `04a8fbfe` is not green. The attribute-ceiling commit `1f422512` chang
 
 `PersistenceWriteQueueLockRetryTests` (2) and `WorldTransferLoopbackTests` (1) failed during a full-suite run that overlapped other sessions' test processes and passed in isolation on both master and this branch; treat them as contention flakes, with the two 0-byte HUD allocation tests already known to be intermittent.
 
+## Fix loop 1: the ramp's two production defects
+
+Merged onto `integrate/character-gaits-v2` as `fix/gaits-loop1` (`75fb6148`). Besides re-expressing the 18 ramp-invalidated tests, it fixed two places where the ramp was actively wrong rather than merely re-measured.
+
+### M1 - a snap restarted the ramp from rest
+
+`ClientCorrectionApplier`, on a `Snap`, called `SetWorldPosition`, which teleports the body AND zeroes its velocity. Under the old motor that was free: the motor set the commanded velocity outright, so the tick after a snap was back at full speed. Under the ramp the motor accelerates from the body's own horizontal velocity, so a zeroed body needs v/a to recover - 0.24 s at the 4.3 cruise, 0.33 s at the 6.0 sprint - and falls v^2/2a behind a server that never stopped: **0.51 m at cruise, 1.00 m at sprint, on every snap**. It also read `HorizontalSpeed ~ 0` for those frames, so the local figure replayed idle -> walk -> run, exactly the stride restart `GaitHysteresisSpeed` exists to prevent.
+
+The fix restores the pre-snap **horizontal** velocity and leaves the vertical zeroed: the replayed snap position already contains the unacknowledged travel, so the pre-snap horizontal velocity is the state that belongs with it, while a snap may be a respawn or a teleport and the fall it was in must not survive it. A snap whose replay was **discarded** (a teleport, or a path into a solid cell) lands on the server position alone, carries no unacknowledged travel, and so restores nothing.
+
+Measured, in `SnapVelocityHandoffTests`: with the fix, speed right after a snap is **4.300 m/s** and the body covers **0.993 m** over the next 15 ticks, against a cruising ideal of **1.008 m**. Without it, **0.000 m/s** and **0.413 m** - the restart-from-rest curve, short by **0.494 m**.
+
+The test `ClientReplayReconciliationTests.Snap_ZeroesThePredictedVelocity` asserted the very behaviour M1 fixes, and is now `Snap_KeepsTheHorizontalVelocity_AndZeroesTheVertical`.
+
+### M6 - a zero-length tick bypassed the ramp
+
+`PlayerMotor`'s ramp returned the full target speed when `deltaTime <= 0f`, folded into the same branch as "already at the commanded velocity". That made the motor's output depend on whether one side happened to see a zero-length tick, in the one method whose contract is that the server and a predicting client stay bit-identical. It now returns the current horizontal velocity for a zero-length tick - no time passed, so no ramping happened. Every production caller passes the fixed 1/64 s, so this was unreachable; it was still the wrong answer to give. The same branch's `float.Epsilon` (1.4e-45, which made a tolerance test an exact comparison) became a named `RampVelocityEpsilon = 1e-6f`.
+
+### Cluster 3's replay-residual bound is cruise-only
+
+Loop 1's replay-residual bound of **0.514 m** is cruise-only *by construction*: the harnesses in that cluster never sprint. If a future test sprints through that path the bound has to become 6.0^2/36 = **1.00 m**. The number is not a measured ceiling; it is v^2/2a at one tier.
+
+## Fix loop 2 merge note
+
+Merged as `fix/gaits-loop2` (`38eaa4dd`). Both loops contain an identical one-line change to `LatestPlayerCommandInbox.Merge` (sprint takes the newer value instead of OR-ing); loop 1 had taken loop 2's hunk verbatim so its own branch would not be red, so the second merge did not touch the file at all and there was no conflict. Loop 1 also flipped the matching stale `Assert.True(drained.MoveIntent.SprintHeld)` to `Assert.False` in `LatestPlayerCommandInboxTests`, the expectation loop 2 recorded as needing flipping during integration.
+
+## The reconciler's starved-tick extrapolation: raised as an open question, then RESOLVED by fix loop 3
+
+Recorded during the v2 integration as the wave's top follow-up, deliberately left unfixed there
+because it was a design question rather than a merge resolution. `ClientPredictionReconciler`'s
+class comment still ended:
+
+> The motor stops horizontal movement at once on an idle tick, so the idle part needs no deceleration.
+
+That claim is **false** under the ramp, and it mattered more than a stale comment usually would
+because that sentence was the stated *rationale* for how the starved-tick extrapolation builds its
+idle step. At v2 the comment was known wrong while the logic underneath it was **unresolved**: no
+test exposed it, because every error it produced in the measured scenarios was sub-deadband (below
+the 0.05 m `DefaultDeadbandDistance`), so nothing failed and nothing proved it right either.
+
+**Fix loop 3 settled it: the logic was wrong too, and in two places rather than one.** The section
+below has the derivation, the fix and the measured residual. The short version is that the
+extrapolation modelled constant velocity for the 16 repeat ticks and then an instantaneous stop;
+both halves were exactly right under the old assign-velocity motor and both are wrong under the
+ramp. The unmentioned half - the constant-step assumption inside the repeat window - crosses the
+deadband sooner than the idle tail the comment was about.
+
 ## Fix loop 3: the client's starved-tick extrapolation still modelled the old motor
 
 One production bug, on `fix/gaits-loop3`. `ClientPredictionReconciler` was never touched by this wave, and its class comment still claimed the rationale the ramp destroyed:
@@ -245,3 +292,9 @@ Two tests in `Wave9StarveInputChangeTests` encoded the old model and were adjust
 ### Verification
 
 `dream` and `dream.Tests` build with 0 errors and no new warnings. Blast radius `ClientPredictionReconciler|ClientReplayReconciliation|SnapVelocityHandoff|Correction|ClickSoak|PlayerMotor|CommandInbox`: **114 passed, 0 failed, 2 skipped**. A wider replication sweep (`Replication|Reconcil|Starv|Wave12Delta|Snapshot|Prediction`): **576 passed, 0 failed, 4 skipped**. `check_sources.py`: 0 problems, 428 names scanned. The three Wave9 failures above were confirmed as this loop's by re-running them against `84eb1c34`'s reconciler, where they pass.
+
+## Other deliberate non-fixes
+
+- `FootstepCadence.MaxStepDistance` still has the same distance-not-speed shape as the enemy snap guard that fix loop 2's F4 corrected. Left as is: a spike there only adds one extra footstep, rather than switching gait the way the enemy guard's spike flashed the gallop.
+- `dream.Tests/Server/LatestInboxSprintCoalescingTests.cs` sits under `Server/` only because of parallel-ownership boundaries in loop 2. It tests `LatestPlayerCommandInbox` and **should be moved beside `LatestPlayerCommandInboxTests.cs`**.
+- F1 is an **audible** change: walk footfalls go 1.9/s -> 2.5/s and sprint 3.0/s -> 4.5/s, because the strides were re-derived from the authored clip cycles (0.85/1.5/2.0 -> 0.64/1.333/1.32; sprint audio had been 52% slower than the legs). It wants one human listen before it ships - no test can judge whether it sounds right.
