@@ -88,7 +88,13 @@ internal sealed partial class PlayerInventoryService
 
         if (_groundItems.Count >= MaxGroundItems)
         {
-            DespawnOldestGroundItem();
+            // Loot is never refused, but prefers an item nobody holds a claim on; only when every item is
+            // claimed does it destroy the globally oldest, so the room is always made.
+            GroundItem? victim = FindOldestEvictableGroundItem(null, tick) ?? FindOldestGroundItem();
+            if (victim != null)
+            {
+                Despawn(victim);
+            }
         }
 
         ToolDefinition tool = ToolCatalog.Resolve(definition.Key);
@@ -313,12 +319,12 @@ internal sealed partial class PlayerInventoryService
         // other players' ground items by drop and pick-up cycling. Evict only the oldest item nobody else
         // holds a claim on (the dropper's own claimed items count as unclaimed here); if every item is
         // claimed by someone else, refuse the drop rather than destroy another player's property. Loot
-        // drops (TryDropRolled) keep evicting the globally oldest. NoRoom is the closest honest outcome:
+        // drops (TryDropRolled) prefer an unclaimed item too but are never refused. NoRoom is the closest honest outcome:
         // the world has nowhere to put the item.
         GroundItem? victim = null;
         if (_groundItems.Count >= MaxGroundItems)
         {
-            victim = FindOldestEvictableGroundItem(playerName);
+            victim = FindOldestEvictableGroundItem(playerName, tick);
             if (victim == null)
             {
                 return InventoryEquipOutcome.NoRoom;
@@ -429,12 +435,17 @@ internal sealed partial class PlayerInventoryService
         _nextGroundEventTick = next;
     }
 
-    private GroundItem? FindOldestEvictableGroundItem(string playerName)
+    // The oldest item that no one other than evictor holds a live claim on (same predicate as
+    // TryPickUpGround: a claim blocks only until it expires). A null evictor (loot) treats every live
+    // claim as blocking.
+    private GroundItem? FindOldestEvictableGroundItem(string? evictor, ulong tick)
     {
         GroundItem? oldest = null;
         foreach (GroundItem ground in _groundItems.Values)
         {
-            if (ground.ClaimantKey != null && ground.ClaimantKey != playerName)
+            if (ground.ClaimantKey != null
+                && tick < ground.ClaimExpiresTick
+                && !string.Equals(ground.ClaimantKey, evictor, StringComparison.Ordinal))
             {
                 continue;
             }
@@ -448,7 +459,7 @@ internal sealed partial class PlayerInventoryService
         return oldest;
     }
 
-    private void DespawnOldestGroundItem()
+    private GroundItem? FindOldestGroundItem()
     {
         GroundItem? oldest = null;
         foreach (GroundItem ground in _groundItems.Values)
@@ -459,10 +470,7 @@ internal sealed partial class PlayerInventoryService
             }
         }
 
-        if (oldest != null)
-        {
-            Despawn(oldest);
-        }
+        return oldest;
     }
 
     // Removes from memory first, so a pickup that follows finds nothing, then deletes the row; the

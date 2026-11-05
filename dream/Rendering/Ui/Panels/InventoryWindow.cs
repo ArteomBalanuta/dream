@@ -558,11 +558,13 @@ public static class InventoryWindow
         }
 
         // The same decision a release makes, so the cue never disagrees with it. Over the world (no
-        // in-window target) the dragged item's own cell or well carries the cue: hover overlay when
-        // releasing would drop it on the ground (there is no confirm), invalid overlay when it is refused.
+        // in-window target) a valid release drops the item on the ground; that is NOT a cell cue, because
+        // the hover overlay means "lands in this cell". It is shown on the ghost instead (ItemOverlays
+        // draws it in DropGhostTint). Only a refused world release (a worn item) keeps the invalid
+        // overlay on the item's own well.
         int target = ResolveTarget(l, win, v, st.DragSource, i.Pointer.Position);
         DropVerdict verdict = TryResolveRelease(l, win, v, st.DragSource, i.Pointer.Position, out _);
-        if (verdict == DropVerdict.None)
+        if (verdict == DropVerdict.None || (target < 0 && verdict == DropVerdict.Valid))
         {
             return none;
         }

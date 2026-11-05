@@ -1501,14 +1501,16 @@ public sealed class InventoryWindowTests : IDisposable
     }
 
     [Fact]
-    public void Drag_OverTheWorld_ShowsTheDropCueOnTheSourceCell()
+    public void Drag_OverTheWorld_ShowsNoCellCue_BecauseHoverMeansLandsInThisCell()
     {
+        // The ground-drop cue is the ghost's tint (ItemOverlaysTests); the hover overlay would claim the
+        // item lands in its own cell, the opposite of what a release does.
         _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
         _scene.Refresh();
 
         Hold(InventoryScene.Centre(_scene.Slot(9)), WorldPoint);
 
-        Assert.Equal(CellRects([9]), RectsOf("cell.overlay.hover"));
+        Assert.Empty(_scene.Canvas.Named("cell.overlay.hover"));
         Assert.Empty(_scene.Canvas.Named("cell.overlay.invalid"));
     }
 

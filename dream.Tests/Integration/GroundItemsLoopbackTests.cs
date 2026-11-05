@@ -60,7 +60,7 @@ public sealed class GroundItemsLoopbackTests
         Dictionary<long, GroundItemSnapshot> list = [];
         foreach (ServerGroundItems message in frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>())
         {
-            Assert.InRange(message.Upserts.Count + message.RemovedIds.Count, 1 - 1, ServerGroundItems.MaxEntries);
+            Assert.InRange(message.Upserts.Count + message.RemovedIds.Count, 0, ServerGroundItems.MaxEntries);
             if (message.Reset)
             {
                 list.Clear();
@@ -126,7 +126,7 @@ public sealed class GroundItemsLoopbackTests
     // The security property of the whole drop design, end to end: InventoryDropIntent carries no
     // position, so the server must place the item at the position IT holds for the dropper. Pinned by
     // moving the dropper somewhere no default could coincide with and asserting the replicated position
-    // equals the server's own view of that player exactly -- not the origin, not the shared Spot every
+    // equals the server's own view of that player -- not the origin, not the shared Spot every
     // other test here uses, and not a value any client could have chosen.
     [Fact]
     public async Task ADrop_LandsAtTheServersOwnPositionForTheDropper_NotTheOriginNorAnyClientSuppliedPlace()
@@ -157,8 +157,10 @@ public sealed class GroundItemsLoopbackTests
 
         GroundItemSnapshot seen = Assert.Single(Ground(a.Frames).Values);
         Assert.Equal(id, seen.ItemInstanceId);
-        Assert.Equal(standing, targetA.Position);
-        Assert.Equal(standing, seen.Position);
+        // The invariant: the item sits where the SERVER holds the dropper, whatever that is by now.
+        // `standing` below only guards against the default positions, so a later gravity or terrain
+        // snap at that spot cannot turn this into a false failure.
+        Assert.Equal((Vector3)targetA.Position, seen.Position);
         Assert.NotEqual(Vector3.Zero, seen.Position);
         Assert.NotEqual(Spot, seen.Position);
     }

@@ -104,9 +104,25 @@ public class StatSheetTests
         97,
         1_000,
         5_000,
+        // The starter-kit strength bonuses are +0, +1, +2, +4 and +8, so the interesting boundary is
+        // base + bonus == MaxStrength EXACTLY (the largest value that does not clamp). Max-1 hits it for
+        // the +1 item; Max-2 and Max-8 hit it for the +2 and +8 items. Max-1 and Max both clamp for every
+        // nonzero bonus, so without these two the exact-ceiling case is never exercised. Do not tidy away.
+        PlayerCombatStats.MaxStrength - 8,
+        PlayerCombatStats.MaxStrength - 2,
         PlayerCombatStats.MaxStrength - 1,
         PlayerCombatStats.MaxStrength,
     ];
+
+    // The grid is built from the strength constants but walks the vitality axis too. If the two ranges
+    // ever diverge the vitality axis would be fed out-of-range values that both paths clamp identically,
+    // so the grid tests would still pass while covering less; fail loudly here instead.
+    [Fact]
+    public void GridAttributes_SuitBothTheStrengthAndTheVitalityAxis()
+    {
+        Assert.Equal(PlayerCombatStats.MinStrength, PlayerCombatStats.MinVitality);
+        Assert.Equal(PlayerCombatStats.MaxStrength, PlayerCombatStats.MaxVitality);
+    }
 
     [Fact]
     public void Resolution_EqualsLegacyCombine_ForEveryStrengthAndVitalityWithEveryTool()
@@ -127,9 +143,12 @@ public class StatSheetTests
                         sheet.SetBase(BlockOf(strength, attackSpeed, vitality));
                         sheet.SetSource(0, modifiers);
 
-                        Assert.Equal((float)legacy.Strength, sheet.Effective[StatId.Strength]);
-                        Assert.Equal((float)legacy.Vitality, sheet.Effective[StatId.Vitality]);
-                        Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(sheet.Effective[StatId.AttackSpeed]));
+                        string at = $"strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}";
+                        Assert.True((float)legacy.Strength == sheet.Effective[StatId.Strength], $"Strength differs ({legacy.Strength} vs {sheet.Effective[StatId.Strength]}) at {at}");
+                        Assert.True((float)legacy.Vitality == sheet.Effective[StatId.Vitality], $"Vitality differs ({legacy.Vitality} vs {sheet.Effective[StatId.Vitality]}) at {at}");
+                        Assert.True(
+                            BitConverter.SingleToInt32Bits(legacy.AttackSpeed) == BitConverter.SingleToInt32Bits(sheet.Effective[StatId.AttackSpeed]),
+                            $"AttackSpeed differs ({legacy.AttackSpeed} vs {sheet.Effective[StatId.AttackSpeed]}) at {at}");
                     }
                 }
             }
@@ -172,9 +191,12 @@ public class StatSheetTests
                         EquipInMainHand(combatant, definition);
 
                         PlayerCombatStats legacy = LegacyToolStats.Combine(combatant.BaseStats, tool);
-                        Assert.Equal(legacy.Strength, combatant.Stats.Strength);
-                        Assert.Equal(legacy.Vitality, combatant.Stats.Vitality);
-                        Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed));
+                        string at = $"strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}";
+                        Assert.True(legacy.Strength == combatant.Stats.Strength, $"Strength differs ({legacy.Strength} vs {combatant.Stats.Strength}) at {at}");
+                        Assert.True(legacy.Vitality == combatant.Stats.Vitality, $"Vitality differs ({legacy.Vitality} vs {combatant.Stats.Vitality}) at {at}");
+                        Assert.True(
+                            BitConverter.SingleToInt32Bits(legacy.AttackSpeed) == BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed),
+                            $"AttackSpeed differs ({legacy.AttackSpeed} vs {combatant.Stats.AttackSpeed}) at {at}");
                     }
                 }
             }

@@ -291,7 +291,7 @@ public sealed class GroundItemServiceTests
     }
 
     [Fact]
-    public void APlayerDrop_LandsExactlyWhereThePlayerStands_NotAtTheOrigin_AndFollowsThemWhenTheyMove()
+    public void ADrop_StoresTheGivenPosition_PerItem_NotTheOriginNorASharedDefault()
     {
         // The service takes the position the server read from the player's own authoritative
         // state; it must place the item there and nowhere else (never the origin, never Spot).
