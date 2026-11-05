@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import io
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -30,7 +31,25 @@ import uiart as U  # noqa: E402
 REQUIRED_CLIPS = ("idle", "walk", "sprint", "die", "attack-melee-right", "holding-right-shoot",
                   "walk-back", "walk-strafe-left", "walk-strafe-right")
 ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right")
-M3_SPREAD_MIN = 0.50       # spec 00-acceptance M3, the offline bimodal-lambert floor
+# M3, the offline bimodal-lambert spread (p90 - p10 of HSV value over the silhouette, shaded through
+# enginelook at a brazier 1.5 units away, at the WORSE of two mirrored key azimuths).
+#
+# Spec 00-acceptance M3 sets 0.50, and until 2026-11-06 this file held the BASE FIGURE to it. That number was
+# calibrated on a figure with a kettle helm, a pauldron, a lame and knee cops baked in: MEASURED 0.5064, and 0.1577
+# with those plates removed. The "worn-visuals" wave then moved every piece of armour into the equipment layer
+# (ArmourMeshCatalog) and left the base figure an unarmoured traveller - tunic, breeches, boots, a bare head -
+# which is the old negative control, so the premise of the 0.50 floor on the BASE changed, not its intent.
+#
+# 1. The BASE keeps a legibility floor (a traveller must still read as a figure and not a dark blob), set from
+#    the measurement: MEASURED 2026-11-06 on the undressed figure, M3 0.2376 (worst azimuth 35: p10 0.0202,
+#    p90 0.2578; az 145: 0.0212 / 0.4320). The floor is that minus ~0.025 of headroom.
+# 2. The 0.50 claim moves to the figure PLUS a reference worn set (greathelm + plate-cuirass + hooded-cloak),
+#    read from the shipped ArmourMeshCatalog.cs, because that is where plate contrast now legitimately lives.
+BASE_SPREAD_MIN = 0.21
+WORN_SET_SPREAD_MIN = 0.50
+WORN_SET_IDS = ("worn.head.greathelm", "worn.body.plate-cuirass", "worn.back.hooded-cloak")
+CATALOG = TOOLS.parents[1] / "dream" / "Rendering" / "Actors" / "ArmourMeshCatalog.cs"
+ENVELOPE_TOL = 0.015       # the worn-model contract's tolerance, engine units
 DIE_SPAN_FRACTION = 0.45   # the lying-down gate: a fraction of the figure's own standing height...
 DIE_SPAN_ABS_MAX = 1.15    # ...and an absolute ceiling, so a taller figure cannot ride the fraction up
 # The engine's own copy, the one PlayerModelAssetDefinition loads; the generator must reproduce it exactly.
@@ -97,6 +116,123 @@ def gate_shipped(label: str, data: bytes, shipped: Path) -> None:
              f"re-run the generator and commit the asset")
     else:
         ok(f"{label}: the shipped {shipped.name} is byte-for-byte what the generator makes ({len(on_disk)} bytes)")
+
+
+def _edge_samples(positions: np.ndarray, indices: np.ndarray, steps: int = 16) -> np.ndarray:
+    """Every vertex plus points along every triangle edge, so a region bound that falls between two loft rings
+    is still measured on the surface and not only on the rings."""
+    v = np.asarray(positions, dtype=np.float64)
+    tri = np.asarray(indices, dtype=np.int64).reshape(-1, 3)
+    t = np.linspace(0.0, 1.0, steps + 1)[None, :, None]
+    out = [v]
+    for i, j in ((0, 1), (1, 2), (2, 0)):
+        a, b = v[tri[:, i]][:, None, :], v[tri[:, j]][:, None, :]
+        out.append((a + (b - a) * t).reshape(-1, 3))
+    return np.concatenate(out)
+
+
+def node_points(asset: dict) -> dict:
+    """node name -> surface samples in that node's own frame (engine units, y up, +z forward)."""
+    names = [n.name for n in asset["nodes"]]
+    out: dict = {}
+    for p in asset["primitives"]:
+        out.setdefault(names[p.node], []).append(_edge_samples(p.positions, p.indices))
+    return {k: np.concatenate(v) for k, v in out.items()}
+
+
+def envelope_rows(asset: dict) -> list:
+    """(label, measured, target) for each row of the shared worn-model contract (see build_parts()): the largest
+    extent of the base figure inside the row's region, which the row's target must hit within ENVELOPE_TOL."""
+    pts = node_points(asset)
+    arm_x = 0.2   # ARM_OFFSET_U * UNITS_PER_U: the arm's own axis, outboard of its node
+
+    def inside(node, y0, y1, shift=0.0):
+        v = pts[node].copy()
+        v[:, 0] -= shift
+        return v[(v[:, 1] >= y0 - 1e-9) & (v[:, 1] <= y1 + 1e-9)]
+
+    rows = []
+    h = inside("head", 0.0, 0.42)
+    rows += [("head |x|", float(np.abs(h[:, 0]).max()), 0.12), ("head |z|", float(np.abs(h[:, 2]).max()), 0.13),
+             ("head top y", float(pts["head"][:, 1].max()), 0.42)]
+    t = inside("torso", 0.0, 0.86)
+    rows += [("torso |x| (hip skirt)", float(np.abs(t[:, 0]).max()), 0.26),
+             ("torso front z", float(t[:, 2].max()), 0.14), ("torso back z (Back mount)", float(-t[:, 2].min()), 0.14)]
+    c = inside("torso", 0.35, 0.86)
+    rows += [("torso chest |x|", float(np.abs(c[:, 0]).max()), 0.19)]
+    for node, side in (("arm-left", 1.0), ("arm-right", -1.0)):
+        a = inside(node, -0.95, -0.55, shift=side * arm_x)
+        rows += [(f"{node} |x|", float(np.abs(a[:, 0]).max()), 0.09), (f"{node} |z|", float(np.abs(a[:, 2]).max()), 0.09)]
+    for node in ("leg-left", "leg-right"):
+        l = inside(node, -0.75, -0.10)
+        rows += [(f"{node} |x|", float(np.abs(l[:, 0]).max()), 0.11), (f"{node} |z|", float(np.abs(l[:, 2]).max()), 0.11)]
+        f = inside(node, -1.30, -0.88)
+        rows += [(f"{node} foot |x|", float(np.abs(f[:, 0]).max()), 0.132),
+                 (f"{node} foot back z", float(-f[:, 2].min()), 0.05), (f"{node} foot front z", float(f[:, 2].max()), 0.15)]
+    # the hand: the fist is centred at arm-local y -0.9 (HeldWeaponRenderer), so the bare hand's heel is at -1.003
+    rows += [("arm-left lowest y (hand at -0.9)", float(-pts["arm-left"][:, 1].min()), 1.003)]
+    return rows
+
+
+_BOX = re.compile(r"Box\(\s*((?:[-\d.]+f,\s*){5}[-\d.]+f),\s*(?:ArmourMaterial\.)?(\w+)((?:,\s*(?:pitch|roll):\s*[-\d.]+f)*)\)")
+# ArmourMeshCatalog.BaseColor, linear, as the engine draws it: the worn palette is already the lifted figure's
+_WORN_COLOUR = {"Steel": (0.36, 0.39, 0.46), "DarkIron": (0.17, 0.17, 0.20), "Iron": (0.17, 0.17, 0.20),
+                "Leather": (0.13, 0.08, 0.06), "ClothCold": (0.086, 0.102, 0.157), "Cold": (0.086, 0.102, 0.157),
+                "ClothAsh": (0.118, 0.125, 0.141), "Ash": (0.118, 0.125, 0.141), "ClothRed": (0.353, 0.118, 0.102),
+                "Red": (0.353, 0.118, 0.102), "Bone": (0.62, 0.58, 0.48), "Gilt": (0.50, 0.37, 0.14)}
+_FACES = (((1, 0, 0), ((1, -1, -1), (1, 1, -1), (1, 1, 1), (1, -1, 1))),
+          ((-1, 0, 0), ((-1, -1, 1), (-1, 1, 1), (-1, 1, -1), (-1, -1, -1))),
+          ((0, 1, 0), ((-1, 1, -1), (-1, 1, 1), (1, 1, 1), (1, 1, -1))),
+          ((0, -1, 0), ((-1, -1, 1), (-1, -1, -1), (1, -1, -1), (1, -1, 1))),
+          ((0, 0, 1), ((-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1))),
+          ((0, 0, -1), ((1, -1, -1), (-1, -1, -1), (-1, 1, -1), (1, 1, -1))))
+
+
+def catalog_boxes(visual_id: str) -> tuple:
+    """(mount, [(centre, size, material, pitch, roll)]) for one model, parsed from ArmourMeshCatalog.cs."""
+    src = CATALOG.read_text(encoding="utf-8")
+    m = re.search(r'Add\("%s",\s*ArmourMount\.(\w+),(.*?)\);' % re.escape(visual_id), src, re.S)
+    if not m:
+        return "", []
+    out = []
+    for bm in _BOX.finditer(m.group(2)):
+        n = [float(x.strip().rstrip("f")) for x in bm.group(1).split(",")]
+        kw = {k: float(v.rstrip("f")) for k, v in re.findall(r"(pitch|roll):\s*([-\d.]+f)", bm.group(3))}
+        out.append((tuple(n[:3]), tuple(n[3:]), bm.group(2), kw.get("pitch", 0.0), kw.get("roll", 0.0)))
+    return m.group(1), out
+
+
+def worn_surfaces(asset: dict, ids) -> list:
+    """The worn models as enginelook Surfaces, standing on the bind-pose figure at the same normalisation the
+    engine applies (the figure's own authored height, 1.2 world units). Flat-shaded boxes in the catalog's
+    own palette, turned about X (pitch) then Z (roll), exactly as ArmourPart.ToMatrix does."""
+    world = L.node_worlds(asset["nodes"])
+    names = [n.name for n in asset["nodes"]]
+    pts = fk_vertices(asset, None, None)
+    k = L.PLAYER_WORLD_HEIGHT / float(pts[:, 1].max() - pts[:, 1].min())
+    surfaces = []
+    for vid in ids:
+        mount, boxes = catalog_boxes(vid)
+        if not boxes:
+            return []
+        W = world[names.index("head" if mount == "Head" else "torso")]
+        for centre, size, mat, pitch, roll in boxes:
+            cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
+            cr, sr = math.cos(math.radians(roll)), math.sin(math.radians(roll))
+            R = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]]) @ np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
+            pos, nrm, tri = [], [], []
+            for normal, corners in _FACES:
+                base = len(pos)
+                for q in corners:
+                    local = R @ (np.array(q, dtype=np.float64) * 0.5 * np.array(size)) + np.array(centre)
+                    pos.append(W[:3, :3] @ local + W[:3, 3])
+                nrm += [W[:3, :3] @ (R @ np.array(normal, dtype=np.float64))] * 4
+                tri += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
+            nrm = np.array(nrm)
+            nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
+            alb = np.tile(np.array(_WORN_COLOUR[mat]), (len(pos), 1))
+            surfaces.append(L.Surface(np.array(pos) * k, nrm, alb, np.array(tri), None))
+    return surfaces
 
 
 def main() -> int:
@@ -241,27 +377,55 @@ def main() -> int:
     if len(accent_prims) != len(a["emissive"]):
         fail(f"{len(accent_prims)} primitives off material 0 but {len(a['emissive'])} emissive parts")
 
-    # M3: the figure's own geometry, shaded with the engine's actor transfer function (C4) at a brazier 1.5
-    # units away, must span >= 0.50 of HSV value over its silhouette - at the WORSE of two mirrored key
-    # azimuths, so a figure cannot pass by being plated down one side only.
+    # M3 on the BASE figure: it still has to read as a figure. Measured BEFORE the floor was set; see BASE_SPREAD_MIN.
     surfaces = L.asset_surfaces(a, [a["encoded"]] + [None] * (len(a["materials"]) - 1))
     m3 = L.m3_measure(surfaces)
     per = m3["per_azimuth"]
-    if m3["spread"] < M3_SPREAD_MIN:
-        fail(f"M3 spread {m3['spread']:.4f} < {M3_SPREAD_MIN} at azimuth {m3['worst_azimuth']:.0f} "
-             f"(the figure's lambert histogram is not bimodal enough to read under a close light)")
+    detail = ", ".join(f"az {k:.0f} p10 {v['p10']:.4f} p90 {v['p90']:.4f}" for k, v in sorted(per.items()))
+    print(f"  info M3 base spread {m3['spread']:.4f} (worst azimuth {m3['worst_azimuth']:.0f}; {detail})")
+    if m3["spread"] < BASE_SPREAD_MIN:
+        fail(f"base figure M3 spread {m3['spread']:.4f} < {BASE_SPREAD_MIN} at azimuth {m3['worst_azimuth']:.0f} "
+             f"(the unarmoured figure reads as a dark blob under a close light)")
     else:
-        ok(f"M3 spread {m3['spread']:.4f} >= {M3_SPREAD_MIN} (worst azimuth {m3['worst_azimuth']:.0f}; "
-           + ", ".join(f"az {k:.0f} p10 {v['p10']:.4f} p90 {v['p90']:.4f}" for k, v in sorted(per.items())) + ")")
-    # the negative control: the same figure with every flat PLATE removed, i.e. the smooth elliptical lofts
-    # alone, which is what the figure was before this wave. It must fail the floor, or the gate has stopped
-    # measuring the thing it claims to measure.
-    lofts = [s for s, part in zip(surfaces, a["parts"]) if part[1].n is not None]
-    bare = L.m3_measure(lofts)
-    if bare["spread"] >= M3_SPREAD_MIN:
-        fail(f"the M3 gate passes the loft-only figure at {bare['spread']:.4f}; it has stopped measuring the plates")
+        ok(f"base figure M3 spread {m3['spread']:.4f} >= {BASE_SPREAD_MIN} (worst azimuth {m3['worst_azimuth']:.0f})")
+    # The live failure: NOT the undressed figure (that is now the figure under test). The same geometry with
+    # every part forced to one albedo and no second material - a flat figure - must fail the base floor, or the
+    # gate has stopped measuring contrast.
+    lit = [s for s in surfaces if s.emissive is None]
+    mid = np.median(np.concatenate([s.albedo for s in lit]), axis=0)
+    flat = L.m3_measure([L.Surface(s.positions, s.normals, np.tile(mid, (len(s.positions), 1)), s.indices, None)
+                         for s in lit])
+    if flat["spread"] >= BASE_SPREAD_MIN:
+        fail(f"the base gate passes a single-albedo flat figure at {flat['spread']:.4f}; it has stopped measuring contrast")
     else:
-        ok(f"the M3 gate is live: lofts alone, with no plate, spread {bare['spread']:.4f} < {M3_SPREAD_MIN}")
+        ok(f"the base gate is live: the same figure at one albedo, spread {flat['spread']:.4f} < {BASE_SPREAD_MIN}")
+
+    # M3 on the figure PLUS the reference worn set: where plate contrast lives now. 0.50 is the spec's number.
+    worn = worn_surfaces(a, WORN_SET_IDS)
+    if not worn:
+        fail(f"could not read {WORN_SET_IDS} from {CATALOG.name}; the worn-set gate has nothing to measure")
+    else:
+        dressed = L.m3_measure(surfaces + worn)
+        dper = ", ".join(f"az {k:.0f} p10 {v['p10']:.4f} p90 {v['p90']:.4f}" for k, v in sorted(dressed["per_azimuth"].items()))
+        print(f"  info M3 figure + worn set {dressed['spread']:.4f} ({dper})")
+        if dressed["spread"] < WORN_SET_SPREAD_MIN:
+            fail(f"figure + worn set M3 spread {dressed['spread']:.4f} < {WORN_SET_SPREAD_MIN} at azimuth "
+                 f"{dressed['worst_azimuth']:.0f} (the dressed figure is too flat under a close light)")
+        else:
+            ok(f"figure + worn set M3 spread {dressed['spread']:.4f} >= {WORN_SET_SPREAD_MIN}")
+        # live: the figure without the set is under the same floor, so the gate is measuring what the set adds
+        if m3["spread"] >= WORN_SET_SPREAD_MIN:
+            fail(f"the worn-set gate passes the figure alone at {m3['spread']:.4f}; it has stopped measuring the set")
+        else:
+            ok(f"the worn-set gate is live: the figure alone, {m3['spread']:.4f} < {WORN_SET_SPREAD_MIN}")
+
+    # the worn-model contract: the base figure's extents in each mount's frame, +-0.015 of the table in build_parts()
+    for label, got, want in envelope_rows(a):
+        line = f"envelope {label}: {got:.4f} (contract {want})"
+        if abs(got - want) > ENVELOPE_TOL + 1e-9:
+            fail(line + f" is outside +-{ENVELOPE_TOL}")
+        else:
+            ok(line)
 
     # the baked texture's own palette discipline: no forbidden hues, and saturation past 0.35 belongs to the one
     # accent material alone, which keeps to a few percent of the figure's atlas area
