@@ -82,6 +82,10 @@ public sealed class LatestPlayerCommandInbox : IPlayerCommandInbox
 
     // Folds a newer frame into an older pending one: newer axes, facing, mode and sequence; one-shot
     // presses ORed; look deltas summed. BufferedPlayerCommandInbox merges ring slots with it too.
+    // Sprint is NOT one of the ORed presses: it is held state, so the newer frame's value wins, as
+    // ClientOutboundCommandQueue.Merge does on the client. OR-ing it (which this did, by copying
+    // JumpPressed's treatment) made a coalesced pair in which sprint was RELEASED simulate one
+    // extra sprint tick server-side, and left the two coalescers disagreeing about one field.
     internal static PlayerCommandFrame Merge(PlayerCommandFrame existing, PlayerCommandFrame incoming)
     {
         PlayerInteractionMode? requestedMode = incoming.RequestedMode.Mode ?? existing.RequestedMode.Mode;
@@ -92,7 +96,7 @@ public sealed class LatestPlayerCommandInbox : IPlayerCommandInbox
             JumpPressed: existing.MoveIntent.JumpPressed || incoming.MoveIntent.JumpPressed,
             FreezePressed: existing.MoveIntent.FreezePressed || incoming.MoveIntent.FreezePressed,
             ToggleNoclipPressed: existing.MoveIntent.ToggleNoclipPressed || incoming.MoveIntent.ToggleNoclipPressed,
-            SprintHeld: existing.MoveIntent.SprintHeld || incoming.MoveIntent.SprintHeld);
+            SprintHeld: incoming.MoveIntent.SprintHeld);
         PlayerLookIntent lookIntent = new(
             existing.LookIntent.YawDelta + incoming.LookIntent.YawDelta,
             existing.LookIntent.PitchDelta + incoming.LookIntent.PitchDelta,

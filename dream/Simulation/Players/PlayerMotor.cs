@@ -19,6 +19,9 @@ public class PlayerMotor
     private bool _wasNoclipTogglePressed;
 
     private const float PlayerHalfHeight = 0.5f;
+    // "Already at the commanded velocity", for the ramp. float.Epsilon (1.4e-45) made that test
+    // an exact comparison; this is the tolerance it was meant to be.
+    private const float RampVelocityEpsilon = 1e-6f;
     private const float GroundEpsilon = 0.08f;
     private const float WorldFloorTopY = 1f;
     private const float MinimumWorldFloorCenterY = WorldFloorTopY + PlayerHalfHeight;
@@ -273,7 +276,18 @@ public class PlayerMotor
 
         Vector3 delta = targetVelocity - currentHorizontal;
         float distance = delta.Length;
-        if (distance <= float.Epsilon || deltaTime <= 0f)
+        if (deltaTime <= 0f)
+        {
+            // No time passed, so no ramping happened: the velocity is left alone. Returning the
+            // target here snapped straight past the ramp, which would make the motor's output
+            // depend on whether one side happened to see a zero-length tick -- in the one method
+            // whose contract is that the server and a predicting client stay bit-identical. Every
+            // production caller passes the fixed 1/64 s, so this was unreachable; it is still the
+            // wrong answer to give.
+            return currentHorizontal;
+        }
+
+        if (distance <= RampVelocityEpsilon)
         {
             return targetVelocity;
         }

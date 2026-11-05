@@ -98,6 +98,15 @@ public class CubeRestFreezerTests
     // with the next seam of the carpet. Bullet's box-box contact then pushes against the next
     // cube's side; dynamic cubes yielded, a static one would hold the player forever. The flush
     // seam rule wakes that row, and the walk matches the all-dynamic run.
+    //
+    // Character-gaits wave: 96 walk ticks, not 64. The walk has to cover more than 5 m for the
+    // seam crossings to be what is measured, and a ramping body no longer does that in a second:
+    // at 64 Hz with GroundAcceleration 18 m/s^2 and MoveSpeed 4.3 m/s the ramp takes 4.3 / 18 =
+    // 0.239 s and covers 4.3^2 / 36 = 0.514 m, so 64 ticks give
+    // 0.514 + (1.0 - 0.239) * 4.3 = 3.78 m (measured 3.57 m with floor friction) against the old
+    // instant motor's 64 / 64 x 6 = 6 m. 96 ticks (1.5 s) give
+    // 0.514 + (1.5 - 0.239) * 4.3 = 5.93 m, measured 5.69 m. The frozen/dynamic comparison that
+    // this test exists for is untouched: both runs ramp the same way.
     [Fact]
     public void PlayerStartingCellAligned_WalksAcrossTheSeamsLikeWithDynamicCubes()
     {
@@ -108,7 +117,7 @@ public class CubeRestFreezerTests
             Player player = scene.AddPlayer(scene.CarpetTop(2, 10));
             scene.Run(player, SettleTicks, TkVector3.Zero);
             float startX = player.GetWorldPosition().X;
-            scene.Run(player, 64, TkVector3.UnitX);
+            scene.Run(player, 96, TkVector3.UnitX);
             walked[freeze ? 0 : 1] = player.GetWorldPosition().X - startX;
         }
 
@@ -117,12 +126,29 @@ public class CubeRestFreezerTests
         Assert.InRange(walked[0], walked[1] - 0.05f, walked[1] + 0.05f);
     }
 
+    // Character-gaits wave: the run-up is 3 m long and sprinted, and the push runs 96 ticks.
+    //
+    // Shoving a 3-cube chain is a momentum transfer, and the ramp changed how much momentum
+    // arrives. The old motor assigned the commanded velocity every tick, so a player standing
+    // flush against the row pressed with the full 6 m/s on every tick regardless of the contact.
+    // PlayerMotor now ramps from the body's own velocity, which the solver zeroes on contact, so a
+    // player with no run-up can only ever add GroundAcceleration * dt = 0.28 m/s against three
+    // cube masses: measured, the row moved 0.011 m in 48 ticks and 0.396 m in 144 (it saturates;
+    // the distance is set by the arrival energy, not by how long the key is held).
+    //
+    // So the walk-up is given the distance to arrive at full speed, which is what the test always
+    // measured. The old flat 6 m/s is now exactly the sprint tier (DefaultSprintSpeed 6.0), so the
+    // run-up sprints and the 0.5 m the push was measured against still stands. Sprinting takes
+    // 6 / 18 = 0.333 s and 6^2 / 36 = 1.0 m to reach, so a 3 m run-up needs
+    // (3 - 1.0) / 6 + 0.333 = 0.667 s = 43 ticks, leaving 53 of the 96 for the push. Measured:
+    // the row end moves 0.719 m (0.396 m if the run-up only reaches the run cruise, which is the
+    // (4.3 / 6.0)^2 = 0.51 energy ratio).
     [Fact]
     public void PlayerPushingACube_MovesItAndWakesOnlyWhatItTouches()
     {
         using Scene scene = Scene.Create(freezeEnabled: true);
         // A lone row of 3 cubes beside the carpet, one cell apart from it, and a player on the
-        // floor west of the row pushing east along it.
+        // floor 3 m west of the row sprinting east along it.
         int z = CarpetOrigin + CarpetSide + 1;
         List<RigidBody> row = [];
         for (int x = 10; x < 13; x++)
@@ -132,7 +158,7 @@ public class CubeRestFreezerTests
 
         // A cube touching the row's side (north of the first cube) that the push slides past.
         RigidBody side = scene.AddCube(10, 1, z + 1);
-        Player player = scene.AddPlayer(new TkVector3(9.48f, 1.52f, z + 0.5f));
+        Player player = scene.AddPlayer(new TkVector3(6.48f, 1.52f, z + 0.5f));
         scene.Run(player, SettleTicks, TkVector3.Zero);
         Assert.Equal(0, scene.CountActiveCarpetBodies());
         Assert.All(row, body => Assert.True(scene.Physics.CubeRest.IsFrozen(body)));
@@ -140,15 +166,17 @@ public class CubeRestFreezerTests
         float startX = row[2].WorldTransform.Origin.X;
         bool sideWoke = false;
         bool carpetWoke = false;
-        for (int tick = 0; tick < 32; tick++)
+        for (int tick = 0; tick < 96; tick++)
         {
-            scene.Run(player, 1, TkVector3.UnitX);
+            scene.Run(player, 1, TkVector3.UnitX, sprint: true);
             sideWoke |= side.IsActive;
             carpetWoke |= scene.Carpet.Any(entry => entry.Body.IsActive);
         }
 
         float moved = row[2].WorldTransform.Origin.X - startX;
-        _output.WriteLine($"row end moved {moved:0.000} m; active {scene.CountActive()}");
+        _output.WriteLine(
+            $"row end moved {moved:0.000} m; active {scene.CountActive()}; "
+            + $"player at {player.GetWorldPosition().X:0.000} doing {new TkVector2(player.PhysicsBody.LinearVelocity.X, player.PhysicsBody.LinearVelocity.Z).Length:0.000} m/s");
         Assert.True(moved > 0.5f, $"the pushed row moved {moved} m");
         Assert.All(row, body => Assert.True(body.IsActive));
         Assert.False(carpetWoke);
@@ -163,6 +191,14 @@ public class CubeRestFreezerTests
     // Pushing feels the same: a lone cube on the floor, and a cube resting on top of the carpet
     // (which the player pushes while standing on the carpet), travel as far as with every cube
     // dynamic.
+    //
+    // Character-gaits wave: 64 push ticks, not 48. A single cube does yield to a ramping player
+    // leaning on it, so this one only lost the ramp's travel: the first 4.3 / 18 = 0.239 s
+    // (15.3 ticks) go into reaching cruise and cover 0.514 m instead of 0.65 m, and the cube
+    // measured 0.923 m against the 1 m the test asks for. 16 more ticks is the ramp window back
+    // (0.0662 m per cruise tick of push); measured 1.646 m on the carpet and 2.061 m on the floor.
+    // The frozen/dynamic comparison, which is what this test is for, is unaffected: both runs
+    // ramp identically (measured 1.646 vs 1.671 m).
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -189,7 +225,7 @@ public class CubeRestFreezerTests
 
             scene.Run(player, SettleTicks, TkVector3.Zero);
             float startX = pushed.WorldTransform.Origin.X;
-            scene.Run(player, 48, TkVector3.UnitX);
+            scene.Run(player, 64, TkVector3.UnitX);
             moved[freeze ? 0 : 1] = pushed.WorldTransform.Origin.X - startX;
             wokenCarpet[freeze ? 0 : 1] = scene.CountActiveCarpetBodies();
             Assert.Empty(scene.Map.FindInvariantViolations());
@@ -434,12 +470,12 @@ public class CubeRestFreezerTests
             return player;
         }
 
-        public void Run(Player player, int ticks, TkVector3 direction, bool jump = false)
+        public void Run(Player player, int ticks, TkVector3 direction, bool jump = false, bool sprint = false)
         {
-            Run([player], ticks, direction, jump);
+            Run([player], ticks, direction, jump, sprint);
         }
 
-        public void Run(IReadOnlyList<Player> players, int ticks, TkVector3 direction, bool jump = false)
+        public void Run(IReadOnlyList<Player> players, int ticks, TkVector3 direction, bool jump = false, bool sprint = false)
         {
             PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
             for (int tick = 0; tick < ticks; tick++)
@@ -448,7 +484,7 @@ public class CubeRestFreezerTests
                 {
                     players[i].Update(
                         TickSeconds,
-                        new PlayerSimulationInput(new MovementCommand(direction, JumpPressed: jump && tick == 0), TkVector2.Zero, AllowGameplayInput: true),
+                        new PlayerSimulationInput(new MovementCommand(direction, JumpPressed: jump && tick == 0, Sprint: sprint), TkVector2.Zero, AllowGameplayInput: true),
                         tuning);
                 }
 

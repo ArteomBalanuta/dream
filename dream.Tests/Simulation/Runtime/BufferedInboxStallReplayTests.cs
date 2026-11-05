@@ -11,16 +11,41 @@ using Dream.Tests.Utilities;
 namespace Dream.Tests.Simulation.Runtime;
 
 // NETR-5: the walker sends one command per tick (the NETR-4 client). Its commands stall in the
-// network for a second and then arrive as one 64-frame burst. Wave7StarvationReconciliationTests
+// network for StallTicks ticks and then arrive as one burst. Wave7StarvationReconciliationTests
 // measured the latest-only inbox: the server idles the seat after 16 repeated ticks and moves it
-// one tick on resume, so the client snaps back about 4.45 m. The buffered inbox replays the
-// burst one frame per tick, skipping the 16 ticks the runtime already repeated.
+// one tick on resume, so the client snaps back by the whole stall. The buffered inbox replays the
+// burst one frame per tick, skipping the 16 ticks the runtime already repeated, which leaves only
+// the ramp deficit of the character-gaits motor (ReplayRampDeficit) instead of a snap.
 public class BufferedInboxStallReplayTests(ITestOutputHelper output)
 {
     private const string Steady = "session-a";
     private const string Walker = "session-b";
     private const int WalkTicks = 8;
-    private const int StallTicks = SimulationClock.AuthoritativeTicksPerSecond;
+
+    // 80 ticks (1.25 s), not 64. The latest-only inbox has to diverge past
+    // ClientPredictionReconciler.DefaultSnapDistance for this test to contrast a snap with a
+    // replay, and that threshold is a DISTANCE: at the character-gaits wave's run cruise of 4.3 m/s
+    // (measured 4.239 m/s = 0.0662 m/tick once floor friction is in) a one-second stall reaches
+    // only 2.886 m, just under the 3 m snap, where the old 6 m/s instant motor cleared it easily.
+    // The seat is at rest for every stall tick past its braking window, so each extra stall tick
+    // adds one cruise tick to the gap: 2.886 + 16 * 0.0662 = 3.95 m, clear of the snap.
+    private const int StallTicks = 80;
+
+    // What a command replay cannot recover (character-gaits wave). The buffered inbox replays the
+    // backlog frame by frame, so the server re-walks the same commands -- but a replay carries
+    // commands, not velocity, and the server resumes from rest (it idled and braked during the
+    // stall) while the client's prediction for the same frame was already at cruise. The server
+    // therefore stays one ramp deficit behind the prediction for that frame:
+    //   ramp deficit = cruise * ramp time - ramp distance = 4.3^2 / (2 * 18) = 0.514 m
+    // Part of it is paid for in advance by the 0.385 m the server coasted while braking, which
+    // leaves it 0.318 m ahead at the resume tick, so the motor-only residual is 0.514 - 0.318 =
+    // 0.196 m; measured it is 0.316 m, the difference being floor friction, which costs a ramping
+    // body more than a cruising one. 0.514 m is used as the bound because it is the structural
+    // quantity: the whole velocity gap, with no credit for the coast. The residual is positional
+    // and permanent in this harness (nothing applies the correction); in production the reconciler
+    // smooths it away, which is why the assert below also requires it to stay a Smooth correction
+    // and nowhere near the 3 m snap the latest-only inbox takes.
+    private const float ReplayRampDeficit = 0.514f;
 
     private static readonly PlayerSimulationTuning Tuning = PlayerSimulationTuning.AuthoritativeDefault;
 
@@ -33,7 +58,7 @@ public class BufferedInboxStallReplayTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void OneSecondStallThenBurst_ReplaysTheBurst_AndEndsWhereTheUnstalledRunEnds(bool walkerIsPrimary)
+    public void LongStallThenBurst_ReplaysTheBurst_AndEndsWithinTheRampDeficit(bool walkerIsPrimary)
     {
         Vector3 facing = FindOpenFacing(walkerIsPrimary);
         // The walker sends WalkTicks + StallTicks frames, the last StallTicks of them delayed, and
@@ -51,21 +76,28 @@ public class BufferedInboxStallReplayTests(ITestOutputHelper output)
         float latestFinal = Horizontal(latest[^1].Position - predicted[^1].Position);
         float walked = Horizontal(predicted[^1].Position - predicted[0].Position);
         output.WriteLine(
-            $"walker {(walkerIsPrimary ? "primary" : "secondary")}, 1 s stall then 64-frame burst, walked {walked:F2} m: "
+            $"walker {(walkerIsPrimary ? "primary" : "secondary")}, {StallTicks}-tick stall then {StallTicks}-frame burst, walked {walked:F2} m: "
             + $"max correction latest {latestError:F3} m ({latestKind}), buffered {bufferedError:F3} m ({bufferedKind}); "
             + $"final position error latest {latestFinal:F3} m, buffered {bufferedFinal:F3} m");
 
         Assert.True(walked > 5f, $"the walker only walked {walked} m");
         Assert.True(latestError >= ClientPredictionReconciler.DefaultSnapDistance, $"latest error {latestError} m");
-        Assert.True(bufferedError < ClientPredictionReconciler.DefaultDeadbandDistance, $"buffered error {bufferedError} m");
-        Assert.True(bufferedFinal < 0.05f, $"buffered final error {bufferedFinal} m");
+
+        // The replay keeps the seat within one ramp deficit (ReplayRampDeficit) of the prediction
+        // and never snaps, against the latest-only inbox's full-stall snap above. The premise
+        // "ends exactly where the unstalled run ends" died with the instant motor: a replay of
+        // commands cannot replay the velocity the server braked away.
+        Assert.True(bufferedError <= ReplayRampDeficit, $"buffered error {bufferedError} m");
+        Assert.NotEqual(ClientReconciliationKind.Snap, bufferedKind);
+        Assert.True(bufferedError < latestError / 4f, $"buffered {bufferedError} m vs latest {latestError} m");
+        Assert.True(bufferedFinal <= ReplayRampDeficit, $"buffered final error {bufferedFinal} m");
     }
 
     // A client that keeps sending one frame per tick after the burst keeps the backlog topped up.
     // The replay holds the seat on its prediction until the elastic shed cuts the backlog's
     // latency, which costs the idle ticks of the stall; this records that trade-off.
     [Fact]
-    public void OneSecondStallThenBurst_WithTheClientStillSending_ShedsTheBacklogLatency()
+    public void LongStallThenBurst_WithTheClientStillSending_ShedsTheBacklogLatency()
     {
         Vector3 facing = FindOpenFacing(walkerIsPrimary: false);
         int sentFrames = WalkTicks + StallTicks;
@@ -84,7 +116,10 @@ public class BufferedInboxStallReplayTests(ITestOutputHelper output)
             $"steady sender after the burst: latest max correction {latestError:F3} m; buffered {bufferedReplayError:F3} m "
             + $"during the replay window, {bufferedError:F3} m after the shed; final ack lag {finalLag} ticks");
 
-        Assert.True(bufferedReplayError < ClientPredictionReconciler.DefaultDeadbandDistance, $"replay error {bufferedReplayError} m");
+        // Same residual as above: the replay holds the seat within one ramp deficit of its
+        // prediction, not on it, because the server resumes from rest (see ReplayRampDeficit).
+        Assert.True(bufferedReplayError <= ReplayRampDeficit, $"replay error {bufferedReplayError} m");
+        Assert.True(bufferedReplayError < latestError / 4f, $"replay {bufferedReplayError} m vs latest {latestError} m");
         Assert.InRange(finalLag, 0UL, 2UL);
     }
 

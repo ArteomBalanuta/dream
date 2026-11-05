@@ -181,6 +181,34 @@ public class PlayerMotorTests
         Assert.InRange(HorizontalSpeed(body), 0f, 0.001f);
     }
 
+    // Character-gaits fix loop 1 (M6). A zero-length tick ramps nothing, so it must leave the
+    // velocity alone; returning the target speed there bypassed the ramp outright and made the
+    // motor's output depend on whether one side happened to see a zero-dt tick, in the method
+    // whose contract is that a predicting client and the server stay bit-identical. Production
+    // only ever passes the fixed 1/64 s, so this is a guard, not a repair of observed drift.
+    [Fact]
+    public void RampGroundVelocity_WithAZeroLengthTick_LeavesTheVelocityAlone()
+    {
+        PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
+        TkVector3 cruising = new(1.5f, 0f, 0f);
+
+        Assert.Equal(
+            cruising,
+            PlayerMotor.RampGroundVelocity(cruising, TkVector3.UnitX, new MovementCommand(TkVector3.UnitX), tuning, 0f));
+        Assert.Equal(
+            cruising,
+            PlayerMotor.RampGroundVelocity(cruising, TkVector3.Zero, new MovementCommand(TkVector3.Zero), tuning, 0f));
+
+        // A normal tick still ramps: one tick of 18 m/s^2 is 0.28 m/s on top of the 1.5 m/s.
+        TkVector3 stepped = PlayerMotor.RampGroundVelocity(
+            cruising,
+            TkVector3.UnitX,
+            new MovementCommand(TkVector3.UnitX),
+            tuning,
+            TickSeconds);
+        Assert.Equal(1.5f + (tuning.GroundAcceleration * TickSeconds), stepped.X, 4);
+    }
+
     [Fact]
     public void ResetSeatState_AfterNoclipAndFreeze_RestoresNormalPhysicsForNextOccupant()
     {

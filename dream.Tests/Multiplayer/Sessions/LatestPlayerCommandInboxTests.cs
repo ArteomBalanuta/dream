@@ -91,9 +91,9 @@ public class LatestPlayerCommandInboxTests
         Assert.True(drained.MoveIntent.JumpPressed);
         Assert.True(drained.MoveIntent.FreezePressed);
         Assert.True(drained.MoveIntent.ToggleNoclipPressed);
-        // Sprint merges with || like the presses do: a sprint tick folded into a pending frame
-        // must not be dropped before the server has simulated it.
-        Assert.True(drained.MoveIntent.SprintHeld);
+        // Sprint is HELD state, not a press: the newer frame's value wins, as
+        // ClientOutboundCommandQueue.Merge does. The newer frame here has it released.
+        Assert.False(drained.MoveIntent.SprintHeld);
         Assert.Equal(0.60f, drained.LookIntent.YawDelta, 5);
         Assert.Equal(-0.05f, drained.LookIntent.PitchDelta, 5);
         Assert.True(drained.PrimaryUsePressed);

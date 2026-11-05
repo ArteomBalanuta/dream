@@ -269,11 +269,27 @@ public class Wave9StarvedTickAckTests
     private static Vector3 Position(WorldSessionRuntime runtime) =>
         Assert.Single(runtime.CaptureActorSnapshots(), actor => actor.SessionId == Session).Position;
 
-    // A facing whose 40-tick walk stays on the floor and is not blocked. It depends only on the
+    // A facing whose probe walk stays on the floor and is not blocked. It depends only on the
     // floor size, so it is probed once per size for the class (ARCH-1c).
     private static readonly ProbeCache<int, Vector3> OpenFacings = new(ProbeOpenFacing);
 
     private static Vector3 OpenFacing(WorldSessionRuntime template) => OpenFacings.Get(template.Map.Width);
+
+    // Ticks the probe walks, and the distance an unblocked walk must cover in them.
+    //
+    // Character-gaits wave: the motor ramps instead of snapping to the cruise speed, so the probe
+    // no longer covers its old burst distance and this helper threw "No open walk from the spawn."
+    // before the tests under it ran. Derivation at 64 Hz, GroundAcceleration 18 m/s^2, run cruise
+    // MoveSpeed 4.3 m/s:
+    //   ramp time       4.3 / 18          = 0.2389 s (15.3 ticks)
+    //   ramp distance   4.3^2 / (2 * 18)  = 0.5136 m
+    // The old 40 ticks (0.625 s) now cover 0.5136 + (0.625 - 0.2389) * 4.3 = 2.17 m, under the
+    // 2.5 m the probe asks for. 56 ticks (0.875 s) cover
+    // 0.5136 + (0.875 - 0.2389) * 4.3 = 3.25 m, the same comfortable margin over 2.5 m that the
+    // old instant motor had at 40 ticks (0.625 * 6 = 3.75 m). The probe only has to prove the
+    // facing is open and level; the tests themselves walk 32 ticks, a shorter distance than this.
+    private const int ProbeWalkTicks = 56;
+    private const float ProbeOpenDistance = 2.5f;
 
     private static Vector3 ProbeOpenFacing(int floorSize)
     {
@@ -284,7 +300,7 @@ public class Wave9StarvedTickAckTests
             host.JoinSession(Session, Session);
             probe.Enemies.Clear();
             Vector3 start = Position(probe);
-            for (ulong tick = 1; tick <= 40; tick++)
+            for (ulong tick = 1; tick <= (ulong)ProbeWalkTicks; tick++)
             {
                 host.AdvanceTick(
                     tick,
@@ -295,7 +311,7 @@ public class Wave9StarvedTickAckTests
             }
 
             Vector3 end = Position(probe);
-            if ((end - start).Xz.Length > 2.5f && MathF.Abs(end.Y - start.Y) < 0.1f)
+            if ((end - start).Xz.Length > ProbeOpenDistance && MathF.Abs(end.Y - start.Y) < 0.1f)
             {
                 return facing;
             }

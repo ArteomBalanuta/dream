@@ -22,6 +22,9 @@ public class Wave7StarvationReconciliationTests(ITestOutputHelper output)
     private const int WalkTicks = 2;
     private const int ResumeTicks = 2;
 
+    // 1.25 s: see StallPastTheSnapDistance_SnapsTheWalkerBack for the derivation.
+    private const int StallTicks = 80;
+
     private static readonly PlayerSimulationTuning Tuning = PlayerSimulationTuning.AuthoritativeDefault;
 
     [Fact]
@@ -42,14 +45,26 @@ public class Wave7StarvationReconciliationTests(ITestOutputHelper output)
         Assert.InRange(error, ClientPredictionReconciler.DefaultDeadbandDistance, 1f);
     }
 
-    // Documents the NETR-3 trade-off rather than a defect: a walking client whose commands stall for
-    // about a second is pulled back by everything it predicted after the 16 repeated ticks.
+    // Documents the NETR-3 trade-off rather than a defect: a walking client whose commands stall
+    // long enough is pulled back by everything it predicted after the 16 repeated ticks.
+    //
+    // Character-gaits wave: the snap threshold is a DISTANCE (DefaultSnapDistance 3 m), so a slower
+    // cruise takes longer to diverge past it and a one-second stall now smooths (measured 2.991 m)
+    // where it used to snap. The stall is lengthened rather than the threshold lowered -- what the
+    // test protects is "a long stall snaps", not "one second snaps". Derivation at 64 Hz:
+    //   the client cruises the whole stall at MoveSpeed 4.3 m/s = 0.0672 m/tick; the server walks
+    //   WalkTicks + MaxCommandRepeatTicks = 18 ticks (0.513 m of ramp + 0.182 m of cruise), brakes
+    //   0.385 m to rest, and then stands still for the rest of the stall. Every stall tick past the
+    //   braking window therefore adds a cruise tick to the gap:
+    //     64 ticks  ->  ~2.99 m (measured), just under the 3 m snap
+    //     80 ticks  ->  2.99 + 16 * 0.0672 = ~4.06 m, clear of it
+    // The old instant motor reached 3 m sooner only because it cruised at 6 m/s from tick one.
     [Fact]
-    public void OneSecondStall_SnapsTheWalkerBack()
+    public void StallPastTheSnapDistance_SnapsTheWalkerBack()
     {
-        ClientReconciliationResult result = RunStall(SimulationClock.AuthoritativeTicksPerSecond, out float error);
+        ClientReconciliationResult result = RunStall(StallTicks, out float error);
 
-        output.WriteLine($"one-second stall: {result.Kind}, error {error:F2} m");
+        output.WriteLine($"{StallTicks}-tick stall: {result.Kind}, error {error:F2} m");
         Assert.True(error >= ClientPredictionReconciler.DefaultSnapDistance, $"error {error} m");
         Assert.Equal(ClientReconciliationKind.Snap, result.Kind);
     }
