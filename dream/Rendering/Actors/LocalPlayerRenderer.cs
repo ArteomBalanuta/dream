@@ -29,8 +29,11 @@ public sealed class LocalPlayerRenderer : IDisposable
     private readonly PlayerAnimationStateMachine _machine = new();
     private readonly PlayerPoseLayers _layers = new();
     private readonly HeldWeaponRenderer _heldWeapons = new();
+    private readonly WornArmourRenderer _wornArmour = new();
     private LocalPlayerFrameInputs _inputs = new(default, true, 0f, false, 0, 0);
     private AnimatedModelInstanceHandle? _model;
+    private Matrix4 _lastModelMatrix = Matrix4.Identity;
+    private bool _hasDrawn;
     private bool _disposed;
 
     public LocalPlayerRenderer(Render render)
@@ -94,6 +97,8 @@ public sealed class LocalPlayerRenderer : IDisposable
             WeaponMeshCatalog.IsRanged(equipment.MainHand),
             PlayerAnimationStateMachine.LegTwist(
                 localPlayer.Facing.X, localPlayer.Facing.Z, _inputs.TravelDirection.X, _inputs.TravelDirection.Z));
+        _lastModelMatrix = renderState.ModelMatrix;
+        _hasDrawn = true;
         PlayerAnimationFrame frame = _machine.Update(in animationInputs, deltaTime);
         LastAnimationFrame = frame;
         LastRawLegTwistRadians = animationInputs.LegTwistRadians;
@@ -114,6 +119,7 @@ public sealed class LocalPlayerRenderer : IDisposable
             model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
             model.EndRender();
             _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
+            _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
             shader.Use();
             shader.SetVector3("uActorTintOffset", Vector3.Zero);
             GL.DepthMask(true);
@@ -131,11 +137,31 @@ public sealed class LocalPlayerRenderer : IDisposable
         model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
         model.EndRender();
         _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
+        _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
         if (flashing)
         {
             shader.Use();
             shader.SetVector3("uActorTintOffset", Vector3.Zero);
         }
+    }
+
+    // The corners of every worn and held box the last Draw put on screen, in world space, appended to
+    // corners; modelMatrix is the model matrix those boxes were drawn under (returned so the caller can
+    // tell how far the figure has moved since). False when nothing has been drawn yet. The capture's
+    // actorbox unions these with the authored bounds: armour is separate geometry and stands outside
+    // them. Computed on demand from the retained pose, so a frame that logs no box pays nothing.
+    public bool TryAppendDrawnEquipmentCorners(List<Vector3> corners, out Matrix4 modelMatrix)
+    {
+        modelMatrix = _lastModelMatrix;
+        if (_disposed || !_hasDrawn || _model is null || !_model.TryGet(out _, out AnimatedModelInstance? instance))
+        {
+            return false;
+        }
+
+        PlayerEquipmentVisuals equipment = _inputs.Equipment;
+        HeldWeaponRenderer.AppendCorners(instance, _layers, in equipment, _lastModelMatrix, corners);
+        WornArmourRenderer.AppendCorners(instance, _layers, in equipment, _lastModelMatrix, corners);
+        return true;
     }
 
     // The player's instance handle is a per-instance request, so this renderer owns it: disposing
@@ -147,6 +173,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         AnimatedModelInstanceHandle? model = _model;
         _model = null;
         _heldWeapons.Dispose();
+        _wornArmour.Dispose();
         model?.Dispose();
     }
 }

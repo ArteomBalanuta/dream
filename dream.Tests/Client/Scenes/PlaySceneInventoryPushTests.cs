@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Scenes;
 using Dream.Multiplayer.Protocol;
+using Dream.Rendering.Actors;
 using Dream.Rendering.Hud;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
@@ -79,5 +80,21 @@ public sealed class PlaySceneInventoryPushTests
 
         Assert.Equal("Looted: 100% {0} Cap (Rare)", feed.GetLine(0));
         Assert.Equal("100% Cap", push.Inventory!.Value.EquippedSlot!.Value.Item!.Value.DisplayName);
+    }
+
+    [Fact]
+    public void AHostilePush_WithHostileWornVisualIds_DoesNotThrow_AndDressesNothing()
+    {
+        string[] hostile = ["worn.head." + new string('x', 500), "WORN.BODY.X", "worn.hands.a|b", "\u0000", "held.weapon.sword", "worn.back.cloak\n"];
+        InventorySlotSnapshot[] equipment = hostile
+            .Select((visual, i) => new InventorySlotSnapshot(102 + i, Hostile(null) with { VisualId = visual }, IsEquipped: true))
+            .ToArray();
+        PlayerInventorySnapshot inventory = new("p", 4, 4, [], null, equipment);
+
+        PlayerEquipmentVisuals visuals = default;
+        Exception? thrown = Record.Exception(() => visuals = PlayScene.ReadEquipment(inventory, new EquipmentLoadout()).Visuals);
+
+        Assert.Null(thrown);
+        Assert.False(visuals.HasWorn);
     }
 }

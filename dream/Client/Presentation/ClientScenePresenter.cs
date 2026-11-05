@@ -304,8 +304,7 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 entry.IsMoving,
                 entry.HeldLight,
                 entry.Level,
-                entry.MainHandVisual,
-                entry.OffHandVisual,
+                entry.Equipment,
                 entry.AttackSerial,
                 entry.HitSerial,
                 entry.Airborne,
@@ -364,16 +363,16 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             sampledRemoteCount);
     }
 
-    // The held items from the player VisualKey, how fast and how vertically it moved since the
-    // previous snapshot, and whether it swung at a struck enemy. The held visuals stay as they were
+    // The held and worn items from the player VisualKey, how fast and how vertically it moved since the
+    // previous snapshot, and whether it swung at a struck enemy. The equipment stays as it was
     // when a delta leaves the key out.
     private void ApplyEquipmentAndMotion(RemotePlayerEntry entry, ActorSnapshot actor, ulong serverTick)
     {
         if (actor.VisualKey is not null)
         {
-            PlayerEquipmentVisuals visuals = PlayerEquipmentVisuals.Parse(actor.VisualKey);
-            entry.MainHandVisual = visuals.MainHand;
-            entry.OffHandVisual = visuals.OffHand;
+            // Parse already drops every field that is malformed or in the wrong slot, so this is the
+            // normalized value the renderer draws.
+            entry.Equipment = PlayerEquipmentVisuals.Parse(actor.VisualKey);
         }
 
         if (entry.LastSnapshotPosition.HasValue && serverTick > entry.LastSnapshotTick)
@@ -630,9 +629,8 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
         // False until the first snapshot of this entry has been applied.
         public bool Seen { get; set; }
 
-        public string? MainHandVisual { get; set; }
-
-        public string? OffHandVisual { get; set; }
+        // Held and worn visuals, parsed once per snapshot that carries the key.
+        public PlayerEquipmentVisuals Equipment { get; set; }
 
         // Event counters for the animation: a new value is a new swing or a new hit taken.
         public int AttackSerial { get; set; }

@@ -38,6 +38,7 @@ public sealed class RemotePlayerRenderer : IDisposable
     private readonly Dictionary<int, RemoteAnimationState> _animations = [];
     private readonly List<int> _staleAnimationIds = [];
     private readonly HeldWeaponRenderer _heldWeapons = new();
+    private readonly WornArmourRenderer _wornArmour = new();
 
     // A player that died stays drawn this long, so its death animation plays out.
     public const float DeathLingerSeconds = 3f;
@@ -85,9 +86,8 @@ public sealed class RemotePlayerRenderer : IDisposable
                 _animations[remotePlayer.ActorId] = animation;
             }
 
-            PlayerEquipmentVisuals equipment = new(
-                PlayerEquipmentVisuals.Normalize(remotePlayer.MainHandVisual),
-                PlayerEquipmentVisuals.Normalize(remotePlayer.OffHandVisual));
+            // Parsed once by the presenter (Contract 3): the held ids and the seven worn ids together.
+            PlayerEquipmentVisuals equipment = remotePlayer.Equipment;
             PlayerAnimationInputs inputs = new(
                 remotePlayer.IsAlive,
                 ResolveSpeed(remotePlayer),
@@ -116,6 +116,7 @@ public sealed class RemotePlayerRenderer : IDisposable
             model.RenderPrepared(shader, instance, renderState.ModelMatrix, animation.Layers.Overrides);
             model.EndRender();
             _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
+            _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
             if (flashing)
             {
                 shader.Use();
@@ -463,6 +464,7 @@ public sealed class RemotePlayerRenderer : IDisposable
         _playerModels.Clear();
         _animations.Clear();
         _heldWeapons.Dispose();
+        _wornArmour.Dispose();
         try
         {
             _clipTracker.RemoveExcept(_activeActorIds);

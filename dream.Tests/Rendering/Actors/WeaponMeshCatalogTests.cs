@@ -9,13 +9,15 @@ public class WeaponMeshCatalogTests
     public static readonly string[] Weapons =
     [
         "held.weapon.dagger", "held.weapon.sword", "held.weapon.greatsword", "held.weapon.axe",
-        "held.weapon.mace", "held.weapon.hammer", "held.weapon.spear", "held.weapon.bow", "held.weapon.staff"
+        "held.weapon.mace", "held.weapon.hammer", "held.weapon.spear", "held.weapon.bow", "held.weapon.staff",
+        "held.weapon.short-sword", "held.weapon.iron-blade", "held.weapon.hand-axe", "held.weapon.short-bow",
+        "held.weapon.bone-staff"
     ];
 
     public static readonly string[] Shields = ["held.shield.buckler", "held.shield.kite", "held.shield.tower"];
 
     public static readonly string[] Tools =
-        ["held.tool.builder", "held.tool.blade", "held.tool.maul", "held.tool.lantern", "held.tool.torch"];
+        ["held.tool.builder", "held.tool.blade", "held.tool.maul", "held.tool.lantern", "held.tool.torch", "held.gear.ward-lantern"];
 
     public static IEnumerable<object[]> EveryKnownId() =>
         Weapons.Concat(Shields).Concat(Tools).Select(id => new object[] { id });
@@ -45,7 +47,7 @@ public class WeaponMeshCatalogTests
     }
 
     [Fact]
-    public void ShieldsAreStrappedToTheArm_AndOnlyTheBowIsRanged()
+    public void ShieldsAreStrappedToTheArm_AndOnlyTheBowsAreRanged()
     {
         foreach (string id in Shields)
         {
@@ -56,7 +58,7 @@ public class WeaponMeshCatalogTests
         foreach (string id in Weapons.Concat(Tools))
         {
             Assert.False(WeaponMeshCatalog.IsShield(id));
-            Assert.Equal(id == "held.weapon.bow", WeaponMeshCatalog.IsRanged(id));
+            Assert.Equal(id is "held.weapon.bow" or "held.weapon.short-bow", WeaponMeshCatalog.IsRanged(id));
         }
     }
 
@@ -67,6 +69,10 @@ public class WeaponMeshCatalogTests
             - WeaponMeshCatalog.Resolve(id).Parts.Min(p => p.Center.Y - (p.Size.Y / 2f));
 
         Assert.True(Length("held.weapon.dagger") < Length("held.weapon.sword"));
+        Assert.True(Length("held.weapon.dagger") < Length("held.weapon.short-sword"));
+        Assert.True(Length("held.weapon.short-sword") < Length("held.weapon.sword"));
+        Assert.True(Length("held.weapon.hand-axe") < Length("held.weapon.axe"));
+        Assert.True(Length("held.weapon.short-bow") < Length("held.weapon.bow"));
         Assert.True(Length("held.weapon.sword") < Length("held.weapon.greatsword"));
         Assert.True(Length("held.weapon.sword") < Length("held.weapon.spear"));
         Assert.True(Length("held.weapon.axe") < Length("held.weapon.staff"));
@@ -97,6 +103,52 @@ public class WeaponMeshCatalogTests
                 Assert.True((color.X + color.Y + color.Z) / 3f < 0.7f, $"{material} is too bright for the dark palette");
             }
         }
+    }
+
+    [Fact]
+    public void Palette_IsAlbedoNotPixelColour_AndTheMaterialsStayApartByValue()
+    {
+        // Albedo, not final pixel colour: the shader multiplies by a gain of up to ~2.2 with no tonemap, so a lit
+        // channel above ~0.45 clips to a flat patch (the starter torch was a yellow head, the axe a cyan blade).
+        Assert.Equal(new Vector4(0.33f, 0.34f, 0.365f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Steel));
+        Assert.Equal(new Vector4(0.11f, 0.11f, 0.125f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.DarkIron));
+        Assert.Equal(new Vector4(0.20f, 0.125f, 0.07f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Wood));
+        Assert.Equal(new Vector4(0.13f, 0.08f, 0.06f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Leather));
+        Assert.Equal(new Vector4(0.24f, 0.10f, 0.04f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Ember));
+        Assert.Equal(new Vector4(0.10f, 0.06f, 0.17f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Arcane));
+        Assert.Equal(new Vector4(0.40f, 0.36f, 0.29f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Bone));
+
+        foreach (WeaponMaterial material in Enum.GetValues<WeaponMaterial>())
+        {
+            Vector4 c = WeaponMeshCatalog.BaseColor(material);
+            Assert.True(MathF.Max(c.X, MathF.Max(c.Y, c.Z)) <= 0.44f, $"{material} albedo {c} would clip under the actor gain");
+        }
+
+        // Steel is a desaturated blue-grey, never a cyan: no channel more than ~12% off the mean.
+        Vector4 steel = WeaponMeshCatalog.BaseColor(WeaponMaterial.Steel);
+        float mean = (steel.X + steel.Y + steel.Z) / 3f;
+        Assert.True(MathF.Max(steel.X, MathF.Max(steel.Y, steel.Z)) / mean < 1.12f);
+
+        // Distinguished by value: blackened iron < leather < worn wood < steel.
+        static float Value(WeaponMaterial m) => WeaponMeshCatalog.BaseColor(m).X;
+        Assert.True(Value(WeaponMaterial.DarkIron) <= Value(WeaponMaterial.Leather));
+        Assert.True(Value(WeaponMaterial.Leather) < Value(WeaponMaterial.Wood));
+        Assert.True(Value(WeaponMaterial.Wood) < Value(WeaponMaterial.Steel));
+    }
+
+    [Fact]
+    public void TorchFlameGlows_AndItsBodyIsDark()
+    {
+        WeaponModel torch = WeaponMeshCatalog.Resolve("held.tool.torch");
+        Assert.Contains(torch.Parts, p => p.Material == WeaponMaterial.Ember);
+        foreach (WeaponPart part in torch.Parts.Where(p => p.Material != WeaponMaterial.Ember))
+        {
+            Assert.Equal(Vector3.Zero, WeaponMeshCatalog.Emissive(part.Material));
+        }
+
+        // The glow rides on a dark body (light on a dark piece); the flame's own albedo is not what lights it.
+        Assert.True(WeaponMeshCatalog.BaseColor(WeaponMaterial.Ember).X < 0.4f);
+        Assert.True(WeaponMeshCatalog.Emissive(WeaponMaterial.Ember).X > 0.8f);
     }
 
     [Fact]

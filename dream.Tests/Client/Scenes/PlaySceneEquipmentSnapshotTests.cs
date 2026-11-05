@@ -3,6 +3,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Scenes;
 using Dream.Multiplayer.Protocol;
+using Dream.Rendering.Actors;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Content;
@@ -221,7 +222,7 @@ public sealed class PlaySceneEquipmentSnapshotTests
     {
         TransportJsonCodec codec = new();
         InventoryItemSnapshot item = new(
-            1, "gear.iron-blade", "Iron Blade", "held.weapon.sword", 1, "d", [],
+            1, "gear.iron-blade", "Iron Blade", "held.weapon.iron-blade", 1, "d", [],
             Modifiers: [new StatModifier(StatId.Strength, StatOp.Flat, 4f), new StatModifier(StatId.Armor, StatOp.Flat, 4f)],
             EquipSlots: 1, Rarity: ItemRarity.Rare, IsRolled: true);
         ServerActionMessage message = new(new AuthoritativeActionResult(
@@ -309,4 +310,116 @@ public sealed class PlaySceneEquipmentSnapshotTests
 
     private static InventoryItemSnapshot Item(string kind, string visual, HeldLightKind light, params StatModifier[] modifiers) =>
         new(1, kind, kind, visual, 1, "d", [], modifiers.Length == 0 ? null : modifiers, light);
+
+    private static PlayerInventorySnapshot InventoryWithEquipment(params (int Slot, string Visual)[] worn) =>
+        new("p", 4, 4, [], null, worn
+            .Select(entry => new InventorySlotSnapshot(entry.Slot, Item("piece" + entry.Slot, entry.Visual, HeldLightKind.None), IsEquipped: true))
+            .ToArray());
+
+    [Fact]
+    public void WornSlots_CarryTheirVisualIds_FromTheSnapshot_NotAVisualKey()
+    {
+        PlayerInventorySnapshot inventory = new(
+            "p", 4, 4, [],
+            new InventorySlotSnapshot(100, Item("blade", "held.weapon.sword", HeldLightKind.None)),
+            [
+                new InventorySlotSnapshot(101, Item("kite", "held.shield.kite", HeldLightKind.None)),
+                new InventorySlotSnapshot(102, Item("cap", "worn.head.leather-cap", HeldLightKind.None)),
+                new InventorySlotSnapshot(103, Item("vest", "worn.body.leather-vest", HeldLightKind.None)),
+                new InventorySlotSnapshot(104, Item("gloves", "worn.hands.leather-gloves", HeldLightKind.None)),
+                new InventorySlotSnapshot(105, Item("boots", "worn.feet.leather-boots", HeldLightKind.None)),
+                new InventorySlotSnapshot(106, Item("legs", "worn.legs.leather-leggings", HeldLightKind.None)),
+                new InventorySlotSnapshot(107, Item("pendant", "worn.neck.ward-pendant", HeldLightKind.None)),
+                new InventorySlotSnapshot(108, Item("ring", "worn.ring.iron-band", HeldLightKind.None)),
+                new InventorySlotSnapshot(110, Item("cloak", "worn.back.travel-cloak", HeldLightKind.None)),
+                new InventorySlotSnapshot(111, Item("wisp", "worn.companion.ember-wisp", HeldLightKind.None))
+            ]);
+
+        PlayerEquipmentVisuals visuals = PlayScene.ReadEquipment(inventory, new EquipmentLoadout()).Visuals;
+
+        Assert.Equal(
+            new PlayerEquipmentVisuals(
+                "held.weapon.sword", "held.shield.kite", "worn.head.leather-cap", "worn.body.leather-vest",
+                "worn.hands.leather-gloves", "worn.feet.leather-boots", "worn.legs.leather-leggings",
+                "worn.back.travel-cloak", "worn.companion.ember-wisp"),
+            visuals);
+    }
+
+    [Fact]
+    public void WornVisual_InTheWrongSlot_OrMalformed_IsDropped_AndTheRestSurvive()
+    {
+        PlayerInventorySnapshot inventory = InventoryWithEquipment(
+            (102, "worn.feet.leather-boots"),
+            (103, "worn.body.LEATHER"),
+            (104, new string('a', 200)),
+            (106, "worn.legs.leather-leggings"),
+            (110, ""));
+
+        PlayerEquipmentVisuals visuals = PlayScene.ReadEquipment(inventory, new EquipmentLoadout()).Visuals;
+
+        Assert.Null(visuals.Head);
+        Assert.Null(visuals.Body);
+        Assert.Null(visuals.Hands);
+        Assert.Equal("worn.legs.leather-leggings", visuals.Legs);
+        Assert.Null(visuals.Back);
+    }
+
+    [Fact]
+    public void NoSnapshot_AndAnEmptySnapshot_WearNothing()
+    {
+        Assert.False(PlayScene.ReadEquipment(null, new EquipmentLoadout()).Visuals.HasWorn);
+        Assert.False(PlayScene.ReadEquipment(PlayerInventorySnapshot.Empty("p"), new EquipmentLoadout()).Visuals.HasWorn);
+    }
+
+    [Fact]
+    public void LoopbackGalleryKey_IsWellFormed_AndCoversEveryKnownWornId_OverAFullCycle()
+    {
+        string[] known = ArmourMeshCatalog.KnownVisualIds.ToArray();
+        Assert.NotEmpty(known);
+        HashSet<string> seen = [];
+        int cycleSteps = known.Length + 8;
+        for (int step = 0; step < cycleSteps; step++)
+        {
+            for (int figure = 0; figure < 3; figure++)
+            {
+                string? key = PlayScene.LoopbackGalleryVisualKey((step * 3f) + 0.5f, figure);
+                Assert.NotNull(key);
+                Assert.True(key!.Length <= PlayerEquipmentVisuals.MaxKeyLength);
+                Assert.True(key.Count(c => c == PlayerEquipmentVisuals.Separator) <= PlayerEquipmentVisuals.FieldCount - 1);
+
+                // Parse drops any field that is malformed or in the wrong slot, so a round trip proves every field is valid.
+                PlayerEquipmentVisuals parsed = PlayerEquipmentVisuals.Parse(key);
+                Assert.Equal(key, PlayerEquipmentVisuals.Format(in parsed));
+                Assert.True(parsed.HasHeld);
+                Assert.True(parsed.HasWorn);
+                foreach (EquipmentSlot slot in PlayerEquipmentVisuals.KeyFields)
+                {
+                    if (parsed.Get(slot) is string id && id.StartsWith("worn.", StringComparison.Ordinal))
+                    {
+                        Assert.True(ArmourMeshCatalog.IsKnown(id), id);
+                        seen.Add(id);
+                    }
+                }
+            }
+        }
+
+        Assert.Empty(known.Except(seen));
+    }
+
+    [Fact]
+    public void LoopbackGalleryKey_AdvancesEvery3Seconds_AndFiguresDiffer()
+    {
+        Assert.Equal(
+            PlayScene.LoopbackGalleryVisualKey(0.1f, 0),
+            PlayScene.LoopbackGalleryVisualKey(2.9f, 0));
+        Assert.NotEqual(
+            PlayScene.LoopbackGalleryVisualKey(0.1f, 0),
+            PlayScene.LoopbackGalleryVisualKey(3.1f, 0));
+        Assert.NotEqual(
+            PlayScene.LoopbackGalleryVisualKey(0.1f, 0),
+            PlayScene.LoopbackGalleryVisualKey(0.1f, 1));
+        Assert.NotEqual(
+            PlayScene.LoopbackGalleryVisualKey(0.1f, 1),
+            PlayScene.LoopbackGalleryVisualKey(0.1f, 2));
+    }
 }

@@ -61,8 +61,20 @@ public readonly record struct TransportEnvelope(
     // Version 20 adds the "inventory.drop" action (InventoryDropIntent): a bag item dragged out of the
     // inventory window becomes a ground item at the dropper's own position. No message kind and no
     // payload changes; a v19 peer would fail on the unknown action, so both sides refuse it.
+    // Version 21 (worn equipment visuals) widens the player VisualKey from "main|off" to nine
+    // positional fields "main|off|head|body|hands|feet|legs|back|companion", with trailing empty
+    // fields trimmed (a player wearing nothing still sends exactly "main|off") and Neck and the two
+    // ring slots deliberately absent - at the shipped isometric zoom the whole figure is 28x101
+    // pixels and a ring is under 2; a v20 peer reads a worn key's extra separators as a malformed
+    // key and draws an armoured player bare-handed, so both sides refuse it. Every other payload is
+    // unchanged apart from the version digit.
+    //   20 and 21 were developed in parallel and BOTH waves originally bumped 19 -> 20; the worn
+    //   wave moved to 21 before either merged. Mismatched peers refuse each other by digit alone, so
+    //   two meanings for one digit is a disagreement neither side could ever detect - which is what
+    //   this comment exists to prevent. Before claiming a version, check the unmerged branches:
+    //   git show <branch>:dream/Multiplayer/Protocol/TransportEnvelope.cs | grep CurrentProtocolVersion
     // Decode rejects any other version.
-    public const int CurrentProtocolVersion = 20;
+    public const int CurrentProtocolVersion = 21;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

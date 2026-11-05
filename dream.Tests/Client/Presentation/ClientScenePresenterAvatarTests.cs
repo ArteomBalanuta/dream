@@ -76,12 +76,12 @@ public class ClientScenePresenterAvatarTests
 
         presenter.ApplySnapshot(Snapshot(10, RemoteActor(visualKey: "held.weapon.sword|held.shield.kite")));
         RemotePlayerPresentationState state = Remote0(presenter, 10);
-        Assert.Equal("held.weapon.sword", state.MainHandVisual);
-        Assert.Equal("held.shield.kite", state.OffHandVisual);
+        Assert.Equal("held.weapon.sword", state.Equipment.MainHand);
+        Assert.Equal("held.shield.kite", state.Equipment.OffHand);
 
         presenter.ApplySnapshot(Snapshot(12, RemoteActor(visualKey: null)));
         state = Remote0(presenter, 12);
-        Assert.Equal("held.weapon.sword", state.MainHandVisual);
+        Assert.Equal("held.weapon.sword", state.Equipment.MainHand);
     }
 
     [Fact]
@@ -93,8 +93,8 @@ public class ClientScenePresenterAvatarTests
 
         RemotePlayerPresentationState state = Remote0(presenter, 12);
 
-        Assert.Null(state.MainHandVisual);
-        Assert.Equal("held.shield.tower", state.OffHandVisual);
+        Assert.Null(state.Equipment.MainHand);
+        Assert.Equal("held.shield.tower", state.Equipment.OffHand);
     }
 
     [Theory]
@@ -108,8 +108,8 @@ public class ClientScenePresenterAvatarTests
         presenter.ApplySnapshot(Snapshot(10, RemoteActor(visualKey: key)));
 
         RemotePlayerPresentationState state = Remote0(presenter, 10);
-        Assert.Null(state.MainHandVisual);
-        Assert.Null(state.OffHandVisual);
+        Assert.Null(state.Equipment.MainHand);
+        Assert.Null(state.Equipment.OffHand);
     }
 
     [Fact]

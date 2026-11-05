@@ -167,7 +167,8 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
   chunks. It takes both paths - a skin with `JOINTS_0`/`WEIGHTS_0` and `inverseBindMatrices`, or
   rigid node-hierarchy animation with one mesh per node and no skin. Rotation samplers are
   quaternions, bufferViews are 4-byte aligned and `POSITION` carries min/max.
-- `gen_char_player.py` is the shipped player: a hooded, cloaked, plated figure in 38 primitives over
+- `gen_char_player.py` is the shipped player: an unarmoured traveller (cloth tunic, breeches, boots, bare head and hands, one dull red tail)
+  in 15 primitives over
   7 nodes and two materials (the baked albedo atlas plus one untextured emissive accent), with nine
   clips - `idle`, `walk`, `sprint`, `die`, `attack-melee-right`, `holding-right-shoot` and the
   directional `walk-back`, `walk-strafe-left`, `walk-strafe-right` of contract C2 - as node
@@ -180,7 +181,7 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
 - `gen_char_preview.py` renders the same geometry through `isoforge` with a darker `GRIM_RIG` as a
   four-view turntable sheet. That sheet is a review aid for judging form and material by eye; the
   shipped asset is the `.glb`, which looks different because the engine lights it.
-- Both generators are byte-deterministic (`player_grim.glb` is 425076 bytes; `charforge.py` prints
+- Both generators are byte-deterministic (`player_grim.glb` is 258436 bytes; `charforge.py` prints
   the bake sha1 and reruns the bake to prove it). The shipped copy is
   `dream/animations/players/player-grim.glb` - original art, which replaced a third-party CC0 model.
   `tests/check_char.py` gates it: determinism, **the shipped GLB's bytes being exactly what the
@@ -188,8 +189,10 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
   asks for (all nine), no clip sinking through the floor, the fall ending lying down (span_y under
   the tighter of 1.15 units and 45% of its own standing height, with an early die keyframe as the
   negative control), zero cylinder triangles straddling a UV seam, the albedo lift applied exactly
-  once, **M3's bimodal-lambert floor of 0.50 shaded through `enginelook.py`** (with the loft-only
-  figure as the control), **the emissive accent being a second, untextured material under its factor
+  once, **M3's bimodal-lambert spread shaded through `enginelook.py`**: a legibility floor of 0.21 on the
+  base figure (measured 0.2376, with a single-albedo flat figure as the live failure) and the spec's 0.50
+  on the figure plus a reference worn set read from `ArmourMeshCatalog.cs`, plus the worn-model envelope
+  table (each mount's extents, +-0.015), **the emissive accent being a second, untextured material under its factor
   ceiling**, and the saturated-texel budget. The specs and their gate tables are in
   `docs/superpowers/specs/2026-11-02-grim-actor-forge/` and
   `docs/superpowers/specs/2026-11-04-models-and-rigs/`.

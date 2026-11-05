@@ -25,7 +25,7 @@ public sealed class ClientJoinRequestCodecTests
         string json = Encode(new ClientJoinRequestMessage("session-a", "Bob"));
 
         Assert.Equal(
-            "{\"protocolVersion\":20,\"messageKind\":\"client.join-request\",\"sequence\":1,\"payload\":{\"requestedSessionId\":\"session-a\",\"displayName\":\"Bob\"}}",
+            "{\"protocolVersion\":21,\"messageKind\":\"client.join-request\",\"sequence\":1,\"payload\":{\"requestedSessionId\":\"session-a\",\"displayName\":\"Bob\"}}",
             json);
         Assert.DoesNotContain("accountToken", json, StringComparison.Ordinal);
         Assert.DoesNotContain("resolvedAccount", json, StringComparison.OrdinalIgnoreCase);
@@ -50,7 +50,7 @@ public sealed class ClientJoinRequestCodecTests
     [Fact]
     public void JoinRequest_AResolvedAccountFromTheWire_IsIgnored()
     {
-        string json = "{\"protocolVersion\":20,\"messageKind\":\"client.join-request\",\"sequence\":1,\"payload\":" +
+        string json = "{\"protocolVersion\":21,\"messageKind\":\"client.join-request\",\"sequence\":1,\"payload\":" +
             "{\"requestedSessionId\":\"s\",\"displayName\":\"Bob\",\"resolvedAccount\":{\"hashHex\":\"" + new string('a', 64) + "\"}}}";
 
         ClientJoinRequestMessage decoded = Decode(json);
