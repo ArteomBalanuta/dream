@@ -74,10 +74,29 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // instead of 0, so the actor record text carries 10,10; the run itself is unchanged. Previous values:
     // 0x6A91D3B7679F05EA, 0xD8D71AAABAD4E890, 0x15B1892906AE5247, 0xB059BEBAC4DB7E91, 0x42F4E81D5A5D3325,
     // 0x8A59A8D602033E65, 0xBDE658AA2C0D89EF, 0xA048351F730747CC, 0x46384E948B877B11, 0xCC7D87F23B421C08.
+    // Re-pinned by the character-gaits wave (fix loop 1), and this one moved the run itself, not
+    // just the record text. The movement contract changed: the player's single flat 6 m/s became
+    // three tiers (walk 1.6, run cruise 4.3, sprint 6.0) and PlayerMotor ramps into them at
+    // DefaultGroundAcceleration 18 m/s^2 / DefaultGroundDeceleration 24 m/s^2 instead of assigning
+    // the commanded velocity outright, and the enemies were re-based with it (this script's wolf
+    // patrols at 1.4 and chases at 5.0). So every walking tick of the script puts the seats
+    // somewhere new: over the 20 walk ticks the ramp covers
+    // 0.5 x 18 x (20 / 64)^2 = 0.88 m where the old motor covered 20 / 64 x 6 = 1.88 m, and the
+    // positions hashed into checkpoint 1 differ from the first walking tick on. ALL ten checkpoints
+    // moved, which is the expected shape of this change (a quietly broken golden would move a
+    // trailing subset or leave the run's shape different).
+    //
+    // What the script still does, unchanged, is what makes the new values trustworthy: the build
+    // is accepted, the wolf hits players 3 times, players hit enemies 8 times, 2 wolves die,
+    // 2 mutations export, 20 queued same-tick actions are processed and the wolf chases for 87
+    // ticks -- the asserts below, all of which still pass against the regenerated hashes.
+    // The previous values were 0x47C9098CA55E6A2A, 0x75C725B66AC87974, 0xC5C7582BCA65AB27,
+    // 0xFA8959A59E2744C9, 0xB1D85FAD2772C596, 0xD2EF1B9E1AE71866, 0xBF218B5A237681DA,
+    // 0x589E0C5D08B17BC1, 0xA1F2C1A7DCC7D338, 0xC3A8C27C48C84BA2.
     private static readonly ulong[] GoldenCheckpoints =
     [
-        0x47C9098CA55E6A2AUL, 0x75C725B66AC87974UL, 0xC5C7582BCA65AB27UL, 0xFA8959A59E2744C9UL, 0xB1D85FAD2772C596UL,
-        0xD2EF1B9E1AE71866UL, 0xBF218B5A237681DAUL, 0x589E0C5D08B17BC1UL, 0xA1F2C1A7DCC7D338UL, 0xC3A8C27C48C84BA2UL
+        0x1A1BAA6E45BBACD3UL, 0x040DC65A79CDD59FUL, 0xBC1CC1AC529E604AUL, 0xF1E4FE4528377000UL, 0xB709A19E46CCC057UL,
+        0x015F2B430951B84BUL, 0xEAF32C18E2FF7370UL, 0x6013610680906590UL, 0x7EC02EE1E4B36B83UL, 0x18F2DDA4A60C2E40UL
     ];
 
     [Fact]

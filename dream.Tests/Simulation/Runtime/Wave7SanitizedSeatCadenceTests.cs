@@ -73,9 +73,22 @@ public class Wave7SanitizedSeatCadenceTests
         Assert.True(clean.Z > 5.5f, $"the seat should have walked forward: {clean}");
     }
 
-    // The secondary holds use, starves for 20 ticks (past MaxCommandRepeatTicks), then resumes still
-    // holding use. Decaying to idle released the button, so the first fresh command uses at once,
-    // and walking resumes on that same tick (the repeat counter restarted).
+    // The secondary holds use, starves past MaxCommandRepeatTicks, then resumes still holding use.
+    // Decaying to idle released the button, so the first fresh command uses at once, and walking
+    // resumes on that same tick (the repeat counter restarted).
+    //
+    // Character-gaits wave: PlayerMotor ramps, so a seat whose command decays to idle brakes rather
+    // than halting on the next tick, and "standing still at the end of the starvation" was no
+    // longer true 20 ticks in (it measured 0.0526 m of coast). The starve is lengthened to 32 ticks
+    // so the premise holds again, rather than relaxing what it asserts. Derivation at 64 Hz,
+    // MoveSpeed 4.3 m/s, DefaultGroundAcceleration 18 m/s^2, DefaultGroundDeceleration 24 m/s^2:
+    //   the repeated command is the same walk, so the seat is at cruise after 4.3 / 18 = 15.3
+    //   ticks and still at cruise when the repeats run out at tick firstTicks + 16;
+    //   braking then takes 4.3 / 24 = 0.1792 s = 11.5 ticks -> at rest within 12 ticks.
+    // So the starve needs at least 16 + 12 = 28 ticks for the seat to be at rest before it resumes;
+    // 32 leaves a margin. The resumed walk is measured 8 ticks out instead of 4, because a ramping
+    // body covers 0.5 * 18 * (8/64)^2 = 0.141 m in 8 ticks against 0.05 m asked for, where 4 ticks
+    // would have been 0.035 m and the old instant motor's 4 ticks were 0.375 m.
     [Theory]
     [InlineData(SecondarySession, PrimarySession)]
     [InlineData(PrimarySession, SecondarySession)]
@@ -84,7 +97,7 @@ public class Wave7SanitizedSeatCadenceTests
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         host.Runtime.Enemies.Clear();
         const int firstTicks = 4;
-        const int starvedTicks = 20;
+        const int starvedTicks = 32;
         int resumeTick = firstTicks + starvedTicks + 1;
         List<int> useTicks = [];
         Dictionary<int, Vector3> positions = [];
@@ -117,9 +130,11 @@ public class Wave7SanitizedSeatCadenceTests
         Assert.Contains(resumeTick, useTicks);
         Assert.DoesNotContain(useTicks, tick => tick > firstTicks + WorldSessionRuntime.MaxCommandRepeatTicks && tick < resumeTick);
 
-        // Standing still at the end of the starvation, walking again from the resume tick on.
-        Assert.True(HorizontalDistance(positions[resumeTick - 3], positions[resumeTick - 1]) < 1e-3f);
-        Assert.True(HorizontalDistance(positions[resumeTick - 1], positions[resumeTick + 4]) > 0.05f);
+        // Exactly still at the end of the starvation (it has had its full braking window), walking
+        // again from the resume tick on.
+        Assert.Equal(positions[resumeTick - 3].X, positions[resumeTick - 1].X);
+        Assert.Equal(positions[resumeTick - 3].Z, positions[resumeTick - 1].Z);
+        Assert.True(HorizontalDistance(positions[resumeTick - 1], positions[resumeTick + 8]) > 0.05f);
     }
 
     // Holding use while starved within the repeat window resolves the use from the repeated frame,

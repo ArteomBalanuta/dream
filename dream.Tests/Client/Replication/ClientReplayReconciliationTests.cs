@@ -87,8 +87,15 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
         Assert.True(miss < 0.35f, $"snap landed {miss} m from where the server went");
     }
 
+    // Character-gaits fix loop 1 (M1): a snap zeroes the body's VERTICAL velocity and keeps its
+    // horizontal one. Zeroing both was free under the instant-velocity motor, which set the
+    // commanded speed outright on the next tick; now that PlayerMotor ramps from the body's own
+    // velocity it cost the client v^2 / 2a after every snap (0.51 m at cruise, 1.00 m at sprint)
+    // and restarted the figure's stride. The replayed landing already includes the unacknowledged
+    // travel, so the pre-snap horizontal velocity is the state that belongs with it; the vertical
+    // one does not survive a teleport or a respawn. Measured in SnapVelocityHandoffTests.
     [Fact]
-    public void Snap_ZeroesThePredictedVelocity()
+    public void Snap_KeepsTheHorizontalVelocity_AndZeroesTheVertical()
     {
         using ClientWorldSession runtime = CreateRuntime();
         ClientPredictionReconciler reconciler = new();
@@ -105,7 +112,10 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
             reconciler);
 
         AssertVector(server + new Vector3(0.1f, 0f, 0f), runtime.Player.GetWorldPosition());
-        Assert.Equal(0f, runtime.Player.PhysicsBody.LinearVelocity.Length, 4);
+        BulletSharp.Math.Vector3 velocity = runtime.Player.PhysicsBody.LinearVelocity;
+        Assert.Equal(18f, velocity.X, 4);
+        Assert.Equal(-6f, velocity.Z, 4);
+        Assert.Equal(0f, velocity.Y, 4);
         Assert.Equal(Vector3.Zero, reconciler.PendingOffset);
     }
 
