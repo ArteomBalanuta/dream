@@ -29,7 +29,15 @@ public class PlayerCombatAttributeTests
     [Fact]
     public void ASpend_OnStrengthAndAgility_RaisesThem_AndUsesThePoints()
     {
-        PlayerCombatant combatant = Combatant(agility: 10, energy: 10);
+        // The point count measures from the start (PlayerStatRules.Start*, 1000), so the character must
+        // be seeded there: a sheet below the start has spent nothing and a spend of 1 would cost 0 of it.
+        PlayerCombatant combatant = new(() => Vector3.Zero, stats: new PlayerCombatStats
+        {
+            Strength = PlayerStatRules.StartStrength,
+            Vitality = PlayerStatRules.StartVitality,
+            Agility = PlayerStatRules.StartAgility,
+            Energy = PlayerStatRules.StartEnergy
+        });
         combatant.ApplyProgression(2, 0);
         Assert.Equal(5, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
 
@@ -39,10 +47,11 @@ public class PlayerCombatAttributeTests
         Assert.True(PlayerStatRules.TryValidateSpend(combatant.Level, PlayerCombatStatsSnapshot.From(combatant.BaseStats), StatId.Agility, 2, out PlayerCombatStatsSnapshot afterAgility, out _));
         combatant.ApplyBaseStats(afterAgility.ToCombatStats());
 
-        Assert.Equal(11, combatant.BaseStats.Strength);
-        Assert.Equal(12, combatant.BaseStats.Agility);
+        Assert.Equal(PlayerStatRules.StartStrength + 1, combatant.BaseStats.Strength);
+        Assert.Equal(PlayerStatRules.StartAgility + 2, combatant.BaseStats.Agility);
+        // Level 2 earns 5; 1 + 2 spent leaves 2.
         Assert.Equal(2, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
-        Assert.Equal(11, combatant.Stats.Strength);
+        Assert.Equal(PlayerStatRules.StartStrength + 1, combatant.Stats.Strength);
     }
 
     [Theory]
@@ -127,9 +136,14 @@ public class PlayerCombatAttributeTests
     [Fact]
     public void LegacyAttackSpeedSteps_StillCountAsSpent()
     {
-        // 2.25 attack speed is five old 0.05 steps; Agility and Energy at their start of 10 cost nothing.
-        Assert.Equal(5, PlayerStatRules.PointsSpent(10, 2.25f, 10, 10, 10));
-        Assert.Equal(0, PlayerStatRules.PointsAvailable(2, 10, 2.25f, 10, 10, 10));
-        Assert.Equal(3, PlayerStatRules.PointsSpent(10, 2f, 10, 12, 11));
+        // 2.25 attack speed is five old 0.05 steps; every attribute at the start (1000) costs nothing.
+        const int s = PlayerStatRules.StartStrength;
+        const int v = PlayerStatRules.StartVitality;
+        const int a = PlayerStatRules.StartAgility;
+        const int e = PlayerStatRules.StartEnergy;
+        Assert.Equal(5, PlayerStatRules.PointsSpent(s, 2.25f, v, a, e));
+        Assert.Equal(0, PlayerStatRules.PointsAvailable(2, s, 2.25f, v, a, e));
+        // Agility 2 and Energy 1 above the start cost 3.
+        Assert.Equal(3, PlayerStatRules.PointsSpent(s, 2f, v, a + 2, e + 1));
     }
 }

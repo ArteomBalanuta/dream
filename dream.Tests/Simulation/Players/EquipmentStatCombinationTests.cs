@@ -53,9 +53,9 @@ public sealed class EquipmentStatCombinationTests
     private static readonly int[] VitalityGrid = [PlayerCombatStats.MinVitality, 10, 45, PlayerCombatStats.MaxVitality];
     private static readonly float[] SpeedGrid = [PlayerCombatStats.MinAttackSpeed, 2f, PlayerCombatStats.MaxAttackSpeed];
 
-    // The default and one value that is not, so the Agility term in the attack speed is exercised and
+    // The unseeded sheet (10) and one value that is not, so the Agility term in the attack speed is exercised and
     // cannot be satisfied by a single point on the grid. 37 also spans the Defense step (37 / 4 = 9).
-    private static readonly int[] AgilityGrid = [PlayerStatRules.StartAgility, 37];
+    private static readonly int[] AgilityGrid = [PlayerCombatStats.UnseededAttribute, 37];
 
     // Effective stats, worked out from the constants rather than by calling the production rule: the
     // sheet sums the flats and clamps, then attack speed gains AttackSpeedPerAgility per point of

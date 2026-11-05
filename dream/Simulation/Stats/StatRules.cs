@@ -8,10 +8,11 @@ namespace Dream.Simulation.Stats;
 /// </summary>
 public static class StatRules
 {
-    // The fallback ceiling for a stat with no explicit limit, Agility and Energy among them. It
-    // tracks the attribute ceiling: left at the old 1000 it would clamp exactly the gear bonuses
-    // that raising PlayerCombatStats.AttributeCeiling exists to let through.
-    public const float DefaultMaxUnused = PlayerCombatStats.AttributeCeiling;
+    // The fallback ceiling for a stat with no explicit limit: StatId.Armor, StatId.MovementSpeed and
+    // any future stat that does not name its own. Strength, Vitality, Agility, Energy and AttackSpeed
+    // have explicit cases below. Do not tie this to the attribute ceiling: that put the armour cap at
+    // 10000, i.e. damage_taken_factor = 100 / (100 + 10000) = 0.99% damage taken, near immunity.
+    public const float DefaultMaxUnused = 1000f;
 
     /// <summary>
     /// The base ceiling for an enemy's Strength and Vitality. Enemies do not share the player ceiling
@@ -27,6 +28,8 @@ public static class StatRules
     {
         StatId.Strength => PlayerCombatStats.MinStrength,
         StatId.Vitality => PlayerCombatStats.MinVitality,
+        StatId.Agility => PlayerCombatStats.MinAgility,
+        StatId.Energy => PlayerCombatStats.MinEnergy,
         StatId.AttackSpeed => PlayerCombatStats.MinAttackSpeed,
         _ => 0f
     };
@@ -35,6 +38,8 @@ public static class StatRules
     {
         StatId.Strength => PlayerCombatStats.MaxStrength,
         StatId.Vitality => PlayerCombatStats.MaxVitality,
+        StatId.Agility => PlayerCombatStats.MaxAgility,
+        StatId.Energy => PlayerCombatStats.MaxEnergy,
         StatId.AttackSpeed => PlayerCombatStats.MaxAttackSpeed,
         _ => DefaultMaxUnused
     };

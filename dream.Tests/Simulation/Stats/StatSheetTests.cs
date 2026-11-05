@@ -87,6 +87,24 @@ public class StatSheetTests
         Assert.True(compared > 0);
     }
 
+    // The grids below are strength x vitality x speeds x tools, so they grow with the square of the range.
+    // At the old ceiling of 1000, every point (or a step of 7) gave 1000 (or ~143) values per axis; at
+    // 10000 the same loops gave 10x that per axis, 100x the combatants, long enough that the run looked
+    // hung. A stride of 10x the old one keeps the same cost, and the ceiling is added so the clamp edge
+    // is still covered.
+    private static IEnumerable<int> Axis(int min, int max, int stride)
+    {
+        for (int value = min; value <= max; value += stride)
+        {
+            yield return value;
+        }
+
+        if ((max - min) % stride != 0)
+        {
+            yield return max;
+        }
+    }
+
     [Fact]
     public void Resolution_EqualsLegacyCombine_ForEveryStrengthAndVitalityWithEveryTool()
     {
@@ -94,9 +112,9 @@ public class StatSheetTests
         foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
             StatModifier[] modifiers = ModifiersOf(tool);
-            for (int strength = PlayerCombatStats.MinStrength; strength <= PlayerCombatStats.MaxStrength; strength++)
+            foreach (int strength in Axis(PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength, 10))
             {
-                for (int vitality = PlayerCombatStats.MinVitality; vitality <= PlayerCombatStats.MaxVitality; vitality++)
+                foreach (int vitality in Axis(PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality, 10))
                 {
                     foreach (float attackSpeed in new[] { 0.5f, 1.0f, 2.0f, 4.99f, 5.0f })
                     {
@@ -140,9 +158,9 @@ public class StatSheetTests
         float[] attackSpeeds = [0.5f, 0.75f, 1.0f, 2.5f, 4.99f, 5.0f];
         foreach ((LegacyToolStats tool, IReadOnlyList<StatModifier> definition) in AllTools())
         {
-            for (int strength = PlayerCombatStats.MinStrength; strength <= PlayerCombatStats.MaxStrength; strength += 7)
+            foreach (int strength in Axis(PlayerCombatStats.MinStrength, PlayerCombatStats.MaxStrength, 70))
             {
-                for (int vitality = PlayerCombatStats.MinVitality; vitality <= PlayerCombatStats.MaxVitality; vitality += 7)
+                foreach (int vitality in Axis(PlayerCombatStats.MinVitality, PlayerCombatStats.MaxVitality, 70))
                 {
                     foreach (float attackSpeed in attackSpeeds)
                     {
@@ -209,7 +227,7 @@ public class StatSheetTests
     public void Resolution_ClampsEffectiveAndBase()
     {
         StatSheet sheet = new();
-        sheet.SetBase(BlockOf(5000f, -3f, 0f));
+        sheet.SetBase(BlockOf(PlayerCombatStats.MaxStrength + 1f, -3f, 0f));
         Assert.Equal(PlayerCombatStats.MaxStrength, sheet.Base[StatId.Strength]);
         Assert.Equal(0.5f, sheet.Base[StatId.AttackSpeed]);
         Assert.Equal(1f, sheet.Base[StatId.Vitality]);

@@ -24,10 +24,11 @@ public sealed class ArmorMitigationTests
 {
     private const int NoAgility = PlayerCombatStats.MinAgility;
 
-    // Defense at the default Agility 10: 10 / 4 = 2.
-    private const int DefaultDefense = PlayerStatRules.StartAgility / 4;
+    // Defense of the unseeded sheet (PlayerCombatStats.UnseededAttribute = 10): 10 / 4 = 2, not the
+    // starting Agility, which is 1000.
+    private const int DefaultDefense = PlayerCombatStats.UnseededAttribute / 4;
 
-    private static PlayerCombatant WithArmor(float armor, int agility = PlayerStatRules.StartAgility)
+    private static PlayerCombatant WithArmor(float armor, int agility = PlayerCombatStats.UnseededAttribute)
     {
         PlayerCombatant combatant = new(() => new Vector3(1.0f, 1f, 0.5f), stats: new PlayerCombatStats { Agility = agility });
         EquipmentLoadout loadout = new();

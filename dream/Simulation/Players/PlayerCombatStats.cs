@@ -29,7 +29,7 @@ public sealed class PlayerCombatStats
     // These values are only what a sheet holds before any profile or equipment reaches it, so they
     // stay at the old modest baseline: a transient combatant should not arrive at the stat ceiling,
     // and the combat tests measure damage, armor and health against these numbers.
-    private const int UnseededAttribute = 10;
+    public const int UnseededAttribute = 10;
 
     private int _strength = UnseededAttribute;
     private float _attackSpeed = 2.0f;

@@ -196,8 +196,8 @@ public class Wave7HeldUseAndStatsValidationTests
         // the starting 10s here. That a stats update cannot edit Agility or Energy is the point.
         PlayerCombatStatsSnapshot expected = requested with
         {
-            Agility = PlayerStatRules.StartAgility,
-            Energy = PlayerStatRules.StartEnergy
+            Agility = PlayerCombatStats.UnseededAttribute,
+            Energy = PlayerCombatStats.UnseededAttribute
         };
         Assert.Equal(expected, Assert.IsType<PlayerStatsUpdateResult>(result.Payload).Stats);
     }
