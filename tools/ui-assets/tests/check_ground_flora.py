@@ -218,13 +218,14 @@ def self_test() -> list[str]:
     base = {"rect_quad": 0.05, "rect_lowfreq": 0.2, "azimuth": 0.02, "sat_p95": 0.2, "forbidden_hue": 0.0, "chrome": 0.0, "v_p99": 0.3, "mean_v": 0.1,
             "tris": 1000, "verts": 1000, "bytes": 1000, "radius": 1.0, "footprint": 0.3, "height": 3.5, "miny": 0.0, "has_disc": True,
             "hf": 0.05, "albedo_max": 0.3,
-            "precap_albedo_max": 0.3, "cap_scale": 1.0, "moved_fraction": 0.0}
+            "precap_albedo_max": 0.3, "cap_scale": 1.0, "moved_fraction": 0.0,
+            "eff_mean_v": 0.15, "eff_mean_sat": 0.3, "base_mean_v": 0.15, "base_mean_sat": 0.3}
     cbase = {**base, "height": 0.25, "has_disc": False, "tris": 300}
     if metric_errors("selftest", base, spec) or metric_errors("selftest", cbase, cov):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95, "mean_v": 0.7,
              "tris": 10 ** 6, "bytes": 10 ** 9, "miny": 0.2, "footprint": 0.9, "height": 9.0, "hf": 0.004, "albedo_max": 0.7,
-             "precap_albedo_max": 5.0, "cap_scale": 0.01}
+             "precap_albedo_max": 5.0, "cap_scale": 0.01, "eff_mean_sat": 0.01}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}, spec):
             errs.append(f"self-test: gate {k} did not fail its negative")
@@ -252,6 +253,16 @@ def self_test() -> list[str]:
         errs.append(f"self-test: the real ground pipeline shipped effective albedo {bm['albedo_max']:.3f} over the ceiling")
     if not CP.detail_errors("selftest_bright", bm, GATES):
         errs.append(f"self-test: an over-bright bake through the real pipeline passed every pre-cap gate ({bm})")
+    # the mean gates through the real ground pipeline: a detail that darkens (a constant 0.4 field in place of groundkit.detail)
+    real = K.detail
+    K.detail = lambda kind, shape, rng, cyl=False, strength=1.0: np.full(shape, 0.4, np.float32)
+    try:
+        dm = CP.detail_metrics(K.build_ground_asset("flora", "selftest_dark", K.GroundSpec(
+            lambda: [K.GP.Part(I.box(8.0, 6.0, 4.0, 0.3), K.GP.STONE)], "pebbles", "cover", 128)))
+    finally:
+        K.detail = real
+    if not CP.detail_errors("selftest_dark", dm, GATES):
+        errs.append(f"self-test: a darkening detail through the real ground pipeline passed every mean gate ({dm['eff_mean_v']:.3f} of {dm['base_mean_v']:.3f})")
     # the key gate against a real baked key
     r = np.random.default_rng(3)
     th = r.uniform(0, np.pi * 2, 20000)
