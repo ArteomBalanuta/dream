@@ -15,7 +15,12 @@ public static class StatRules
     // This caps gear armour only. Mitigation divides by PlayerCombatant.MitigationArmor =
     // EffectiveArmor + Defense, and Defense (Agility / 4, so up to 2500 at MaxAgility 10000) is a
     // separate contribution that nothing clamps: the sum is unbounded by this constant. At the shipping
-    // default (Agility 1000) a naked character already has Defense 250 (28.6% damage taken).
+    // default (Agility 10) a naked character has Defense 2 (about 98% damage taken); the sum only
+    // becomes large with a large Agility, which the 10000 attribute ceiling still permits.
+    // Enemy arithmetic after the origin moved back to 10: against a fresh character (25-50 damage,
+    // 100 hp, Defense 2) a Wolf (str 10) deals ~11.8 a hit and dies in 2-4 hits; a GraveHowler
+    // (str 40, 700 hp) deals ~41.2 and takes 14-28. The MaxEnemyBase tamper ceiling of 50 means ~51
+    // a hit, a bad tamper but still two hits rather than a one-shot.
     public const float DefaultMaxUnused = 1000f;
 
     /// <summary>
