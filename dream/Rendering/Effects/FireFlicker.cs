@@ -150,7 +150,28 @@ public static class FireFlicker
         float lateral = OffsetLateral * (float)Math.Sin(Tau * 2.9 * t + 3.1 * phase);
         float lateral2 = OffsetLateral * (float)Math.Sin(Tau * 2.9 * t + 3.1 * phase + 1.9);
         float vertical = OffsetVertical * (float)Math.Sin(Tau * 4.7 * t + 0.7 * phase);
-        return new FireFlickerSample(f, radiusScale, new Vector3(lateral, vertical, lateral2));
+        Vector3 offset = new(lateral, vertical, lateral2);
+        if (seed == 0)
+        {
+            // The light is placed at position + Offset, and its halo (FxSimulation) re-derives the
+            // phase from THAT position. Keep the offset inside the phase cell of the un-offset
+            // position, so both quantise to the same cell and agree whatever the position is, even
+            // one a hair from a cell boundary (a damaged lamp's centroid can land exactly on one).
+            offset = KeepInPhaseCell(position, offset);
+        }
+
+        return new FireFlickerSample(f, radiusScale, offset);
+    }
+
+    private static int Cell(float v) => (int)MathF.Floor((v / PhaseGrid) + 0.5f);
+
+    private static Vector3 KeepInPhaseCell(Vector3 position, Vector3 offset)
+    {
+        // Checked on the float sum the callers actually compute, so rounding cannot disagree.
+        if (Cell(position.X + offset.X) != Cell(position.X)) offset.X = 0f;
+        if (Cell(position.Y + offset.Y) != Cell(position.Y)) offset.Y = 0f;
+        if (Cell(position.Z + offset.Z) != Cell(position.Z)) offset.Z = 0f;
+        return offset;
     }
 
     // 0..1 raised-cosine pulse of a gust, 0 outside it.
@@ -182,9 +203,9 @@ public static class FireFlicker
         }
         else
         {
-            int qx = (int)MathF.Floor((position.X / PhaseGrid) + 0.5f);
-            int qy = (int)MathF.Floor((position.Y / PhaseGrid) + 0.5f);
-            int qz = (int)MathF.Floor((position.Z / PhaseGrid) + 0.5f);
+            int qx = Cell(position.X);
+            int qy = Cell(position.Y);
+            int qz = Cell(position.Z);
             h = Hash(qx, qz, qy * 7919 + 0x3C6EF372);
         }
 

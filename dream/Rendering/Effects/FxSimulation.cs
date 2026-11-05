@@ -64,6 +64,22 @@ public sealed class FxSimulation
     private const float HeldHaloLift = 0.12f;
     private const float FlameLift = 0.1f;
     private const float FlameHalfSize = 0.20f;
+    // The flame's size follows the flicker: half-size * (1 + FlameSizeFollow * (flicker - 1)). Area goes
+    // as size squared, so 0.5 makes the sprite's AREA track the flicker intensity to first order
+    // (1 + 2*0.5*(f-1) = f) and equals the torch halo's own follow, so flame and halo swell together.
+    private const float FlameSizeFollow = 0.5f;
+    // The flame's colour is cull * flameNight * min(flicker, cap) * tint, packed in a byte. Night is the
+    // brightest case (nightFactor 1, cull 1), so these constants give the largest per-channel gain the
+    // flame can have; the brightness cap that still fits a byte is the reciprocal (MaxUnclippedFlameBrightness
+    // in HeldLightCatalog). Above the cap the flame grows instead of brightening.
+    private const float FlameNightDay = 0.75f;
+    private const float FlameNightSpan = 0.25f;
+    private const float FlameTintGDay = 0.62f;
+    private const float FlameTintGSpan = 0.38f;
+    private const float FlameTintBDay = 0.25f;
+    private const float FlameTintBSpan = 0.75f;
+    internal static readonly float FlameMaxChannelGain =
+        (FlameNightDay + FlameNightSpan) * MathF.Max(1f, MathF.Max(FlameTintGDay + FlameTintGSpan, FlameTintBDay + FlameTintBSpan));
     public const float SparkStartHalfSize = 0.10f;
     public const float SparkEndHalfSize = 0.04f;
     // Embers read tiny at isometric range, so every ember row is this much larger than the plan.
@@ -314,8 +330,7 @@ public sealed class FxSimulation
         float strength = HaloDayStrength + (HaloNightStrength - HaloDayStrength) * _nightFactor;
         float maxViewSquared = HaloMaxViewDistance * HaloMaxViewDistance;
         float minCameraSquared = HaloMinCameraDistance * HaloMinCameraDistance;
-        float flameNight = 0.75f + 0.25f * _nightFactor;
-        int emberTorches = 0;
+                int emberTorches = 0;
         int emberLamps = 0;
         for (int i = 0; i < lights.Length; i++)
         {
@@ -400,22 +415,37 @@ public sealed class FxSimulation
                 // The flame ignores the halo strength (0.12 at noon): additive light cannot show on a
                 // bright sky, so by day it gets coverage alpha instead and stays opaque enough to read.
                 // RGB never drops below the alpha, so the occluding flame is not dark.
-                float alpha = (1f - _nightFactor) * cull;
-                float flame = cull * flicker * flameNight;
-                // By day the flame is tinted saturated orange; only red is held at the alpha.
-                float tintG = 0.62f + 0.38f * _nightFactor;
-                float tintB = 0.25f + 0.75f * _nightFactor;
                 _halos[_haloCount++] = new FxInstance
                 {
                     Position = fxPosition + Vector3.UnitY * FlameLift,
-                    HalfSize = FlameHalfSize,
-                    Color = FxInstance.PackColor(MathF.Max(flame, alpha), flame * tintG, flame * tintB, alpha),
+                    HalfSize = FlameHalfSizeAt(flicker),
+                    Color = FlameColor(cull, flicker, _nightFactor),
                     Rotation = 0f,
                     Frame = (float)FxFrame.Flame0 + (((int)(_clock * 12f + i)) & 3),
                     DepthBias = FlameDepthBias
                 };
             }
         }
+    }
+
+    // The flame sprite's half-size at a flicker: it swells above 1 and shrinks below it.
+    internal static float FlameHalfSizeAt(float flicker) => FlameHalfSize * (1f + FlameSizeFollow * (flicker - 1f));
+
+    // The flicker as flame brightness: capped so no channel's UNCLAMPED value exceeds 1 (the byte clamp
+    // would hide a violation, which is why the test reads this, not the packed byte).
+    internal static float FlameBrightnessAt(float flicker) => MathF.Min(flicker, HeldLightCatalog.MaxUnclippedFlameBrightness);
+
+    // The flame's packed colour. Brightness is the flicker CAPPED at what a byte holds, so the upper half
+    // of the cycle cannot pin the channels (it shows as size instead, FlameHalfSizeAt). By day the flame
+    // is tinted saturated orange; only red is held at the coverage alpha, so it is never dark.
+    internal static uint FlameColor(float cull, float flicker, float nightFactor)
+    {
+        float alpha = (1f - nightFactor) * cull;
+        float flameNight = FlameNightDay + FlameNightSpan * nightFactor;
+        float flame = cull * FlameBrightnessAt(flicker) * flameNight;
+        float tintG = FlameTintGDay + FlameTintGSpan * nightFactor;
+        float tintB = FlameTintBDay + FlameTintBSpan * nightFactor;
+        return FxInstance.PackColor(MathF.Max(flame, alpha), flame * tintG, flame * tintB, alpha);
     }
 
     // Insertion into the short, sorted list of the lights nearest the view centre.
