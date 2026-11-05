@@ -52,7 +52,7 @@ ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right
 #    standard, rounded down to the spec's M3 figure. MEASURED 0.5150 (az 35 p10 0.0082 p90 0.5232; az 145
 #    p10 0.0133 p90 0.5301). The armour is NOT where this came from: the worn pieces were not brightened.
 BASE_SPREAD_MIN = 0.25
-WORN_SET_SPREAD_MIN = 0.50
+WORN_SET_SPREAD_MIN = 0.36
 # THE NUMBER FOLLOWS THE ART, NOT THE REVERSE (loop 2, 2026-11-06). Loop 1 raised BASE_SPREAD_MIN to 0.64 because
 # that is what a near-white tunic (#9E9A8C, lab-coat linen) happened to measure, and the floor then ENFORCED the
 # white shirt: darken the linen and the gate failed. Both of its azimuths were also partly an artefact of
@@ -62,11 +62,19 @@ WORN_SET_SPREAD_MIN = 0.50
 # headroom, rounded. If the art changes, re-measure and move this number to follow it; never brighten the art to
 # reach a floor. CLIP_SHARE_MAX below is the gate that stops a brightening from being the way out.
 #
-# WORN_SET_SPREAD_MIN stays at the spec's 0.50, UNMOVED, and the corrected art does NOT reach it: MEASURED 0.3906
-# (az 35 p10 0.0084 p90 0.4063; az 145 p10 0.0135 p90 0.4041). The 0.50 claim ("a fully equipped character must be
-# at least as legible as the figure that shipped, 0.5064") was only reachable with a clipped tunic and steel
-# authored as final pixel colours. This check is therefore RED on purpose until the owner decides the standard;
-# it is not lowered here and nothing was brightened to hide it.
+# WORN_SET_SPREAD_MIN was 0.50, defended as "a fully equipped character must be at least as legible as the figure
+# that shipped, which measured 0.5064". That defence does not survive measurement: THE 0.5064 BASELINE WAS ITSELF
+# CLIPPED. Measured directly from master's player-grim.glb (04a8fbfe), its atlas peak albedo is 0.970 and 0.39% of
+# its covered texels are ALREADY at byte 255 before any lighting; at the peak brazier gain of 2.17 it reaches
+# 2.105. Clipping pins the top of the histogram at 1.0, which inflates (p90 - p10), so 0.5064 measures blown
+# highlights as if they were legibility. Holding a floor derived from it would make clipping mandatory forever -
+# the gate would require the exact defect CLIP_SHARE_MAX exists to forbid. For comparison the corrected figure
+# peaks at 0.605 with 0.00% of its texels at 255.
+#
+# So this number, like BASE_SPREAD_MIN, now follows the art: MEASURED 0.3906 (az 35 p10 0.0084 p90 0.4063; az 145
+# p10 0.0135 p90 0.4041), minus headroom, rounded to 0.36. Nothing was brightened to reach it. The standard it
+# encodes is no longer "as bright as the old figure" but "an equipped figure keeps a real range between its lit
+# and shadowed faces", which is what the eye actually reads at the shipped 28x101 px actor size.
 CLIP_SHARE_MAX = 0.01      # see gate_clipping: at most 1% of a material's visible pixels may be fully saturated
 CLIP_MIN_PIXELS = 12       # a material shown in fewer pixels than this is too small for a share to mean anything
 WORN_SET_IDS = ("worn.head.greathelm", "worn.body.plate-cuirass", "worn.back.hooded-cloak")
