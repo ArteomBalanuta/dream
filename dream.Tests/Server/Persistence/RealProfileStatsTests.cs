@@ -94,9 +94,7 @@ public sealed class RealProfileStatsTests
         {
             Join(first, "conn-1", "stat-1");
             Dream.Simulation.Players.PlayerCombatant combatant = first.Runtime!.Player.Combatant;
-            // A new character sits at the attribute ceiling with no headroom to spend into, so
-            // this test states the baseline it measures a spend from.
-            TestStatBaseline.PinTo(combatant);
+            // A new character is created at 1000 in every attribute, the same origin points are measured from.
             combatant.ApplyProgression(2, 0);
             Assert.True(Dream.Simulation.Players.PlayerStatRules.TryValidateSpend(
                 combatant.Level,
@@ -110,15 +108,15 @@ public sealed class RealProfileStatsTests
         }
 
         PersistedCreatureStats stored = profiles.TryGet(Player)!.Value.Stats;
-        Assert.Equal((TestStatBaseline.Attribute + 2, 2), (stored.Energy, stored.Level));
+        Assert.Equal((Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute + 2, 2), (stored.Energy, stored.Level));
 
         using DedicatedServerHost second = CreateHost(database);
         Join(second, "conn-2", "stat-2");
         Dream.Simulation.Players.PlayerCombatant restored = second.Runtime!.Player.Combatant;
-        Assert.Equal(12, restored.BaseStats.Energy);
-        // Level 2 earns 5; 2 went into Energy.
+        Assert.Equal(Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute + 2, restored.BaseStats.Energy);
+        // Level 2 earns 5 * (2 - 1) = 5; 2 went into Energy (1002 - 1000), so 3 remain.
         Assert.Equal(3, Dream.Simulation.Players.PlayerStatRules.PointsAvailable(restored.Level, restored.BaseStats));
-        Assert.Equal(Dream.Simulation.Players.PlayerManaRules.MaxMana(2, 12), restored.MaxMana);
+        Assert.Equal(Dream.Simulation.Players.PlayerManaRules.MaxMana(2, Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute + 2), restored.MaxMana);
     }
 
     private static void AssertStoredStats(SqlitePlayerProfileRepository profiles)

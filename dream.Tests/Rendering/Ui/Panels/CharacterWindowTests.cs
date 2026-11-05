@@ -239,7 +239,7 @@ public sealed class CharacterWindowTests : IDisposable
         Assert.False(_scene.Canvas.HasText("Tester"));
     }
 
-    private static HudStatusSnapshot PointsStatus(int level, int strength = 10, float speed = 2f, int vitality = 10) =>
+    private static HudStatusSnapshot PointsStatus(int level, int strength = Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute, float speed = 2f, int vitality = Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute) =>
         Status(strength, strength, speed, speed, 0) with { Level = level, BaseVitality = vitality, Vitality = vitality };
 
     private void ClickPlate(int index)
@@ -275,14 +275,17 @@ public sealed class CharacterWindowTests : IDisposable
     [Fact]
     public void ACappedAttribute_DoesNotSpend_TheOthersDo_AndAnOverBudgetCharacterSpendsNothing()
     {
-        Fill(PointsStatus(level: 400, strength: Dream.Simulation.Players.PlayerCombatStats.MaxStrength));
+        // Strength at the 10000 ceiling is 9000 above the 1000 origin, so the budget has to cover that before any
+        // other attribute can spend: level 2000 earns 5 * 1999 = 9995, leaving 995. (Level 400 earned only 1995.)
+        Fill(PointsStatus(level: 2000, strength: Dream.Simulation.Players.PlayerCombatStats.MaxStrength));
         ClickPlate(0);
         Assert.Empty(_scene.Actions.Picked);
         ClickPlate(1);
         Assert.Equal((int)Dream.Simulation.Stats.StatId.Agility, Assert.Single(_scene.Actions.Picked).SlotIndex);
 
         _scene.Actions.Picked.Clear();
-        Fill(PointsStatus(level: 2, strength: 30, speed: 3f, vitality: 20));
+        // Over budget from the origin: 30 + 20 + 20 steps (2.0 -> 3.0) = 70 spent against 5 earned at level 2.
+        Fill(PointsStatus(level: 2, strength: Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute + 30, speed: 3f, vitality: Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute + 20));
         ClickPlate(2);
         Assert.Empty(_scene.Actions.Picked);
     }

@@ -29,6 +29,11 @@ public sealed class MasterMpGapTests
 
     // ---- 1: Agility and Energy spend, end to end, persisted ----
 
+    // A new character is created at 1000 in every attribute, the origin points are measured from: spending 4 into
+    // Agility and 3 into Energy reads 1004 and 1003, and 7 of the 10 points level 3 earns (5 * (3 - 1)) leave 3.
+    private const int AgilityAfter = PlayerStatRules.NewCharacterAttribute + 4;
+    private const int EnergyAfter = PlayerStatRules.NewCharacterAttribute + 3;
+
     [Fact]
     public async Task SpendingAgilityAndEnergy_ChangesDefenseAttackSpeedAndMaxMana_DropsPoints_AndSurvivesARelog()
     {
@@ -55,28 +60,33 @@ public sealed class MasterMpGapTests
             ServerActionMessage energy = await M4AKit.ActAsync(server, a, new PlayerStatSpendIntent(StatId.Energy, 3), a);
             Assert.True(energy.Result.Accepted, energy.Result.Rejection?.Reason);
             PlayerStatsUpdateResult update = Assert.IsType<PlayerStatsUpdateResult>(energy.Result.Payload);
-            Assert.Equal(14, update.Stats.Agility);
-            Assert.Equal(13, update.Stats.Energy);
+            Assert.Equal(AgilityAfter, update.Stats.Agility);
+            Assert.Equal(EnergyAfter, update.Stats.Energy);
 
-            Assert.Equal(14, combatant.BaseStats.Agility);
-            Assert.Equal(13, combatant.BaseStats.Energy);
-            Assert.Equal(14, combatant.Stats.Agility);
-            Assert.Equal(13, combatant.Stats.Energy);
-            Assert.Equal(PlayerStatRules.Defense(14), combatant.Defense);
+            Assert.Equal(AgilityAfter, combatant.BaseStats.Agility);
+            Assert.Equal(EnergyAfter, combatant.BaseStats.Energy);
+            Assert.Equal(AgilityAfter, combatant.Stats.Agility);
+            Assert.Equal(EnergyAfter, combatant.Stats.Energy);
+            Assert.Equal(PlayerStatRules.Defense(AgilityAfter), combatant.Defense);
             Assert.True(combatant.Defense > defenseBefore, $"defense {defenseBefore} -> {combatant.Defense}");
-            Assert.True(combatant.Stats.AttackSpeed > attackSpeedBefore, $"attack speed {attackSpeedBefore} -> {combatant.Stats.AttackSpeed}");
-            Assert.Equal(PlayerManaRules.MaxMana(3, 13), combatant.MaxMana);
+            // Attack speed is base 2.0 + 0.01 per Agility, clamped to MaxAttackSpeed (5). At the 1000 a character is
+            // created with that is 2 + 10 = 12 before the clamp, so it already sits on the cap and 4 more Agility
+            // cannot raise it: assert the derived value (the cap) rather than a rise the clamp makes impossible.
+            Assert.Equal(PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed, AgilityAfter), combatant.Stats.AttackSpeed);
+            Assert.Equal(PlayerCombatStats.MaxAttackSpeed, combatant.Stats.AttackSpeed);
+            Assert.True(combatant.Stats.AttackSpeed >= attackSpeedBefore, $"attack speed {attackSpeedBefore} -> {combatant.Stats.AttackSpeed}");
+            Assert.Equal(PlayerManaRules.MaxMana(3, EnergyAfter), combatant.MaxMana);
             Assert.True(combatant.MaxMana > maxManaBefore);
             Assert.Equal(3, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
 
             // The remaining 3 points are all there is: a 4th is refused and nothing moves.
             ServerActionMessage over = await M4AKit.ActAsync(server, a, new PlayerStatSpendIntent(StatId.Agility, 4), a);
             Assert.False(over.Result.Accepted);
-            Assert.Equal(14, combatant.BaseStats.Agility);
+            Assert.Equal(AgilityAfter, combatant.BaseStats.Agility);
 
             // The owner's HUD hears the new base stats.
             await M4AKit.StepThroughVitalsDrainAsync(server, a);
-            Assert.Contains(a.Applied.OfType<ServerPlayerProgress>(), p => p.BaseStats.Agility == 14 && p.BaseStats.Energy == 13);
+            Assert.Contains(a.Applied.OfType<ServerPlayerProgress>(), p => p.BaseStats.Agility == AgilityAfter && p.BaseStats.Energy == EnergyAfter);
 
             await a.LeaveAsync();
             M4AKit.Flush(server);
@@ -88,11 +98,11 @@ public sealed class MasterMpGapTests
             await using HeadlessPlayScene back = await M4AKit.JoinAsync(again, SessionA);
             PlayerCombatant combatant = M4AKit.Combatant(again, SessionA);
             Assert.Equal(3, combatant.Level);
-            Assert.Equal(14, combatant.BaseStats.Agility);
-            Assert.Equal(13, combatant.BaseStats.Energy);
-            Assert.Equal(PlayerStatRules.Defense(14), combatant.Defense);
-            Assert.Equal(PlayerManaRules.MaxMana(3, 13), combatant.MaxMana);
-            Assert.True(combatant.Stats.AttackSpeed > attackSpeedBefore);
+            Assert.Equal(AgilityAfter, combatant.BaseStats.Agility);
+            Assert.Equal(EnergyAfter, combatant.BaseStats.Energy);
+            Assert.Equal(PlayerStatRules.Defense(AgilityAfter), combatant.Defense);
+            Assert.Equal(PlayerManaRules.MaxMana(3, EnergyAfter), combatant.MaxMana);
+            Assert.Equal(PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed, AgilityAfter), combatant.Stats.AttackSpeed);
             Assert.Equal(3, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
             await back.LeaveAsync();
         }
