@@ -5,7 +5,7 @@ using Dream.Rendering.Actors;
 namespace Dream.Tests.Rendering.Actors;
 
 // The worn catalog is the whole point of the worn-visuals wave: every piece must change the
-// silhouette, and must fully contain the dressed base figure's own geometry at its node.
+// silhouette, must still cover its body region, and must not stand wider than the fit ceiling.
 public class ArmourMeshCatalogTests
 {
     private const float Eps = 1e-4f;
@@ -39,36 +39,58 @@ public class ArmourMeshCatalogTests
 
     public static IEnumerable<object[]> EveryId() => All.Select(id => new object[] { id });
 
-    // A box in the node's frame: the cover region the piece must contain, and the outer bound it must
-    // stay inside. Numbers are engine units (1 authored u = 0.088).
+    // A box in the node's frame. Numbers are engine units (1 authored u = 0.088).
     private readonly record struct Envelope(Vector3 Min, Vector3 Max);
 
-    private static readonly Dictionary<ArmourMount, (Envelope Cover, Envelope Limit)> Envelopes = new()
+    // The regions of the base figure's body a worn piece must still cover (so no bare skin shows through
+    // a gap), from the shared body contract. Torso has two: the chest and the wider hip skirt.
+    private static readonly Dictionary<ArmourMount, Envelope[]> Covers = new()
     {
-        // Brim hw 0.204 and hood apex 0.537.
-        [ArmourMount.Head] = (new(new(-0.23f, 0.00f, -0.20f), new(0.23f, 0.56f, 0.20f)),
-            new(new(-0.40f, -0.05f, -0.40f), new(0.40f, 0.90f, 0.40f))),
-        // Chest lame at y 0.74, hw 0.24; shoulders to 0.60.
-        [ArmourMount.Torso] = (new(new(-0.26f, 0.18f, -0.20f), new(0.26f, 0.80f, 0.17f)),
-            new(new(-0.60f, 0.05f, -0.30f), new(0.60f, 0.95f, 0.30f))),
-        // Bracer -0.79..-0.475, in the translated arm frame.
-        [ArmourMount.Arms] = (new(new(-0.11f, -0.95f, -0.11f), new(0.11f, -0.55f, 0.11f)),
-            new(new(-0.25f, -1.10f, -0.25f), new(0.25f, -0.40f, 0.25f))),
-        // Cuisse -0.49 and knee cop -0.61.
-        [ArmourMount.Legs] = (new(new(-0.14f, -0.75f, -0.14f), new(0.14f, -0.10f, 0.14f)),
-            new(new(-0.20f, -0.80f, -0.22f), new(0.20f, -0.05f, 0.22f))),
-        // Baked boot -14.72..-10.2 u and sabaton at -12.25 u, forward 0.70 u.
-        [ArmourMount.Feet] = (new(new(-0.13f, -1.30f, -0.05f), new(0.13f, -0.88f, 0.22f)),
-            new(new(-0.20f, -1.36f, -0.15f), new(0.20f, -0.80f, 0.42f)))
+        [ArmourMount.Head] = [new(new(-0.12f, 0.00f, -0.13f), new(0.12f, 0.42f, 0.13f))],
+        [ArmourMount.Torso] =
+        [
+            new(new(-0.19f, 0.00f, -0.14f), new(0.19f, 0.86f, 0.14f)),
+            new(new(-0.26f, 0.00f, -0.14f), new(0.26f, 0.30f, 0.14f))
+        ],
+        [ArmourMount.Arms] = [new(new(-0.09f, -0.95f, -0.09f), new(0.09f, -0.55f, 0.09f))],
+        [ArmourMount.Legs] = [new(new(-0.11f, -0.75f, -0.11f), new(0.11f, -0.10f, 0.11f))],
+        [ArmourMount.Feet] = [new(new(-0.132f, -1.30f, -0.05f), new(0.132f, -0.88f, 0.15f))]
     };
 
-    // Baked extents the cloaks and the helm must exceed.
-    private const float BakedCloakHalfWidth = 0.326f;
-    private const float BakedCloakBack = -0.36f;
-    private const float BakedCloakHem = -0.475f;
-    private const float BakedCloakTop = 0.836f;
-    private const float BakedBrimHalfWidth = 0.204f;
-    private const float BakedHoodApex = 0.537f;
+    // The outer bound of every box of a piece: far enough to read as armour, no further.
+    private static readonly Dictionary<ArmourMount, Envelope> Limits = new()
+    {
+        [ArmourMount.Head] = new(new(-0.20f, -0.05f, -0.25f), new(0.20f, 0.75f, 0.25f)),
+        [ArmourMount.Torso] = new(new(-0.42f, -0.05f, -0.25f), new(0.42f, 0.95f, 0.25f)),
+        [ArmourMount.Arms] = new(new(-0.25f, -1.10f, -0.25f), new(0.25f, -0.40f, 0.25f)),
+        [ArmourMount.Legs] = new(new(-0.20f, -0.80f, -0.22f), new(0.20f, -0.05f, 0.22f)),
+        [ArmourMount.Feet] = new(new(-0.20f, -1.36f, -0.15f), new(0.20f, -0.80f, 0.42f))
+    };
+
+    // The fit ceiling: the union half-width of a piece over the base figure's own half-width at its
+    // node. A cover rule has no upper bound, so on its own one big box satisfies it; this is the bound.
+    // Head, Torso and the cloaks are the re-authored pieces and carry the 1.6 rule. Hands, legs and feet
+    // were not re-authored (they were sized for the old, thicker figure) and keep their old shapes under
+    // explicit, looser multipliers rather than being silently exempt.
+    private const float FitCeiling = 1.6f;
+
+    private static readonly Dictionary<ArmourMount, (float BaseHalfWidth, float Multiplier)> Fit = new()
+    {
+        [ArmourMount.Head] = (0.12f, FitCeiling),
+        [ArmourMount.Torso] = (0.26f, FitCeiling),
+        [ArmourMount.Arms] = (0.09f, 2.3f),
+        [ArmourMount.Legs] = (0.11f, 1.7f),
+        [ArmourMount.Feet] = (0.132f, 1.5f)
+    };
+
+    // Cloaks: above this height (torso frame) a cloak is on the shoulders and back and obeys the 1.6
+    // rule; below it the hem may flare to 1.9x so the taper reads, but no further.
+    private const float CloakShoulderBand = 0.30f;
+    private const float CloakHemFlare = 1.9f;
+    private const float CloakBaseHalfWidth = 0.26f;
+
+    // The hanging panels of a cloak: boxes whose centre is behind the torso back surface (z -0.14).
+    private const float CloakPanelZ = -0.18f;
 
     private static ArmourModel Model(string id)
     {
@@ -227,33 +249,37 @@ public class ArmourMeshCatalogTests
         Assert.Contains(model.Parts, p => IsDark(p.Material));
     }
 
-    public static IEnumerable<object[]> EnclosingIds() =>
+    public static IEnumerable<object[]> FittedIds() =>
         Head.Concat(Body).Concat(Hands).Concat(Feet).Concat(Legs).Select(id => new object[] { id });
 
     [Theory]
-    [MemberData(nameof(EnclosingIds))]
-    public void EveryEnclosingPiece_ContainsItsSlotsBakedGeometry_AndStaysInsideItsLimit(string id)
+    [MemberData(nameof(FittedIds))]
+    public void EveryFittedPiece_CoversItsBodyRegion_AndStaysInsideItsLimit(string id)
     {
         ArmourModel model = Model(id);
-        (Envelope cover, Envelope limit) = Envelopes[model.Mount];
 
-        // Every sample of the cover region (corners, edge midpoints, face centres, centre) lies inside
-        // some part, so the baked geometry is an interior surface and nothing pokes out through a gap.
-        for (int ix = 0; ix < 3; ix++)
+        // Every sample of each cover region (corners, edge midpoints, face centres, centre) lies inside
+        // some part, so no bare body shows through a gap. This is coverage only: it proves nothing about
+        // shape, which is what the fit ceiling is for.
+        foreach (Envelope cover in Covers[model.Mount])
         {
-            for (int iy = 0; iy < 3; iy++)
+            for (int ix = 0; ix < 3; ix++)
             {
-                for (int iz = 0; iz < 3; iz++)
+                for (int iy = 0; iy < 3; iy++)
                 {
-                    Vector3 point = new(
-                        MathHelper.Lerp(cover.Min.X, cover.Max.X, ix / 2f),
-                        MathHelper.Lerp(cover.Min.Y, cover.Max.Y, iy / 2f),
-                        MathHelper.Lerp(cover.Min.Z, cover.Max.Z, iz / 2f));
-                    Assert.True(model.Parts.Any(p => PartContains(p, point)), $"{id} leaves {point} uncovered");
+                    for (int iz = 0; iz < 3; iz++)
+                    {
+                        Vector3 point = new(
+                            MathHelper.Lerp(cover.Min.X, cover.Max.X, ix / 2f),
+                            MathHelper.Lerp(cover.Min.Y, cover.Max.Y, iy / 2f),
+                            MathHelper.Lerp(cover.Min.Z, cover.Max.Z, iz / 2f));
+                        Assert.True(model.Parts.Any(p => PartContains(p, point)), $"{id} leaves {point} uncovered");
+                    }
                 }
             }
         }
 
+        Envelope limit = Limits[model.Mount];
         foreach (ArmourPart part in model.Parts)
         {
             (Vector3 min, Vector3 max) = PartBounds(part);
@@ -263,46 +289,67 @@ public class ArmourMeshCatalogTests
     }
 
     [Theory]
-    [MemberData(nameof(HeadIds))]
-    public void EveryHelm_ExceedsTheBakedBrimAndHoodApex(string id)
+    [MemberData(nameof(FittedIds))]
+    public void EveryFittedPiece_StaysWithinItsFitCeiling(string id)
     {
-        (Vector3 min, Vector3 max) = Union(Model(id));
+        // The opposite direction to the cover rule, and the one whose absence made the plank: a piece
+        // wider than ~1.6x the body at its node reads as a block that swallows the figure, however
+        // well it covers. Both sides of the union are measured, so a lopsided piece cannot hide.
+        ArmourModel model = Model(id);
+        (float baseHalfWidth, float multiplier) = Fit[model.Mount];
+        (Vector3 min, Vector3 max) = Union(model);
+        float ceiling = baseHalfWidth * multiplier;
 
-        Assert.True(max.X > BakedBrimHalfWidth && min.X < -BakedBrimHalfWidth);
-        Assert.True(max.Y > BakedHoodApex);
+        Assert.True(max.X <= ceiling + Eps && -min.X <= ceiling + Eps, $"{id} half-width {MathF.Max(max.X, -min.X)} exceeds {ceiling} ({multiplier}x {baseHalfWidth})");
     }
-
-    public static IEnumerable<object[]> HeadIds() => Head.Select(id => new object[] { id });
 
     public static IEnumerable<object[]> CloakIds() => Cloaks.Select(id => new object[] { id });
 
     [Theory]
     [MemberData(nameof(CloakIds))]
-    public void EveryCloak_StrictlyExceedsTheBakedCloak(string id)
+    public void EveryCloak_StaysWithinItsFitCeiling_AndHangsOffTheBody(string id)
     {
-        (Vector3 min, Vector3 max) = Union(Model(id));
+        ArmourModel model = Model(id);
+        float shoulderCeiling = CloakBaseHalfWidth * FitCeiling;
+        float hemCeiling = CloakBaseHalfWidth * CloakHemFlare;
 
-        Assert.True(max.X >= 0.36f && min.X <= -0.36f, $"{id} half-width {max.X}");
-        Assert.True(min.Z <= -0.38f && min.Z < BakedCloakBack, $"{id} back {min.Z}");
-        Assert.True(min.Y <= -0.50f && min.Y < BakedCloakHem, $"{id} hem {min.Y}");
-        Assert.True(max.Y >= 0.84f && max.Y > BakedCloakTop, $"{id} top {max.Y}");
-        Assert.True(max.X > BakedCloakHalfWidth);
+        foreach (ArmourPart part in model.Parts)
+        {
+            (Vector3 min, Vector3 max) = PartBounds(part);
+            float half = MathF.Max(max.X, -min.X);
+
+            // The hem flare is only for the boxes that hang below the shoulders.
+            float allowed = part.Center.Y >= CloakShoulderBand ? shoulderCeiling : hemCeiling;
+            Assert.True(half <= allowed + Eps, $"{id} box at {part.Center} is {half} half-wide, over {allowed}");
+
+            // Nothing hangs further back than the contract's panel depth plus the swing of the pitch.
+            Assert.True(min.Z >= -0.42f, $"{id} box at {part.Center} reaches back to {min.Z}");
+        }
+
+        // Hanging panels sit behind the torso back surface (z -0.14) and clear of it.
+        foreach (ArmourPart panel in model.Parts.Where(p => p.Center.Z <= CloakPanelZ))
+        {
+            Assert.True(panel.Center.Z >= -0.30f - Eps, $"{id} panel at {panel.Center} hangs too far back");
+        }
     }
+
+    private static float ShoulderHalfWidth(ArmourModel model) =>
+        model.Parts.Where(p => p.Center.Y >= 0.5f).Max(p => MathF.Max(PartBounds(p).Max.X, -PartBounds(p).Min.X));
 
     [Theory]
     [MemberData(nameof(CloakIds))]
     public void EveryCloak_TapersFromNarrowShouldersToAWiderHem(string id)
     {
-        // A cloak is a stack of hanging panels (centre z <= -0.30). A single broad slab reads as a
+        // A cloak is a stack of hanging panels (centre z <= -0.18). A single broad slab reads as a
         // billboard at the isometric angle, so the highest panel must be narrow and everything below
-        // it must be clearly wider, and no single box may be broader than the mantle's 1.2 shoulders.
-        ArmourPart[] panels = [.. Model(id).Parts.Where(p => p.Center.Z <= -0.30f)];
+        // it must be clearly wider, and no single box may be broader than 0.9.
+        ArmourPart[] panels = [.. Model(id).Parts.Where(p => p.Center.Z <= CloakPanelZ)];
         Assert.True(panels.Length >= 3, $"{id} has only {panels.Length} hanging panels");
 
         ArmourPart top = panels.OrderByDescending(p => p.Center.Y).First();
         (Vector3 topMin, Vector3 topMax) = PartBounds(top);
         float topWidth = topMax.X - topMin.X;
-        Assert.True(topWidth <= 0.62f, $"{id} top panel is {topWidth} wide");
+        Assert.True(topWidth <= 0.44f, $"{id} top panel is {topWidth} wide");
 
         float lowerMin = float.MaxValue;
         float lowerMax = float.MinValue;
@@ -316,7 +363,7 @@ public class ArmourMeshCatalogTests
         Assert.True(lowerMax - lowerMin >= topWidth + 0.12f, $"{id} hem {lowerMax - lowerMin} vs shoulders {topWidth}");
 
         // No oversized box: none is broader than the mantle shoulders.
-        Assert.All(Model(id).Parts, p => Assert.True(p.Size.X <= 1.2f, $"{id} has a {p.Size.X} wide box"));
+        Assert.All(Model(id).Parts, p => Assert.True(p.Size.X <= 0.90f, $"{id} has a {p.Size.X} wide box"));
 
         // The panels hang at more than one depth, so the lengths do not merge into one flat plane.
         Assert.True(panels.Select(p => MathF.Round(p.Center.Z, 2)).Distinct().Count() >= 3, $"{id} panels share a depth");
@@ -331,13 +378,11 @@ public class ArmourMeshCatalogTests
         // instead of running as one straight line. Folds are the boxes reaching the lowest tier.
         (Vector3 min, _) = Union(Model(id));
         float[] bottoms = [.. Model(id).Parts
-            .Where(p => p.Center.Z <= -0.30f && PartBounds(p).Item1.Y < min.Y + 0.25f)
+            .Where(p => p.Center.Z <= CloakPanelZ && PartBounds(p).Item1.Y < min.Y + 0.25f)
             .Select(p => MathF.Round(PartBounds(p).Item1.Y, 2))];
         Assert.True(bottoms.Length >= minFolds, $"{id} has {bottoms.Length} hem boxes");
         Assert.True(bottoms.Distinct().Count() >= minFolds, $"{id} hem bottoms are level");
         Assert.True(bottoms.Max() - bottoms.Min() >= 0.05f, $"{id} hem steps only {bottoms.Max() - bottoms.Min()}");
-        // Every fold still covers the baked hem.
-        Assert.All(bottoms, b => Assert.True(b < BakedCloakHem, $"{id} fold bottom {b}"));
     }
 
     [Fact]
@@ -345,17 +390,17 @@ public class ArmourMeshCatalogTests
     {
         (Vector3 travelMin, Vector3 travelMax) = Union(Model("worn.back.travel-cloak"));
         (Vector3 hoodedMin, Vector3 hoodedMax) = Union(Model("worn.back.hooded-cloak"));
-        (Vector3 mantleMin, Vector3 mantleMax) = Union(Model("worn.back.grave-mantle"));
+        (Vector3 mantleMin, _) = Union(Model("worn.back.grave-mantle"));
         (Vector3 wingsMin, Vector3 wingsMax) = Union(Model("worn.back.gossamer-wings"));
 
-        // The hooded cloak is the long one, with a collar that stands above the baked cloak top.
+        // The hooded cloak is the long one, with a collar that stands above the shoulders.
         Assert.True(hoodedMin.Y < travelMin.Y - 0.3f);
         Assert.True(hoodedMin.Y < mantleMin.Y - 0.3f);
         Assert.True(hoodedMax.Y > travelMax.Y + 0.15f);
 
-        // The mantle is the broad one.
-        Assert.True(mantleMax.X > travelMax.X + 0.15f);
-        Assert.True(mantleMax.X > hoodedMax.X + 0.15f);
+        // The mantle is the broad one at the shoulders (the hems flare alike, so compare the shoulders).
+        Assert.True(ShoulderHalfWidth(Model("worn.back.grave-mantle")) > ShoulderHalfWidth(Model("worn.back.travel-cloak")) + 0.15f);
+        Assert.True(ShoulderHalfWidth(Model("worn.back.grave-mantle")) > ShoulderHalfWidth(Model("worn.back.hooded-cloak")) + 0.15f);
 
         // The wings are not cloth: no cloth material, thin planes, glowing, and nowhere near a hem.
         ArmourModel wings = Model("worn.back.gossamer-wings");
