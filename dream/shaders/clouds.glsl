@@ -10,6 +10,8 @@ const float CloudCellsPerUnit = 0.008;        // base noise frequency, cells per
 const float CloudLacunarity = 2.0;
 const float CloudGain = 0.5;
 const float CloudAmplitudeSum = 1.875;        // 1 + 0.5 + 0.25 + 0.125 (4 octaves)
+// NOTE: because of CloudContrast, uCloudParams.x (coverage) is NOT the literal fraction of sky covered:
+// 0.35 covers roughly 30-35 % of the plane, but the mapping is a threshold on stretched noise, not a percentage.
 const float CloudContrast = 2.0;            // fBm clusters near 0.5; stretch it so coverage is about the fraction covered
 const float CloudSoftnessScale = 0.5;         // half-width of the threshold ramp at softness 1
 

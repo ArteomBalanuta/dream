@@ -12,6 +12,7 @@ public static class CloudLayer
     public const float Lacunarity = 2f;
     public const float Gain = 0.5f;
     public const float AmplitudeSum = 1.875f;
+    // Coverage is a threshold on contrast-stretched noise, NOT the literal fraction of sky covered.
     public const float Contrast = 2f;
     public const float SoftnessScale = 0.5f;
     public const int Octaves = 4;
