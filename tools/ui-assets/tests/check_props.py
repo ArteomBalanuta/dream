@@ -73,6 +73,8 @@ GATES = {
     "footprint_pad": 0.15,       # ... plus this much (world units)
     "footprint_floor": 0.35,     # and must fill at least this share of it
     "ember_max": 0.35,           # emissive factor ceiling (the night look budget)
+    "hf_min": 0.027,             # FLOOR on the mean |4-neighbour luma gradient| of the shipped texture over the used uv area (7.0 / 255)
+    "albedo_clip_max": 0.42,     # CEILING on byte / 255 * baseColorFactor over the used texels: above it the lit pixel clips flat
 }
 # An override is a claim that the art needs it: say why, with the measured value, and keep it as tight as the
 # measurement allows.
@@ -153,6 +155,46 @@ def texel_samples(a: dict):
 
 
 AZIMUTHS = [math.tau * k / 16 for k in range(16)]
+
+
+def used_mask(a: dict) -> np.ndarray:
+    """The used uv area: the interior of every part rectangle (the gutter and the unallocated atlas are not part of it). Not only the
+    texels a triangle lands on: the rest of a rectangle is filled by the bake and is sampled by mip levels and filtering, and it is the
+    area the 3.3 - 4.1 / 255 flora measurement in the brief was taken over (a triangle-only mask reads 6 - 9 on the same atlases)."""
+    tex = a["spec"].atlas
+    mask = np.zeros((tex, tex), dtype=bool)
+    for r in a["rects"]:
+        mask[r.y:r.y + r.h, r.x:r.x + r.w] = True
+    return mask
+
+
+def hf_gradient(enc: np.ndarray, mask: np.ndarray) -> float:
+    """Mean absolute 4-neighbour luma gradient (|d/dx| and |d/dy| over every pair of used texels) of the SHIPPED texture bytes. The
+    check_art.high_frequency laplacian reads about three times this; the floor is calibrated on the gradient (props/cottage 7.0/255)."""
+    y = luma(enc)
+    gx = np.abs(y[:, 1:] - y[:, :-1])[mask[:, 1:] & mask[:, :-1]]
+    gy = np.abs(y[1:] - y[:-1])[mask[1:] & mask[:-1]]
+    both = np.concatenate([gx, gy])
+    return float(both.mean()) if len(both) else 0.0
+
+
+def albedo_max(enc: np.ndarray, scale: float, mask: np.ndarray) -> float:
+    """Largest EFFECTIVE albedo over the used texels: the texture byte times the material's baseColorFactor, not the byte alone."""
+    return float(enc[..., :3][mask].max()) / 255.0 * float(scale) if mask.any() else 0.0
+
+
+def detail_metrics(a: dict) -> dict:
+    mask = used_mask(a)
+    return {"hf": hf_gradient(a["encoded"], mask), "albedo_max": albedo_max(a["encoded"], a["scale"], mask)}
+
+
+def detail_errors(name: str, m: dict, c: dict) -> list[str]:
+    errs = []
+    if m["hf"] < c["hf_min"]:
+        errs.append(f"{name}: texture gradient {m['hf']:.4f} < {c['hf_min']} (a near-flat atlas: no grain, striation or breakup)")
+    if m["albedo_max"] > c["albedo_clip_max"]:
+        errs.append(f"{name}: effective albedo {m['albedo_max']:.3f} > {c['albedo_clip_max']} (byte * baseColorFactor clips under the brazier)")
+    return errs
 
 
 def azimuth_leak(samples) -> float:
@@ -359,7 +401,7 @@ def job(name: str):
     samples = texel_samples(a)
     rq, rl = rect_metrics(a["atlas"], a["rects"])
     m = {"rect_quad": rq, "rect_lowfreq": rl, "azimuth": azimuth_leak(samples), "azimuth_keyed": azimuth_leak(with_key(samples)),
-         **palette(a["atlas"], a["rects"]),
+         **palette(a["atlas"], a["rects"]), **detail_metrics(a),
          "tris": sum(len(p.indices) for p in a["primitives"]), "verts": sum(len(p.positions) for p in a["primitives"]), "bytes": len(glb)}
     keep = {k: a[k] for k in ("meshes", "uvs", "rects", "encoded", "atlas", "primitives", "materials", "spec")}
     return name, glb, m, keep
@@ -395,6 +437,7 @@ def metric_errors(name: str, m: dict) -> list[str]:
         errs.append(f"{name}: mean V {m['mean_v']:.3f} > {c['mean_v_max']}")
     # One branch per ceiling, not one or-ed condition: with the three sharing a condition the self-test only
     # mutated tris, so the verts and bytes ceilings could have stopped measuring without anything going red.
+    errs += detail_errors(name, m, c)
     if m["tris"] > c["tris_max"]:
         errs.append(f"{name}: {m['tris']} triangles over the {c['tris_max']} budget")
     if m["verts"] > c["verts_max"]:
@@ -410,11 +453,11 @@ def metric_errors(name: str, m: dict) -> list[str]:
 def self_test() -> list[str]:
     errs = []
     base = {"rect_quad": 0.05, "rect_lowfreq": 0.2, "azimuth": 0.02, "sat_p95": 0.2, "forbidden_hue": 0.0, "chrome": 0.0,
-            "v_p99": 0.3, "mean_v": 0.1, "tris": 1000, "verts": 1000, "bytes": 1000}
+            "v_p99": 0.3, "mean_v": 0.1, "tris": 1000, "verts": 1000, "bytes": 1000, "hf": 0.05, "albedo_max": 0.3}
     if metric_errors("selftest", base):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95,
-             "mean_v": 0.7, "tris": 10 ** 6, "verts": 10 ** 6, "bytes": 10 ** 9}
+             "mean_v": 0.7, "tris": 10 ** 6, "verts": 10 ** 6, "bytes": 10 ** 9, "hf": 0.004, "albedo_max": 0.7}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}):
             errs.append(f"self-test: gate {k} did not fail its negative")
@@ -438,6 +481,25 @@ def self_test() -> list[str]:
     rq, rl = rect_metrics(rgba, [C.Rect(0, 0, 64, 64)])
     if rq <= GATES["rect_quad_max"] and rl <= GATES["rect_lowfreq_max"]:
         errs.append(f"self-test: a lit ramp passed the rectangle gates (quad {rq:.2f}, low {rl:.2f})")
+    # the detail gates against real textures: a smooth ramp has no gradient to speak of, and a bright one clips
+    ramp8 = np.zeros((64, 64, 4), np.uint8)
+    ramp8[..., :3] = np.tile(np.linspace(40, 90, 64, dtype=np.uint8), (64, 1))[..., None]
+    full = np.ones((64, 64), bool)
+    if hf_gradient(ramp8, full) >= GATES["hf_min"]:
+        errs.append("self-test: a smooth ramp reads as detailed; hf_gradient has stopped measuring")
+    noise8 = ramp8.copy()
+    noise8[..., :3] = np.random.default_rng(5).integers(40, 90, (64, 64, 1), dtype=np.uint8)
+    if hf_gradient(noise8, full) < GATES["hf_min"]:
+        errs.append("self-test: noise reads as flat; hf_gradient has stopped measuring")
+    if hf_gradient(noise8, np.zeros((64, 64), bool)) != 0.0:
+        errs.append("self-test: hf_gradient counts texels outside the used mask")
+    bright = np.full((8, 8, 4), 255, np.uint8)
+    if not detail_errors("x", {"hf": 1.0, "albedo_max": albedo_max(bright, 0.6, np.ones((8, 8), bool))}, GATES):
+        errs.append("self-test: byte * baseColorFactor over the ceiling passed albedo_clip_max")
+    if detail_errors("x", {"hf": 1.0, "albedo_max": albedo_max(bright, 0.3, np.ones((8, 8), bool))}, GATES):
+        errs.append("self-test: byte * baseColorFactor under the ceiling failed albedo_clip_max")
+    if albedo_max(bright, 0.6, np.zeros((8, 8), bool)) != 0.0:
+        errs.append("self-test: albedo_max counts texels outside the used mask")
     # the seam gate against the old unwrap
     spec = GP.PROPS["rust_barrel"]
     parts = [p for p in spec.build() if p.mesh is not None]
@@ -485,7 +547,7 @@ def main() -> int:
         if src.startswith("sprite:") and src[7:] not in sprite_names:
             errs.append(f"{n}: claims the unused sprite {src[7:]!r}, which iso_manifest.json does not list")
         print(f"  {n:16s} tris {m['tris']:6d} bytes {m['bytes']:8d} quad {m['rect_quad']:.2f} low {m['rect_lowfreq']:.2f} "
-              f"az {m['azimuth']:.2f} (keyed {m['azimuth_keyed']:.2f}) satp95 {m['sat_p95']:.2f} vp99 {m['v_p99']:.2f}")
+              f"az {m['azimuth']:.2f} (keyed {m['azimuth_keyed']:.2f}) satp95 {m['sat_p95']:.2f} vp99 {m['v_p99']:.2f} hf {m['hf'] * 255:.2f} albedo {m['albedo_max']:.3f}")
         if m["azimuth_keyed"] <= cfg(n)["azimuth_max"]:
             errs.append(f"{n}: the azimuth gate is blind on this prop: a synthetic key reads {m['azimuth_keyed']:.3f}, under the {cfg(n)['azimuth_max']} ceiling")
     # every shipped file belongs to a generated prop, and the catalog names exactly the generated set

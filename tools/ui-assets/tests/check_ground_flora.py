@@ -113,7 +113,7 @@ def job(stem: str):
     baked = a["primitives"][0].positions
     radius, fp, height = measure_bounds(baked)
     m = {"rect_quad": rq, "rect_lowfreq": rl, "azimuth": CP.azimuth_leak(samples), "azimuth_keyed": CP.azimuth_leak(CP.with_key(samples)),
-         **CP.palette(a["atlas"], a["rects"]),
+         **CP.palette(a["atlas"], a["rects"]), **CP.detail_metrics(a),
          "tris": sum(len(p.indices) for p in a["primitives"]), "verts": sum(len(p.positions) for p in a["primitives"]), "bytes": len(glb),
          "radius": radius, "footprint": fp, "height": height, "miny": float(baked[:, 1].min()), "has_disc": a["disc"] is not None,
          "bounds_kit": tuple(float(x) for x in a["bounds"])}
@@ -148,6 +148,7 @@ def metric_errors(stem: str, m: dict, spec) -> list[str]:
         errs.append(f"{stem}: p99 V {m['v_p99']:.3f} < {c['v_p99_min']} (a black hole)")
     if m["mean_v"] > c["mean_v_max"]:
         errs.append(f"{stem}: mean V {m['mean_v']:.3f} > {c['mean_v_max']}")
+    errs += CP.detail_errors(stem, m, c)
     b = K.budget_for(spec.cls, spec.layer)
     if m["tris"] > b["tris_max"]:
         errs.append(f"{stem}: {m['tris']} triangles over the {spec.cls} budget of {b['tris_max']}")
@@ -215,12 +216,13 @@ def self_test() -> list[str]:
     spec = F.ASSETS["tree_dead_spruce"]
     cov = F.ASSETS["grass_tuft_dry_01"]
     base = {"rect_quad": 0.05, "rect_lowfreq": 0.2, "azimuth": 0.02, "sat_p95": 0.2, "forbidden_hue": 0.0, "chrome": 0.0, "v_p99": 0.3, "mean_v": 0.1,
-            "tris": 1000, "verts": 1000, "bytes": 1000, "radius": 1.0, "footprint": 0.3, "height": 3.5, "miny": 0.0, "has_disc": True}
+            "tris": 1000, "verts": 1000, "bytes": 1000, "radius": 1.0, "footprint": 0.3, "height": 3.5, "miny": 0.0, "has_disc": True,
+            "hf": 0.05, "albedo_max": 0.3}
     cbase = {**base, "height": 0.25, "has_disc": False, "tris": 300}
     if metric_errors("selftest", base, spec) or metric_errors("selftest", cbase, cov):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95, "mean_v": 0.7,
-             "tris": 10 ** 6, "bytes": 10 ** 9, "miny": 0.2, "footprint": 0.9, "height": 9.0}
+             "tris": 10 ** 6, "bytes": 10 ** 9, "miny": 0.2, "footprint": 0.9, "height": 9.0, "hf": 0.004, "albedo_max": 0.7}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}, spec):
             errs.append(f"self-test: gate {k} did not fail its negative")
@@ -284,7 +286,8 @@ def main() -> int:
         errs += [f"{s}: groundkit bounds {m['bounds_kit']} disagree with the re-measured geometry"] \
             if max(abs(a - b) for a, b in zip(m["bounds_kit"], (m["radius"], m["footprint"], m["height"]))) > 1e-6 else []
         print(f"  {s:24s} {spec.cls:9s} tris {m['tris']:5d} bytes {m['bytes']:7d} h {m['height']:.2f} fp {m['footprint']:.2f} quad {m['rect_quad']:.2f} "
-              f"low {m['rect_lowfreq']:.2f} az {m['azimuth']:.2f} (keyed {m['azimuth_keyed']:.2f}) sat {m['sat_p95']:.2f} vp99 {m['v_p99']:.2f}")
+              f"low {m['rect_lowfreq']:.2f} az {m['azimuth']:.2f} (keyed {m['azimuth_keyed']:.2f}) sat {m['sat_p95']:.2f} vp99 {m['v_p99']:.2f} "
+              f"hf {m['hf'] * 255:.2f} albedo {m['albedo_max']:.3f}")
         errs += blind_errors(s, m)
     total = sum(m["bytes"] for m in measured.values())
     print(f"  family total {total} bytes of {K.FAMILY_BYTES_MAX['flora']}")

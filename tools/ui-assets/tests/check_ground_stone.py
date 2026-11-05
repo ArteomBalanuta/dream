@@ -154,7 +154,7 @@ def job(name: str):
     rq, rl = CP.rect_metrics(a["atlas"], a["rects"])
     radius, fp, height, low = measured_bounds(a)
     m = {"rect_quad": rq, "rect_lowfreq": rl, "azimuth": CP.azimuth_leak(samples), "azimuth_keyed": CP.azimuth_leak(CP.with_key(samples)),
-         **CP.palette(a["atlas"], a["rects"]),
+         **CP.palette(a["atlas"], a["rects"]), **CP.detail_metrics(a),
          "tris": sum(len(p.indices) for p in a["primitives"]), "verts": sum(len(p.positions) for p in a["primitives"]), "bytes": len(glb),
          "radius": radius, "footprint": fp, "height": height, "low_y": low}
     keep = {k: a[k] for k in ("meshes", "uvs", "rects", "encoded", "atlas", "primitives", "materials", "bounds")}
@@ -193,6 +193,7 @@ def metric_errors(name: str, m: dict, cls: str, layer: str) -> list[str]:
         errs.append(f"{name}: p99 V {m['v_p99']:.3f} < {c['v_p99_min']} (a black hole)")
     if m["mean_v"] > c["mean_v_max"]:
         errs.append(f"{name}: mean V {m['mean_v']:.3f} > {c['mean_v_max']}")
+    errs += CP.detail_errors(name, m, c)
     b = K.budget_for(cls, layer)
     if m["tris"] > b["tris_max"]:
         errs.append(f"{name}: {m['tris']} triangles over the {b['tris_max']} budget for {cls}/{layer}")
@@ -288,11 +289,11 @@ def family_total_errors(sizes: dict[str, int]) -> list[str]:
 def self_test() -> list[str]:
     errs = []
     base = {"rect_quad": 0.05, "rect_lowfreq": 0.2, "azimuth": 0.02, "sat_p95": 0.2, "forbidden_hue": 0.0, "chrome": 0.0, "v_p99": 0.3,
-            "mean_v": 0.1, "tris": 100, "bytes": 1000, "low_y": 0.0, "height": 0.1}
+            "mean_v": 0.1, "tris": 100, "bytes": 1000, "low_y": 0.0, "height": 0.1, "hf": 0.05, "albedo_max": 0.3}
     if metric_errors("selftest", base, "rock", "cover"):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95,
-             "mean_v": 0.7, "tris": 10 ** 6, "bytes": 10 ** 9, "low_y": 0.2, "height": 0.9}
+             "mean_v": 0.7, "tris": 10 ** 6, "bytes": 10 ** 9, "low_y": 0.2, "height": 0.9, "hf": 0.004, "albedo_max": 0.7}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}, "rock", "cover"):
             errs.append(f"self-test: gate {k} did not fail its negative")
