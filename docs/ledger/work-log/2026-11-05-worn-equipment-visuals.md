@@ -75,6 +75,17 @@ no icon work was needed. The gap was purely on-character 3D.
   not.
 - Visual: `artifacts/captures/` holds the before, the gallery at noon and midnight, and the cloak
   iterations. Emissive pieces (ember wisp, gossamer wings) verified at midnight.
+- After the renumber to 21: **1116 passed / 0 failed** across the protocol, wire, mismatch,
+  armour-catalog and client-scene families. The one red test under those filters,
+  `StoredWorldJoinLoopbackTests.GeneratedWorldJoin_FrameSequenceAndBytes_EqualTheC0Capture`, was
+  measured at master `04a8fbfe` in a clean detached worktree: it yields the **identical** sha256
+  `e9dfe27f` and the identical 6,127 bytes there and fails identically, so it is pre-existing and the
+  join bytes are untouched by this wave. Its pin dates from `823f6eb9` and is stale on master.
+  Corroborated afterwards: `integrate/master-green-v2` re-pinned that gate in `9f54e66b` to exactly
+  `e9dfe27f...` / `6_127` - the same bytes this wave measured independently, without having seen that
+  branch. The test goes green when master-green-v2 lands. This wave deliberately does **not**
+  cherry-pick the re-pin: it is master-side, that branch owns it, and duplicating it would only
+  produce a merge conflict.
 
 ## The art took two iterations, both driven by looking at it
 
@@ -109,13 +120,19 @@ eye needs a capture in the verification loop, not just a green filter.
 - **Never run two suites at once in this repo.** Concurrent runs produce ~35 spurious failures, always in
   the persistence and world-lease families, and frequently leave a `testhost.exe` hung holding a lock on
   `dream.Tests.dll`, after which every later build fails with MSB3027.
-- **Protocol v20 is contended.** The inventory.drop wave also bumps 19 -> 20. Whoever merges second must
-  renumber to 21 *and* rewrite their paragraph of the version comment; a fixture in
-  `ProtocolVersionMismatchClientTests` fakes a newer server and would then need pushing to 22.
+- **Protocol v20 was contended, and this wave moved.** The inventory.drop wave also bumped 19 -> 20 and
+  claimed it first, so this wave now ships **21** and the version comment says why rather than just
+  carrying a new digit. The renumber had to touch five distinct spellings of the same number: the
+  constant, raw `"protocolVersion":NN` fixtures, **escaped** `\"protocolVersion\":NN` fixtures, the
+  `"Supported version: NN"` / `"this client uses vNN"` message strings, and the downgrade helpers whose
+  `Replace()` *searches* for the current version. A sed that handles only the unescaped form leaves 40
+  tests red - this wave hit that trap twice, which is why it is written down twice.
+  `ProtocolVersionMismatchClientTests`' fake newer server moved 21 -> 22.
 
 ## Open
 
-- The v20 collision above is unresolved and is the user's call.
+- Nothing blocks the merge. If the drop wave never lands, 20 is simply never used: `Decode` accepts only
+  the current version, so an unreachable digit is harmless.
 - Cloak sway is deferred: the walk clip deliberately holds the torso steady, and 1-2 px of sway is
   invisible at this zoom.
 - An undressed base figure, so "no armour" reads as no armour, is a separate wave.
