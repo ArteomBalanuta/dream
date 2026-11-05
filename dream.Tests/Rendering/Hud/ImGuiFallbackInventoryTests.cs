@@ -1,5 +1,6 @@
 using System.Reflection;
 using ImGuiNET;
+using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Scenes;
 using Dream.Multiplayer.Protocol;
@@ -174,6 +175,7 @@ public sealed class ImGuiFallbackInventoryTests
                         InventoryMoveIntent m => service.TryMove(Player, m.From, m.To),
                         InventoryEquipIntent e => service.TryEquip(Player, e.SlotIndex, e.TargetSlotIndex),
                         InventoryDestroyIntent d => service.TryDestroy(Player, d.SlotIndex, d.ItemInstanceId),
+                        InventoryDropIntent drop => service.TryDropToGround(Player, drop.SlotIndex, drop.ItemInstanceId, Vector3.Zero, 0, 0),
                         InventoryUnequipIntent u => service.TryUnequip(Player, u.SlotIndex, u.TargetCell),
                         // A potion's "Use" entry: the item.use path consumes it (the cooldown and the pool check are the runtime's).
                         ItemUseIntent use => service.TryConsume(Player, use.SlotIndex, use.ItemInstanceId),

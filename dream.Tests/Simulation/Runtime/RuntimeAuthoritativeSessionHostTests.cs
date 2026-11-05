@@ -24,9 +24,12 @@ public class RuntimeAuthoritativeSessionHostTests
 {
     // Effective attack speed is the sheet's attack speed (base plus gear) plus AttackSpeedPerAgility per
     // point of Agility. Expectations below are written as "sheet total + that term" so the number keeps
-    // its derivation; a seeded profile starts at PlayerStatRules.StartAgility (1000) while an unseeded
-    // combatant (PlayerCombatStats.UnseededAttribute) is 10, so the Agility is always passed explicitly.
-    // At Agility 10 the term is 0.1.
+    // its derivation. The Agility has no default on purpose: a seeded new-character profile starts at
+    // PlayerStatRules.StartAgility (1000, term 10), but an unseeded combatant sheet carries
+    // PlayerCombatStats.UnseededAttribute (10, term 0.1) by design, so each call states which it measures.
+    // This constant is bound to the production constant rather than spelled 10, so a change to the
+    // unseeded default moves these expectations with it. Call sites whose Agility comes from a persisted
+    // profile row state their own literal instead: that 10 only coincides with the unseeded default.
     private const int UnseededAgility = PlayerCombatStats.UnseededAttribute;
 
     private static float WithAgility(float sheetAttackSpeed, int agility)
@@ -492,7 +495,7 @@ public class RuntimeAuthoritativeSessionHostTests
         Assert.Equal(27, runtime.Player.Combatant.Experience);
         Assert.Equal(19, runtime.Player.Combatant.Stats.Strength);
         // 3.5 persisted plus the kit's 0.25 is 3.75 on the sheet, plus 0.1 from the row's Agility 10: 3.85.
-        Assert.Equal(WithAgility(3.75f, UnseededAgility), runtime.Player.Combatant.Stats.AttackSpeed);
+        Assert.Equal(WithAgility(3.75f, 10 /* the persisted row's Agility */), runtime.Player.Combatant.Stats.AttackSpeed);
         Assert.Equal(14, runtime.Player.Combatant.Stats.Vitality);
         Assert.Equal(73, runtime.Player.Combatant.Health.CurrentHealth);
         Assert.Equal(120, runtime.Player.Combatant.Health.MaxHealth);

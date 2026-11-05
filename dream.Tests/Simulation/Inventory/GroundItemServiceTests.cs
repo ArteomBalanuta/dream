@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Multiplayer.Protocol;
+using Dream.Server.Persistence;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
@@ -250,5 +251,173 @@ public sealed class GroundItemServiceTests
         Assert.Equal(PlayerInventoryService.MaxGroundItems, crowded.GroundItemCount);
         Assert.False(crowded.IsOnGround(5));
         Assert.True(crowded.IsOnGround(6));
+    }
+
+    // ---- the player's own drop (TryDropToGround) ----
+
+    private static InventorySlotSnapshot Granted(PlayerInventoryService service, string player, int seed = 0)
+    {
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryGrantRolled(player, Kind, ItemRarity.Common, new ItemRollSeed(7, 7, 7, 7, seed)));
+        return service.BuildSnapshot(player).Slots.Last(slot => slot.Item?.ItemKind == Kind);
+    }
+
+    [Fact]
+    public void APlayerDrop_LeavesTheBag_AppearsOnceAsAnUpsertAtTheirPosition_WithTheDroppersClaim()
+    {
+        PlayerInventoryService service = Service();
+        InventorySlotSnapshot slot = Granted(service, Alice);
+        long id = slot.Item!.Value.ItemInstanceId;
+        int free = service.BuildSnapshot(Alice).FreeCells();
+        service.DrainGroundDeltas([], []);
+
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryDropToGround(Alice, slot.SlotIndex, id, Spot, 7, Start));
+
+        PlayerInventorySnapshot bag = service.BuildSnapshot(Alice);
+        Assert.DoesNotContain(bag.AllItems(), item => item.ItemInstanceId == id);
+        Assert.Equal(free + 1, bag.FreeCells());
+        Assert.True(bag.BoardIsConsistent());
+        GroundItemSnapshot ground = Assert.Single(All(service));
+        Assert.Equal(id, ground.ItemInstanceId);
+        Assert.Equal(Kind, ground.ItemKind);
+        Assert.Equal(Spot, ground.Position);
+        Assert.Equal(7, ground.ClaimantActorId);
+        Assert.Equal(Start + PlayerInventoryService.GroundClaimTicks, ground.ClaimExpiresTick);
+        List<GroundItemSnapshot> upserts = [];
+        List<long> removed = [];
+        service.DrainGroundDeltas(upserts, removed);
+        Assert.Equal(ground, Assert.Single(upserts));
+        Assert.Empty(removed);
+        Assert.False(service.HasPendingGroundDeltas);
+    }
+
+    [Fact]
+    public void ADrop_StoresTheGivenPosition_PerItem_NotTheOriginNorASharedDefault()
+    {
+        // The service takes the position the server read from the player's own authoritative
+        // state; it must place the item there and nowhere else (never the origin, never Spot).
+        // This pins only "the service uses the position it is given" -- that the position comes
+        // from the player rather than the client is pinned end to end in GroundItemsLoopbackTests.
+        PlayerInventoryService service = Service();
+        Vector3 here = new(-37.25f, 4.5f, 912.75f);
+        Vector3 there = new(481.5f, -2f, -63.125f);
+        InventorySlotSnapshot first = Granted(service, Alice, seed: 0);
+        InventorySlotSnapshot second = Granted(service, Alice, seed: 1);
+
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryDropToGround(Alice, first.SlotIndex, first.Item!.Value.ItemInstanceId, here, 7, Start));
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryDropToGround(Alice, second.SlotIndex, second.Item!.Value.ItemInstanceId, there, 7, Start + 100));
+
+        Dictionary<long, GroundItemSnapshot> ground = All(service).ToDictionary(item => item.ItemInstanceId);
+        Assert.Equal(2, ground.Count);
+        Assert.Equal(here, ground[first.Item.Value.ItemInstanceId].Position);
+        Assert.Equal(there, ground[second.Item.Value.ItemInstanceId].Position);
+        Assert.All(ground.Values, item =>
+        {
+            Assert.NotEqual(Vector3.Zero, item.Position);
+            Assert.NotEqual(Spot, item.Position);
+        });
+    }
+
+    [Fact]
+    public void TheDropper_PicksItStraightBackUp_AndAnotherPlayerIsRefusedWhileTheClaimHolds()
+    {
+        PlayerInventoryService service = Service();
+        InventorySlotSnapshot slot = Granted(service, Alice);
+        long id = slot.Item!.Value.ItemInstanceId;
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryDropToGround(Alice, slot.SlotIndex, id, Spot, 7, Start));
+
+        Assert.Equal(InventoryEquipOutcome.NotYours, service.TryPickUpGround(Bob, id, Spot, Start + 1));
+        Assert.True(service.IsOnGround(id));
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryPickUpGround(Alice, id, Spot, Start + 1));
+
+        Assert.Single(service.BuildSnapshot(Alice).AllItems(), item => item.ItemInstanceId == id);
+        Assert.Equal(0, service.GroundItemCount);
+    }
+
+    [Fact]
+    public void ADropOnAFullGround_DespawnsTheOldest_InsteadOfFailing()
+    {
+        PlayerInventoryService service = Service();
+        // Unclaimed loot, because a player drop now evicts only an item nobody else has claimed. This
+        // test used to fill the ground with items claimed by Bob, which is the case that is refused with
+        // NoRoom instead (GroundItemCapDropTests covers that, and the dropper's own claims staying
+        // evictable). The eviction path this test pins is unchanged.
+        for (int i = 0; i < PlayerInventoryService.MaxGroundItems; i++)
+        {
+            Assert.True(Drop(service, i, null));
+        }
+
+        long oldest = All(service)[0].ItemInstanceId;
+        InventorySlotSnapshot slot = Granted(service, Alice);
+        long id = slot.Item!.Value.ItemInstanceId;
+        service.DrainGroundDeltas([], []);
+
+        Assert.Equal(InventoryEquipOutcome.Equipped, service.TryDropToGround(Alice, slot.SlotIndex, id, Spot, 7, Start));
+
+        Assert.Equal(PlayerInventoryService.MaxGroundItems, service.GroundItemCount);
+        Assert.False(service.IsOnGround(oldest));
+        Assert.True(service.IsOnGround(id));
+        List<long> removed = [];
+        service.DrainGroundDeltas([], removed);
+        Assert.Equal([oldest], removed);
+    }
+
+    [Fact]
+    public void ADropRejection_ChangesNothing_AndFollowsTheCheckOrder()
+    {
+        PlayerInventoryService service = Service();
+        InventorySlotSnapshot slot = Granted(service, Alice);
+        long id = slot.Item!.Value.ItemInstanceId;
+        service.DrainGroundDeltas([], []);
+        string layout = service.BuildSnapshot(Alice).Layout();
+        long next = service.NextItemInstanceId;
+
+        // An empty anchor (the last cell holds nothing), a mismatched id, a non-finite position.
+        PlayerInventorySnapshot snapshot = service.BuildSnapshot(Alice);
+        int empty = Enumerable.Range(0, 64).Last(cell => snapshot.ItemAt(cell) == null);
+        Assert.Equal(InventoryEquipOutcome.SlotEmpty, service.TryDropToGround(Alice, empty, id, Spot, 7, Start));
+        Assert.Equal(InventoryEquipOutcome.ItemMismatch, service.TryDropToGround(Alice, slot.SlotIndex, id + 1000, Spot, 7, Start));
+        Assert.Equal(InventoryEquipOutcome.TooFar, service.TryDropToGround(Alice, slot.SlotIndex, id, new Vector3(float.NaN, 0f, 0f), 7, Start));
+        Assert.Equal(InventoryEquipOutcome.TooFar, service.TryDropToGround(Alice, slot.SlotIndex, id, new Vector3(0f, float.PositiveInfinity, 0f), 7, Start));
+        foreach (int bad in new[] { -1, 64, 100, 200, int.MaxValue })
+        {
+            Assert.Equal(InventoryEquipOutcome.SlotOutOfRange, service.TryDropToGround(Alice, bad, id, Spot, 7, Start));
+        }
+
+        // The budget is last: a refusal by it spends once and changes nothing.
+        int spends = 0;
+        service.ActionGate = () => { spends++; return false; };
+        Assert.Equal(InventoryEquipOutcome.Throttled, service.TryDropToGround(Alice, slot.SlotIndex, id, Spot, 7, Start));
+        Assert.Equal(1, spends);
+        Assert.Equal(InventoryEquipOutcome.ItemMismatch, service.TryDropToGround(Alice, slot.SlotIndex, id + 1000, Spot, 7, Start));
+        Assert.Equal(1, spends);
+
+        Assert.Equal(layout, service.BuildSnapshot(Alice).Layout());
+        Assert.Equal(0, service.GroundItemCount);
+        Assert.False(service.HasPendingGroundDeltas);
+        Assert.Equal(next, service.NextItemInstanceId);
+    }
+
+    [Fact]
+    public void AWornItem_IsRefusedAsEquipped_WithNothingChanged()
+    {
+        EquipmentTestWorld world = new();
+        world.PutItem(EquipmentTestWorld.MakeItem(50, Alice, "tool.field-blade"));
+        world.PutSlot(Alice, 0, 50);
+        world.PutSlot(Alice, 100, 50);
+        world.PutGrant(Alice, ToolCatalog.CurrentStarterKitVersion);
+        PlayerInventoryService service = EquipmentSlotTests.Create(world, out PersistenceWriteQueue writes);
+        using (writes)
+        {
+            Assert.True(service.Ensure(Alice));
+            Dictionary<int, long> before = world.SlotsOf(Alice);
+            int writesBefore = world.SlotWrites;
+
+            Assert.Equal(InventoryEquipOutcome.ItemEquipped, service.TryDropToGround(Alice, 0, 50, Spot, 7, Start));
+
+            Assert.Equal(before, world.SlotsOf(Alice));
+            Assert.Equal(writesBefore, world.SlotWrites);
+            Assert.Equal(0, service.GroundItemCount);
+            Assert.True(world.HasItem(50));
+        }
     }
 }

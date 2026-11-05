@@ -265,7 +265,7 @@ public static class CharacterPanelModel
     };
 
     // The context menu of a bag item: Equip to each allowed slot, Unequip when it is held, and
-    // Destroy (behind a confirm) when it is not. backpackSlotIndex is the item's anchor cell (0..63).
+    // Drop (onto the ground, no confirm) and Destroy (behind a confirm) when it is not. backpackSlotIndex is the item's anchor cell (0..63).
     // Move targets come from MoveTargets.
     public static List<CharacterMenuEntry> BackpackMenu(
         in PlayerInventorySnapshot inventory,
@@ -305,7 +305,11 @@ public static class CharacterPanelModel
         }
         else
         {
-            // The server refuses to destroy an equipped item, so the menu does not offer it.
+            // The server refuses to drop or destroy an equipped item, so the menu offers neither.
+            entries.Add(new CharacterMenuEntry(
+                "Drop",
+                new InventoryHudAction(InventoryHudActionKind.Drop, backpackSlotIndex, 0, item.ItemInstanceId),
+                RequiresConfirm: false));
             entries.Add(new CharacterMenuEntry(
                 "Destroy...",
                 new InventoryHudAction(InventoryHudActionKind.Destroy, backpackSlotIndex, 0, item.ItemInstanceId),

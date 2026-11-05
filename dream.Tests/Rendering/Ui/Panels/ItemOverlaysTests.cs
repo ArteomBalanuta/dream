@@ -553,6 +553,42 @@ public sealed class ItemOverlaysTests : IDisposable
     }
 
     [Fact]
+    public void Ghost_OverTheWorld_IsTintedAsAGroundDrop_ButNotOverTheBoard()
+    {
+        _scene.Items[9] = InventoryScene.Item(1, "gem.amber");
+        _scene.Refresh();
+        UiColor plain = new(255, 255, 255, 200);
+
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(9));
+        _scene.Input.StartDrag = true;
+        _scene.Frame();
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(40));
+        _scene.Frame();
+        Assert.Equal(plain, _scene.Canvas.Named("item.gem.amber").Last().Color);
+
+        _scene.Input.Pointer = new Vector2(40f, 40f);
+        _scene.Frame();
+        UiColor overWorld = _scene.Canvas.Named("item.gem.amber").Last().Color;
+        Assert.NotEqual(plain, overWorld);
+        Assert.True(overWorld.R == 255 && overWorld.G < 200 && overWorld.B < 200, "a warm red, distinct from the white in-window ghost");
+    }
+
+    [Fact]
+    public void Ghost_OfAWornItemOverTheWorld_IsNotTintedAsADrop()
+    {
+        _scene.Worn[0] = InventoryScene.Item(1, "gear.iron-blade", MainMask);
+        _scene.Refresh();
+
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Well(0));
+        _scene.Input.StartDrag = true;
+        _scene.Frame();
+        _scene.Input.Pointer = new Vector2(40f, 40f);
+        _scene.Frame();
+
+        Assert.Equal(new UiColor(255, 255, 255, 200), _scene.Canvas.Named("item.gear.iron-blade").Last().Color);
+    }
+
+    [Fact]
     public void Ghost_FollowsThePointerOverTheBoardWithoutSnapping()
     {
         _scene.Items[9] = InventoryScene.Item(1, "axe.twinbit");

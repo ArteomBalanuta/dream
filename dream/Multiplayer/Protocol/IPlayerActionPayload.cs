@@ -11,6 +11,7 @@ namespace Dream.Multiplayer.Protocol;
 [JsonDerivedType(typeof(InventoryUnequipIntent), "inventory.unequip")]
 [JsonDerivedType(typeof(InventoryMoveIntent), "inventory.move")]
 [JsonDerivedType(typeof(InventoryDestroyIntent), "inventory.destroy")]
+[JsonDerivedType(typeof(InventoryDropIntent), "inventory.drop")]
 [JsonDerivedType(typeof(PlayerStatsUpdateIntent), "player.stats.update")]
 [JsonDerivedType(typeof(PlayerStatSpendIntent), "player.stats.spend")]
 [JsonDerivedType(typeof(GroundPickupIntent), "ground.pickup")]

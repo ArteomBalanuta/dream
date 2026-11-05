@@ -88,7 +88,13 @@ internal sealed partial class PlayerInventoryService
 
         if (_groundItems.Count >= MaxGroundItems)
         {
-            DespawnOldestGroundItem();
+            // Loot is never refused, but prefers an item nobody holds a claim on; only when every item is
+            // claimed does it destroy the globally oldest, so the room is always made.
+            GroundItem? victim = FindOldestEvictableGroundItem(null, tick) ?? FindOldestGroundItem();
+            if (victim != null)
+            {
+                Despawn(victim);
+            }
         }
 
         ToolDefinition tool = ToolCatalog.Resolve(definition.Key);
@@ -259,6 +265,128 @@ internal sealed partial class PlayerInventoryService
         return InventoryEquipOutcome.Equipped;
     }
 
+    // Drops the item anchored at a bag cell onto the ground at the position (the player's own, resolved
+    // by the caller). The request names the item (like TryDestroy), so a queued drop cannot hit whatever
+    // moved there. A worn item is never dropped. The dropper holds the claim like a loot drop, so a
+    // mis-drop cannot be sniped at once. A full ground despawns its oldest unclaimed item, or refuses with NoRoom.
+    // WriteFailed like a sale, because a drop writes the item row and the slot rows. Checks come first,
+    // so a rejection changes and queues nothing.
+    internal InventoryEquipOutcome TryDropToGround(
+        string playerName,
+        int slotIndex,
+        long itemInstanceId,
+        Vector3 position,
+        int actorId,
+        ulong tick)
+    {
+        if (!InventoryConstants.IsBagAnchor(slotIndex))
+        {
+            return InventoryEquipOutcome.SlotOutOfRange;
+        }
+
+        if (!Ensure(playerName))
+        {
+            return InventoryEquipOutcome.StillLoading;
+        }
+
+        if (HasSeenFailedWrite(playerName))
+        {
+            return InventoryEquipOutcome.WriteFailed;
+        }
+
+        if (!_slotsByPlayer.TryGetValue(playerName, out Dictionary<int, long>? slots)
+            || !TryGetItem(slots, slotIndex, out PersistedItemInstance existing))
+        {
+            return InventoryEquipOutcome.SlotEmpty;
+        }
+
+        if (existing.ItemInstanceId != itemInstanceId)
+        {
+            return InventoryEquipOutcome.ItemMismatch;
+        }
+
+        if (FindEquipmentSlotOf(slots, itemInstanceId) >= 0)
+        {
+            return InventoryEquipOutcome.ItemEquipped;
+        }
+
+        if (!IsFinite(position))
+        {
+            return InventoryEquipOutcome.TooFar;
+        }
+
+        // Decision (drop wave): a drop is a client action, so at the cap it must not let a player evict
+        // other players' ground items by drop and pick-up cycling. Evict only the oldest item nobody else
+        // holds a claim on (the dropper's own claimed items count as unclaimed here); if every item is
+        // claimed by someone else, refuse the drop rather than destroy another player's property. Loot
+        // drops (TryDropRolled) prefer an unclaimed item too but are never refused. NoRoom is the closest honest outcome:
+        // the world has nowhere to put the item.
+        GroundItem? victim = null;
+        if (_groundItems.Count >= MaxGroundItems)
+        {
+            victim = FindOldestEvictableGroundItem(playerName, tick);
+            if (victim == null)
+            {
+                return InventoryEquipOutcome.NoRoom;
+            }
+        }
+
+        if (!TrySpendAction())
+        {
+            return InventoryEquipOutcome.Throttled;
+        }
+
+        if (victim != null)
+        {
+            Despawn(victim);
+        }
+
+        List<int> rows = [];
+        foreach (KeyValuePair<int, long> row in slots)
+        {
+            if (row.Value == itemInstanceId)
+            {
+                rows.Add(row.Key);
+            }
+        }
+
+        // The guarded deletes of the slot rows ride in the same closure as the ground row (see SlotChanges).
+        SlotChanges changes = new();
+        foreach (int row in rows)
+        {
+            slots.Remove(row);
+            changes.Remove(row, itemInstanceId);
+        }
+
+        if (!IsReferencedByOtherInventory(playerName, itemInstanceId))
+        {
+            _itemInstances.Remove(itemInstanceId);
+        }
+
+        PersistedItemInstance groundRow = existing with
+        {
+            OwnerPlayerName = null,
+            WorldPosition = position,
+            State = GroundState,
+            UpdatedUtc = DateTime.UtcNow,
+        };
+        AddGroundItem(new GroundItem(
+            groundRow,
+            _nextGroundDropOrder++,
+            playerName,
+            actorId,
+            tick + GroundClaimTicks,
+            tick + GroundDespawnTicks));
+        DrainHeldBack(slots, changes);
+        // The row is saved first, inside the same savepoint as the guarded slot deletes, so it is never
+        // both slotted and Ground on disk.
+        // An unguarded SaveItemInstance is safe here, unlike TrySell's throwing DestroyHeldInventoryItem:
+        // the HasSeenFailedWrite gate above refuses once a write has failed, and the upsert is idempotent.
+        QueueChanges(playerName, changes, world => world.SaveItemInstance(groundRow));
+        RefreshEquippedSummary(playerName);
+        return InventoryEquipOutcome.Equipped;
+    }
+
     // Lapses claims and despawns items that have been on the ground too long. Compares one number when
     // nothing is due.
     internal void StepGroundItems(ulong tick)
@@ -307,7 +435,31 @@ internal sealed partial class PlayerInventoryService
         _nextGroundEventTick = next;
     }
 
-    private void DespawnOldestGroundItem()
+    // The oldest item that no one other than evictor holds a live claim on (same predicate as
+    // TryPickUpGround: a claim blocks only until it expires). A null evictor (loot) treats every live
+    // claim as blocking.
+    private GroundItem? FindOldestEvictableGroundItem(string? evictor, ulong tick)
+    {
+        GroundItem? oldest = null;
+        foreach (GroundItem ground in _groundItems.Values)
+        {
+            if (ground.ClaimantKey != null
+                && tick < ground.ClaimExpiresTick
+                && !string.Equals(ground.ClaimantKey, evictor, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (oldest == null || ground.DropOrder < oldest.DropOrder)
+            {
+                oldest = ground;
+            }
+        }
+
+        return oldest;
+    }
+
+    private GroundItem? FindOldestGroundItem()
     {
         GroundItem? oldest = null;
         foreach (GroundItem ground in _groundItems.Values)
@@ -318,10 +470,7 @@ internal sealed partial class PlayerInventoryService
             }
         }
 
-        if (oldest != null)
-        {
-            Despawn(oldest);
-        }
+        return oldest;
     }
 
     // Removes from memory first, so a pickup that follows finds nothing, then deletes the row; the
@@ -337,6 +486,9 @@ internal sealed partial class PlayerInventoryService
     {
         long id = ground.Item.ItemInstanceId;
         _groundItems[id] = ground;
+        // A dropped item re-adds an id that a pickup in the same tick may have queued for removal; the
+        // client applies upserts before removals, so leaving it listed would delete a live item.
+        _groundRemoved.Remove(id);
         _groundUpserted.Add(id);
         ulong due = ground.DespawnTick;
         if (ground.ClaimantKey != null)

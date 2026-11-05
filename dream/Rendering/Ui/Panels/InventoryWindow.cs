@@ -174,8 +174,7 @@ public static class InventoryWindow
         {
             if (st.DragActive && !st.DragCancelled && payload == st.DragSource)
             {
-                int target = ResolveTarget(l, win, v, payload, dropPosition);
-                if (TryResolveDrop(v, payload, target, out InventoryHudAction action) == DropVerdict.Valid)
+                if (TryResolveRelease(l, win, v, payload, dropPosition, out InventoryHudAction action) == DropVerdict.Valid)
                 {
                     a.Inventory(action);
                 }
@@ -291,6 +290,59 @@ public static class InventoryWindow
         return TryDragFootprint(v, source, out ItemFootprint footprint) && TryDropAnchor(l, win, p, footprint, out int anchor)
             ? anchor
             : -1;
+    }
+
+    // What a release at p does: a well or bag anchor first (TryResolveDrop); with no in-window target,
+    // a bag item released over the world is dropped on the ground (no confirm: it stays recoverable).
+    // A worn item released into the world is Invalid (the server refuses it, as with Destroy and Sell).
+    // Anything else, including a non-finite pointer, is None. The window is open here.
+    internal static DropVerdict TryResolveRelease(
+        in UiLayout l, UiRect win, HudView v, int source, Vector2 p, out InventoryHudAction action)
+    {
+        action = default;
+        if (!float.IsFinite(p.X) || !float.IsFinite(p.Y))
+        {
+            return DropVerdict.None;
+        }
+
+        int target = ResolveTarget(l, win, v, source, p);
+        if (target >= 0)
+        {
+            return TryResolveDrop(v, source, target, out action);
+        }
+
+        if (!ClassicHudHitTest.OverWorld(in l, inventoryOpen: true, p))
+        {
+            return DropVerdict.None;
+        }
+
+        if (EquipmentSlots.TryFromSlotIndex(source, out EquipmentSlot sourceSlot))
+        {
+            return TryItem(v.Worn, (int)sourceSlot, out _) ? DropVerdict.Invalid : DropVerdict.None;
+        }
+
+        if (!IsPlaced(v, source))
+        {
+            return DropVerdict.None;
+        }
+
+        // An item can hold a bag anchor and a worn row at once; the server refuses to drop it (ItemEquipped),
+        // so no Drop is offered, as in CharacterPanelModel.BackpackMenu. The bag copy's Equipped flag is
+        // false (it means "this row is an equipment slot"), so the worn rows are scanned for the id.
+        long itemId = v.Backpack[source].Item.ItemInstanceId;
+        if (v.Worn is { } worn)
+        {
+            for (int slot = 0; slot < worn.Length; slot++)
+            {
+                if (TryItem(worn, slot, out InventoryItemSnapshot held) && held.ItemInstanceId == itemId)
+                {
+                    return DropVerdict.Invalid;
+                }
+            }
+        }
+
+        action = new InventoryHudAction(InventoryHudActionKind.Drop, source, 0, itemId);
+        return DropVerdict.Valid;
     }
 
     // Scale that fits an icon with the given footprint into a box of boxW x boxH units: the
@@ -505,11 +557,21 @@ public static class InventoryWindow
             return none;
         }
 
+        // The same decision a release makes, so the cue never disagrees with it. Over the world (no
+        // in-window target) a valid release drops the item on the ground; that is NOT a cell cue, because
+        // the hover overlay means "lands in this cell". It is shown on the ghost instead (ItemOverlays
+        // draws it in DropGhostTint). Only a refused world release (a worn item) keeps the invalid
+        // overlay on the item's own well.
         int target = ResolveTarget(l, win, v, st.DragSource, i.Pointer.Position);
-        DropVerdict verdict = TryResolveDrop(v, st.DragSource, target, out _);
-        if (verdict == DropVerdict.None)
+        DropVerdict verdict = TryResolveRelease(l, win, v, st.DragSource, i.Pointer.Position, out _);
+        if (verdict == DropVerdict.None || (target < 0 && verdict == DropVerdict.Valid))
         {
             return none;
+        }
+
+        if (target < 0)
+        {
+            target = st.DragSource;
         }
 
         ulong cells = 0;

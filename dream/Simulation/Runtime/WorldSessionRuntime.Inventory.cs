@@ -118,7 +118,26 @@ public sealed partial class WorldSessionRuntime
         InventoryEquipOutcome outcome,
         string verb)
     {
-        string? reason = outcome switch
+        string? reason = InventoryRejectionReason(outcome, verb);
+        if (reason != null)
+        {
+            return CreateRejectedActionResult(message, $"Inventory {verb} rejected because {reason}.");
+        }
+
+        RefreshAuthoritativePlayerCombatStats(message.SessionId);
+
+        return new AuthoritativeActionResult(
+            message.SessionId.Value,
+            message.ActionSequence,
+            CurrentServerTick,
+            Accepted: true,
+            Payload: new InventoryChangedResult(_inventory.BuildSnapshot(player.CharacterKey.Value)));
+    }
+
+    // The player-facing reason an outcome is refused, or null for Equipped. The verb only changes the text
+    // where one outcome means different things per verb.
+    internal static string? InventoryRejectionReason(InventoryEquipOutcome outcome, string verb)
+        => outcome switch
         {
             InventoryEquipOutcome.Equipped => null,
             InventoryEquipOutcome.SlotOutOfRange => "the slot index is out of range",
@@ -130,6 +149,9 @@ public sealed partial class WorldSessionRuntime
             InventoryEquipOutcome.ItemEquipped => "the item is equipped",
             InventoryEquipOutcome.ItemMismatch => "the slot no longer holds that item",
             InventoryEquipOutcome.Throttled => "too many inventory actions, try again shortly",
+            // A drop only gets NoRoom from the ground cap (every item claimed by someone else), so the item
+            // itself fits fine; say the world is full rather than blaming the item.
+            InventoryEquipOutcome.NoRoom when verb == "drop" => "there is no room on the ground right now, try again shortly",
             InventoryEquipOutcome.NoRoom => "the item does not fit there",
             InventoryEquipOutcome.TooFar => "it is too far away",
             InventoryEquipOutcome.NotYours => "it is reserved for another player",
@@ -145,20 +167,6 @@ public sealed partial class WorldSessionRuntime
             InventoryEquipOutcome.QuestUnavailable => "the quest is not available",
             _ => "the request was not valid",
         };
-        if (reason != null)
-        {
-            return CreateRejectedActionResult(message, $"Inventory {verb} rejected because {reason}.");
-        }
-
-        RefreshAuthoritativePlayerCombatStats(message.SessionId);
-
-        return new AuthoritativeActionResult(
-            message.SessionId.Value,
-            message.ActionSequence,
-            CurrentServerTick,
-            Accepted: true,
-            Payload: new InventoryChangedResult(_inventory.BuildSnapshot(player.CharacterKey.Value)));
-    }
 
     // See PlayerInventoryService.ApplyLoaded.
     private void ApplyLoadedInventory(string playerName, PersistedPlayerInventory? inventory)

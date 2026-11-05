@@ -124,9 +124,12 @@ public class StatSheetTests
                         sheet.SetBase(BlockOf(strength, attackSpeed, vitality));
                         sheet.SetSource(0, modifiers);
 
-                        Assert.Equal((float)legacy.Strength, sheet.Effective[StatId.Strength]);
-                        Assert.Equal((float)legacy.Vitality, sheet.Effective[StatId.Vitality]);
-                        Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(sheet.Effective[StatId.AttackSpeed]));
+                        string at = $"strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}";
+                        Assert.True((float)legacy.Strength == sheet.Effective[StatId.Strength], $"Strength differs ({legacy.Strength} vs {sheet.Effective[StatId.Strength]}) at {at}");
+                        Assert.True((float)legacy.Vitality == sheet.Effective[StatId.Vitality], $"Vitality differs ({legacy.Vitality} vs {sheet.Effective[StatId.Vitality]}) at {at}");
+                        Assert.True(
+                            BitConverter.SingleToInt32Bits(legacy.AttackSpeed) == BitConverter.SingleToInt32Bits(sheet.Effective[StatId.AttackSpeed]),
+                            $"AttackSpeed differs ({legacy.AttackSpeed} vs {sheet.Effective[StatId.AttackSpeed]}) at {at}");
                     }
                 }
             }
@@ -169,9 +172,12 @@ public class StatSheetTests
                         EquipInMainHand(combatant, definition);
 
                         PlayerCombatStats legacy = LegacyToolStats.Combine(combatant.BaseStats, tool);
-                        Assert.Equal(legacy.Strength, combatant.Stats.Strength);
-                        Assert.Equal(legacy.Vitality, combatant.Stats.Vitality);
-                        Assert.Equal(BitConverter.SingleToInt32Bits(legacy.AttackSpeed), BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed));
+                        string at = $"strength={strength} vitality={vitality} attackSpeed={attackSpeed} tool={tool}";
+                        Assert.True(legacy.Strength == combatant.Stats.Strength, $"Strength differs ({legacy.Strength} vs {combatant.Stats.Strength}) at {at}");
+                        Assert.True(legacy.Vitality == combatant.Stats.Vitality, $"Vitality differs ({legacy.Vitality} vs {combatant.Stats.Vitality}) at {at}");
+                        Assert.True(
+                            BitConverter.SingleToInt32Bits(legacy.AttackSpeed) == BitConverter.SingleToInt32Bits(combatant.Stats.AttackSpeed),
+                            $"AttackSpeed differs ({legacy.AttackSpeed} vs {combatant.Stats.AttackSpeed}) at {at}");
                     }
                 }
             }
@@ -227,6 +233,9 @@ public class StatSheetTests
     public void Resolution_ClampsEffectiveAndBase()
     {
         StatSheet sheet = new();
+        // Over the ceiling, expressed relative to it: a literal 5000 was above the old ceiling and is
+        // below today's, so after commit 1f422512 it clamped nothing and this test only still passed
+        // because the hanging grid tests above it meant it never ran.
         sheet.SetBase(BlockOf(PlayerCombatStats.MaxStrength + 1f, -3f, 0f));
         Assert.Equal(PlayerCombatStats.MaxStrength, sheet.Base[StatId.Strength]);
         Assert.Equal(0.5f, sheet.Base[StatId.AttackSpeed]);

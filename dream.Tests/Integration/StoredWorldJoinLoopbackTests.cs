@@ -42,7 +42,22 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // longer (5050 for 100, 2 x 1 = 2 B), +10 B. Rolling the start back to 10 (NewCharacterAttribute) removes
     // exactly those 10 B and returns the earlier pin: 6,127 -> 6,117 B, and the sha-256 is again
     // 90a7bf84de99b7b7... byte for byte. This test does not seed the baseline on purpose: it pins what a
-    // new character's join looks like. The join is 6,117 B in all.
+    // new character's join looks like.
+    //
+    // Re-measured on the tree that carries BOTH the attribute-origin rollback and the inventory-drop
+    // protocol bump (19 -> 20), because each wave moved this pin on its own branch and the combined value
+    // is neither branch's. Measured: 6,117 B, sha-256 90a7bf84de99b7b7.... Accounted for in full:
+    //   6,117 B  the pre-a39702e6 pin, restored by the rollback above (6,127 - 10 B)
+    //     + 0 B  the 19 -> 20 protocol bump
+    //   -------
+    //   6,117 B  measured
+    // The protocol bump contributes nothing at all here, and not merely because the digit is the same
+    // width: CaptureGeneratedJoinAsync below normalises "protocolVersion":20 to "protocolVersion":8 on
+    // every frame before it hashes or counts, exactly as it previously normalised ":19" to ":8". Both
+    // versions collapse to identical normalised text, so the bump moves neither the byte count nor the
+    // sha-256. That is why the hash here is byte-for-byte the attribute wave's 90a7bf84... rather than a
+    // new value -- a protocol bump alone can never re-pin this test, only a payload change can.
+    // The join is 6,117 B in all.
     private const int C0FrameCount = 3;
     private const long C0TotalBytes = 6_117;
     private const string C0FrameKinds =
@@ -191,7 +206,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
             // out, so every other byte still matches the capture. The inventory's size and shape are pinned by
             // StarterKitInventoryBytesTests and PlayerInventorySnapshotConverterTests.
             string text = StripInventory(
-                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":19", "\"protocolVersion\":8"));
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":20", "\"protocolVersion\":8"));
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));

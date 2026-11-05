@@ -258,6 +258,11 @@ public static class ItemOverlays
     private static readonly UiColor RowHover = new(255, 255, 255, 44);
     private static readonly UiColor GhostTint = new(255, 255, 255, 200);
 
+    // The ghost while a release would drop the item on the ground (no confirm dialog, so this is the
+    // cue): a warm red, unlike the white of every in-window outcome. Multiplies the icon, so it stays
+    // readable and needs no new art.
+    private static readonly UiColor DropGhostTint = new(255, 120, 100, 200);
+
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
     {
         InventoryUiState st = InventoryUiState.Current;
@@ -556,7 +561,9 @@ public static class ItemOverlays
         float width = footprint.Cols * InventoryWindow.CellUnits * l.Scale;
         float height = footprint.Rows * InventoryWindow.CellUnits * l.Scale;
         UiRect box = new(p.X - (width * 0.5f), p.Y - (height * 0.5f), width, height);
-        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), InventoryWindow.IconRect(hv.Icon, box, l.Scale), GhostTint);
+        bool dropsOnGround = InventoryWindow.TryResolveRelease(in l, l.Inventory, v, st.DragSource, p, out InventoryHudAction action) == InventoryWindow.DropVerdict.Valid
+            && action.Kind == InventoryHudActionKind.Drop;
+        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), InventoryWindow.IconRect(hv.Icon, box, l.Scale), dropsOnGround ? DropGhostTint : GhostTint);
     }
 
     // ---- context menu -----------------------------------------------------------------------

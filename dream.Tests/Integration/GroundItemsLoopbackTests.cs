@@ -52,27 +52,28 @@ public sealed class GroundItemsLoopbackTests
         return target;
     }
 
-    // The client's ground list as ClientGroundItemCache will keep it: replayed from every ground message
-    // received, in order (Reset replaces, upserts and removals are idempotent).
+    // The client's ground list as ClientGroundItemCache keeps it: replayed from every ground message
+    // received, in order. Within one message Reset replaces, then upserts apply, then removals apply (the
+    // production order, so an id listed in both is removed).
     private static Dictionary<long, GroundItemSnapshot> Ground(IReadOnlyList<WireFrame> frames)
     {
         Dictionary<long, GroundItemSnapshot> list = [];
         foreach (ServerGroundItems message in frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>())
         {
-            Assert.InRange(message.Upserts.Count + message.RemovedIds.Count, 1 - 1, ServerGroundItems.MaxEntries);
+            Assert.InRange(message.Upserts.Count + message.RemovedIds.Count, 0, ServerGroundItems.MaxEntries);
             if (message.Reset)
             {
                 list.Clear();
             }
 
-            foreach (long id in message.RemovedIds)
-            {
-                list.Remove(id);
-            }
-
             foreach (GroundItemSnapshot item in message.Upserts)
             {
                 list[item.ItemInstanceId] = item;
+            }
+
+            foreach (long id in message.RemovedIds)
+            {
+                list.Remove(id);
             }
         }
 
@@ -120,6 +121,177 @@ public sealed class GroundItemsLoopbackTests
     {
         Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
         Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
+    }
+
+    // The security property of the whole drop design, end to end: InventoryDropIntent carries no
+    // position, so the server must place the item at the position IT holds for the dropper. Pinned by
+    // moving the dropper somewhere no default could coincide with and asserting the replicated position
+    // equals the server's own view of that player -- not the origin, not the shared Spot every
+    // other test here uses, and not a value any client could have chosen.
+    [Fact]
+    public async Task ADrop_LandsAtTheServersOwnPositionForTheDropper_NotTheOriginNorAnyClientSuppliedPlace()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
+        await TickAsync(server, 2);
+        IAuthoritativePlayerTarget targetA = WaveIRuntimeKit.Target(server.Runtime, SessionA);
+        // Offset from the Spot every other test here uses, so it is well inside the map: a position
+        // outside it is clamped to the world centre by the server, which would make this assert the
+        // clamp rather than the drop.
+        Vector3 standing = Spot + new Vector3(7.25f, 0f, 11.5f);
+        targetA.SetWorldPosition(standing);
+        await TickAsync(server);
+        WorldSessionRuntime runtime = server.Runtime;
+
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            runtime.InventoryService.TryGrantRolled(KeyOf(SessionA), Band, ItemRarity.Common, new ItemRollSeed(9, 9, 9, 9, 0)));
+        await TickAsync(server);
+        InventorySlotSnapshot band = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.Slots.First(slot => slot.Item?.ItemKind == Band);
+        long id = band.Item!.Value.ItemInstanceId;
+
+        ActionResult dropped = await ActAsync(server, a, new InventoryDropIntent(band.SlotIndex, id));
+        Assert.True(dropped.Accepted, dropped.Reason);
+        await WaitGroundAsync(a, ground => ground.Count == 1, "the dropped item");
+
+        GroundItemSnapshot seen = Assert.Single(Ground(a.Frames).Values);
+        Assert.Equal(id, seen.ItemInstanceId);
+        // The invariant: the item sits where the SERVER holds the dropper, whatever that is by now.
+        // `standing` below only guards against the default positions, so a later gravity or terrain
+        // snap at that spot cannot turn this into a false failure.
+        Assert.Equal((Vector3)targetA.Position, seen.Position);
+        Assert.NotEqual(Vector3.Zero, seen.Position);
+        Assert.NotEqual(Spot, seen.Position);
+    }
+
+    [Fact]
+    public async Task ADrop_BecomesAGroundUpsert_TheStrangerIsRefused_TheDropperPicksItBackUp_AndADeadPlayerCannotDrop()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
+        await using WireLoopbackClient b = await server.ConnectAndJoinAsync(SessionB);
+        await TickAsync(server, 2);
+        IAuthoritativePlayerTarget targetA = Place(server, SessionA);
+        Place(server, SessionB);
+        await TickAsync(server);
+        WorldSessionRuntime runtime = server.Runtime;
+        Assert.Equal(0, runtime.GroundItemCount);
+
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            runtime.InventoryService.TryGrantRolled(KeyOf(SessionA), Band, ItemRarity.Common, new ItemRollSeed(7, 7, 7, 7, 0)));
+        await TickAsync(server);
+        InventorySlotSnapshot band = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.Slots.First(slot => slot.Item?.ItemKind == Band);
+        long id = band.Item!.Value.ItemInstanceId;
+        int free = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.FreeCells();
+
+        // ---- the drop: the item leaves the bag and appears once, at A's feet, claimed by A ----
+        ActionResult dropped = await ActAsync(server, a, new InventoryDropIntent(band.SlotIndex, id));
+        Assert.True(dropped.Accepted, dropped.Reason);
+        PlayerInventorySnapshot afterDrop = Assert.IsType<InventoryChangedResult>(dropped.Payload).Inventory;
+        Assert.DoesNotContain(afterDrop.AllItems(), item => item.ItemInstanceId == id);
+        Assert.Equal(free + 1, afterDrop.FreeCells());
+        Assert.Equal(1, runtime.GroundItemCount);
+        foreach (WireLoopbackClient client in new[] { a, b })
+        {
+            await WaitGroundAsync(client, ground => ground.Count == 1, "the dropped item");
+            GroundItemSnapshot seen = Assert.Single(Ground(client.Frames).Values);
+            Assert.Equal(id, seen.ItemInstanceId);
+            Assert.Equal(Band, seen.ItemKind);
+            Assert.Equal(targetA.ActorId, seen.ClaimantActorId);
+            Assert.True(Vector3.Distance(seen.Position, targetA.Position) < 1f);
+            Assert.Equal(1, client.Frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().SelectMany(m => m.Upserts).Count(u => u.ItemInstanceId == id));
+        }
+
+        Flush(server);
+        Assert.Equal("Ground", db.Scalar($"SELECT state FROM item_instances WHERE item_instance_id = {id};"));
+        Assert.IsType<DBNull>(db.Scalar($"SELECT owner_player_name FROM item_instances WHERE item_instance_id = {id};"));
+        Assert.Equal(0, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {id};"));
+
+        // ---- the claim holds the stranger off ----
+        ActionResult stranger = await ActAsync(server, b, new GroundPickupIntent(id));
+        Assert.False(stranger.Accepted);
+        Assert.Contains("reserved for another player", stranger.Reason);
+        Assert.Equal(1, runtime.GroundItemCount);
+
+        // ---- the dropper picks it straight back up ----
+        ActionResult picked = await ActAsync(server, a, new GroundPickupIntent(id));
+        Assert.True(picked.Accepted, picked.Reason);
+        Assert.Single(Assert.IsType<InventoryChangedResult>(picked.Payload).Inventory.AllItems(), item => item.ItemInstanceId == id);
+        Assert.Equal(0, runtime.GroundItemCount);
+        foreach (WireLoopbackClient client in new[] { a, b })
+        {
+            await WaitGroundAsync(client, ground => ground.Count == 0, "the pickup removed the item");
+        }
+
+        Flush(server);
+        Assert.Equal("Inventory", db.Scalar($"SELECT state FROM item_instances WHERE item_instance_id = {id};"));
+        Assert.Equal(1, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {id};"));
+
+        // ---- a dead player cannot drop ----
+        PlayerInventorySnapshot again = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value;
+        InventorySlotSnapshot anchor = again.Slots.First(slot => slot.Item?.ItemInstanceId == id);
+        WaveIRuntimeKit.Kill(runtime, SessionA);
+        ActionResult dead = await ActAsync(server, a, new InventoryDropIntent(anchor.SlotIndex, id));
+        Assert.False(dead.Accepted);
+        Assert.Contains("dead", dead.Reason);
+        Assert.Equal(0, runtime.GroundItemCount);
+        Assert.Contains(runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.AllItems(), item => item.ItemInstanceId == id);
+
+        await server.DisconnectAsync(a);
+        await server.DisconnectAsync(b);
+        await TickAsync(server, 2);
+        Flush(server);
+    }
+
+    [Fact]
+    public async Task APickupThenADropOfTheSameItemInOneTick_StaysVisibleToAClientApplyingDeltasInProductionOrder()
+    {
+        using MigrationTestDatabase db = new();
+        await using WireLoopbackServer server = await StartAsync(db);
+        await using WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
+        await TickAsync(server, 2);
+        Place(server, SessionA);
+        await TickAsync(server);
+        WorldSessionRuntime runtime = server.Runtime;
+
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            runtime.InventoryService.TryGrantRolled(KeyOf(SessionA), Band, ItemRarity.Common, new ItemRollSeed(7, 7, 7, 7, 0)));
+        await TickAsync(server);
+        InventorySlotSnapshot band = runtime.TryCaptureInventorySnapshot(new PlayerSessionId(SessionA))!.Value.Slots.First(slot => slot.Item?.ItemKind == Band);
+        long id = band.Item!.Value.ItemInstanceId;
+
+        ActionResult first = await ActAsync(server, a, new InventoryDropIntent(band.SlotIndex, id));
+        Assert.True(first.Accepted, first.Reason);
+        await WaitGroundAsync(a, ground => ground.ContainsKey(id), "the first drop");
+        int messagesBefore = a.Frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().Count();
+
+        // Pick up and drop again: both actions are queued before the one tick that runs them.
+        InventorySlotSnapshot cell = band;
+        await a.SendActionAsync(new GroundPickupIntent(id));
+        ulong pickupSequence = a.SentActionSequence;
+        await a.SendActionAsync(new InventoryDropIntent(cell.SlotIndex, id));
+        ulong dropSequence = a.SentActionSequence;
+        await TickAsync(server);
+        Assert.True((await ResultAsync(a, pickupSequence)).Accepted);
+        ActionResult second = await ResultAsync(a, dropSequence);
+        Assert.True(second.Accepted, second.Reason);
+
+        Assert.Equal(1, runtime.GroundItemCount);
+        await a.WaitForAsync(
+            frames => frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().Count() > messagesBefore,
+            "the second ground message");
+        List<ServerGroundItems> later = a.Frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().Skip(messagesBefore).ToList();
+        Assert.Contains(later.SelectMany(m => m.Upserts), u => u.ItemInstanceId == id);
+        Assert.DoesNotContain(later.SelectMany(m => m.RemovedIds), removed => removed == id);
+        Assert.True(Ground(a.Frames).ContainsKey(id));
+
+        await server.DisconnectAsync(a);
+        await TickAsync(server, 2);
+        Flush(server);
     }
 
     [Fact]
