@@ -210,7 +210,11 @@ public sealed class M8EndToEndLoopbackTests
         await TicksAsync(server, 8);
         Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello anyone");
 
-        // The mute is on the account: a new connection starts muted.
+        // The mute is on the account: a new connection starts muted. The persistence queue writes that
+        // account row asynchronously, so the rejoin below can out-run it and read an unmuted account -
+        // which passes on an idle machine and fails under load. Wait for the write, as the sibling
+        // admin tests do, before disconnecting.
+        Flush(server);
         await server.DisconnectAsync(bee);
         bee = await server.ConnectAndJoinAsync(Bee);
         await SayAsync(bee, ChatChannel.World, "hello again");
