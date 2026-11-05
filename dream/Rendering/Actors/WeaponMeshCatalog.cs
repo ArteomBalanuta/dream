@@ -24,8 +24,8 @@ public enum WeaponGrip
     Shield
 }
 
-// One box of a held model: centre and size in model units (the unscaled player model, about 2 units
-// tall), turned about X (Pitch) and then Z (Roll), in degrees.
+// One box of a held model: centre and size in model units (the unscaled player model, 2.68 units
+// tall = 1.904 m, see HeldItemScale), turned about X (Pitch) and then Z (Roll), in degrees.
 public readonly record struct WeaponPart(
     Vector3 Center,
     Vector3 Size,
@@ -148,21 +148,21 @@ public static class WeaponMeshCatalog
 
         // Short, thin, a bone pommel and a hooked guard.
         Hand("held.weapon.dagger", false,
-            Box(0f, 0.08f, 0f, 0.07f, 0.22f, 0.07f, WeaponMaterial.Leather),
-            Box(0f, -0.05f, 0f, 0.09f, 0.07f, 0.09f, WeaponMaterial.Bone),
-            Box(0f, 0.21f, 0f, 0.08f, 0.04f, 0.20f, WeaponMaterial.DarkIron),
-            Box(0f, 0.48f, 0f, 0.04f, 0.52f, 0.10f, WeaponMaterial.Steel),
-            Box(0f, 0.46f, 0f, 0.05f, 0.34f, 0.03f, WeaponMaterial.DarkIron),
-            Box(0f, 0.78f, 0f, 0.035f, 0.10f, 0.05f, WeaponMaterial.Steel));
+            Box(0f, 0.043f, 0f, 0.07f, 0.118f, 0.07f, WeaponMaterial.Leather),
+            Box(0f, -0.027f, 0f, 0.09f, 0.037f, 0.09f, WeaponMaterial.Bone),
+            Box(0f, 0.112f, 0f, 0.08f, 0.021f, 0.20f, WeaponMaterial.DarkIron),
+            Box(0f, 0.257f, 0f, 0.04f, 0.278f, 0.10f, WeaponMaterial.Steel),
+            Box(0f, 0.246f, 0f, 0.05f, 0.182f, 0.03f, WeaponMaterial.DarkIron),
+            Box(0f, 0.418f, 0f, 0.035f, 0.054f, 0.05f, WeaponMaterial.Steel));
 
         // The long blade, a plain cross guard and a round pommel.
         Hand("held.weapon.sword", false,
-            Box(0f, 0.09f, 0f, 0.08f, 0.28f, 0.08f, WeaponMaterial.Leather),
-            Box(0f, -0.07f, 0f, 0.12f, 0.10f, 0.12f, WeaponMaterial.Gilt),
-            Box(0f, 0.25f, 0f, 0.09f, 0.05f, 0.36f, WeaponMaterial.DarkIron),
-            Box(0f, 0.78f, 0f, 0.05f, 0.95f, 0.15f, WeaponMaterial.Steel),
-            Box(0f, 0.74f, 0f, 0.058f, 0.70f, 0.045f, WeaponMaterial.DarkIron),
-            Box(0f, 1.30f, 0f, 0.045f, 0.12f, 0.08f, WeaponMaterial.Steel));
+            Box(0f, 0.081f, 0f, 0.08f, 0.254f, 0.08f, WeaponMaterial.Leather),
+            Box(0f, -0.063f, 0f, 0.12f, 0.091f, 0.12f, WeaponMaterial.Gilt),
+            Box(0f, 0.226f, 0f, 0.09f, 0.045f, 0.36f, WeaponMaterial.DarkIron),
+            Box(0f, 0.706f, 0f, 0.05f, 0.86f, 0.15f, WeaponMaterial.Steel),
+            Box(0f, 0.67f, 0f, 0.058f, 0.634f, 0.045f, WeaponMaterial.DarkIron),
+            Box(0f, 1.177f, 0f, 0.045f, 0.109f, 0.08f, WeaponMaterial.Steel));
 
         // A hand-and-a-half grip, wide crossguard with drooping quillons, a broad blade, red wrap.
         Hand("held.weapon.greatsword", false,
@@ -256,11 +256,11 @@ public static class WeaponMeshCatalog
 
         // A short haft and a small bearded bit.
         Hand("held.weapon.hand-axe", false,
-            Box(0f, 0.20f, 0f, 0.06f, 0.70f, 0.06f, WeaponMaterial.Wood),
-            Box(0f, -0.16f, 0f, 0.09f, 0.05f, 0.09f, WeaponMaterial.DarkIron),
-            Box(0f, 0.58f, 0.02f, 0.10f, 0.16f, 0.10f, WeaponMaterial.DarkIron),
-            Box(0f, 0.58f, 0.16f, 0.045f, 0.28f, 0.20f, WeaponMaterial.Steel),
-            Box(0f, 0.58f, 0.27f, 0.04f, 0.34f, 0.04f, WeaponMaterial.Steel));
+            Box(0f, 0.165f, 0f, 0.06f, 0.576f, 0.06f, WeaponMaterial.Wood),
+            Box(0f, -0.132f, 0f, 0.09f, 0.041f, 0.09f, WeaponMaterial.DarkIron),
+            Box(0f, 0.478f, 0.02f, 0.10f, 0.132f, 0.10f, WeaponMaterial.DarkIron),
+            Box(0f, 0.478f, 0.16f, 0.045f, 0.231f, 0.20f, WeaponMaterial.Steel),
+            Box(0f, 0.478f, 0.27f, 0.04f, 0.28f, 0.04f, WeaponMaterial.Steel));
 
         // A small recurved bow with bone tips and a short string.
         Hand("held.weapon.short-bow", true,
@@ -343,11 +343,11 @@ public static class WeaponMeshCatalog
             Box(0f, 0.50f, 0f, 0.09f, 0.08f, 0.09f, WeaponMaterial.DarkIron));
 
         Hand("held.tool.torch", false,
-            Box(0f, 0.30f, 0f, 0.07f, 0.85f, 0.07f, WeaponMaterial.Wood),
-            Box(0f, 0.78f, 0f, 0.12f, 0.16f, 0.12f, WeaponMaterial.Leather),
-            Box(0f, 0.95f, 0f, 0.13f, 0.18f, 0.13f, WeaponMaterial.DarkIron),
-            Box(0f, 1.07f, 0f, 0.09f, 0.16f, 0.09f, WeaponMaterial.Ember, roll: 45f),
-            Box(0f, 1.18f, 0f, 0.05f, 0.12f, 0.05f, WeaponMaterial.Ember, roll: 45f));
+            Box(0f, 0.169f, 0f, 0.07f, 0.479f, 0.07f, WeaponMaterial.Wood),
+            Box(0f, 0.44f, 0f, 0.12f, 0.09f, 0.12f, WeaponMaterial.Leather),
+            Box(0f, 0.536f, 0f, 0.13f, 0.102f, 0.13f, WeaponMaterial.DarkIron),
+            Box(0f, 0.604f, 0f, 0.09f, 0.09f, 0.09f, WeaponMaterial.Ember, roll: 45f),
+            Box(0f, 0.666f, 0f, 0.05f, 0.068f, 0.05f, WeaponMaterial.Ember, roll: 45f));
 
         Hand("held.tool.lantern", false,
             Box(0f, 0.20f, 0f, 0.025f, 0.30f, 0.025f, WeaponMaterial.DarkIron),

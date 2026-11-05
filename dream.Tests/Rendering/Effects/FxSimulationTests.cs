@@ -4,6 +4,7 @@ using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
 using Dream.Rendering.World;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Runtime;
 using OpenTK.Mathematics;
 using Xunit;
@@ -551,11 +552,13 @@ public class FxSimulationTests
     public void A_Halo_Flickers_Over_Time_Without_Moving()
     {
         FxSimulation simulation = new(1u);
-        PointLight[] lights = [new PointLight(Camera + Front * 5f, HeldLightCatalog.TorchRadius, HeldLightCatalog.TorchColor)];
         HashSet<uint> reds = [];
 
         for (int frame = 0; frame < 120; frame++)
         {
+            // The halo carries no flicker of its own: the light's colour does (one shared flicker).
+            Assert.True(HeldLightCatalog.TryCreate(HeldLightKind.Torch, Camera + Front * 5f, frame / 60.0, 3, out PointLight light));
+            PointLight[] lights = [light];
             simulation.Advance(Inputs(night: 1f), lights);
             reds.Add(WriteAll(simulation).First(i => IsHalo(i)).Color & 0xFFu);
         }
