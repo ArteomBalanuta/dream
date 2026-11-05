@@ -49,6 +49,18 @@ public static class HeldLightCatalog
     public static readonly float MaxUnclippedBrazierIntensity =
         1f / (FxSimulation.LampHaloTint.X * (1f + FireFlicker.BrazierAmplitude));
 
+    // The largest brightness the torch FLAME sprite can carry before a channel exceeds a byte: its
+    // channels are cull * flameNight * brightness * tint, all factors <= 1 at night, so it is the
+    // reciprocal of the largest per-channel gain (1.0 today).
+    public static readonly float MaxUnclippedFlameBrightness = 1f / FxSimulation.FlameMaxChannelGain;
+
+    // The flame's brightness at the flicker peak: a margin UNDER that ceiling, never AT it. Touching
+    // the ceiling pinned the byte for every flicker >= 1 (half the cycle); with the margin, the byte at
+    // the peak is 247 and each of the 2A-wide flicker steps is a distinct byte
+    // (FxSimulation.FlameBrightnessAt maps [1 - A, 1 + A] linearly onto [0.75, this]).
+    public const float FlameSaturationMargin = 0.03f;
+    public static readonly float FlameBrightnessCeiling = MaxUnclippedFlameBrightness * (1f - FlameSaturationMargin);
+
     public static readonly Vector3 TorchColor = new Vector3(1.0f, 0.62f, 0.32f) * TorchIntensity;
     public static readonly Vector3 LanternColor = new Vector3(1.0f, 0.80f, 0.55f) * LanternIntensity;
 
@@ -90,6 +102,10 @@ public static class HeldLightCatalog
         }
 
         FireFlickerSample sample = Sample(kind, position, timeSeconds, seed);
+        // A held light's colour must NEVER be scaled after this point (no daylight factor, no fade):
+        // FireFlicker.IntensityOf recovers the torch's flicker by reading Color.X / TorchColor.X back,
+        // clamped to [1 - A, 1 + A]. A scaled colour would not fail, it would silently pin the halo's
+        // flicker at the floor. Scale a placed fire's colour (the brazier does) but never a held one.
         light = new PointLight(position + sample.Offset, radius * sample.RadiusScale, color * sample.Intensity);
         return true;
     }

@@ -149,6 +149,56 @@ public class FireFlickerTests
             FireFlicker.Sample(FireFlickerKind.Brazier, Position + new Vector3(16f, 0f, 0f), 5.5, 0).Intensity);
     }
 
+    // The halo re-derives its phase from light.Position, which already carries the offset, while the
+    // light itself was sampled at the un-offset position. Cell boundaries sit at 0.5k - 0.25; a position
+    // within the offset of one (a damaged lamp's centroid can sit exactly on it) used to give the halo a
+    // different phase from the light, flipping as the offset oscillated. Sweep each axis through boundaries.
+    [Theory]
+    [InlineData(FireFlickerKind.Lamp)]
+    [InlineData(FireFlickerKind.Brazier)]
+    public void ThePhase_IsStableUnderTheOffset_AcrossEveryCellBoundary(FireFlickerKind kind)
+    {
+        float radius = kind == FireFlickerKind.Lamp ? LampLightIndex.LampRadius : PlacedLightIndex.BrazierRadius;
+        int checkedSamples = 0;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            // From 1.80 to 3.30 in 0.001 steps: crosses the boundaries at 2.25 and 2.75 (and 3.25), and
+            // lands exactly on them.
+            for (int step = 0; step <= 1500; step++)
+            {
+                Vector3 position = new(7.5f, 3.5f, -4.5f);
+                float value = 1.8f + (step * 0.001f);
+                if (axis == 0) position.X = value; else if (axis == 1) position.Y = value; else position.Z = value;
+
+                for (int k = 0; k < 24; k++)
+                {
+                    double t = (k * 0.173) + (step * 0.0007);
+                    FireFlickerSample s = FireFlicker.Sample(kind, position, t, 0);
+                    PointLight light = new(position + s.Offset, radius * s.RadiusScale, Vector3.One);
+                    Assert.Equal(s.Intensity, FireFlicker.IntensityOf(in light, t));
+                    checkedSamples++;
+                }
+            }
+        }
+
+        Assert.True(checkedSamples > 100000);
+    }
+
+    [Fact]
+    public void AHaloOnACellBoundary_DoesNotJitterFrameToFrame()
+    {
+        // Exactly on a boundary on every axis (2.25 = 0.5*5 - 0.25), 4 s at 60 fps: the light's own
+        // flicker and the halo's read-back must be the same series, i.e. no frame flips to another phase.
+        Vector3 position = new(2.25f, 2.25f, 2.25f);
+        for (int frame = 0; frame < 240; frame++)
+        {
+            double t = frame / 60.0;
+            FireFlickerSample s = FireFlicker.Sample(FireFlickerKind.Lamp, position, t, 0);
+            PointLight light = new(position + s.Offset, LampLightIndex.LampRadius * s.RadiusScale, Vector3.One);
+            Assert.Equal(s.Intensity, FireFlicker.IntensityOf(in light, t));
+        }
+    }
+
     // FxSimulation classifies a light by its radius, so a flickering radius must stay in its class.
     [Fact]
     public void TryClassify_KeepsEveryFlickeringRadiusInItsClass_AndTheBandsDoNotOverlap()

@@ -3,6 +3,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
+using Dream.Rendering.World;
 using Dream.Simulation.Inventory;
 
 namespace Dream.Tests.Rendering.Lighting;
@@ -103,6 +104,59 @@ public sealed class HeldLightCatalogTests
         Assert.True(peakRed <= 0.99f, $"peak brazier halo red {peakRed:F3}");
         Assert.True(PlacedLightIndex.BrazierColor.X * FxSimulation.LampHaloTint.X * (1f + FireFlicker.BrazierAmplitude) <= 1.0f);
         Assert.True(HeldLightCatalog.TorchColor.X * FxSimulation.HeldHaloTint.X * (1f + HeldLightCatalog.TorchFlickerAmplitude) <= 1.0f);
+    }
+
+    // The torch FLAME sprite packs cull * flameNight * min(flicker, cap) * tint into bytes. Before the cap,
+    // flicker (peak 1.25) pinned every channel for the upper half of the cycle. Worst case: night, cull 1.
+    [Fact]
+    public void TheTorchFlame_NeverPinsAChannel_AndTheCeilingIsDerived()
+    {
+        Assert.Equal(1f / FxSimulation.FlameMaxChannelGain, HeldLightCatalog.MaxUnclippedFlameBrightness, 5);
+        Assert.Equal(1f, HeldLightCatalog.MaxUnclippedFlameBrightness, 4);
+
+        Assert.Equal(1f * (1f - HeldLightCatalog.FlameSaturationMargin), HeldLightCatalog.FlameBrightnessCeiling, 5);
+
+        float a = HeldLightCatalog.TorchFlickerAmplitude;
+        float peak = 1f + a;
+        // The byte clamp hides overshoot, so check the UNCLAMPED channel gain: night, cull 1, every flicker.
+        for (float f = 1f - a; f <= peak; f += 0.005f)
+        {
+            float gain = FxSimulation.FlameBrightnessAt(f) * FxSimulation.FlameMaxChannelGain;
+            Assert.True(gain <= HeldLightCatalog.FlameBrightnessCeiling + 1e-6f, $"flame channel {gain} overshoots at flicker {f}");
+        }
+
+        // No plateau: strictly increasing, and at least a byte per 0.01 of flicker, over the whole range.
+        uint previous = FxSimulation.FlameColor(1f, 1f - a, 1f) & 0xFFu;
+        for (float f = 1f - a + 0.01f; f <= peak + 1e-4f; f += 0.01f)
+        {
+            uint now = FxSimulation.FlameColor(1f, f, 1f) & 0xFFu;
+            Assert.True(now > previous, $"flame byte plateaus at flicker {f}: {previous} -> {now}");
+            previous = now;
+        }
+
+        Assert.Equal(191u, FxSimulation.FlameColor(1f, 1f - a, 1f) & 0xFFu);
+        Assert.Equal(219u, FxSimulation.FlameColor(1f, 1f, 1f) & 0xFFu);
+        Assert.Equal(247u, FxSimulation.FlameColor(1f, peak, 1f) & 0xFFu);
+
+        // The sprite grows with the flicker as well.
+        Assert.True(FxSimulation.FlameHalfSizeAt(peak) > FxSimulation.FlameHalfSizeAt(1f));
+        Assert.True(FxSimulation.FlameHalfSizeAt(1f - a) < FxSimulation.FlameHalfSizeAt(1f));
+        // Without the margin the peak would touch the byte.
+        Assert.True(peak * FxSimulation.FlameMaxChannelGain > 1f);
+    }
+
+    [Fact]
+    public void TheWorstCasePackedBytes_OfTheTorchFlame_TheBrazierHalo_AndTheLampHalo_StayInRange()
+    {
+        float peak = 1f + FireFlicker.TorchAmplitude;
+        uint flame = FxSimulation.FlameColor(1f, peak, 1f);
+        uint brazier = FxInstance.PackColor(
+            PlacedLightIndex.BrazierColor.X * peak * FxSimulation.LampHaloTint.X, 0f, 0f, 0f);
+        uint lamp = FxInstance.PackColor(
+            LampLightIndex.LampColor.X * peak * FxSimulation.LampHaloTint.X, 0f, 0f, 0f);
+        Assert.True((flame & 0xFFu) < 255u, $"flame {flame & 0xFFu}");
+        Assert.True((brazier & 0xFFu) < 255u, $"brazier {brazier & 0xFFu}");
+        Assert.True((lamp & 0xFFu) < 255u, $"lamp {lamp & 0xFFu}");
     }
 
     [Fact]
