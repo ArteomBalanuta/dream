@@ -64,6 +64,11 @@ public class AnimatedModel : IDisposable
     // is today's look. The caller resets it to zero after drawing a tinted actor.
     public Vector3 ActorTintOffset { get; set; }
 
+    // The plant sway (uWind in cubeVertex.glsl, see Rendering/Ground/GroundWind): written to every program a
+    // draw of this model binds, so the MASK variant never keeps a value an earlier draw left in it. Zero (the
+    // default) is no sway; GroundScatterRenderer sets it per asset and zeroes it after.
+    public Vector2 Wind { get; set; }
+
     // The view and projection of the current BeginRender, for a switch to an alpha-mask program.
     private Matrix4 _renderView = Matrix4.Identity;
     private Matrix4 _renderProjection = Matrix4.Identity;
@@ -508,6 +513,7 @@ public class AnimatedModel : IDisposable
         // Wave I: the enemy shader's colour tint (zero for every other model), so the MASK variant
         // never draws with a value an earlier frame or model left in it.
         program.SetVector3("uActorTintOffset", ActorTintOffset);
+        program.SetVector2("uWind", Wind);
         if (!instanced)
         {
             program.SetModelMatrix(modelMatrix);

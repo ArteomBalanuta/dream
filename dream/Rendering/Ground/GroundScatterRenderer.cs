@@ -161,9 +161,11 @@ public sealed class GroundScatterRenderer
                     bool terrain = info.Layer <= GroundLayer.Cover;
                     Shader shader = _render.GetShader(terrain ? TerrainShaderName : ActorShaderName);
                     (terrain ? _terrainWind : _actorWind).Set(GroundWind.Uniform(info.Class, info.Height));
+                    model.Wind = GroundWind.Uniform(info.Class, info.Height);
                     model.BeginRender(shader, view, projection, enableCulling: false);
                     model.RenderPreparedInstanced(shader, _matrices, count);
                     model.EndRender();
+                    model.Wind = Vector2.Zero;
                     LastDrawnCount += count;
                     LastDrawCalls++;
                 }
