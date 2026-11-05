@@ -75,6 +75,15 @@ WORN_SET_SPREAD_MIN = 0.36
 # p10 0.0135 p90 0.4041), minus headroom, rounded to 0.36. Nothing was brightened to reach it. The standard it
 # encodes is no longer "as bright as the old figure" but "an equipped figure keeps a real range between its lit
 # and shadowed faces", which is what the eye actually reads at the shipped 28x101 px actor size.
+# KNOWN LIMIT OF THIS GATE, stated rather than hidden: it models albedo x (ambient + direct) x exposure, which is
+# the NORMAL actor pass. It does NOT model uActorTintOffset (enemyFragment.glsl:57), a per-pass multiplier the
+# renderer injects BEFORE lighting. The occlusion silhouette pass sets it to (0.5, 2, 6) in
+# LocalPlayerRenderer.cs:117, i.e. albedo x (1.5, 3, 7), so the parts of the player hidden by world geometry are
+# deliberately blown to an x-ray blue: Steel (0.33, 0.34, 0.365) becomes (0.50, 1.02, 2.56) and clamps to cyan.
+# That is a readability FEATURE, not a defect, and it is why a frame can show a blown held item while this gate is
+# green. Verified by capture: 117 saturated cyan pixels on the actor while it stood behind a wall, 1 after walking
+# clear. The hit flash (HitFlashOffset, red) rides the same mechanism. If you ever gate the tinted passes, model
+# the multiplier explicitly; do not "fix" the tint to make a frame calmer.
 CLIP_SHARE_MAX = 0.01      # see gate_clipping: at most 1% of a material's visible pixels may be fully saturated
 CLIP_MIN_PIXELS = 12       # a material shown in fewer pixels than this is too small for a share to mean anything
 WORN_SET_IDS = ("worn.head.greathelm", "worn.body.plate-cuirass", "worn.back.hooded-cloak")
