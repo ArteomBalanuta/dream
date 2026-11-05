@@ -173,7 +173,7 @@ def build_parts():
 
     # Bone ridges and a collar: broad, flat, UP-FACING plates. They are the hound's whole answer to M3 - a
     # smooth-lofted animal shades as one soft ramp and renders as a single flat value under a brazier. The
-    # arithmetic is in gen_char_player._torso_plates; the short version is that on a camera looking down at 50
+    # arithmetic is in gen_char_player.plate(); the short version is that on a camera looking down at 50
     # degrees, a horizontal facet is the only place a bright pixel can live.
     # Four of them, not three equal rectangles: they TAPER and overlap down the spine, each one narrower,
     # shorter and more steeply raked than the one behind it, so the ridge follows the animal's back instead of

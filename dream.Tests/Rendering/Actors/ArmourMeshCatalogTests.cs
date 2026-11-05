@@ -1,6 +1,8 @@
 using OpenTK.Mathematics;
+using SharpGLTF.Schema2;
 using Xunit;
 using Dream.Rendering.Actors;
+using Dream.Rendering.Models;
 
 namespace Dream.Tests.Rendering.Actors;
 
@@ -46,15 +48,15 @@ public class ArmourMeshCatalogTests
     // a gap), from the shared body contract. Torso has two: the chest and the wider hip skirt.
     private static readonly Dictionary<ArmourMount, Envelope[]> Covers = new()
     {
-        [ArmourMount.Head] = [new(new(-0.12f, 0.00f, -0.13f), new(0.12f, 0.42f, 0.13f))],
+        [ArmourMount.Head] = [new(new(-0.12f, 0.00f, -0.135f), new(0.12f, 0.42f, 0.135f))],
         [ArmourMount.Torso] =
         [
-            new(new(-0.19f, 0.00f, -0.14f), new(0.19f, 0.86f, 0.14f)),
-            new(new(-0.26f, 0.00f, -0.14f), new(0.26f, 0.30f, 0.14f))
+            new(new(-0.195f, 0.00f, -0.145f), new(0.195f, 0.86f, 0.15f)),
+            new(new(-0.26f, 0.00f, -0.145f), new(0.26f, 0.30f, 0.15f))
         ],
-        [ArmourMount.Arms] = [new(new(-0.09f, -0.95f, -0.09f), new(0.09f, -0.55f, 0.09f))],
+        [ArmourMount.Arms] = [new(new(-0.09f, -0.95f, -0.075f), new(0.09f, -0.55f, 0.10f))],
         [ArmourMount.Legs] = [new(new(-0.11f, -0.75f, -0.11f), new(0.11f, -0.10f, 0.11f))],
-        [ArmourMount.Feet] = [new(new(-0.132f, -1.30f, -0.05f), new(0.132f, -0.88f, 0.15f))]
+        [ArmourMount.Feet] = [new(new(-0.132f, -1.30f, -0.055f), new(0.132f, -0.88f, 0.155f))]
     };
 
     // The outer bound of every box of a piece: far enough to read as armour, no further.
@@ -67,20 +69,36 @@ public class ArmourMeshCatalogTests
         [ArmourMount.Feet] = new(new(-0.20f, -1.36f, -0.15f), new(0.20f, -0.80f, 0.42f))
     };
 
-    // The fit ceiling: the union half-width of a piece over the base figure's own half-width at its
-    // node. A cover rule has no upper bound, so on its own one big box satisfies it; this is the bound.
-    // Head, Torso and the cloaks are the re-authored pieces and carry the 1.6 rule. Hands, legs and feet
-    // were not re-authored (they were sized for the old, thicker figure) and keep their old shapes under
-    // explicit, looser multipliers rather than being silently exempt.
-    private const float FitCeiling = 1.6f;
+    // The fit window: how far a piece's union must stand PROUD of the body at its node (the floor) and how far
+    // it may stand (the ceiling). Both are needed. A cover rule has no upper bound, so one big box satisfies
+    // it, and it also has no lower bound, so a piece that is exactly the body (measured: leather-vest, union
+    // 0.2600 against a body of 0.2600) changes colour but not outline. This file's header promises that every
+    // piece changes the silhouette; the floor is what keeps that true.
+    //
+    // Derived from the figure, not from the pieces. PixelUnits is one screen pixel at the shipped zoom
+    // (the actor is 28 x 101 px, 0.0265 engine units per px). The FLOOR is one pixel past the body's
+    // half-width: below that the outline does not move. The CEILING is the body plus a shell allowance:
+    // for the head 0.06 (a 0.04 wall and a hand of clearance, 2.3 px) which makes 0.18 = 1.5x the base head of
+    // 0.12, and for the torso 1.6x. The authored helms sit at 0.16-0.17, so the head's margin to its ceiling is
+    // 0.01-0.02 (0.4-0.8 px) and to its floor 0.014-0.024. Depth is bounded the same way, so a plank cannot be
+    // turned 90 degrees to dodge the width rule. Hands, legs and feet were not re-authored (sized for the old,
+    // thicker figure): they keep their old multipliers, no floor and no depth bound, rather than being
+    // silently exempt; a boot legitimately runs far forward of the leg.
+    private const float PixelUnits = 0.0265f;
+    private const float HeadShell = 0.06f;
+    private const float TorsoCeilingMultiplier = 1.6f;
 
-    private static readonly Dictionary<ArmourMount, (float BaseHalfWidth, float Multiplier)> Fit = new()
+    private readonly record struct FitWindow(float BaseHalfWidth, float MinHalfWidth, float MaxHalfWidth, float MaxHalfDepth);
+
+    private static readonly Dictionary<ArmourMount, FitWindow> Fit = new()
     {
-        [ArmourMount.Head] = (0.12f, FitCeiling),
-        [ArmourMount.Torso] = (0.26f, FitCeiling),
-        [ArmourMount.Arms] = (0.09f, 2.3f),
-        [ArmourMount.Legs] = (0.11f, 1.7f),
-        [ArmourMount.Feet] = (0.132f, 1.5f)
+        // base head 0.12 x 0.135: floor 0.1465, ceiling 0.18 wide, 0.195 deep
+        [ArmourMount.Head] = new(0.12f, 0.12f + PixelUnits, 0.12f + HeadShell, 0.135f + HeadShell),
+        // base torso 0.26 x 0.15: floor 0.2865, ceiling 0.416 wide, 0.24 deep
+        [ArmourMount.Torso] = new(0.26f, 0.26f + PixelUnits, 0.26f * TorsoCeilingMultiplier, 0.15f * TorsoCeilingMultiplier),
+        [ArmourMount.Arms] = new(0.09f, 0f, 0.09f * 2.3f, float.MaxValue),
+        [ArmourMount.Legs] = new(0.11f, 0f, 0.11f * 1.7f, float.MaxValue),
+        [ArmourMount.Feet] = new(0.132f, 0f, 0.132f * 1.5f, float.MaxValue)
     };
 
     // Cloaks: above this height (torso frame) a cloak is on the shoulders and back and obeys the 1.6
@@ -91,6 +109,153 @@ public class ArmourMeshCatalogTests
 
     // The hanging panels of a cloak: boxes whose centre is behind the torso back surface (z -0.14).
     private const float CloakPanelZ = -0.18f;
+
+    // ---- The cover table against the mesh it describes.
+    //
+    // Covers/Limits/Fit are the body's geometry stated by hand. Nothing else compared them to the shipped
+    // figure, so the figure could drift away from the table with every test green (the tunic's hairline
+    // 0.1901 against a declared 0.19 was the symptom). This reads player-grim.glb and measures, in each
+    // mount node's own frame, the figure's extent inside every cover region's y slab, then holds the table to it.
+    // The rule is the one the worn pieces rely on and is ONE-SIDED outward: the figure may not stand past the
+    // table (a worn piece covers the table value, so a figure wider than the table pokes out of it), and it may
+    // stand short of it by at most TableSlack (the table is not allowed to ask pieces to cover air).
+    // It fails when the base figure is widened, narrowed or moved beyond those, or when a Covers row is edited
+    // without the figure.
+    private const float TableOver = 0.0005f;
+    private const float TableSlack = 0.015f;
+    private const float ArmAxisX = 0.2f;   // the arm hangs 0.2 units outboard of its node (UNITS_PER_U * ARM_OFFSET_U)
+
+    private static readonly Dictionary<ArmourMount, (string Node, float Shift)[]> MountNodes = new()
+    {
+        [ArmourMount.Head] = [("head", 0f)],
+        [ArmourMount.Torso] = [("torso", 0f)],
+        [ArmourMount.Arms] = [("arm-left", ArmAxisX), ("arm-right", -ArmAxisX)],
+        [ArmourMount.Legs] = [("leg-left", 0f), ("leg-right", 0f)],
+        [ArmourMount.Feet] = [("leg-left", 0f), ("leg-right", 0f)]
+    };
+
+    // Every vertex plus 16 points along every triangle edge, so a slab bound that falls between two loft
+    // rings is still measured on the surface.
+    private static Dictionary<string, List<Vector3>> FigureSurfacePoints()
+    {
+        ModelRoot model = ModelRoot.Load(PlayerModelAssetDefinition.ModelPath);
+        Dictionary<string, List<Vector3>> byNode = [];
+        foreach (Node node in model.LogicalNodes.Where(n => n.Mesh != null))
+        {
+            List<Vector3> list = byNode.TryGetValue(node.Name, out List<Vector3>? existing) ? existing : byNode[node.Name] = [];
+            foreach (MeshPrimitive primitive in node.Mesh.Primitives)
+            {
+                IList<System.Numerics.Vector3> positions = primitive.GetVertexAccessor("POSITION").AsVector3Array();
+                int[] index = [.. primitive.GetIndices().Select(i => (int)i)];
+                Vector3 P(int i) => new(positions[i].X, positions[i].Y, positions[i].Z);
+                list.AddRange(positions.Select(v => new Vector3(v.X, v.Y, v.Z)));
+                for (int t = 0; t + 2 < index.Length; t += 3)
+                {
+                    for (int e = 0; e < 3; e++)
+                    {
+                        Vector3 a = P(index[t + e]);
+                        Vector3 b = P(index[t + ((e + 1) % 3)]);
+                        for (int k = 1; k < 16; k++)
+                        {
+                            list.Add(Vector3.Lerp(a, b, k / 16f));
+                        }
+                    }
+                }
+            }
+        }
+
+        return byNode;
+    }
+
+    // Problems between the declared table and the figure's points; empty when they agree.
+    private static List<string> CoverTableProblems(Dictionary<string, List<Vector3>> figure)
+    {
+        List<string> problems = [];
+        foreach ((ArmourMount mount, Envelope[] regions) in Covers)
+        {
+            for (int r = 0; r < regions.Length; r++)
+            {
+                Envelope region = regions[r];
+
+                // A region nested over a shorter one (the torso's chest over its hip skirt) is measured above
+                // the shorter one's top, or the wider skirt would be read as the chest.
+                float yMin = regions.Where(o => o.Max.Y < region.Max.Y).Select(o => o.Max.Y).DefaultIfEmpty(region.Min.Y).Max();
+                yMin = MathF.Max(yMin, region.Min.Y);
+
+                Vector3 lo = new(float.MaxValue);
+                Vector3 hi = new(float.MinValue);
+                float zLo = float.MaxValue;
+                float zHi = float.MinValue;
+                foreach ((string node, float shift) in MountNodes[mount])
+                {
+                    foreach (Vector3 v in figure[node].Where(v => v.Y >= yMin - 1e-6f && v.Y <= region.Max.Y + 1e-6f))
+                    {
+                        Vector3 q = new(v.X - shift, v.Y, v.Z);
+                        lo = Vector3.ComponentMin(lo, q);
+                        hi = Vector3.ComponentMax(hi, q);
+                    }
+
+                    // Depth is measured over the region's WHOLE y range: the nested slab exists only so the
+                    // wider hip skirt is not read as the chest's width.
+                    foreach (Vector3 v in figure[node].Where(v => v.Y >= region.Min.Y - 1e-6f && v.Y <= region.Max.Y + 1e-6f))
+                    {
+                        zLo = MathF.Min(zLo, v.Z);
+                        zHi = MathF.Max(zHi, v.Z);
+                    }
+                }
+
+                void Compare(string axis, float measured, float declared, bool upper)
+                {
+                    // upper: a MAX extent (must not exceed the declared value). Otherwise a MIN extent.
+                    float outward = upper ? measured - declared : declared - measured;
+                    if (outward > TableOver)
+                    {
+                        problems.Add($"{mount}[{r}] {axis}: the figure reaches {measured:F4}, past the table's {declared:F4}");
+                    }
+                    else if (outward < -TableSlack)
+                    {
+                        problems.Add($"{mount}[{r}] {axis}: the figure reaches only {measured:F4}, {-outward:F4} short of the table's {declared:F4}");
+                    }
+                }
+
+                // Y is checked only where the region's own edge is the figure's edge (the head's crown).
+                if (mount == ArmourMount.Head)
+                {
+                    Compare("top y", figure["head"].Max(v => v.Y), region.Max.Y, upper: true);
+                }
+
+                Compare("max x", hi.X, region.Max.X, upper: true);
+                Compare("min x", lo.X, region.Min.X, upper: false);
+                Compare("max z", zHi, region.Max.Z, upper: true);
+                Compare("min z", zLo, region.Min.Z, upper: false);
+            }
+        }
+
+        return problems;
+    }
+
+    [Fact]
+    public void TheCoverTable_AgreesWithTheShippedFigureMesh()
+    {
+        Assert.Empty(CoverTableProblems(FigureSurfacePoints()));
+    }
+
+    [Fact]
+    public void TheCoverTableGate_FailsWhenTheFigureDriftsFromTheTable()
+    {
+        // Control: the gate must be able to fail. Widen the head 20% and push the torso front out 0.03: both
+        // directions of the rule (past the table) have to be reported.
+        Dictionary<string, List<Vector3>> figure = FigureSurfacePoints()
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(v => kv.Key == "head" ? new Vector3(v.X * 1.2f, v.Y, v.Z) : kv.Key == "torso" ? new Vector3(v.X, v.Y, v.Z > 0.1f ? v.Z + 0.03f : v.Z) : v).ToList());
+        List<string> problems = CoverTableProblems(figure);
+        Assert.Contains(problems, p => p.StartsWith("Head[0] max x", StringComparison.Ordinal));
+        Assert.Contains(problems, p => p.StartsWith("Torso[0] max z", StringComparison.Ordinal));
+
+        // And the other side: a figure that shrinks away from the table leaves the pieces covering air.
+        Dictionary<string, List<Vector3>> thin = FigureSurfacePoints()
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(v => kv.Key == "leg-left" || kv.Key == "leg-right" ? new Vector3(v.X * 0.6f, v.Y, v.Z) : v).ToList());
+        Assert.Contains(CoverTableProblems(thin), p => p.StartsWith("Legs[0] max x", StringComparison.Ordinal));
+    }
 
     private static ArmourModel Model(string id)
     {
@@ -290,17 +455,60 @@ public class ArmourMeshCatalogTests
 
     [Theory]
     [MemberData(nameof(FittedIds))]
-    public void EveryFittedPiece_StaysWithinItsFitCeiling(string id)
+    public void EveryFittedPiece_StaysInsideItsFitWindow(string id)
     {
-        // The opposite direction to the cover rule, and the one whose absence made the plank: a piece
-        // wider than ~1.6x the body at its node reads as a block that swallows the figure, however
-        // well it covers. Both sides of the union are measured, so a lopsided piece cannot hide.
+        // The window has both sides. Ceiling: a piece wider than ~1.5-1.6x the body reads as a block that
+        // swallows the figure, however well it covers; for the head and torso depth is bounded as well, so
+        // the same plank cannot be rotated. Floor (head and torso, the re-authored pieces): the piece must
+        // stand at least one pixel proud of the body's half-width, or equipping it does not change the outline.
         ArmourModel model = Model(id);
-        (float baseHalfWidth, float multiplier) = Fit[model.Mount];
         (Vector3 min, Vector3 max) = Union(model);
-        float ceiling = baseHalfWidth * multiplier;
+        Assert.Null(FitProblem(id, model.Mount, min, max));
+    }
 
-        Assert.True(max.X <= ceiling + Eps && -min.X <= ceiling + Eps, $"{id} half-width {MathF.Max(max.X, -min.X)} exceeds {ceiling} ({multiplier}x {baseHalfWidth})");
+    private static string? FitProblem(string id, ArmourMount mount, Vector3 min, Vector3 max)
+    {
+        FitWindow window = Fit[mount];
+        float half = MathF.Max(max.X, -min.X);
+        float depth = MathF.Max(max.Z, -min.Z);
+        if (half > window.MaxHalfWidth + Eps)
+        {
+            return $"{id} half-width {half} exceeds {window.MaxHalfWidth} ({window.MaxHalfWidth / window.BaseHalfWidth:F2}x {window.BaseHalfWidth})";
+        }
+
+        if (depth > window.MaxHalfDepth + Eps)
+        {
+            return $"{id} half-depth {depth} exceeds {window.MaxHalfDepth}";
+        }
+
+        if (-min.X < window.MinHalfWidth - Eps || max.X < window.MinHalfWidth - Eps)
+        {
+            return $"{id} does not stand a pixel proud of the body ({window.BaseHalfWidth}) on both sides (x {min.X}..{max.X}, floor {window.MinHalfWidth})";
+        }
+
+        return null;
+    }
+
+    [Fact]
+    public void TheFitFloor_RejectsAPieceThatIsExactlyTheBody()
+    {
+        // Control: the window has to be able to fail on each side. A model precisely as wide as the body (the
+        // measured leather-vest before its yoke, 0.26 against 0.26), a plank rotated to be deep, and a block.
+        Assert.NotNull(FitProblem("exact-body", ArmourMount.Torso, new(-0.26f, 0f, -0.15f), new(0.26f, 0.9f, 0.15f)));
+        Assert.NotNull(FitProblem("exact-head", ArmourMount.Head, new(-0.12f, 0f, -0.135f), new(0.12f, 0.4f, 0.135f)));
+        Assert.NotNull(FitProblem("sandwich-board", ArmourMount.Head, new(-0.17f, 0f, -0.25f), new(0.17f, 0.5f, 0.25f)));
+        Assert.NotNull(FitProblem("block", ArmourMount.Torso, new(-0.5f, 0f, -0.15f), new(0.5f, 0.9f, 0.15f)));
+        Assert.Null(FitProblem("fits", ArmourMount.Head, new(-0.17f, 0f, -0.17f), new(0.17f, 0.5f, 0.17f)));
+    }
+
+    [Fact]
+    public void TheFitTable_AgreesWithTheCoverTable()
+    {
+        foreach ((ArmourMount mount, FitWindow window) in Fit)
+        {
+            float coverHalf = Covers[mount].Max(c => MathF.Max(c.Max.X, -c.Min.X));
+            Assert.True(MathF.Abs(coverHalf - window.BaseHalfWidth) < Eps, $"{mount}: Fit base {window.BaseHalfWidth} vs cover {coverHalf}");
+        }
     }
 
     public static IEnumerable<object[]> CloakIds() => Cloaks.Select(id => new object[] { id });
@@ -310,7 +518,7 @@ public class ArmourMeshCatalogTests
     public void EveryCloak_StaysWithinItsFitCeiling_AndHangsOffTheBody(string id)
     {
         ArmourModel model = Model(id);
-        float shoulderCeiling = CloakBaseHalfWidth * FitCeiling;
+        float shoulderCeiling = CloakBaseHalfWidth * TorsoCeilingMultiplier;
         float hemCeiling = CloakBaseHalfWidth * CloakHemFlare;
 
         foreach (ArmourPart part in model.Parts)
@@ -365,8 +573,16 @@ public class ArmourMeshCatalogTests
         // No oversized box: none is broader than the mantle shoulders.
         Assert.All(Model(id).Parts, p => Assert.True(p.Size.X <= 0.90f, $"{id} has a {p.Size.X} wide box"));
 
-        // The panels hang at more than one depth, so the lengths do not merge into one flat plane.
-        Assert.True(panels.Select(p => MathF.Round(p.Center.Z, 2)).Distinct().Count() >= 3, $"{id} panels share a depth");
+        // The panels hang at more than one depth, so the lengths do not merge into one flat plane. Distinct
+        // rounded depths are not enough (0.01 apart satisfies that and the boxes still interpenetrate): the
+        // consecutive tiers must be at least half a panel thickness apart, so no tier overlaps the next.
+        float thickness = panels.Max(p => p.Size.Z);
+        float[] tiers = [.. panels.Select(p => MathF.Round(p.Center.Z, 3)).Distinct().OrderByDescending(z => z)];
+        Assert.True(tiers.Length >= 3, $"{id} panels share a depth");
+        for (int i = 1; i < tiers.Length; i++)
+        {
+            Assert.True(tiers[i - 1] - tiers[i] >= (0.5f * thickness) - Eps, $"{id} panel tiers {tiers[i - 1]} and {tiers[i]} are closer than half their {thickness} thickness and interpenetrate");
+        }
     }
 
     [Theory]
@@ -383,6 +599,18 @@ public class ArmourMeshCatalogTests
         Assert.True(bottoms.Length >= minFolds, $"{id} has {bottoms.Length} hem boxes");
         Assert.True(bottoms.Distinct().Count() >= minFolds, $"{id} hem bottoms are level");
         Assert.True(bottoms.Max() - bottoms.Min() >= 0.05f, $"{id} hem steps only {bottoms.Max() - bottoms.Min()}");
+    }
+
+    [Theory]
+    [InlineData("worn.back.travel-cloak", -0.45f)]
+    [InlineData("worn.back.hooded-cloak", -1.00f)]
+    [InlineData("worn.back.grave-mantle", -0.50f)]
+    public void EveryCloak_ReachesItsContractLength(string id, float hemAtMost)
+    {
+        // An absolute length, stated as a contract and not read off the baked geometry: every relative check
+        // survives scaling a cloak's y by half, which turns a calf-length cloak into a waist cape.
+        (Vector3 min, _) = Union(Model(id));
+        Assert.True(min.Y <= hemAtMost, $"{id} hem is at {min.Y}, above its contract length {hemAtMost}");
     }
 
     [Fact]

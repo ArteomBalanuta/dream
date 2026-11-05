@@ -63,16 +63,28 @@ CUSTOM = {
     "cloth.red": ("#5A1E1A", 0.90, 0.030, 0.40, None),       # the one saturated thing, as in the target
     "steel.cool": ("#5C6475", 0.50, 0.050, 0.26, "#7E869A"),
     "cloth.cold": ("#161A28", 0.92, 0.030, 0.28, None),
-    "cloth.ash.cold": ("#1E2024", 0.94, 0.028, 0.24, None),
-    # The undyed wool of the traveller's tunic and sleeves: drab, low saturation, the one pale cloth on a figure
-    # that no longer has steel to carry its value range.
-    "cloth.tunic": ("#5E5748", 0.92, 0.030, 0.22, None),
+    # The breeches (was #1E2024): near-black, so the pale tunic over them is the figure's value contrast (see
+    # cloth.tunic). Warm on purpose: a cool near-black such as #0D0F12 quantises into the palette gate's
+    # forbidden cyan band (1367 texels) where this one makes none.
+    "cloth.ash.cold": ("#101010", 0.94, 0.028, 0.24, None),
+    # The weathered linen of the traveller's tunic, sleeves and collar: a sun-faded, soiled off-white (HSV
+    # saturation 0.10, value 0.62 - not laundry white), the one pale cloth on a figure that no longer has steel
+    # to carry its value range. It used to be #5E5748 and, with the whole palette at 15-35% value, the figure had
+    # no light end at all (p90 0.26 at azimuth 35). The value was found by sweeping it against the M3 gates:
+    # the worn-set spread climbs steeply with it, and the ceiling is not taste but the 8-bit atlas. The engine
+    # lift is 3x and a texel cannot exceed 1.0, so a lit linen texel above linear 0.33 clips; the lift-once gate
+    # in check_char.py (mean shipped / baked within 3% of 3.0) is what stops that, and it passes up to roughly
+    # R = 0x9E (2.92x) and fails by R = 0xA4 (2.83x). Only the largest channel sets HSV value, so G and B are
+    # held back to keep the linen low in saturation. This is the brightest linen that keeps the lift honest.
+    "cloth.tunic": ("#9E9A8C", 0.92, 0.030, 0.22, None),
+    # Boot leather and belt, darkened from grim.leather #241C16: the dark end of the histogram is as much a
+    # part of the spread as the light end, and the boots are the figure's largest dark area.
+    "leather.dark": ("#0F0F0E", 0.84, 0.035, 0.26, None),
     # The eye sockets' own surface. It is NOT baked into the atlas (it rides its own emissive material), but
     # bake_material has to answer for it anyway: the preview sheet renders every part build_parts returns.
     "ember.eye": ("#160A06", 0.95, 0.025, 0.30, None),
 }
 MATERIALS = {
-    "leather": "grim.leather",
     "bone": "grim.bone",
     "flesh.grey": "grim.flesh.grey",
 }
@@ -144,15 +156,6 @@ def loft(rings, sides: int = 10) -> I.Mesh:
 # of the face at the occlusion it actually has, which for an up-facing plate in clear air is about 0.9.
 # MEASURED: evenly spaced, the pauldron's top baked at a linear albedo of 0.27; on this schedule, 0.44.
 PLATE_RINGS = (1.0, 0.50)
-
-# How much of a shoulder plate's half-extent the chamfer takes. Pure silhouette: it costs the broad face
-# about 1 - (1 - PAULDRON_BEVEL)^2 of its area and gives that strip to the dark half of the histogram, so the
-# M3 price is real and is reported. At 0.14 the measured price on the player is under 0.01.
-PAULDRON_BEVEL = 0.14
-# How deep the shoulder plates' corners are cut, against 0.34 everywhere else. The second half of the
-# box-read fix and nearly free: a near-octagonal spaulder costs 0.003 of M3 against a square-cornered one,
-# because the corners it removes were the plate's worst-lit texels anyway.
-SHOULDER_CUT = 0.52
 
 
 def _disc(o: np.ndarray, c: np.ndarray, z: float, rings: int):
@@ -310,6 +313,7 @@ def quat_z(deg: float) -> tuple:
 PELVIS_Y = 0.92                      # hip height in m; the legs reach exactly this far down
 PELVIS_U = PELVIS_Y * U_PER_M        # 14.72
 LEG_U = PELVIS_U
+SKIRT_HEM_U = -5.0                   # the tunic skirt hangs this far below the pelvis, u (was -3.0): more pale area below the cuirass
 
 # node name, parent, translation from the parent in u (iso axes: x, y forward, z up)
 # The arm nodes sit INBOARD of the arms (ARM_OFFSET_U): HeldWeaponRenderer measures the fist 0.2 units
@@ -353,7 +357,7 @@ def _limb_leg():
                     (-3.6, 1.10, 1.10, 0.0, 0.0), (-1.2, 1.23, 1.23, 0.0, 0.0), (0.0, 1.25, 1.25, 0.0, 0.0), (0.4, 0.95, 0.95, 0.0, 0.0)], 8)
     boot = loft([(-LEG_U, 1.05, 1.12, 0.0, 0.56), (-14.1, 1.10, 1.15, 0.0, 0.56), (-13.0, 1.00, 1.05, 0.0, 0.50),
                  (-11.5, 1.05, 1.00, 0.0, 0.45), (-10.5, 1.40, 1.00, 0.0, 0.45), (-10.0, 1.10, 0.85, 0.0, 0.25)], 8)
-    return [("cloth.ash.cold", trouser), ("leather", boot)]
+    return [("cloth.ash.cold", trouser), ("leather.dark", boot)]
 
 
 def build_parts():
@@ -365,21 +369,23 @@ def build_parts():
     figure from bare to armoured rather than from one shape to another. Unarmoured is not nude.
 
     ENVELOPE TABLE (engine units = u * UNITS_PER_U, each node's own frame; the contract the worn models are
-    authored against; tolerance +-0.015; the measured values are read back from the built GLB by
+    authored against. The figure may stand SHORT of a row by up to 0.015 but never past it
+    (check_char.py's envelope gate is one-sided outward, so a re-tuned tunic cannot poke out of a worn piece
+    that covers the table value); the measured values are read back from the built GLB by
     tools/ui-assets/tests/check_char.py's envelope gate and recorded in
     docs/ledger/work-log/2026-11-06-undressed-base-figure.md):
 
         mount   region                                       base half-width
-        Head    y 0.00..0.42, |x|<=0.12, |z|<=0.13           0.12
+        Head    y 0.00..0.42, |x|<=0.12, |z|<=0.135          0.12
         Torso   y 0.00..0.86, |x|<=0.26 (hip skirt; chest    0.26
-                0.19), z -0.14..+0.14
+                0.195), z -0.145..+0.15
         Arm     (one arm, own axis) y -0.95..-0.55,          0.09
-                |x|<=0.09, |z|<=0.09
+                |x|<=0.09, z -0.075..+0.10
         Leg     (one leg) y -0.75..-0.10, |x|<=0.11,         0.11
                 |z|<=0.11
         Foot    (one leg) y -1.30..-0.88, |x|<=0.132,        0.132
-                z -0.05..+0.15
-        Back    torso back surface at z >= -0.14             0.26
+                z -0.055..+0.155
+        Back    torso back surface at z >= -0.145             0.26
 
     The head node sits 1.37 u higher than the dressed figure's (10.97 u over the pelvis; it was 9.6 u under a
     hood): with a bare 0.42 skull the authored top is held at 2.68 only by lengthening the neck, and doing it
@@ -394,11 +400,11 @@ def build_parts():
     tunic = loft([(1.0, 2.35, 1.48, 0.0, 0.0), (2.6, 2.15, 1.42, 0.0, 0.0), (5.2, 2.05, 1.40, 0.0, 0.05),
                   (7.6, 2.16, 1.45, 0.0, 0.10), (9.0, 2.00, 1.35, 0.0, 0.10), (9.75, 1.20, 1.00, 0.0, 0.10)], 8)
     belt = loft([(0.9, 2.50, 1.58, 0.0, 0.0), (2.4, 2.45, 1.57, 0.0, 0.0)], 10)
-    skirt = loft([(-3.0, 3.05, 1.65, 0.0, 0.0), (-1.0, 3.00, 1.68, 0.0, 0.0), (0.0, 2.95, 1.68, 0.0, 0.0),
+    skirt = loft([(SKIRT_HEM_U, 2.90, 1.62, 0.0, 0.0), (-1.0, 3.00, 1.68, 0.0, 0.0), (0.0, 2.95, 1.68, 0.0, 0.0),
                   (1.2, 2.45, 1.55, 0.0, 0.0)], 10)
     tail = loft([(-3.4, 0.86, 0.30, 0.0, 1.40), (-1.8, 0.92, 0.33, 0.0, 1.38), (0.2, 1.00, 0.36, 0.0, 1.34),
                  (2.3, 1.04, 0.40, 0.0, 1.30)], 8)
-    parts += [("torso", tunic, "cloth.tunic"), ("torso", belt, "leather"), ("torso", skirt, "cloth.tunic"),
+    parts += [("torso", tunic, "cloth.tunic"), ("torso", belt, "leather.dark"), ("torso", skirt, "cloth.tunic"),
               ("torso", tail, "cloth.red")]
 
     # head, local origin at the chin: a bare skull-and-jaw loft in grey flesh, a neck, a short cowl collar and
@@ -559,10 +565,10 @@ def clip_shoot(n: dict) -> G.GltfAnimation:
     }, index=n)
 
 
-def clip_die(n: dict, lift: float) -> G.GltfAnimation:
+def clip_die(n: dict, lift) -> G.GltfAnimation:
     """1.3 s: stagger, then fall onto the back and stay there (the engine holds the last frame). The root pivots
     on the ground, so it is also lifted by the body's back-to-front thickness to rest ON the ground rather than
-    in it; `lift` is that thickness in m."""
+    in it; `lift` is that thickness in m, one number for every key or a per-key list (see _die_lift)."""
     t = [0.0, 0.25, 0.55, 0.9, 1.3]
     fall = [0.0, -14.0, -52.0, -86.0, -90.0]
     return _clip("die", t, {
@@ -573,33 +579,37 @@ def clip_die(n: dict, lift: float) -> G.GltfAnimation:
         "arm-right": [quat_x(0.0), quat_x(-50.0), quat_x(-20.0), quat_x(-40.0), quat_x(-25.0)],
         "leg-left": [quat_x(0.0), quat_x(10.0), quat_x(-20.0), quat_x(-8.0), quat_x(-4.0)],
         "leg-right": [quat_x(0.0), quat_x(-12.0), quat_x(14.0), quat_x(6.0), quat_x(8.0)],
-    }, {"root": [[0.0, lift * math.sin(math.radians(-a)), 0.0] for a in fall]}, index=n)
+    }, {"root": [[0.0, (lift[k] if isinstance(lift, (list, tuple)) else lift) * math.sin(math.radians(-a)), 0.0]
+                 for k, a in enumerate(fall)]}, index=n)
 
 
 # ---------------------------------------------------------------------------- build
 
-def _die_lift(nodes, primitives, index: dict, back: float) -> float:
-    """How far the die clip must lift the root so no vertex of the falling body goes under the ground.
+def _die_lift(nodes, primitives, index: dict, back: float) -> list:
+    """Per key, how far the die clip must lift the root so no vertex of the falling body goes under the ground.
 
-    `back` (how far behind the pelvis axis the body reaches) was the whole answer while a cloak stood behind the
-    figure and was the deepest thing on its back. The bare figure has no cloak, so the head - which the fall
-    tips back a further 10 to 18 degrees on a long neck - is the deepest thing instead, and `back` alone left it
-    0.13 units under the ground. The root's lift is linear (lift * sin of the fall angle), so the lowest vertex
-    of each key at zero lift gives the lift that key needs. The result is never below `back`."""
+    `back` (how far behind the pelvis axis the body reaches) is the floor of every key. Above it each key needs
+    its own number: the root's lift is linear (lift * sin of the fall angle), so the lowest vertex of a key at
+    zero lift gives the lift THAT key needs. This used to return the maximum over the keys, and clip_die spent
+    that one number on every key, so only the binding key landed on the ground and the held last frame hovered
+    (measured 0.0414 units, 1.5 px, with the shipped 0.3218). What binds a key differs: at mid-fall (52 degrees)
+    it is the swinging right leg, not the head; the head only sets the final key, where the fall tips it back a
+    further 10 to 18 degrees on a long neck. A reader tuning the head cannot move the mid-fall number."""
     import enginelook as L
     base = clip_die(index, 0.0)
     unit = clip_die(index, 1.0)
-    need = back
+    out = []
     for k, v in enumerate(unit.translations[index["root"]][1]):
         s = float(v[1])
-        if s < 0.05:
-            continue
-        world = L.node_worlds(nodes, base, k)
-        low = min(float((np.asarray(p.positions, dtype=np.float64) @ world[p.node][:3, :3].T
-                         + world[p.node][:3, 3])[:, 1].min()) for p in primitives)
-        if low < 0.0:
-            need = max(need, -low / s)
-    return need
+        need = back
+        if s >= 0.05:
+            world = L.node_worlds(nodes, base, k)
+            low = min(float((np.asarray(p.positions, dtype=np.float64) @ world[p.node][:3, :3].T
+                             + world[p.node][:3, 3])[:, 1].min()) for p in primitives)
+            if low < 0.0:
+                need = max(need, -low / s)
+        out.append(need)
+    return out
 
 
 def build_asset():

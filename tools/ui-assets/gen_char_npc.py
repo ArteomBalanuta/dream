@@ -108,7 +108,7 @@ VARIANTS: dict[str, Variant] = {
 
 def _torso(v: Variant):
     """Tunic, belt and the shoulder yoke. The yoke is a broad near-horizontal plate: on the fixed play camera
-    an up-facing facet is the only place a bright pixel can live (gen_char_player._torso_plates states the
+    an up-facing facet is the only place a bright pixel can live (gen_char_player.plate() states the
     arithmetic), so it is what stops a robed figure rendering as one flat value under a brazier."""
     s = v.shoulders
     tunic = P.loft([(-0.4, 2.30, 1.55, 0.0, 0.0), (1.6, 2.05, 1.45, 0.0, 0.0), (4.4, s * 0.92, 1.40, 0.0, 0.05),
@@ -134,7 +134,7 @@ def _torso(v: Variant):
 
 def _head(v: Variant):
     """Head, face and headgear. Each variant's brim or crown is a broad plate with clear air above it; that
-    combination is the one the albedo bake does not darken (gen_char_player._head_plates states why)."""
+    combination is the one the albedo bake does not darken (gen_char_player.plate() and PLATE_RINGS state why)."""
     skull = P.loft([(-0.6, 1.35, 1.30, 0.0, 0.0), (0.6, 1.55, 1.50, 0.0, 0.1), (2.2, 1.60, 1.55, 0.0, 0.15),
                     (3.5, 1.35, 1.30, 0.0, 0.1), (4.2, 0.70, 0.70, 0.0, 0.0)], 8)
     out = [(skull, "flesh")]

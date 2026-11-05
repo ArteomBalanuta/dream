@@ -41,16 +41,23 @@ ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right
 # which is the old negative control, so the premise of the 0.50 floor on the BASE changed, not its intent.
 #
 # 1. The BASE keeps a legibility floor (a traveller must still read as a figure and not a dark blob), set from
-#    the measurement: MEASURED 2026-11-06 on the undressed figure, M3 0.2376 (worst azimuth 35: p10 0.0202,
-#    p90 0.2578; az 145: 0.0212 / 0.4320). The floor is that minus ~0.025 of headroom.
+#    the measurement: MEASURED 2026-11-06 on the first undressed figure, 0.2376 (az 35 p10 0.0202 p90 0.2578),
+#    because every material sat at 15-35% value and nothing on the figure caught light. The palette now has a
+#    light end (weathered linen tunic over near-black breeches and boots): MEASURED 0.6717 (worst azimuth 35:
+#    p10 0.0079 p90 0.6796; az 145: 0.0081 / 1.0000). The floor is that minus 0.03 of stated headroom.
 # 2. The 0.50 claim moves to the figure PLUS a reference worn set (greathelm + plate-cuirass + hooded-cloak),
 #    read from the shipped ArmourMeshCatalog.cs, because that is where plate contrast now legitimately lives.
-BASE_SPREAD_MIN = 0.21
+#    WHY 0.50 and not a number picked to make the build green: a fully equipped character must be at least as
+#    legible as the figure that actually shipped, which measured 0.5064 with its plate baked in. 0.50 is that
+#    standard, rounded down to the spec's M3 figure. MEASURED 0.5150 (az 35 p10 0.0082 p90 0.5232; az 145
+#    p10 0.0133 p90 0.5301). The armour is NOT where this came from: the worn pieces were not brightened.
+BASE_SPREAD_MIN = 0.64
 WORN_SET_SPREAD_MIN = 0.50
 WORN_SET_IDS = ("worn.head.greathelm", "worn.body.plate-cuirass", "worn.back.hooded-cloak")
 CATALOG = TOOLS.parents[1] / "dream" / "Rendering" / "Actors" / "ArmourMeshCatalog.cs"
 ENVELOPE_TOL = 0.015       # the worn-model contract's tolerance, engine units
 DIE_SPAN_FRACTION = 0.45   # the lying-down gate: a fraction of the figure's own standing height...
+DIE_REST_MAX = 0.012       # the held last frame may float at most this far (0.45 px) above y = 0
 DIE_SPAN_ABS_MAX = 1.15    # ...and an absolute ceiling, so a taller figure cannot ride the fraction up
 # The engine's own copy, the one PlayerModelAssetDefinition loads; the generator must reproduce it exactly.
 SHIPPED_PLAYER = TOOLS.parents[1] / "dream" / "animations" / "players" / "player-grim.glb"
@@ -153,33 +160,48 @@ def envelope_rows(asset: dict) -> list:
 
     rows = []
     h = inside("head", 0.0, 0.42)
-    rows += [("head |x|", float(np.abs(h[:, 0]).max()), 0.12), ("head |z|", float(np.abs(h[:, 2]).max()), 0.13),
+    rows += [("head |x|", float(np.abs(h[:, 0]).max()), 0.12), ("head |z|", float(np.abs(h[:, 2]).max()), 0.135),
              ("head top y", float(pts["head"][:, 1].max()), 0.42)]
     t = inside("torso", 0.0, 0.86)
     rows += [("torso |x| (hip skirt)", float(np.abs(t[:, 0]).max()), 0.26),
-             ("torso front z", float(t[:, 2].max()), 0.14), ("torso back z (Back mount)", float(-t[:, 2].min()), 0.14)]
+             ("torso front z", float(t[:, 2].max()), 0.15), ("torso back z (Back mount)", float(-t[:, 2].min()), 0.145)]
     c = inside("torso", 0.35, 0.86)
-    rows += [("torso chest |x|", float(np.abs(c[:, 0]).max()), 0.19)]
+    rows += [("torso chest |x|", float(np.abs(c[:, 0]).max()), 0.195)]
     for node, side in (("arm-left", 1.0), ("arm-right", -1.0)):
         a = inside(node, -0.95, -0.55, shift=side * arm_x)
-        rows += [(f"{node} |x|", float(np.abs(a[:, 0]).max()), 0.09), (f"{node} |z|", float(np.abs(a[:, 2]).max()), 0.09)]
+        rows += [(f"{node} |x|", float(np.abs(a[:, 0]).max()), 0.09), (f"{node} |z|", float(np.abs(a[:, 2]).max()), 0.10)]
     for node in ("leg-left", "leg-right"):
         l = inside(node, -0.75, -0.10)
         rows += [(f"{node} |x|", float(np.abs(l[:, 0]).max()), 0.11), (f"{node} |z|", float(np.abs(l[:, 2]).max()), 0.11)]
         f = inside(node, -1.30, -0.88)
         rows += [(f"{node} foot |x|", float(np.abs(f[:, 0]).max()), 0.132),
-                 (f"{node} foot back z", float(-f[:, 2].min()), 0.05), (f"{node} foot front z", float(f[:, 2].max()), 0.15)]
+                 (f"{node} foot back z", float(-f[:, 2].min()), 0.055), (f"{node} foot front z", float(f[:, 2].max()), 0.155)]
     # the hand: the fist is centred at arm-local y -0.9 (HeldWeaponRenderer), so the bare hand's heel is at -1.003
     rows += [("arm-left lowest y (hand at -0.9)", float(-pts["arm-left"][:, 1].min()), 1.003)]
     return rows
 
 
 _BOX = re.compile(r"Box\(\s*((?:[-\d.]+f,\s*){5}[-\d.]+f),\s*(?:ArmourMaterial\.)?(\w+)((?:,\s*(?:pitch|roll):\s*[-\d.]+f)*)\)")
-# ArmourMeshCatalog.BaseColor, linear, as the engine draws it: the worn palette is already the lifted figure's
-_WORN_COLOUR = {"Steel": (0.36, 0.39, 0.46), "DarkIron": (0.17, 0.17, 0.20), "Iron": (0.17, 0.17, 0.20),
-                "Leather": (0.13, 0.08, 0.06), "ClothCold": (0.086, 0.102, 0.157), "Cold": (0.086, 0.102, 0.157),
-                "ClothAsh": (0.118, 0.125, 0.141), "Ash": (0.118, 0.125, 0.141), "ClothRed": (0.353, 0.118, 0.102),
-                "Red": (0.353, 0.118, 0.102), "Bone": (0.62, 0.58, 0.48), "Gilt": (0.50, 0.37, 0.14)}
+# ArmourMeshCatalog.BaseColor, linear, as the engine draws it. Parsed from the same .cs the boxes come from
+# (a hand-copied table had no gate tying it to the catalog and no entry for the glowing materials).
+_BASE_COLOUR = re.compile(r"ArmourMaterial\.(\w+)\s*=>\s*new Vector4\(\s*([-\d.]+)f,\s*([-\d.]+)f,\s*([-\d.]+)f,\s*[-\d.]+f\)")
+_EMISSIVE = re.compile(r"ArmourMaterial\.(\w+)\s*=>\s*new Vector3\(")
+_ALIAS = re.compile(r"const ArmourMaterial (\w+) = ArmourMaterial\.(\w+);")
+
+
+def worn_palette() -> tuple:
+    """(name -> linear albedo, set of glowing material names), both including the BuildModels aliases."""
+    src = CATALOG.read_text(encoding="utf-8")
+    colours = {m.group(1): tuple(float(m.group(i)) for i in (2, 3, 4)) for m in _BASE_COLOUR.finditer(src)}
+    glow = {m.group(1) for m in _EMISSIVE.finditer(src)}
+    for alias, target in _ALIAS.findall(src):
+        if target in colours:
+            colours[alias] = colours[target]
+        if target in glow:
+            glow.add(alias)
+    return colours, glow
+
+
 _FACES = (((1, 0, 0), ((1, -1, -1), (1, 1, -1), (1, 1, 1), (1, -1, 1))),
           ((-1, 0, 0), ((-1, -1, 1), (-1, 1, 1), (-1, 1, -1), (-1, -1, -1))),
           ((0, 1, 0), ((-1, 1, -1), (-1, 1, 1), (1, 1, 1), (1, 1, -1))),
@@ -211,9 +233,15 @@ def worn_surfaces(asset: dict, ids) -> list:
     pts = fk_vertices(asset, None, None)
     k = L.PLAYER_WORLD_HEIGHT / float(pts[:, 1].max() - pts[:, 1].min())
     surfaces = []
+    colours, glow = worn_palette()
     for vid in ids:
         mount, boxes = catalog_boxes(vid)
         if not boxes:
+            return []
+        # Head rides the head node; Torso and Back are authored in the torso frame. Any other mount would be
+        # drawn on the torso, unmirrored, and look plausible: refuse it.
+        if mount not in ("Head", "Torso", "Back"):
+            fail(f"{vid}: mount {mount} is not drawn by the worn-set gate (only Head, Torso and Back are)")
             return []
         W = world[names.index("head" if mount == "Head" else "torso")]
         for centre, size, mat, pitch, roll in boxes:
@@ -230,7 +258,11 @@ def worn_surfaces(asset: dict, ids) -> list:
                 tri += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
             nrm = np.array(nrm)
             nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
-            alb = np.tile(np.array(_WORN_COLOUR[mat]), (len(pos), 1))
+            if mat in glow or mat not in colours:
+                fail(f"{vid}: material {mat} is {'emissive' if mat in glow else 'unknown to ArmourMeshCatalog.BaseColor'}; "
+                     f"the worn-set gate draws lit materials only")
+                return []
+            alb = np.tile(np.array(colours[mat]), (len(pos), 1))
             surfaces.append(L.Surface(np.array(pos) * k, nrm, alb, np.array(tri), None))
     return surfaces
 
@@ -287,8 +319,8 @@ def main() -> int:
     # The fall must end LYING DOWN, measured against the TIGHTER of a fraction of the figure's own standing
     # height and an absolute ceiling. The fraction alone is what a taller figure would ride up; the absolute
     # alone was the old gaunt cloth figure's 1.00, which this plated figure genuinely cannot meet - MEASURED
-    # 1.06 units lying on its back against the 2.68 it stands at, because the helm brim and the pauldrons are
-    # broad horizontal plates and a half turn about X stands them upright. So the ceiling is 1.15, a stated
+    # 0.87 units lying on its back against the 2.68 it stands at (1.06 with the old baked helm brim and pauldrons,
+    # broad horizontal plates that a half turn about X stood upright). So the ceiling is 1.15, a stated
     # 15% relaxation of the old 1.00 with 8% of headroom over the measurement, and the fraction binds instead
     # as soon as the figure is shorter than 2.56 units.
     # The sibling below is what keeps this honest, and it is NOT the bind pose: a bind-pose control is circular
@@ -308,6 +340,13 @@ def main() -> int:
     else:
         ok(f"die ends lying down ({span_y:.2f} units <= {limit:.2f}, {span_y / stand:.0%} of its standing "
            f"{stand:.2f}; lowest y {float(dv[:, 1].min()):+.3f})")
+    # and it must REST on the ground: the engine holds the last frame forever, and a lift sized for a mid-fall key
+    # left the corpse hovering 0.0414 units (1.5 px) above the floor.
+    rest = float(dv[:, 1].min())
+    if not -0.01 <= rest <= DIE_REST_MAX:
+        fail(f"the held last frame of die rests at y = {rest:+.4f}, outside -0.01..{DIE_REST_MAX} (a hovering or sunken corpse)")
+    else:
+        ok(f"die's held frame rests on the ground (lowest y {rest:+.4f} <= {DIE_REST_MAX})")
     early = min(1, keys - 1)
     ev = fk_vertices(a, "die", early)
     early_span = float(ev[:, 1].max() - ev[:, 1].min())
@@ -413,17 +452,27 @@ def main() -> int:
                  f"{dressed['worst_azimuth']:.0f} (the dressed figure is too flat under a close light)")
         else:
             ok(f"figure + worn set M3 spread {dressed['spread']:.4f} >= {WORN_SET_SPREAD_MIN}")
-        # live: the figure without the set is under the same floor, so the gate is measuring what the set adds
-        if m3["spread"] >= WORN_SET_SPREAD_MIN:
-            fail(f"the worn-set gate passes the figure alone at {m3['spread']:.4f}; it has stopped measuring the set")
+        # live: the same dressed figure at ONE albedo (figure and set alike) must fail the same floor, or the
+        # gate has stopped measuring contrast. The figure alone is no longer a control: its own palette now
+        # clears 0.50 by itself, so "figure < 0.50" would assert something false.
+        every = surfaces + worn
+        lit_all = [s for s in every if s.emissive is None]
+        mid_all = np.median(np.concatenate([s.albedo for s in lit_all]), axis=0)
+        flat_worn = L.m3_measure([L.Surface(s.positions, s.normals, np.tile(mid_all, (len(s.positions), 1)),
+                                            s.indices, None) for s in lit_all])
+        if flat_worn["spread"] >= WORN_SET_SPREAD_MIN:
+            fail(f"the worn-set gate passes a single-albedo dressed figure at {flat_worn['spread']:.4f}; it has stopped measuring contrast")
         else:
-            ok(f"the worn-set gate is live: the figure alone, {m3['spread']:.4f} < {WORN_SET_SPREAD_MIN}")
+            ok(f"the worn-set gate is live: the dressed figure at one albedo, {flat_worn['spread']:.4f} < {WORN_SET_SPREAD_MIN}")
 
     # the worn-model contract: the base figure's extents in each mount's frame, +-0.015 of the table in build_parts()
     for label, got, want in envelope_rows(a):
         line = f"envelope {label}: {got:.4f} (contract {want})"
-        if abs(got - want) > ENVELOPE_TOL + 1e-9:
-            fail(line + f" is outside +-{ENVELOPE_TOL}")
+        # One-sided OUTWARD: the figure may stand short of the table by ENVELOPE_TOL, but never past it. Worn
+        # pieces are authored to cover the table value, so a figure wider than the table pokes out through them.
+        two_sided = "lowest y" in label     # the hand's heel must sit AT the grip, not merely inside it
+        if (abs(got - want) > ENVELOPE_TOL + 1e-9) if two_sided else (got > want + 1e-9 or got < want - ENVELOPE_TOL - 1e-9):
+            fail(line + f" is outside the table (at most {want}, at least {want - ENVELOPE_TOL})")
         else:
             ok(line)
 

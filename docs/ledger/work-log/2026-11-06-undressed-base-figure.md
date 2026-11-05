@@ -62,3 +62,38 @@ Measured before touching any floor: the undressed figure's M3 spread is **0.2376
 A3 (`check_look.py`, `ACTOR_SPREAD_MIN = 0.45`) needs a real capture and is not touched. The offline proxy is
 the same M3 number: 0.2376 for the bare figure against 0.5064 before, so expect A3 to drop well under 0.45 when
 nothing is equipped.
+
+## Fix loop 1
+
+Palette (the actual defect). Everything left on the figure sat at 15-35% value, so there was no light end.
+Measured sweep of the tunic linen against the M3 gates, then fixed at the brightest value the 8-bit atlas keeps
+honest: the engine lift is 3x and a texel cannot exceed 1.0, so the lift-once gate (mean shipped / baked within 3%
+of 3.0) caps the linen at R = 0x9E (2.92x; 0xA4 gives 2.83x and fails). Only R sets HSV value, so G/B are held back.
+
+| Material | Was | Now | Why |
+| --- | --- | --- | --- |
+| cloth.tunic (tunic, sleeves, collar, skirt) | #5E5748 | #9E9A8C (sat 0.10) | the light end; ceiling is the atlas, not taste |
+| cloth.ash.cold (breeches) | #1E2024 | #101010 | value contrast between garments |
+| leather (belt, boots) -> leather.dark | #241C16 | #0F0F0E | the boots are the largest dark area |
+
+Near-black has a floor of its own: #0D0F12 quantised into the forbidden cyan band (1367 texels), and #0A0706 /
+#0E0C0B made 369 texels past 0.35 saturation. Neutral #101010 / #0F0F0E makes none; the accent share is 0.036 (budget
+0.04) and no material exceeds 0.35. The tunic skirt hangs to -5 u (was -3) for more pale area below a cuirass.
+
+Measured: base 0.6717 (az 35 p10 0.0079 p90 0.6796, binding; az 145 p10 0.0081 p90 1.0000), up from 0.2376.
+Worn set 0.5150 (az 35 p10 0.0082 p90 0.5232; az 145 p10 0.0133 p90 0.5301), up from 0.4487. Target 0.52 was NOT
+reached: the worn p90 is pinned by the atlas ceiling and the armour's own lit faces, and brighter linen fails the
+lift gate. The 0.50 floor stands, now with the rationale that a fully equipped character must be at least as legible
+as the figure that shipped (0.5064). `BASE_SPREAD_MIN` 0.21 -> 0.64. The worn-set liveness control is now the dressed
+figure at one albedo (0.107), since the figure alone clears 0.50.
+
+Head ceiling. The three helms sat at 1.583 of a 1.6 ceiling. Now: main masses 0.32-0.34 wide (half 0.16-0.17),
+nothing wider than 0.17; ceiling = base head 0.12 + a 0.06 shell allowance = 0.18 (1.5x), depth 0.135 + 0.06; floor
+= body + one pixel (0.0265) = 0.1465. Margin to ceiling 0.01 (0.4 px), to floor 0.014+.
+
+Also: fit window gets a floor and a z ceiling (leather-vest was exactly 1.000x; it gains a shoulder yoke and a wider
+body); cloak panels respaced to tiers 0.03 apart at 0.06 thickness; cloak length contracts; the envelope gate is
+one-sided outward and the table moved to the figure (head z 0.135, torso z -0.145/+0.15, chest 0.195, arm z 0.10,
+foot z -0.055/+0.155); a cover-table-vs-mesh test; the die clip lift is per key (the held frame now rests at y 0,
+was 0.0414 up); worn colours parsed from the catalog. A3 (`check_look.py`) still needs a real capture.
+
