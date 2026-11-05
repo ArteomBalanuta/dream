@@ -289,11 +289,13 @@ def family_total_errors(sizes: dict[str, int]) -> list[str]:
 def self_test() -> list[str]:
     errs = []
     base = {"rect_quad": 0.05, "rect_lowfreq": 0.2, "azimuth": 0.02, "sat_p95": 0.2, "forbidden_hue": 0.0, "chrome": 0.0, "v_p99": 0.3,
-            "mean_v": 0.1, "tris": 100, "bytes": 1000, "low_y": 0.0, "height": 0.1, "hf": 0.05, "albedo_max": 0.3}
+            "mean_v": 0.1, "tris": 100, "bytes": 1000, "low_y": 0.0, "height": 0.1, "hf": 0.05, "albedo_max": 0.3,
+            "precap_albedo_max": 0.3, "cap_scale": 1.0, "moved_fraction": 0.0}
     if metric_errors("selftest", base, "rock", "cover"):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95,
-             "mean_v": 0.7, "tris": 10 ** 6, "bytes": 10 ** 9, "low_y": 0.2, "height": 0.9, "hf": 0.004, "albedo_max": 0.7}
+             "mean_v": 0.7, "tris": 10 ** 6, "bytes": 10 ** 9, "low_y": 0.2, "height": 0.9, "hf": 0.004, "albedo_max": 0.7,
+             "precap_albedo_max": 5.0, "cap_scale": 0.01}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}, "rock", "cover"):
             errs.append(f"self-test: gate {k} did not fail its negative")

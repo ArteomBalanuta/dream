@@ -323,23 +323,32 @@ def apply_detail(atlas: np.ndarray, rects, kinds, seed: str, strength: float = 1
     return out
 
 
-def cap_peak(eff: np.ndarray, covered: np.ndarray, ceiling: float = ALBEDO_CEILING) -> np.ndarray:
+CAP_MOVED_EPS = 0.02   # a texel counts as moved by the cap when its brightest channel changes by more than this (effective albedo)
+
+
+def cap_peak(eff: np.ndarray, covered: np.ndarray, ceiling: float = ALBEDO_CEILING):
     """eff: effective albedo (float, HxWx3). Scale so the 99.5th percentile of the covered texels sits at the ceiling, then clip the
-    rare outlier at it. A no-op when the atlas is already under it."""
+    rare outlier at it. A no-op when the atlas is already under it. Returns (capped, report): the report says how much the cap had to
+    do, because a cap that quietly flattens the brightest texels would undo the detail there. precap_albedo_max is the brightest
+    effective albedo the bake produced, cap_scale the uniform darkening (1 = untouched) and moved_fraction the share of covered
+    texels the cap changed by more than CAP_MOVED_EPS; check_props gates all three on the pre-cap bake."""
     top = float(np.percentile(eff[covered].max(axis=1), 99.5))
     s = min(1.0, ceiling / max(top, 1e-9))
-    return np.minimum(eff * s, ceiling)
+    out = np.minimum(eff * s, ceiling)
+    moved = (eff.max(axis=2) - out.max(axis=2))[covered] > CAP_MOVED_EPS
+    return out, {"precap_albedo_max": float(eff[covered].max()), "cap_scale": float(s), "moved_fraction": float(moved.mean())}
 
 
-def cap_ground_atlas(atlas: np.ndarray, gain: float = GROUND_ALBEDO_GAIN) -> np.ndarray:
-    """Keep the effective albedo (byte / 255 * gain) of a baked atlas at or under ALBEDO_CEILING."""
+def cap_ground_atlas(atlas: np.ndarray, gain: float = GROUND_ALBEDO_GAIN):
+    """Keep the effective albedo (byte / 255 * gain) of a baked atlas at or under ALBEDO_CEILING. -> (atlas, cap report)."""
     cov = atlas[..., 3] > 0
     eff = atlas[..., :3].astype(np.float64) / 255.0 * gain
     if float(eff[cov].max()) <= ALBEDO_CEILING:
-        return atlas
+        return atlas, {"precap_albedo_max": float(eff[cov].max()), "cap_scale": 1.0, "moved_fraction": 0.0}
     out = atlas.copy()
-    out[..., :3] = np.round(np.clip(cap_peak(eff, cov) / gain, 0.0, 1.0) * 255.0).astype(np.uint8)
-    return out
+    capped, report = cap_peak(eff, cov)
+    out[..., :3] = np.round(np.clip(capped / gain, 0.0, 1.0) * 255.0).astype(np.uint8)
+    return out, report
 
 
 # ---------------------------------------------------------------------------------------------- build
@@ -353,8 +362,9 @@ def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
     atlas = C.bake_albedo(split, None, None, uvs, rects, spec.atlas, materials=[p.mat for p in parts], seed=seed,
                           wear=wear, grime=grime, rust=rust, dust=dust)
     kinds = [detail_kind(spec.cls, r.cyl) for r in rects]
+    cap = None
     if any(kinds):
-        atlas = cap_ground_atlas(apply_detail(atlas, rects, kinds, seed, ASSET_STRENGTH.get(stem, CLASS_STRENGTH.get(spec.cls, 1.0))))
+        atlas, cap = cap_ground_atlas(apply_detail(atlas, rects, kinds, seed, ASSET_STRENGTH.get(stem, CLASS_STRENGTH.get(spec.cls, 1.0))))
     png, scale, enc = encode_ground_atlas(atlas)
     k = GP.WORLD_UNITS_PER_U / GP.UNITS_PER_U
     arrays = []
@@ -381,7 +391,7 @@ def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
     bounds = (float(horiz.max()), footprint, float(p64[:, 1].max()))
     nodes = [G.GltfNode(name=stem, parent=None)]
     return dict(name=stem, family=family, nodes=nodes, primitives=prims, materials=mats, atlas=atlas, encoded=enc, scale=scale,
-                rects=rects, parts=parts, meshes=split, uvs=uvs, disc=disc, spec=spec, bounds=bounds)
+                rects=rects, parts=parts, meshes=split, uvs=uvs, disc=disc, spec=spec, bounds=bounds, cap=cap)
 
 
 def glb_bytes(asset: dict) -> bytes:

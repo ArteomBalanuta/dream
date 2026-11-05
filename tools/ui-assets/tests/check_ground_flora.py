@@ -217,12 +217,14 @@ def self_test() -> list[str]:
     cov = F.ASSETS["grass_tuft_dry_01"]
     base = {"rect_quad": 0.05, "rect_lowfreq": 0.2, "azimuth": 0.02, "sat_p95": 0.2, "forbidden_hue": 0.0, "chrome": 0.0, "v_p99": 0.3, "mean_v": 0.1,
             "tris": 1000, "verts": 1000, "bytes": 1000, "radius": 1.0, "footprint": 0.3, "height": 3.5, "miny": 0.0, "has_disc": True,
-            "hf": 0.05, "albedo_max": 0.3}
+            "hf": 0.05, "albedo_max": 0.3,
+            "precap_albedo_max": 0.3, "cap_scale": 1.0, "moved_fraction": 0.0}
     cbase = {**base, "height": 0.25, "has_disc": False, "tris": 300}
     if metric_errors("selftest", base, spec) or metric_errors("selftest", cbase, cov):
         errs.append("self-test: a clean metric set fails its own gates")
     cases = {"rect_quad": 0.9, "rect_lowfreq": 0.99, "azimuth": 0.8, "sat_p95": 0.9, "forbidden_hue": 0.5, "chrome": 0.2, "v_p99": 0.95, "mean_v": 0.7,
-             "tris": 10 ** 6, "bytes": 10 ** 9, "miny": 0.2, "footprint": 0.9, "height": 9.0, "hf": 0.004, "albedo_max": 0.7}
+             "tris": 10 ** 6, "bytes": 10 ** 9, "miny": 0.2, "footprint": 0.9, "height": 9.0, "hf": 0.004, "albedo_max": 0.7,
+             "precap_albedo_max": 5.0, "cap_scale": 0.01}
     for k, v in cases.items():
         if not metric_errors("selftest", {**base, k: v}, spec):
             errs.append(f"self-test: gate {k} did not fail its negative")
@@ -239,6 +241,17 @@ def self_test() -> list[str]:
         errs.append("self-test: grass over 0.35 wu passed")
     if not metric_errors("selftest", base, K.GroundSpec(spec.build, "tree", "landmark", 256, (1.0, 1.0))):
         errs.append("self-test: a wrong atlas size passed")
+    # the pre-cap gates through the real ground pipeline: a bright material is capped to the ceiling (albedo_clip_max passes) and must
+    # still fail on what the cap had to do
+    import isoforge as I
+    bright = I.IsoMat((0.9, 0.9, 0.9), (0.03,) * 3, 0.9)
+    over = K.GroundSpec(lambda: [K.GP.Part(I.box(8.0, 6.0, 4.0, 0.3), bright)], "pebbles", "cover", 128)
+    ba = K.build_ground_asset("flora", "selftest_bright", over)
+    bm = CP.detail_metrics(ba)
+    if bm["albedo_max"] > GATES["albedo_clip_max"]:
+        errs.append(f"self-test: the real ground pipeline shipped effective albedo {bm['albedo_max']:.3f} over the ceiling")
+    if not CP.detail_errors("selftest_bright", bm, GATES):
+        errs.append(f"self-test: an over-bright bake through the real pipeline passed every pre-cap gate ({bm})")
     # the key gate against a real baked key
     r = np.random.default_rng(3)
     th = r.uniform(0, np.pi * 2, 20000)
