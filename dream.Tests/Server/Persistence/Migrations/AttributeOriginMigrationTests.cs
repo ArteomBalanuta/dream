@@ -49,15 +49,12 @@ public sealed class AttributeOriginMigrationTests
         // The migration shifts by 990 = 1000 - 10, so the distance above the origin is unchanged.
         Assert.Equal(1005 - 1000, 15 - 10);
         Assert.Equal(1012 - 1000, 22 - 10);
-        // PointsSpent over the migrated row is the same 17 points once the code's origin is the 10 the
-        // migration targets. Written against the live constant: on a build whose origin is still 1000
-        // the migrated row (correctly) reads as nothing spent, so only the matching origin is asserted.
+        // PointsSpent over the migrated row is the same 17 points. Written against the live constants,
+        // which are now the origin the migration targets for good: StartStrength and StartVitality are
+        // both NewCharacterAttribute = 10, so the total is asserted outright.
         int expected = Math.Max(0, 15 - PlayerStatRules.StartStrength) + Math.Max(0, 22 - PlayerStatRules.StartVitality);
         Assert.Equal(expected, PlayerStatRules.PointsSpent(15, PlayerStatRules.StartAttackSpeed, 22, 10, 10));
-        if (PlayerStatRules.StartStrength == 10 && PlayerStatRules.StartVitality == 10)
-        {
-            Assert.Equal(17, expected);
-        }
+        Assert.Equal(17, expected);
     }
 
     [Fact]
@@ -89,8 +86,14 @@ public sealed class AttributeOriginMigrationTests
 
         database.Schema.EnsureSchema();
 
-        // No backfill: max health is a formula in combat_formulas. HealthState.SetAuthoritativeState
-        // clamps the stored current to the recomputed maximum when the character loads.
+        // No backfill: max health is a formula in combat_formulas. The stale pair is harmless and
+        // self-healing. PlayerCombatant.DeriveFromSheet recomputes DerivedStats from that expression
+        // and then calls Health.SetMaxHealthPreservingRatio, so a stored 5050/5050 -- a ratio of
+        // exactly 1.0 -- loads as 100/100 at vitality 10 (50 + 10 * 5); HealthState.SetAuthoritativeState
+        // clamps any other stored ratio into [0, MaxHealth]. Nor is this pair the authority for current
+        // health: that is player_world_state.current_hp, keyed by (world_id, player_name), and that
+        // table has no max_hp column at all. A subsequent checkpoint rewrites both columns here
+        // (CheckpointUpdateVitalsSql), retiring the stored 5050 for good.
         Assert.Equal(5050L, database.Scalar("SELECT current_hp FROM player_profiles WHERE player_name = 'hero';"));
         Assert.Equal(5050L, database.Scalar("SELECT max_hp FROM player_profiles WHERE player_name = 'hero';"));
     }

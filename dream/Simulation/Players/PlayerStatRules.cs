@@ -23,8 +23,9 @@ public static class PlayerStatRules
     // coefficients by 1/100 would have repaired combat while leaving every item meaningless, so the
     // origin moved back instead. PlayerCombatStats.AttributeCeiling (10000) is kept deliberately as
     // gear and level headroom above it. Migration 0015_attribute_origin.sql moves stored characters
-    // onto this origin (subtracting the same amount from every attribute) so their PointsSpent is
-    // unchanged.
+    // onto this origin (subtracting 990 only where an attribute is >= 1000, which leaves characters
+    // stored before a39702e6 untouched: an unconditional subtract floored at 10 would turn a legacy
+    // stored 14 into 10 and silently delete 4 earned points) so their PointsSpent is unchanged.
     public const int NewCharacterAttribute = 10;
 
     // The origin the point count measures from: deliberately the same number a new character is

@@ -79,6 +79,11 @@ public sealed class MasterMpGapTests
             // spend could not raise it).
             Assert.Equal(PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed + gearAttackSpeed, AgilityAfter), combatant.Stats.AttackSpeed, 4);
             Assert.True(combatant.Stats.AttackSpeed > attackSpeedBefore, $"attack speed {attackSpeedBefore} -> {combatant.Stats.AttackSpeed}");
+            // The assertion above recovers the gear term from the observed pre-spend value, so it cannot fail on
+            // that term's magnitude. This one is direct: 4 points of Agility move attack speed by exactly
+            // 4 * AttackSpeedPerAgility, clamp uninvolved. At the 1000 origin both sides sat pinned at the 5.0 cap
+            // and this delta was 0.0, so it is precisely what moving the origin back to 10 restores.
+            Assert.Equal(4 * PlayerStatRules.AttackSpeedPerAgility, combatant.Stats.AttackSpeed - attackSpeedBefore, 4);
             Assert.Equal(PlayerManaRules.MaxMana(3, EnergyAfter), combatant.MaxMana);
             Assert.True(combatant.MaxMana > maxManaBefore);
             Assert.Equal(3, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
