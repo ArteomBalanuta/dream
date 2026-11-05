@@ -307,10 +307,10 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         }
 
         // The script was written for a character that needs several hits: a cube has 100 hp and the
-        // scripted enemy 400. A profile-backed join of a new character reads Strength 1000, and the
-        // player.min_damage formula (5 + strength * 2) makes the first swing 2005 and the maximum
-        // (10 + strength * 4) 4010, so the first hit destroys whatever is in reach and no later damage
-        // roll ever happens. At the baseline's Strength 10 the range is 25-50: 2-4 hits on a cube.
+        // scripted enemy 400. A profile-backed join of a new character reads Strength 10, and the
+        // player.min_damage formula (5 + strength * 2) makes the first swing 25 and the maximum
+        // (10 + strength * 4) 50: 2-4 hits on a cube, so later damage rolls happen. The seeding states
+        // that baseline explicitly and is a no-op on a new character now.
         // Invariant that makes seeding on every construction safe: never construct this harness after a
         // deliberate profile deletion (a test that deletes a profile must build a raw host instead, as
         // BuildingsOutliveBuilderTests does), because this would silently recreate the deleted row.

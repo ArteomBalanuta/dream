@@ -6,18 +6,21 @@ namespace Dream.Tests;
 
 // The modest attribute baseline the combat and stat-mechanics tests measure against.
 //
-// A new character is created at PlayerStatRules.NewCharacterAttribute (1000 in each attribute,
-// against a ceiling of 10000, so there is plenty of point headroom). That is not why this helper
-// exists. It exists for damage and armour magnitude: the player.min_damage formula is
-// 5 + strength * 2 and player.max_damage is 10 + strength * 4, so a fresh character swings for
-// 2005-4010, which one-shots a 100 hp cube or a 400 hp enemy. Combat harnesses written around
-// "it takes several hits" (cube fracture sequences, hit-roll divergence, damage-then-checkpoint)
-// would never see a second damage roll. At this baseline's Strength 10 the range is 25-50, which is
-// 2-4 hits on a cube, and armour and health stay in the modest range their numbers were derived in.
+// The combat harnesses are written around damage and armour magnitude: the player.min_damage formula
+// is 5 + strength * 2 and player.max_damage is 10 + strength * 4, so at this baseline's Strength 10
+// the range is 25-50, which is 2-4 hits on a cube, and armour and health stay in the modest range
+// their numbers were derived in. "It takes several hits" (cube fracture sequences, hit-roll
+// divergence, damage-then-checkpoint) needs exactly that.
 //
-// These numbers are the tests' own, on purpose. They are not the shipping default and must not be
-// wired to it: the point of pinning them is that changing what players start with does not silently
-// rewrite what these tests assert.
+// History: for a while a new character was created at 1000 in each attribute (commit a39702e6), which
+// swung for 2005-4010 and one-shot a 100 hp cube, so these helpers were what kept the harnesses
+// meaningful. The start is back at PlayerStatRules.NewCharacterAttribute = 10 (the ceiling stays 10000
+// as gear headroom), so Profile(...) is now byte-identical to PersistedPlayerProfile.CreateDefault(...)
+// and PinTo is a no-op on a profile-backed character.
+//
+// These numbers are the tests' own, on purpose. They must not be wired to the shipping default: the
+// point of pinning them is that changing what players start with does not silently rewrite what these
+// tests assert. That they currently equal production is a coincidence, not a link.
 public static class TestStatBaseline
 {
     public const int Attribute = 10;

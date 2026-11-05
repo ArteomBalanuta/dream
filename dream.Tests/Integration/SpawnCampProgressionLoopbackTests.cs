@@ -102,7 +102,7 @@ public sealed class SpawnCampProgressionLoopbackTests
 
             // A server-side level-up: the snapshot carries the level and the server's threshold.
             IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(server.Runtime, Session);
-            // A new character is created at 1000 with 9000 of headroom to the ceiling and 0 points spent,
+            // A new character is created at 10 with 9990 of headroom to the ceiling and 0 points spent,
             // so level 3 earns 10 (5 * (3 - 1)) and one Strength spend leaves 9.
             target.Combatant.ApplyProgression(3, 10);
             await StepUntilAsync(server, client, p => p.Level == 3 && p.Experience == 10, "the level-up");

@@ -56,10 +56,11 @@ public sealed class M5EndToEndLoopbackTests
 
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db)
     {
-        // A new profile-backed character is created at Strength 1000, so player.min_damage
-        // (5 + strength * 2) is 2005 and max_damage (10 + strength * 4) 4010. These tests were written for
-        // the baseline's Strength 10 (25-50 per hit): a wolf, a dire wolf or a cube falls to the first
-        // swing otherwise. A row that already exists (a restart) is left as the earlier phase stored it.
+        // A new profile-backed character is created at Strength 10, so player.min_damage
+        // (5 + strength * 2) is 25 and max_damage (10 + strength * 4) 50: the baseline's 25-50 per hit,
+        // which is what these tests were written for (a wolf, a dire wolf or a cube takes several swings).
+        // The seed is therefore a no-op on a new character now, kept because it states the stats the tests
+        // assume. A row that already exists (a restart) is left as the earlier phase stored it.
         ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath, start: new ServerStartOptions(null));
         TestStatBaseline.SeedMissingProfiles(bundle.Schema, KeyOf(SessionA), KeyOf(SessionB), KeyOf(SessionC));
         DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(bundle);
@@ -509,8 +510,8 @@ public sealed class M5EndToEndLoopbackTests
     {
         using MigrationTestDatabase db = new();
         // The mate's hit must leave the cube standing for the refusal after the mate leaves to mean
-        // anything. At a new character's Strength 1000 that hit is 2005-4010 (5 + strength * 2 up to
-        // 10 + strength * 4) against a 100 hp cube and breaks it; the baseline's Strength 10 is 25-50.
+        // anything. At a new character's Strength 10 that hit is 25-50 (5 + strength * 2 up to
+        // 10 + strength * 4) against a 100 hp cube, which stands; the seed states the baseline explicitly.
         // The rig builds its own bundle, so the tables are created first (EnsureSchema is idempotent).
         db.Schema.EnsureSchema();
         TestStatBaseline.SeedMissingProfiles(db.Schema, M4BRig.KeyOf(M4BRig.SessionA), M4BRig.KeyOf(M4BRig.SessionB));

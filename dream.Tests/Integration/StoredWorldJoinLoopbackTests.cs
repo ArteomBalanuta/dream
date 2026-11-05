@@ -37,18 +37,17 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // Re-pinned by the starter kit's off-hand torch (items.json "equip": "OffHand"): the player actor's
     // visualKey reads "held.tool.builder|held.tool.torch" and it now carries a held light, 29 B in all.
     // Sha-256 was c1ba86757bab6b22..., now 90a7bf84de99b7b7.... The join is 6,117 B in all.
-    // Re-pinned by the new-character start (a39702e6): the join creates the player's profile, and a new
-    // character is made at 1000 in Strength, Agility, Vitality and Energy instead of 10, and its health
-    // follows the player.max_health formula (50 + vitality * 5) from 100 to 5050. In the join's player
-    // combatStats and vitals that is two digits longer in each of four attributes (4 x 2 = 8 B) and one
-    // digit longer in each of the two health values (2 x 1 = 2 B): +10 B, 6,117 -> 6,127. This test does
-    // not seed the baseline on purpose: it pins what a new character's join looks like. Sha-256 was
-    // 90a7bf84de99b7b7..., now e9dfe27f584dcbcb.... The join is 6,127 B in all.
+    // The new-character start was 1000 for a while (a39702e6; pinned 6,127 B, sha-256 e9dfe27f584dcbcb...):
+    // four attributes two digits longer ("1000" for "10", 4 x 2 = 8 B) and the two health values one digit
+    // longer (5050 for 100, 2 x 1 = 2 B), +10 B. Rolling the start back to 10 (NewCharacterAttribute) removes
+    // exactly those 10 B and returns the earlier pin: 6,127 -> 6,117 B, and the sha-256 is again
+    // 90a7bf84de99b7b7... byte for byte. This test does not seed the baseline on purpose: it pins what a
+    // new character's join looks like. The join is 6,117 B in all.
     private const int C0FrameCount = 3;
-    private const long C0TotalBytes = 6_127;
+    private const long C0TotalBytes = 6_117;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "e9dfe27f584dcbcbef375ed6204c4f44baf1ad94fd12748c9bd20f61bf04a1fb";
+    private const string C0Sha256 = "90a7bf84de99b7b72c5cca0a84403fbd3406d725b036b7872286cdf241324e36";
     private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]

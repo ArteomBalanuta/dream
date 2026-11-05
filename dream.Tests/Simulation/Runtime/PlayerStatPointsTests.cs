@@ -14,9 +14,9 @@ namespace Dream.Tests.Simulation.Runtime;
 // PlayerStatSpendIntent, and checked by the server on every server (not only with dev commands).
 // Since the stats sheet merge the four attributes (Strength, Agility, Vitality, Energy) take points
 // and Attack Speed does not (it comes from Agility); caps are PlayerCombatStats' (10000, AttributeCeiling).
-// Points are measured from the creation value (PlayerStatRules.NewCharacterAttribute, 1000), so every
-// character here is built from that origin; a combatant a host has not loaded a profile into still holds
-// the unseeded 10, below the origin, which counts as nothing spent and so cannot show a budget at all.
+// Points are measured from the creation value (PlayerStatRules.NewCharacterAttribute, 10), so every
+// character here is built from that origin; a combatant a host has not loaded a profile into holds the
+// unseeded 10, which is the same value, so it too counts as nothing spent.
 public class PlayerStatPointsTests
 {
     private const string SessionA = "session-a";
@@ -24,7 +24,7 @@ public class PlayerStatPointsTests
 
     private const int Origin = PlayerStatRules.NewCharacterAttribute;
 
-    // A new character as it is created: every attribute at 1000 (PersistedPlayerProfile.CreateDefault), 0 spent.
+    // A new character as it is created: every attribute at 10 (PersistedPlayerProfile.CreateDefault), 0 spent.
     private static PlayerCombatStats Stats(int strength = Origin, float attackSpeed = 2f, int vitality = Origin, int agility = Origin, int energy = Origin) =>
         new() { Strength = strength, AttackSpeed = attackSpeed, Vitality = vitality, Agility = agility, Energy = energy };
 
@@ -42,15 +42,15 @@ public class PlayerStatPointsTests
     [Fact]
     public void PointsAvailable_CountsStrengthVitalityAndEveryFiveHundredthsOfAttackSpeed()
     {
-        // 3 + 2 + 4 steps (2.0 -> 2.2) = 9 spent of 10 earned at level 3 (5 * (3 - 1)), from the 1000 origin.
+        // 3 + 2 + 4 steps (2.0 -> 2.2) = 9 spent of 10 earned at level 3 (5 * (3 - 1)), from the origin of 10.
         Assert.Equal(1, PlayerStatRules.PointsAvailable(3, Stats(Origin + 3, 2.2f, Origin + 2)));
     }
 
     [Fact]
     public void PointsAvailable_IsZeroNotNegative_ForAnOverBudgetCharacter()
     {
-        // Spent from the 1000 origin: 50 + 50 + 60 steps (2.0 -> 5.0 at 0.05) = 160, over the 20 that level 5 earns
-        // (5 * (5 - 1)). Values near 50 would sit below the origin and count as nothing spent.
+        // Spent from the origin of 10: 50 + 50 + 60 steps (2.0 -> 5.0 at 0.05) = 160, over the 20 that level 5 earns
+        // (5 * (5 - 1)).
         PlayerCombatStats freeSliders = Stats(Origin + 50, 5f, Origin + 50);
         Assert.Equal(0, PlayerStatRules.PointsAvailable(1, freeSliders));
         Assert.Equal(0, PlayerStatRules.PointsAvailable(5, freeSliders));
@@ -162,7 +162,7 @@ public class PlayerStatPointsTests
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
         // Enough levels that the budget is not what stops the spends below. The most any one case needs is
-        // an attribute at the 10000 ceiling, 9000 above the 1000 origin, plus a point or two: level 2000 earns
+        // an attribute at the 10000 ceiling, 9990 above the origin of 10, plus a point or two: level 2000 earns
         // 5 * 1999 = 9995.
         a.ApplyProgression(2000, 0);
 
@@ -196,7 +196,7 @@ public class PlayerStatPointsTests
         using RuntimeAuthoritativeSessionHost host = CreateHost();
         PlayerCombatant a = Combatant(host, SessionA);
         a.ApplyProgression(2, 0);
-        // Spent from the 1000 origin: 30 + 20 + 20 steps (2.0 -> 3.0) = 70, against 5 earned at level 2 and 15 at level 4.
+        // Spent from the origin of 10: 30 + 20 + 20 steps (2.0 -> 3.0) = 70, against 5 earned at level 2 and 15 at level 4.
         a.ApplyBaseStats(Stats(Origin + 30, 3f, Origin + 20));
         PlayerCombatStatsSnapshot kept = PlayerCombatStatsSnapshot.From(a.BaseStats);
 
