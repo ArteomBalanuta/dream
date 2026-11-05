@@ -136,7 +136,10 @@ public sealed class GroundItemsLoopbackTests
         await using WireLoopbackClient a = await server.ConnectAndJoinAsync(SessionA);
         await TickAsync(server, 2);
         IAuthoritativePlayerTarget targetA = WaveIRuntimeKit.Target(server.Runtime, SessionA);
-        Vector3 standing = new(73.5f, 1.5f, 118.25f);
+        // Offset from the Spot every other test here uses, so it is well inside the map: a position
+        // outside it is clamped to the world centre by the server, which would make this assert the
+        // clamp rather than the drop.
+        Vector3 standing = Spot + new Vector3(7.25f, 0f, 11.5f);
         targetA.SetWorldPosition(standing);
         await TickAsync(server);
         WorldSessionRuntime runtime = server.Runtime;
