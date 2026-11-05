@@ -177,6 +177,10 @@ public sealed class StoredWorldEditsRestartTests(ITestOutputHelper output)
         compared = 0;
         (ServerPersistenceBundle leftBundle, IReadOnlyList<PersistedTerrainChunk>? leftTerrain) = left.OpenBundle();
         (ServerPersistenceBundle rightBundle, IReadOnlyList<PersistedTerrainChunk>? rightTerrain) = right.OpenBundle();
+        // The host overload of PersistentScriptedServer cannot seed: without this both servers join at
+        // Strength 1000 and the first swing (5 + 1000 * 2 = 2005) one-shots the 100 hp cube.
+        PersistentScriptedServer.SeedBaseline(leftBundle);
+        PersistentScriptedServer.SeedBaseline(rightBundle);
         using PersistentScriptedServer first = new(StoredWorldDb.CreateHost(leftBundle, leftTerrain));
         using PersistentScriptedServer second = new(StoredWorldDb.CreateHost(rightBundle, rightTerrain));
         Assert.IsType<StoredMapSource>(first.Runtime.Map.Source);
@@ -203,6 +207,12 @@ public sealed class StoredWorldEditsRestartTests(ITestOutputHelper output)
             first.Runtime.Map.RubbleCells.Keys.OrderBy(key => (key.X, key.Y, key.Z)).ToArray(),
             second.Runtime.Map.RubbleCells.Keys.OrderBy(key => (key.X, key.Y, key.Z)).ToArray());
         rubbleCells = first.Runtime.Map.RubbleCells.Count;
+        // Not vacuous: on the baseline (Strength 10, 25-50 per hit) a 100 hp cube takes several hits (seen: 3,
+        // health 64, 7, 0). A one-shot character (Strength 1000, 2005 per hit) destroys it in one, which
+        // is what an unseeded harness gives. Only a phase that placed the cube has hits to count.
+        Assert.True(
+            first.BuiltCubeHits.Count == 0 || first.BuiltCubeHits.Count > 1,
+            $"the cube fell to {first.BuiltCubeHits.Count} hit; the script needs several, so the harness is not on the baseline");
         return firstDivergence;
     }
 

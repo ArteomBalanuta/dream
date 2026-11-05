@@ -311,6 +311,9 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         // player.min_damage formula (5 + strength * 2) makes the first swing 2005 and the maximum
         // (10 + strength * 4) 4010, so the first hit destroys whatever is in reach and no later damage
         // roll ever happens. At the baseline's Strength 10 the range is 25-50: 2-4 hits on a cube.
+        // Invariant that makes seeding on every construction safe: never construct this harness after a
+        // deliberate profile deletion (a test that deletes a profile must build a raw host instead, as
+        // BuildingsOutliveBuilderTests does), because this would silently recreate the deleted row.
         // The stored profile is keyed by the joined display name. It is seeded on every construction
         // because WipeWorldStateKeepingMetadata empties the player tables before a replay phase; a row
         // that survived a plain restart is left as the earlier phase stored it.

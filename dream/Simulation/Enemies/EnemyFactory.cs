@@ -122,7 +122,7 @@ internal static class EnemyFactory
     }
 
     // Enemies are clamped against the enemy ceiling (StatRules.ClampEnemyBase), not the player one: the
-    // player ceiling is 1000 and `enemy.attack_damage = strength + 2`, so a tampered row would otherwise
+    // player ceiling is 10000 and `enemy.attack_damage = strength + 2`, so a tampered row would otherwise
     // one-shot anyone. See StatRules.MaxEnemyBase.
     private static StatBlock Clamped(int strength, int agility, int vitality, int energy, float movementSpeed, float attackSpeed)
     {
