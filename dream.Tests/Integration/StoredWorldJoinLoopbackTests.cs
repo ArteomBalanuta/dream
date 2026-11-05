@@ -184,6 +184,13 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
             // fields to it and v13 rewrote it as the compact snapshot); compare as v8 with the inventory cut
             // out, so every other byte still matches the capture. The inventory's size and shape are pinned by
             // StarterKitInventoryBytesTests and PlayerInventorySnapshotConverterTests.
+            // KEEP THIS LITERAL IN STEP WITH TransportEnvelope.CurrentProtocolVersion. It is not a guarantee that
+            // a protocol bump cannot move the pin - it is the maintenance that makes that true. Miss it and the
+            // Replace is a silent no-op: the digit stays in the hashed bytes, the sha256 and byte count move, and
+            // it presents as a PAYLOAD regression rather than as a stale search pattern, which is a long hunt for
+            // nothing. The same stale-pattern bug on the downgrade helpers in JoinAcceptedWorldDescriptorCodecTests
+            // and WaveBTesterWorldsLoopbackTests has the opposite symptom - those go green while verifying nothing -
+            // so after ANY bump, grep Replace("\"protocolVersion across the test tree even if the suite is green.
             string text = StripInventory(
                 TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":21", "\"protocolVersion\":8"));
             texts.Add(text);
