@@ -296,7 +296,7 @@ public sealed class WaveCTesterBuildingsOutliveBuilderWireTests(ITestOutputHelpe
         ServerPersistenceBundle bundle = database.OpenBundle();
         if (seedBaseline)
         {
-            TestStatBaseline.SeedMissingProfiles(bundle.Schema, [$"Name {SessionA}", $"Name {SessionB}"]);
+            TestStatBaseline.SeedMissingProfiles(bundle.Schema, [WorldSessionRuntime.ResolveJoinPlayerName(SessionA, $"Name {SessionA}"), WorldSessionRuntime.ResolveJoinPlayerName(SessionB, $"Name {SessionB}")]);
         }
 
         return await WireLoopbackServer.StartAsync(ServerBootstrap.CreateAuthoritativeHost(bundle));

@@ -15,7 +15,7 @@ public class AuthoritativeActionFlowTests
     // Effective attack speed is the sheet's attack speed plus AttackSpeedPerAgility per point of Agility,
     // so the expectations keep the sheet total and the Agility term apart. At the unseeded Agility of 10 (PlayerCombatStats.UnseededAttribute)
     // the term is 0.1. The base stats on the wire (PlayerStatsUpdateResult.Stats) carry no Agility term.
-    private static float WithStartingAgility(float sheetAttackSpeed)
+    private static float WithUnseededAgility(float sheetAttackSpeed)
         => sheetAttackSpeed + (PlayerStatRules.AttackSpeedPerAgility * PlayerCombatStats.UnseededAttribute);
 
     [Fact]
@@ -344,7 +344,7 @@ public class AuthoritativeActionFlowTests
         Assert.Equal(16, applied.Stats.Vitality);
         Assert.Equal(22, runtime.Player.Combatant.Stats.Strength);
         // The update asks for 4.5; the effective value adds 0.1 for Agility 10, which the update left alone.
-        Assert.Equal(WithStartingAgility(4.5f), runtime.Player.Combatant.Stats.AttackSpeed, 3);
+        Assert.Equal(WithUnseededAgility(4.5f), runtime.Player.Combatant.Stats.AttackSpeed, 3);
         Assert.Equal(16, runtime.Player.Combatant.Stats.Vitality);
     }
 
@@ -451,7 +451,7 @@ public class AuthoritativeActionFlowTests
         Assert.True(second.Accepted);
         // 2.0 start plus the equipped tool's 2.0 is 4.0 on the sheet, plus 0.1 from Agility 10: 4.1,
         // so one attack per 1 / 4.1 s, about 0.244.
-        float expectedSpeed = WithStartingAgility(4.0f);
+        float expectedSpeed = WithUnseededAgility(4.0f);
         Assert.Equal(expectedSpeed, runtime.Player.Combatant.Stats.AttackSpeed, 3);
         Assert.Equal(1f / expectedSpeed, runtime.Player.Combatant.DerivedStats.AttackIntervalSeconds, 3);
     }

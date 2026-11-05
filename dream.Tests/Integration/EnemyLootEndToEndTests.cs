@@ -474,11 +474,15 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
 
         // The server keeps the owner's base stats out of the actor snapshot (OwnerOnlyProgress) and sends
         // them as ServerPlayerProgress on the 16-tick vitals cadence, the first one just after the join.
-        // Until it lands the client's local combatant holds the bare default sheet, so an equipment push
-        // would recompute max health from Vitality 10 (100) while the join gave it the server's value.
-        // That window is real but closes by itself, so the test starts from a client that has the stats
-        // the way a playing one does.
-        for (int steps = 0; client.Applied.OfType<ServerPlayerProgress>().Count() == 0; steps++)
+        // Until it lands the client's local combatant holds the bare default sheet (Vitality
+        // PlayerCombatStats.UnseededAttribute = 10, max health 50 + 10 * 5 = 100). In production the
+        // server's value differs (a new character is Vitality 1000, max health 5050), so an equipment push
+        // in that window would recompute max health from the wrong Vitality. In THIS test the profile is
+        // seeded to the baseline's Vitality 10 (see StartAsync), so the server's max health is also 100
+        // and no mismatch can arise: the loop is belt-and-braces here. It is kept because the window is
+        // real in production and the test then starts from a client that has the stats the way a playing
+        // one does.
+        for (int steps = 0; !client.Applied.OfType<ServerPlayerProgress>().Any(); steps++)
         {
             Assert.True(steps < 4 * WorldSessionRuntime.VitalsIntervalTicks, "no ServerPlayerProgress followed the join");
             await StepAsync(server, client);

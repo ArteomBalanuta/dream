@@ -55,7 +55,9 @@ public sealed class EquipmentStatCombinationTests
 
     // The unseeded sheet (10) and one value that is not, so the Agility term in the attack speed is exercised and
     // cannot be satisfied by a single point on the grid. 37 also spans the Defense step (37 / 4 = 9).
-    private static readonly int[] AgilityGrid = [PlayerCombatStats.UnseededAttribute, 37];
+    // PlayerCombatStats.MaxAgility is the ceiling: at 10000 the Agility term (0.01 * 10000 = 100) is far past
+    // MaxAttackSpeed, so the second clamp is exercised on every speed in SpeedGrid.
+    private static readonly int[] AgilityGrid = [PlayerCombatStats.UnseededAttribute, 37, PlayerCombatStats.MaxAgility];
 
     // Effective stats, worked out from the constants rather than by calling the production rule: the
     // sheet sums the flats and clamps, then attack speed gains AttackSpeedPerAgility per point of

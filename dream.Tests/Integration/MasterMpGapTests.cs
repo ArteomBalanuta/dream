@@ -103,6 +103,7 @@ public sealed class MasterMpGapTests
             Assert.Equal(PlayerStatRules.Defense(AgilityAfter), combatant.Defense);
             Assert.Equal(PlayerManaRules.MaxMana(3, EnergyAfter), combatant.MaxMana);
             Assert.Equal(PlayerStatRules.EffectiveAttackSpeed(combatant.BaseStats.AttackSpeed, AgilityAfter), combatant.Stats.AttackSpeed);
+            Assert.Equal(PlayerCombatStats.MaxAttackSpeed, combatant.Stats.AttackSpeed);
             Assert.Equal(3, PlayerStatRules.PointsAvailable(combatant.Level, combatant.BaseStats));
             await back.LeaveAsync();
         }

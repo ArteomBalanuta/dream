@@ -10,8 +10,12 @@ public static class StatRules
 {
     // The fallback ceiling for a stat with no explicit limit: StatId.Armor, StatId.MovementSpeed and
     // any future stat that does not name its own. Strength, Vitality, Agility, Energy and AttackSpeed
-    // have explicit cases below. Do not tie this to the attribute ceiling: that put the armour cap at
-    // 10000, i.e. damage_taken_factor = 100 / (100 + 10000) = 0.99% damage taken, near immunity.
+    // have explicit cases below. Do not tie this to the attribute ceiling: that put the cap on *gear*
+    // armour at 10000, i.e. damage_taken_factor = 100 / (100 + 10000) = 0.99% damage taken from gear alone.
+    // This caps gear armour only. Mitigation divides by PlayerCombatant.MitigationArmor =
+    // EffectiveArmor + Defense, and Defense (Agility / 4, so up to 2500 at MaxAgility 10000) is a
+    // separate contribution that nothing clamps: the sum is unbounded by this constant. At the shipping
+    // default (Agility 1000) a naked character already has Defense 250 (28.6% damage taken).
     public const float DefaultMaxUnused = 1000f;
 
     /// <summary>

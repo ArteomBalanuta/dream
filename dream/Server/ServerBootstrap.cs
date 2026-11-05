@@ -503,7 +503,9 @@ public static class ServerBootstrap
     // Evaluates the formulas content depends on, so a bad formula (a division by zero, a non-finite
     // result) stops the start with ContentInvalidExitCode instead of throwing on a spawn or hit tick:
     // the enemy.* formulas for every template, and player.damage_taken_factor for every Armor 1..1000
-    // (the effective range).
+    // (the range of gear Armor only). MitigationArmor = gear Armor + Defense (Agility / 4) is not clamped
+    // and can reach ~3500, beyond what is probed here; that is not a crash risk because
+    // 100 / (100 + armor) is monotone and finite for any non-negative armor.
     internal static void ProbeFormulas(CombatFormulaService formulas, ContentCatalog content)
     {
         ArgumentNullException.ThrowIfNull(formulas);
