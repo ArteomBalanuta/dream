@@ -51,8 +51,24 @@ ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right
 #    legible as the figure that actually shipped, which measured 0.5064 with its plate baked in. 0.50 is that
 #    standard, rounded down to the spec's M3 figure. MEASURED 0.5150 (az 35 p10 0.0082 p90 0.5232; az 145
 #    p10 0.0133 p90 0.5301). The armour is NOT where this came from: the worn pieces were not brightened.
-BASE_SPREAD_MIN = 0.64
+BASE_SPREAD_MIN = 0.25
 WORN_SET_SPREAD_MIN = 0.50
+# THE NUMBER FOLLOWS THE ART, NOT THE REVERSE (loop 2, 2026-11-06). Loop 1 raised BASE_SPREAD_MIN to 0.64 because
+# that is what a near-white tunic (#9E9A8C, lab-coat linen) happened to measure, and the floor then ENFORCED the
+# white shirt: darken the linen and the gate failed. Both of its azimuths were also partly an artefact of
+# clipping (az 145 p90 was 1.0000, a tenth of the figure fully blown out), so the "spread" was a clipped cloth
+# against black. The base floor is now set from the corrected, non-clipping art (dirty oatmeal tunic #645E4F over
+# near-black breeches): MEASURED 0.2780 (az 35 p10 0.0077 p90 0.2857; az 145 0.0083 / 0.4918), minus 0.03 of
+# headroom, rounded. If the art changes, re-measure and move this number to follow it; never brighten the art to
+# reach a floor. CLIP_SHARE_MAX below is the gate that stops a brightening from being the way out.
+#
+# WORN_SET_SPREAD_MIN stays at the spec's 0.50, UNMOVED, and the corrected art does NOT reach it: MEASURED 0.3906
+# (az 35 p10 0.0084 p90 0.4063; az 145 p10 0.0135 p90 0.4041). The 0.50 claim ("a fully equipped character must be
+# at least as legible as the figure that shipped, 0.5064") was only reachable with a clipped tunic and steel
+# authored as final pixel colours. This check is therefore RED on purpose until the owner decides the standard;
+# it is not lowered here and nothing was brightened to hide it.
+CLIP_SHARE_MAX = 0.01      # see gate_clipping: at most 1% of a material's visible pixels may be fully saturated
+CLIP_MIN_PIXELS = 12       # a material shown in fewer pixels than this is too small for a share to mean anything
 WORN_SET_IDS = ("worn.head.greathelm", "worn.body.plate-cuirass", "worn.back.hooded-cloak")
 CATALOG = TOOLS.parents[1] / "dream" / "Rendering" / "Actors" / "ArmourMeshCatalog.cs"
 ENVELOPE_TOL = 0.015       # the worn-model contract's tolerance, engine units
@@ -224,10 +240,14 @@ def catalog_boxes(visual_id: str) -> tuple:
     return m.group(1), out
 
 
-def worn_surfaces(asset: dict, ids) -> list:
+def worn_surfaces(asset: dict, ids, labels: list | None = None, lit_glow: bool = False) -> list:
     """The worn models as enginelook Surfaces, standing on the bind-pose figure at the same normalisation the
     engine applies (the figure's own authored height, 1.2 world units). Flat-shaded boxes in the catalog's
-    own palette, turned about X (pitch) then Z (roll), exactly as ArmourPart.ToMatrix does."""
+    own palette, turned about X (pitch) then Z (roll), exactly as ArmourPart.ToMatrix does.
+
+    `labels`, if given, receives one "<id>:<material>" per surface. `lit_glow` draws the glowing materials by
+    their lit albedo alone (their emissive is added after the gain and is not what clips); the worn-set spread
+    gate leaves it off and refuses them, as before. The Companion mount rides the torso frame, so it is drawn."""
     world = L.node_worlds(asset["nodes"])
     names = [n.name for n in asset["nodes"]]
     pts = fk_vertices(asset, None, None)
@@ -240,7 +260,7 @@ def worn_surfaces(asset: dict, ids) -> list:
             return []
         # Head rides the head node; Torso and Back are authored in the torso frame. Any other mount would be
         # drawn on the torso, unmirrored, and look plausible: refuse it.
-        if mount not in ("Head", "Torso", "Back"):
+        if mount not in ("Head", "Torso", "Back") + (("Companion",) if lit_glow else ()):
             fail(f"{vid}: mount {mount} is not drawn by the worn-set gate (only Head, Torso and Back are)")
             return []
         W = world[names.index("head" if mount == "Head" else "torso")]
@@ -258,13 +278,44 @@ def worn_surfaces(asset: dict, ids) -> list:
                 tri += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
             nrm = np.array(nrm)
             nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
-            if mat in glow or mat not in colours:
+            if (mat in glow and not lit_glow) or mat not in colours:
                 fail(f"{vid}: material {mat} is {'emissive' if mat in glow else 'unknown to ArmourMeshCatalog.BaseColor'}; "
                      f"the worn-set gate draws lit materials only")
                 return []
             alb = np.tile(np.array(colours[mat]), (len(pos), 1))
             surfaces.append(L.Surface(np.array(pos) * k, nrm, alb, np.array(tri), None))
+            if labels is not None:
+                labels.append(f"{vid}:{mat}")
     return surfaces
+
+
+def clip_report(surfaces, names, azimuths=L.M3_AZIMUTHS, albedo_scale: float = 1.0) -> list:
+    """Per (azimuth, name): (visible pixels, fully-saturated pixels), through the engine transfer at M3's brazier.
+    `names` is one string per surface (the material the surface stands for); a pixel is fully saturated when its
+    HSV value (the largest channel, after the gain and the clamp) is 1.0, i.e. at least one channel is blown.
+    `albedo_scale` exists for the live control only."""
+    if albedo_scale != 1.0:
+        surfaces = [L.Surface(s.positions, s.normals, s.albedo * albedo_scale, s.indices, s.emissive) for s in surfaces]
+    rows = []
+    for az in azimuths:
+        r = L.rasterise(surfaces, L.m3_env(azimuth_deg=az))
+        tally: dict = {}
+        for i, name in enumerate(names):
+            m = r["surface"] == i
+            n, c = tally.get(name, (0, 0))
+            tally[name] = (n + int(m.sum()), c + int((r["value"][m] >= 0.999).sum()))
+        rows.append((az, tally))
+    return rows
+
+
+def clip_problems(rows) -> list:
+    """The materials that blow out: more than CLIP_SHARE_MAX of their visible pixels fully saturated."""
+    out = []
+    for az, tally in rows:
+        for name, (n, c) in sorted(tally.items()):
+            if n >= CLIP_MIN_PIXELS and c / n > CLIP_SHARE_MAX:
+                out.append(f"{name} at azimuth {az:.0f}: {c} of {n} px ({c / n:.1%}) fully saturated")
+    return out
 
 
 def main() -> int:
@@ -464,6 +515,64 @@ def main() -> int:
             fail(f"the worn-set gate passes a single-albedo dressed figure at {flat_worn['spread']:.4f}; it has stopped measuring contrast")
         else:
             ok(f"the worn-set gate is live: the dressed figure at one albedo, {flat_worn['spread']:.4f} < {WORN_SET_SPREAD_MIN}")
+
+    # CLIPPING. M3's spread compares the 10th and 90th percentile and the lift-once gate compares a MEAN, so a
+    # highlight that is blown flat passes both (loop 1 shipped a tunic with 31% of its pixels at 1.0 and the
+    # base figure's p90 read 1.0000). The renderer multiplies albedo by a gain of up to ~2.2 at M3's brazier with
+    # no tonemap, so any lit texel or box above ~0.45 in its largest channel is clamped to a flat patch whose hue
+    # is wrong. This gate looks at the TOP of the distribution, per material, at BOTH azimuths:
+    #   - a material's visible pixels may have at most CLIP_SHARE_MAX (1%) fully saturated, equivalent to its p99
+    #     value staying under 1.0. A share rather than a bare count, because a count means different things for
+    #     a 70 px tunic and a 700 px one; 1% rather than 0 because a pixel or two on a silhouette edge is not a
+    #     blown patch, while anything a viewer can see as a flat hot area is far above 1%. A p100 gate would fail
+    #     on noise; a p90 gate is what let the highlight through;
+    #   - measured on every baked material of the figure and on every worn piece (drawn on the figure, so
+    #     occlusion is real), the lit part only for the glowing ones: their emissive bypasses the gain and is
+    #     capped separately (EMBER_FACTOR_MAX);
+    #   - plus the palette bound: no ArmourMeshCatalog colour times the peak gain on the drawn geometry may reach 1.
+    fig_names = ["figure:" + k for _, _, k in P.split_parts(P.build_parts())[0]]
+    fig_names += ["figure:emissive"] * (len(surfaces) - len(fig_names))
+    problems = clip_problems(clip_report(surfaces, fig_names))
+    catalog_src = CATALOG.read_text(encoding="utf-8")
+    drawable = [vid for vid in sorted(set(re.findall(r'Add\("(worn\.[^"]+)"', catalog_src)))
+                if catalog_boxes(vid)[0] in ("Head", "Torso", "Back", "Companion")]
+    seen_materials, peak_gain, worn_total = set(), 0.0, 0
+    palette, _ = worn_palette()
+    for vid in drawable:
+        names: list = []
+        piece = worn_surfaces(a, [vid], names, lit_glow=True)
+        if not piece:
+            continue
+        worn_total += len(piece)
+        seen_materials |= {n.split(":")[1] for n in names}
+        problems += clip_problems(clip_report(surfaces + piece, fig_names + names))
+        for az in L.M3_AZIMUTHS:
+            env = L.m3_env(azimuth_deg=az)
+            for sf in surfaces + piece:
+                peak_gain = max(peak_gain, float(L.gain(sf.normals, sf.positions, env).max()))
+    base = {m.group(1): tuple(float(m.group(i)) for i in (2, 3, 4)) for m in _BASE_COLOUR.finditer(catalog_src)}
+    for mat, rgb in sorted(base.items()):
+        if max(rgb) * peak_gain >= 1.0:
+            problems.append(f"palette: {mat} albedo {rgb} x peak gain {peak_gain:.2f} = {max(rgb) * peak_gain:.2f} reaches 1.0")
+    # materials are named by their enum member here, and by their BuildModels alias in the box labels
+    alias = dict(_ALIAS.findall(catalog_src))
+    drawn = {alias.get(m, m) for m in seen_materials}
+    unseen = sorted(set(base) - drawn - {"Gilt"})   # Gilt is declared and used by no model
+    if unseen:
+        problems.append(f"palette materials never drawn by the clip gate: {unseen}")
+    for msg in problems:
+        fail("clipping: " + msg)
+    if not problems:
+        ok(f"no clipping: figure + {len(drawable)} worn pieces ({worn_total} boxes), every material under "
+           f"{CLIP_SHARE_MAX:.0%} saturated at both azimuths, peak gain {peak_gain:.2f}, "
+           f"palette max {max(max(c) for c in base.values()):.3f}")
+    # live: the same figure lit 3x brighter (what loop 1's palette amounted to) must trip it. A gate that cannot
+    # fail is not a gate.
+    control = clip_problems(clip_report(surfaces, fig_names, albedo_scale=3.0))
+    if not control:
+        fail("the clipping gate passes the figure at 3x albedo; it has stopped measuring the top of the distribution")
+    else:
+        ok(f"the clipping gate is live: the figure at 3x albedo trips it on {len(control)} material/azimuth pairs")
 
     # the worn-model contract: the base figure's extents in each mount's frame, +-0.015 of the table in build_parts()
     for label, got, want in envelope_rows(a):

@@ -97,3 +97,36 @@ one-sided outward and the table moved to the figure (head z 0.135, torso z -0.14
 foot z -0.055/+0.155); a cover-table-vs-mesh test; the die clip lift is per key (the held frame now rests at y 0,
 was 0.0414 up); worn colours parsed from the catalog. A3 (`check_look.py`) still needs a real capture.
 
+
+## Fix loop 2: the figure looked wrong while every gate passed (palette and clipping only)
+
+Looking at captures, the unarmoured figure read as a white shirt over black trousers and an equipped one as bright
+blocks. Gate numbers were evidence, not the goal; loop 1 had optimised a histogram and produced the wrong mood.
+
+Mechanism (verified in the shader, partly different from the first guess). `enemyFragment.glsl` computes
+`(ambient * z + (direct + point) * 0.75) * baseColor`, times exposure, clamps, with no tonemap and no gamma encode, for
+the baked atlas and the procedural armour boxes alike. `ALBEDO_LIFT = 3.0` is generator-side and touches the atlas
+only; the boxes never get it. So the figure is lifted 3x and then gained by up to 2.17 beside a brazier (1.4 at noon),
+while a box is gained only. The tunic (#9E9A8C, lifted to ~1.0) was fully clipped on 12% of its pixels at azimuth 35 and
+31% at 145 (that is the 1.0000 p90). The armour was authored as final pixel colours: Bone 0.62 x 2.17 = 1.35, Steel
+0.46 reaches 1.00 exactly, Ember 0.95 and Arcane 0.55 are far over. ClothRed (0.353) does NOT actually clip, even at
+the strongest light (0.77); it read as a salmon block because with no gamma a mid albedo is a bright byte, and it was
+the most saturated thing on the figure. Hence: darken, desaturate, distinguish by value.
+
+New gate (check_char.py, "clipping"): per material, on the figure's every baked material and on every drawable worn
+piece drawn on the figure (11 pieces, 66 boxes, glowing ones by lit albedo), at both M3 azimuths, at most 1% of the
+material's visible pixels may be fully saturated (value 1.0 after gain and clamp), equivalent to p99 < 1.0. Plus a
+palette bound: no ArmourMeshCatalog colour x the peak gain on the drawn geometry may reach 1.0, and every catalog
+material must be drawn by some piece. Live controls: the figure at 3x albedo trips it, and the loop 1 catalog trips it
+(Ember 68%/55% saturated, Bone, Steel, Arcane, Gilt over the palette bound).
+
+Art. Tunic #9E9A8C -> #645E4F (dirty oatmeal, atlas p99 0.48 lifted, 0% clipped). Catalog albedo (linear), all
+channels <= 0.40: Steel (0.30,0.315,0.345), DarkIron (0.115,0.115,0.13), Leather unchanged (0.13,0.08,0.06), ClothCold
+(0.07,0.078,0.10), ClothAsh (0.17,0.162,0.145), ClothRed (0.20,0.055,0.045), Bone (0.40,0.36,0.29), Gilt
+(0.32,0.23,0.09), Arcane body (0.10,0.06,0.17), Ember body (0.24,0.10,0.04). Emissive factors unchanged: the glow
+stays hot, the body is dark.
+
+Measured: base 0.2780 (az 35 p10 0.0077 p90 0.2857, binding; az 145 p10 0.0083 p90 0.4918). `BASE_SPREAD_MIN`
+0.64 -> 0.25, from the art, with a comment that the number follows the art. Worn set 0.3906 (az 35 p10 0.0084 p90
+0.4063; az 145 p10 0.0135 p90 0.4041): `WORN_SET_SPREAD_MIN` 0.50 is NOT reached and was NOT moved or worked around;
+that check is red pending the owner's decision. GLB 253588 -> 258436 bytes.

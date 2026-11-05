@@ -181,7 +181,7 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
 - `gen_char_preview.py` renders the same geometry through `isoforge` with a darker `GRIM_RIG` as a
   four-view turntable sheet. That sheet is a review aid for judging form and material by eye; the
   shipped asset is the `.glb`, which looks different because the engine lights it.
-- Both generators are byte-deterministic (`player_grim.glb` is 253588 bytes; `charforge.py` prints
+- Both generators are byte-deterministic (`player_grim.glb` is 258436 bytes; `charforge.py` prints
   the bake sha1 and reruns the bake to prove it). The shipped copy is
   `dream/animations/players/player-grim.glb` - original art, which replaced a third-party CC0 model.
   `tests/check_char.py` gates it: determinism, **the shipped GLB's bytes being exactly what the

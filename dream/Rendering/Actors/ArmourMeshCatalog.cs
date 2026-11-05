@@ -92,18 +92,27 @@ public static class ArmourMeshCatalog
     public static ArmourModel? Resolve(string? visualId) =>
         visualId != null && Models.TryGetValue(visualId, out ArmourModel? model) ? model : null;
 
+    // Linear ALBEDO, not final pixel colour. A worn box is drawn by enemyFragment.glsl as
+    // (ambient * scale + direct * 0.75) * albedo * exposure, with no tonemap and no gamma encode, so the bytes on
+    // screen are this value times a gain that reaches about 2.2 beside a brazier and 1.4 at noon. Anything
+    // above ~0.45 in a channel therefore clips to a flat patch, and anything mid-valued reads as a bright block
+    // (the old Bone 0.62, ClothRed 0.353 and Ember 0.95 did exactly that). Pieces differ by VALUE and MATERIAL
+    // (dark iron < leather < steel < bone, cloth by darkness), never by saturation; every lit channel stays
+    // under 0.44 so it survives the strongest light, which tools/ui-assets/tests/check_char.py enforces by
+    // rasterising each piece and counting fully-saturated pixels. The glowing materials keep their glow in
+    // Emissive() (added after the gain) and a dark body here, so they read as light on a dark piece.
     public static Vector4 BaseColor(ArmourMaterial material) => material switch
     {
-        ArmourMaterial.Steel => new Vector4(0.36f, 0.39f, 0.46f, 1f),
-        ArmourMaterial.DarkIron => new Vector4(0.17f, 0.17f, 0.20f, 1f),
+        ArmourMaterial.Steel => new Vector4(0.30f, 0.315f, 0.345f, 1f),
+        ArmourMaterial.DarkIron => new Vector4(0.115f, 0.115f, 0.13f, 1f),
         ArmourMaterial.Leather => new Vector4(0.13f, 0.08f, 0.06f, 1f),
-        ArmourMaterial.ClothCold => new Vector4(0.086f, 0.102f, 0.157f, 1f),
-        ArmourMaterial.ClothAsh => new Vector4(0.118f, 0.125f, 0.141f, 1f),
-        ArmourMaterial.ClothRed => new Vector4(0.353f, 0.118f, 0.102f, 1f),
-        ArmourMaterial.Bone => new Vector4(0.62f, 0.58f, 0.48f, 1f),
-        ArmourMaterial.Gilt => new Vector4(0.50f, 0.37f, 0.14f, 1f),
-        ArmourMaterial.Arcane => new Vector4(0.35f, 0.18f, 0.55f, 1f),
-        ArmourMaterial.Ember => new Vector4(0.95f, 0.45f, 0.12f, 1f),
+        ArmourMaterial.ClothCold => new Vector4(0.07f, 0.078f, 0.10f, 1f),
+        ArmourMaterial.ClothAsh => new Vector4(0.17f, 0.162f, 0.145f, 1f),
+        ArmourMaterial.ClothRed => new Vector4(0.20f, 0.055f, 0.045f, 1f),
+        ArmourMaterial.Bone => new Vector4(0.40f, 0.36f, 0.29f, 1f),
+        ArmourMaterial.Gilt => new Vector4(0.32f, 0.23f, 0.09f, 1f),
+        ArmourMaterial.Arcane => new Vector4(0.10f, 0.06f, 0.17f, 1f),
+        ArmourMaterial.Ember => new Vector4(0.24f, 0.10f, 0.04f, 1f),
         _ => new Vector4(0.3f, 0.3f, 0.3f, 1f)
     };
 

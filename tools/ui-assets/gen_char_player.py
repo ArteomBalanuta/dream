@@ -67,16 +67,15 @@ CUSTOM = {
     # cloth.tunic). Warm on purpose: a cool near-black such as #0D0F12 quantises into the palette gate's
     # forbidden cyan band (1367 texels) where this one makes none.
     "cloth.ash.cold": ("#101010", 0.94, 0.028, 0.24, None),
-    # The weathered linen of the traveller's tunic, sleeves and collar: a sun-faded, soiled off-white (HSV
-    # saturation 0.10, value 0.62 - not laundry white), the one pale cloth on a figure that no longer has steel
-    # to carry its value range. It used to be #5E5748 and, with the whole palette at 15-35% value, the figure had
-    # no light end at all (p90 0.26 at azimuth 35). The value was found by sweeping it against the M3 gates:
-    # the worn-set spread climbs steeply with it, and the ceiling is not taste but the 8-bit atlas. The engine
-    # lift is 3x and a texel cannot exceed 1.0, so a lit linen texel above linear 0.33 clips; the lift-once gate
-    # in check_char.py (mean shipped / baked within 3% of 3.0) is what stops that, and it passes up to roughly
-    # R = 0x9E (2.92x) and fails by R = 0xA4 (2.83x). Only the largest channel sets HSV value, so G and B are
-    # held back to keep the linen low in saturation. This is the brightest linen that keeps the lift honest.
-    "cloth.tunic": ("#9E9A8C", 0.92, 0.030, 0.22, None),
+    # The traveller's tunic, sleeves and collar: dirty oatmeal, a soiled greige, the pale element of a figure that
+    # no longer has steel to carry its value range. It is NOT a bright linen. It was #9E9A8C (value 0.62) and
+    # that read as a lab coat: the atlas is lifted 3x (ALBEDO_LIFT) and the shader then multiplies by a gain of up
+    # to ~2.2 near a brazier with no tonemap, so a texel above linear 0.153 (sRGB #6E) before the lift is
+    # fully clipped at the peak, and #9E9A8C clipped 12% of the tunic at azimuth 35 and 31% at 145 (it is the 1.0000
+    # p90 at 145). The hex is now chosen so the lit tunic stays under 1.0 at the strongest light, which is what
+    # check_char.py's clipping gate enforces; the value contrast against the near-black breeches is what keeps the
+    # figure legible, and it is a mid value, not a white one. Muted and warm (saturation ~0.17), never a clean white.
+    "cloth.tunic": ("#645E4F", 0.92, 0.030, 0.22, None),
     # Boot leather and belt, darkened from grim.leather #241C16: the dark end of the histogram is as much a
     # part of the spread as the light end, and the boots are the figure's largest dark area.
     "leather.dark": ("#0F0F0E", 0.84, 0.035, 0.26, None),
