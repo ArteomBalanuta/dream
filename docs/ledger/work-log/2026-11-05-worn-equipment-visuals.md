@@ -66,8 +66,37 @@ no icon work was needed. The gap was purely on-character 3D.
   stalled the suite, so ~290 tests never executed for anyone. A peer session fixed that
   (`fix/suite-hang`) and a complete run puts master at **~40 failures**, not 35. See `master-is-green`.
   The 76 attribution is unaffected, since both sides were truncated identically.
+- Final targeted runs on the integration branch, both green: the wave's own areas (ArmourMeshCatalog,
+  WeaponMeshCatalog, PlayerEquipmentVisuals, PlayerWornVisualKey, PlayerPoseLayers, Client.Scenes,
+  ClientScenePresenter) **393 passed / 0 failed**; the protocol classes the 76 came from
+  (Multiplayer.Protocol, ProtocolVersionMismatch, ProtocolV2*, WaveBTesterWorlds, StoredTerrainFixLoop)
+  **737 passed / 0 failed**. No full-suite run was taken at the end: three other sessions were running
+  suites, and a contended run produces spurious failures. Green under contention is trustworthy; red is
+  not.
 - Visual: `artifacts/captures/` holds the before, the gallery at noon and midnight, and the cloak
   iterations. Emissive pieces (ember wisp, gossamer wings) verified at midnight.
+
+## The art took two iterations, both driven by looking at it
+
+The first catalog passed every test and still looked wrong. The enclosure rule ("a worn piece must
+strictly exceed the baked geometry") is satisfiable by one big box, and that is what it got: the hooded
+cloak was a single 0.84 x 2.00 x 0.06 panel against a 0.62-wide torso. In game it read as **a flat navy
+plank** that swallowed the figure. No assertion could have caught it, because the tests encoded coverage,
+not shape.
+
+1. **Taper.** Each cloak became a stack of 3-5 boxes narrowing toward the shoulders, at increasing depth
+   (z -0.30 at the yoke to -0.48 at the hem) with a small increasing pitch, alternating Cold/Ash so
+   neighbouring panels land in different light buckets. That fixed the uniform-mass reading.
+2. **Scallop.** The outline was still one straight hem. The long cloaks' hems became 2-3 fold boxes of
+   unequal length, the idea already proven by `travel-cloak`'s ragged tabs, which read best of the four
+   in the first capture.
+
+Tests now encode the *shape intent* rather than only coverage:
+`EveryCloak_TapersFromNarrowShouldersToAWiderHem` and `LongCloaks_HaveAScallopedHem`. Those would have
+caught the plank.
+
+**Lesson worth keeping: a geometry test proves containment, not legibility.** Anything authored for the
+eye needs a capture in the verification loop, not just a green filter.
 
 ## Findings worth keeping
 
