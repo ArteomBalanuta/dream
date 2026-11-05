@@ -114,32 +114,35 @@ public sealed class HeldLightCatalogTests
         Assert.Equal(1f / FxSimulation.FlameMaxChannelGain, HeldLightCatalog.MaxUnclippedFlameBrightness, 5);
         Assert.Equal(1f, HeldLightCatalog.MaxUnclippedFlameBrightness, 4);
 
-        float peak = 1f + HeldLightCatalog.TorchFlickerAmplitude;
-        uint packed = FxSimulation.FlameColor(1f, peak, 1f);
-        // Red is the brightest channel at night; the peak flicker must leave the byte at its ceiling
-        // (255 only because the CAP is 1.0), and a flicker one step below the cap must differ from it.
-        Assert.Equal(255u, packed & 0xFFu);
-        for (float f = 1f - HeldLightCatalog.TorchFlickerAmplitude; f <= peak; f += 0.01f)
-        {
-            uint c = FxSimulation.FlameColor(1f, f, 1f);
-            float cap = MathF.Min(f, HeldLightCatalog.MaxUnclippedFlameBrightness);
-            // Every channel is exactly the capped brightness times its tint: nothing was clamped by the byte.
-            Assert.Equal((uint)(cap * 255f + 0.5f), c & 0xFFu);
-        }
+        Assert.Equal(1f * (1f - HeldLightCatalog.FlameSaturationMargin), HeldLightCatalog.FlameBrightnessCeiling, 5);
 
+        float a = HeldLightCatalog.TorchFlickerAmplitude;
+        float peak = 1f + a;
         // The byte clamp hides overshoot, so check the UNCLAMPED channel gain: night, cull 1, every flicker.
-        for (float f = 1f - HeldLightCatalog.TorchFlickerAmplitude; f <= peak; f += 0.005f)
+        for (float f = 1f - a; f <= peak; f += 0.005f)
         {
-            Assert.True(FxSimulation.FlameBrightnessAt(f) * FxSimulation.FlameMaxChannelGain <= 1f + 1e-6f, $"flame channel overshoots at flicker {f}");
+            float gain = FxSimulation.FlameBrightnessAt(f) * FxSimulation.FlameMaxChannelGain;
+            Assert.True(gain <= HeldLightCatalog.FlameBrightnessCeiling + 1e-6f, $"flame channel {gain} overshoots at flicker {f}");
         }
 
-        // Below the cap the byte still moves with the flicker (the dim half of the cycle).
-        Assert.True((FxSimulation.FlameColor(1f, 0.8f, 1f) & 0xFFu) < (FxSimulation.FlameColor(1f, 0.95f, 1f) & 0xFFu));
-        // Above the cap the sprite grows instead.
+        // No plateau: strictly increasing, and at least a byte per 0.01 of flicker, over the whole range.
+        uint previous = FxSimulation.FlameColor(1f, 1f - a, 1f) & 0xFFu;
+        for (float f = 1f - a + 0.01f; f <= peak + 1e-4f; f += 0.01f)
+        {
+            uint now = FxSimulation.FlameColor(1f, f, 1f) & 0xFFu;
+            Assert.True(now > previous, $"flame byte plateaus at flicker {f}: {previous} -> {now}");
+            previous = now;
+        }
+
+        Assert.Equal(191u, FxSimulation.FlameColor(1f, 1f - a, 1f) & 0xFFu);
+        Assert.Equal(219u, FxSimulation.FlameColor(1f, 1f, 1f) & 0xFFu);
+        Assert.Equal(247u, FxSimulation.FlameColor(1f, peak, 1f) & 0xFFu);
+
+        // The sprite grows with the flicker as well.
         Assert.True(FxSimulation.FlameHalfSizeAt(peak) > FxSimulation.FlameHalfSizeAt(1f));
-        Assert.True(FxSimulation.FlameHalfSizeAt(0.75f) < FxSimulation.FlameHalfSizeAt(1f));
-        // A ceiling set above the byte would let a flicker through that exceeds it: pin the derivation's meaning.
-        Assert.True(peak * FxSimulation.FlameMaxChannelGain > 1f, "without the cap the peak flicker would clip");
+        Assert.True(FxSimulation.FlameHalfSizeAt(1f - a) < FxSimulation.FlameHalfSizeAt(1f));
+        // Without the margin the peak would touch the byte.
+        Assert.True(peak * FxSimulation.FlameMaxChannelGain > 1f);
     }
 
     [Fact]
@@ -151,7 +154,7 @@ public sealed class HeldLightCatalogTests
             PlacedLightIndex.BrazierColor.X * peak * FxSimulation.LampHaloTint.X, 0f, 0f, 0f);
         uint lamp = FxInstance.PackColor(
             LampLightIndex.LampColor.X * peak * FxSimulation.LampHaloTint.X, 0f, 0f, 0f);
-        Assert.True((flame & 0xFFu) is >= 250u and <= 255u, $"flame {flame & 0xFFu}");
+        Assert.True((flame & 0xFFu) < 255u, $"flame {flame & 0xFFu}");
         Assert.True((brazier & 0xFFu) < 255u, $"brazier {brazier & 0xFFu}");
         Assert.True((lamp & 0xFFu) < 255u, $"lamp {lamp & 0xFFu}");
     }

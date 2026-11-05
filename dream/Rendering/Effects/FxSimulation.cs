@@ -67,6 +67,8 @@ public sealed class FxSimulation
     // The flame's size follows the flicker: half-size * (1 + FlameSizeFollow * (flicker - 1)). Area goes
     // as size squared, so 0.5 makes the sprite's AREA track the flicker intensity to first order
     // (1 + 2*0.5*(f-1) = f) and equals the torch halo's own follow, so flame and halo swell together.
+    // The dimmest flame brightness (flicker 1 - A); unchanged from the old min(flicker, 1) floor of 0.75.
+    internal const float FlameDimBrightness = 0.75f;
     private const float FlameSizeFollow = 0.5f;
     // The flame's colour is cull * flameNight * min(flicker, cap) * tint, packed in a byte. Night is the
     // brightest case (nightFactor 1, cull 1), so these constants give the largest per-channel gain the
@@ -431,9 +433,16 @@ public sealed class FxSimulation
     // The flame sprite's half-size at a flicker: it swells above 1 and shrinks below it.
     internal static float FlameHalfSizeAt(float flicker) => FlameHalfSize * (1f + FlameSizeFollow * (flicker - 1f));
 
-    // The flicker as flame brightness: capped so no channel's UNCLAMPED value exceeds 1 (the byte clamp
-    // would hide a violation, which is why the test reads this, not the packed byte).
-    internal static float FlameBrightnessAt(float flicker) => MathF.Min(flicker, HeldLightCatalog.MaxUnclippedFlameBrightness);
+    // The flicker as flame brightness: a LINEAR map of [1 - A, 1 + A] onto [FlameDimBrightness,
+    // FlameBrightnessCeiling], so every flicker value is a distinct brightness (no plateau) and the top
+    // stays FlameSaturationMargin under the byte. The ceiling is derived (HeldLightCatalog), and the
+    // test reads this unclamped value because the byte clamp would hide an overshoot.
+    internal static float FlameBrightnessAt(float flicker)
+    {
+        float a = FireFlicker.TorchAmplitude;
+        float t = Math.Clamp((flicker - (1f - a)) / (2f * a), 0f, 1f);
+        return FlameDimBrightness + ((HeldLightCatalog.FlameBrightnessCeiling - FlameDimBrightness) * t);
+    }
 
     // The flame's packed colour. Brightness is the flicker CAPPED at what a byte holds, so the upper half
     // of the cycle cannot pin the channels (it shows as size instead, FlameHalfSizeAt). By day the flame
