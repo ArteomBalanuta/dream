@@ -236,7 +236,7 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
 
         InvalidOperationException version = Assert.Throws<InvalidOperationException>(
             () => codec.Encode(new TransportEnvelope(1, message.MessageKind, 1), message, buffer));
-        Assert.Equal("Cannot encode protocol version 1. Supported version: 20.", version.Message);
+        Assert.Equal("Cannot encode protocol version 1. Supported version: 21.", version.Message);
 
         InvalidOperationException kind = Assert.Throws<InvalidOperationException>(
             () => codec.Encode(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, "server.hello", 1), message));
@@ -244,7 +244,7 @@ public class TransportJsonCodecEncodeTests(ITestOutputHelper output)
 
         InvalidOperationException envelopeVersion = Assert.Throws<InvalidOperationException>(
             () => codec.WriteEnvelope(new TransportEnvelope(0, message.MessageKind, 1), "{}"u8, buffer));
-        Assert.Equal("Cannot encode protocol version 0. Supported version: 20.", envelopeVersion.Message);
+        Assert.Equal("Cannot encode protocol version 0. Supported version: 21.", envelopeVersion.Message);
 
         Assert.Throws<ArgumentException>(
             () => codec.WriteEnvelope(new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), ReadOnlySpan<byte>.Empty, buffer));

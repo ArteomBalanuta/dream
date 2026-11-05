@@ -58,7 +58,14 @@ public readonly record struct TransportEnvelope(
     // v19 merges the stats sheet: combat group [str, as, vit, agi, energy], player VisualKey main|off,
     // agility/energy in ServerPlayerProgress.BaseStats; a v18 peer would misread the combat group, so
     // both sides refuse it.
-    // Version 20 (worn equipment visuals) widens the player VisualKey from "main|off" to nine
+    // Version 20 belongs to the inventory.drop wave, which developed in parallel with this one and
+    // claimed 20 first. Both waves bumped 19 -> 20 independently, so one of the two numbers had to
+    // move: shipping the same digit with two different meanings is exactly what this comment exists
+    // to prevent, since mismatched peers refuse each other by digit alone and would never discover
+    // they disagree about what 20 contains. This wave moved, and 20 is described by whichever wave
+    // merges under it. If the drop wave never lands, 20 is simply never used - Decode accepts only
+    // the current version, so an unused digit is unreachable and harmless.
+    // Version 21 (worn equipment visuals) widens the player VisualKey from "main|off" to nine
     // positional fields "main|off|head|body|hands|feet|legs|back|companion", with trailing empty
     // fields trimmed (a player wearing nothing still sends exactly "main|off") and Neck and the two
     // ring slots deliberately absent - at the shipped isometric zoom the whole figure is 28x101
@@ -66,7 +73,7 @@ public readonly record struct TransportEnvelope(
     // key and draws an armoured player bare-handed, so both sides refuse it. Every other payload is
     // unchanged apart from the version digit.
     // Decode rejects any other version.
-    public const int CurrentProtocolVersion = 20;
+    public const int CurrentProtocolVersion = 21;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

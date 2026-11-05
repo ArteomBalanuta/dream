@@ -185,7 +185,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
             // out, so every other byte still matches the capture. The inventory's size and shape are pinned by
             // StarterKitInventoryBytesTests and PlayerInventorySnapshotConverterTests.
             string text = StripInventory(
-                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":20", "\"protocolVersion\":8"));
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":21", "\"protocolVersion\":8"));
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));

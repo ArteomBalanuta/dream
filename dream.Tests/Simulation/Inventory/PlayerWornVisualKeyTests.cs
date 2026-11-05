@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Dream.Tests.Simulation.Inventory;
 
-// The nine-field player VisualKey (protocol v20): "main|off|head|body|hands|feet|legs|back|companion".
+// The nine-field player VisualKey (protocol v21): "main|off|head|body|hands|feet|legs|back|companion".
 public sealed class PlayerWornVisualKeyTests
 {
     private const string Full =

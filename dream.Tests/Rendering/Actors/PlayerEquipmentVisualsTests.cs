@@ -44,7 +44,7 @@ public class PlayerEquipmentVisualsTests
     }
 
     // Contract 1: Parse accepts 1..9 fields, so a lone field is the main hand (the v19 parser read it as
-    // malformed; no v20 sender emits it, as Format always keeps the first two fields).
+    // malformed; no v21 sender emits it, as Format always keeps the first two fields).
     [Fact]
     public void Parse_ALoneFieldIsTheMainHand()
     {
