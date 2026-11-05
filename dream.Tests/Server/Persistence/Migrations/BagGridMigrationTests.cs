@@ -64,7 +64,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         command.CommandText = "PRAGMA foreign_key_check;";
         using SqliteDataReader reader = command.ExecuteReader();
         Assert.False(reader.Read(), "foreign_key_check must be clean");
-        Assert.Equal(15L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(16L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
         string backup = Assert.Single(database.Backups());
-        Assert.Contains("v0009-to-v0015", backup, StringComparison.Ordinal);
+        Assert.Contains("v0009-to-v0016", backup, StringComparison.Ordinal);
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
         BagGridMigrationAsserts.AssertMigrated(before, migrated);
@@ -204,7 +204,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath);
 
-        Assert.Contains("v0006-to-v0015", Assert.Single(database.Backups()), StringComparison.Ordinal);
+        Assert.Contains("v0006-to-v0016", Assert.Single(database.Backups()), StringComparison.Ordinal);
         AssertSound(database);
         List<SlotRow> migrated = BagGridMigrationAsserts.ReadSlots(database);
         BagGridMigrationAsserts.AssertMigrated(before, migrated);
@@ -263,6 +263,6 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM player_inventory_slots;"));
         Assert.Empty(database.Backups());
-        Assert.Equal(15L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(16L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
     }
 }

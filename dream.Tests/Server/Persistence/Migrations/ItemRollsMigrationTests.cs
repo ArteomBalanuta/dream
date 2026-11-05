@@ -42,8 +42,8 @@ public sealed class ItemRollsMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(fromVersion, result.FromVersion);
-        Assert.Equal(15, result.ToVersion);
-        Assert.Equal(15, MigrationTestDatabase.ShippedLatestVersion);
+        Assert.Equal(16, result.ToVersion);
+        Assert.Equal(16, MigrationTestDatabase.ShippedLatestVersion);
         using SqliteConnection c = database.Open();
         Assert.Equal("ok", Scalar(c, "PRAGMA integrity_check;"));
         Assert.Empty(Rows(c, "PRAGMA foreign_key_check;"));
@@ -55,17 +55,31 @@ public sealed class ItemRollsMigrationTests
     public void TheNewColumn_IsTheLastOne_AndExistingRowsAreByteEqualApartFromIt()
     {
         using MigrationTestDatabase database = V7WithData();
-        string before = DumpItems(database, includeRolls: false);
+        // visual_id is left out, the way DumpOtherTables leaves out player_inventory_slots: migration
+        // 0016 realigns it to the content catalog on purpose, so it is no longer byte-stable across the
+        // chain. This test is about 0008 appending rolled_modifiers without disturbing the rows, which
+        // every other column still proves. 0016's own behaviour is asserted below and in
+        // ItemVisualIdsMigrationTests.
+        string before = DumpItems(database, includeRolls: false, includeVisual: false);
         Assert.NotEmpty(before);
         string otherTablesBefore = DumpOtherTables(database);
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(7, result.FromVersion);
-        Assert.Equal(15, result.ToVersion);
-        Assert.Equal(before, DumpItems(database, includeRolls: false));
+        Assert.Equal(16, result.ToVersion);
+        Assert.Equal(before, DumpItems(database, includeRolls: false, includeVisual: false));
         Assert.Equal(otherTablesBefore, DumpOtherTables(database));
         using SqliteConnection c = database.Open();
+        // What 0016 did to this fixture's rows, which happen to cover both of its branches: tool.torch
+        // is in the shipped catalog, so its seeded 'torch' is realigned; tool.pick is not in the
+        // catalog at all, so its 'pick' is left exactly as stored rather than guessed at.
+        Assert.Equal(
+            "held.tool.torch",
+            Scalar(c, "SELECT visual_id FROM item_instances WHERE item_kind = 'tool.torch';"));
+        Assert.Equal(
+            "pick",
+            Scalar(c, "SELECT DISTINCT visual_id FROM item_instances WHERE item_kind = 'tool.pick';"));
         Assert.Equal(3L, Scalar(c, "SELECT COUNT(*) FROM item_instances;"));
         Assert.Equal(3L, Scalar(c, "SELECT COUNT(*) FROM item_instances WHERE rolled_modifiers IS NULL;"));
         string lastColumn = (string)Scalar(c, "SELECT name FROM pragma_table_info('item_instances') ORDER BY cid DESC LIMIT 1;")!;
@@ -92,9 +106,9 @@ public sealed class ItemRollsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(15, result.ToVersion);
-        string backup = Assert.Single(database.Backups(), path => path.Contains("v0007-to-v0015", StringComparison.Ordinal));
-        Assert.Matches(@"persistence\.sqlite\.v0007-to-v0015\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Equal(16, result.ToVersion);
+        string backup = Assert.Single(database.Backups(), path => path.Contains("v0007-to-v0016", StringComparison.Ordinal));
+        Assert.Matches(@"persistence\.sqlite\.v0007-to-v0016\.\d{8}T\d{6}Z\.bak$", backup);
         using SqliteConnection old = MigrationTestDatabase.OpenFile(backup);
         Assert.Equal(0L, Scalar(old, "SELECT COUNT(*) FROM pragma_table_info('item_instances') WHERE name = 'rolled_modifiers';"));
         Assert.Equal(3L, Scalar(old, "SELECT COUNT(*) FROM item_instances;"));
@@ -213,7 +227,7 @@ public sealed class ItemRollsMigrationTests
         using SqliteConnection c = database.Open();
         SchemaTooNewException error = Assert.Throws<SchemaTooNewException>(() => v7Build.Migrate(database.DatabasePath, c));
 
-        Assert.Equal(15, error.StoredVersion);
+        Assert.Equal(16, error.StoredVersion);
         Assert.Equal(7, error.LatestVersion);
         Assert.Equal(3, ServerBootstrap.SchemaTooNewExitCode);
     }
@@ -251,11 +265,13 @@ public sealed class ItemRollsMigrationTests
         new([.. SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory).Take(version)]);
 
     // Every item column that exists before 0008, row by row, as quoted text.
-    private static string DumpItems(MigrationTestDatabase database, bool includeRolls, bool includeTimes = true)
+    private static string DumpItems(MigrationTestDatabase database, bool includeRolls, bool includeTimes = true, bool includeVisual = true)
     {
         using SqliteConnection c = database.Open();
         List<string> columns = Rows(c, "SELECT name FROM pragma_table_info('item_instances') ORDER BY cid;")
-            .Where(name => (includeRolls || name != "rolled_modifiers") && (includeTimes || !name.EndsWith("_utc", StringComparison.Ordinal)))
+            .Where(name => (includeRolls || name != "rolled_modifiers")
+                && (includeTimes || !name.EndsWith("_utc", StringComparison.Ordinal))
+                && (includeVisual || name != "visual_id"))
             .ToList();
         return string.Join(";", Rows(c, $"SELECT {string.Join(" || '|' || ", columns.Select(name => $"quote({name})"))} FROM item_instances ORDER BY 1;"));
     }
