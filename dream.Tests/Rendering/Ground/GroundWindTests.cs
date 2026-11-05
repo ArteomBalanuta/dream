@@ -1,3 +1,4 @@
+using Dream.Rendering.Mist;
 using System.Text.RegularExpressions;
 using Dream.Rendering.Ground;
 using OpenTK.Mathematics;
@@ -67,21 +68,29 @@ public class GroundWindTests
         double boundary = periods * GroundWind.ClockPeriodSeconds;
         foreach (float phase in new[] { 0f, 1.3f, 17.9f, 250.4f })
         {
-            float before = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(boundary - epsilon), phase);
+            float before = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(boundary + epsilon), phase);
             float after = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(boundary + epsilon), phase);
             Assert.True(MathF.Abs(before - after) <= 1e-3f, $"phase {phase}: {before} -> {after}");
         }
     }
 
+    // The boundary mist wraps its clock every 6400 s, which is not a whole number of sway periods, so applying
+    // BoundaryMistField.WrapTime to the sway clock would make the foliage jump. This pins both halves: the mist
+    // wrap really is NOT a sway period (so the test can see the regression), and WrapClock really is.
     [Fact]
-    public void The_Displacement_Is_Continuous_Across_The_Mist_Wrap_Too()
+    public void The_Mist_Wrap_Is_Not_A_Sway_Period_But_The_Sway_Wrap_Is()
     {
+        const double epsilon = 1e-3;
+        double boundary = BoundaryMistField.TimeWrapSeconds;
         Vector2 wind = GroundWind.Uniform(GroundAssetClass.Tree, 5.5f);
         foreach (float phase in new[] { 0f, 1.3f, 17.9f })
         {
-            float before = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(6400d - 1e-3), phase);
-            float after = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(6400d + 1e-3), phase);
-            Assert.True(MathF.Abs(before - after) <= 1e-3f, $"phase {phase}: {before} -> {after}");
+            float raw = GroundWind.Displacement(wind, 5.5f, (float)(boundary + epsilon), phase);
+            float mistWrapped = GroundWind.Displacement(wind, 5.5f, BoundaryMistField.WrapTime(boundary + epsilon), phase);
+            Assert.True(MathF.Abs(raw - mistWrapped) > 1e-2f, $"phase {phase}: the mist wrap looks like a sway period ({raw} vs {mistWrapped})");
+
+            float swayWrapped = GroundWind.Displacement(wind, 5.5f, GroundWind.WrapClock(boundary + epsilon), phase);
+            Assert.True(MathF.Abs(raw - swayWrapped) <= 2e-3f, $"phase {phase}: {raw} vs {swayWrapped}");
         }
     }
 

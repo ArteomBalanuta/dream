@@ -118,10 +118,14 @@ public class CloudLayerTests
         Assert.Contains("planeXZ * CloudCellsPerUnit - uFrameTime.yz", glsl);
         // No clock in the cover: wrapping a clock is what made the sheet pop.
         Assert.DoesNotContain("uFrameTime.x", Regex.Replace(glsl, @"//[^\n]*", ""));
-        // Every octave's stretch divides the period, and the per-octave shift is whole cells.
-        float stretch = MathF.Pow(CloudLayer.Lacunarity, CloudLayer.Octaves - 1);
-        Assert.Equal(0f, CloudLayer.PeriodCells % stretch);
-        Assert.Equal(0f, 17f % 1f);
+        // A shift of PeriodCells moves octave i by PeriodCells * Lacunarity^i cells. That is a whole number of
+        // lattice cells (so every octave still lands on the wrapped hash) only if the lacunarity is an integer.
+        Assert.Equal(MathF.Round(CloudLayer.Lacunarity), CloudLayer.Lacunarity);
+        for (int octave = 0; octave < CloudLayer.Octaves; octave++)
+        {
+            float shift = CloudLayer.PeriodCells * MathF.Pow(CloudLayer.Lacunarity, octave);
+            Assert.Equal(MathF.Round(shift), shift);
+        }
     }
 
     // The sheet is traced from the camera's real position; uCameraPosition is the fog origin (the isometric focus).

@@ -395,8 +395,9 @@ def build_ground_asset(family: str, stem: str, spec: GroundSpec) -> dict:
         # safety net for the texels the detail pushed back over it: the detail keeps its variance in the highlights instead of being
         # compressed away there
         atlas, cap = cap_ground_atlas(atlas)
-        atlas, _ = cap_ground_atlas(apply_detail(atlas, rects, kinds, seed, ASSET_STRENGTH.get(stem, CLASS_STRENGTH.get(spec.cls, 1.0))))
+        atlas, cap2 = cap_ground_atlas(apply_detail(atlas, rects, kinds, seed, ASSET_STRENGTH.get(stem, CLASS_STRENGTH.get(spec.cls, 1.0))))
         cap.update(base)
+        cap.update({"cap2_scale": cap2["cap_scale"], "cap2_moved": cap2["moved_fraction"]})
     png, scale, enc = encode_ground_atlas(atlas)
     k = GP.WORLD_UNITS_PER_U / GP.UNITS_PER_U
     arrays = []

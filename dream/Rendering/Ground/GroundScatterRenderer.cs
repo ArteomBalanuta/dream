@@ -168,6 +168,7 @@ public sealed class GroundScatterRenderer
                     model.RenderPreparedInstanced(shader, _matrices, count);
                     model.EndRender();
                     model.Wind = Vector2.Zero;
+                    drawnModel = null; // only a model mid-draw can be left dirty
                     LastDrawnCount += count;
                     LastDrawCalls++;
                 }

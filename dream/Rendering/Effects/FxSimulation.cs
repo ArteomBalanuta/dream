@@ -64,11 +64,11 @@ public sealed class FxSimulation
     private const float HeldHaloLift = 0.12f;
     private const float FlameLift = 0.1f;
     private const float FlameHalfSize = 0.20f;
+    // The dimmest flame brightness (flicker 1 - A); unchanged from the old min(flicker, 1) floor of 0.75.
+    internal const float FlameDimBrightness = 0.75f;
     // The flame's size follows the flicker: half-size * (1 + FlameSizeFollow * (flicker - 1)). Area goes
     // as size squared, so 0.5 makes the sprite's AREA track the flicker intensity to first order
     // (1 + 2*0.5*(f-1) = f) and equals the torch halo's own follow, so flame and halo swell together.
-    // The dimmest flame brightness (flicker 1 - A); unchanged from the old min(flicker, 1) floor of 0.75.
-    internal const float FlameDimBrightness = 0.75f;
     private const float FlameSizeFollow = 0.5f;
     // The flame's colour is cull * flameNight * min(flicker, cap) * tint, packed in a byte. Night is the
     // brightest case (nightFactor 1, cull 1), so these constants give the largest per-channel gain the
@@ -332,7 +332,7 @@ public sealed class FxSimulation
         float strength = HaloDayStrength + (HaloNightStrength - HaloDayStrength) * _nightFactor;
         float maxViewSquared = HaloMaxViewDistance * HaloMaxViewDistance;
         float minCameraSquared = HaloMinCameraDistance * HaloMinCameraDistance;
-                int emberTorches = 0;
+        int emberTorches = 0;
         int emberLamps = 0;
         for (int i = 0; i < lights.Length; i++)
         {
