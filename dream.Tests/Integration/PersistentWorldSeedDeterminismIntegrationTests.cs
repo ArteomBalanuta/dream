@@ -316,9 +316,14 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         // that survived a plain restart is left as the earlier phase stored it.
         private static DedicatedServerHost CreateHostOnBaseline(ServerPersistenceBundle bundle)
         {
-            TestStatBaseline.SeedMissingProfiles(bundle.Schema, Sessions.Select(session => $"Name {session}").ToArray());
+            SeedBaseline(bundle);
             return ServerBootstrap.CreateAuthoritativeHost(bundle);
         }
+
+        // For a test that builds the host itself and hands it to the DedicatedServerHost constructor,
+        // which cannot seed: call this on the bundle before CreateAuthoritativeHost.
+        internal static void SeedBaseline(ServerPersistenceBundle bundle) =>
+            TestStatBaseline.SeedMissingProfiles(bundle.Schema, Sessions.Select(session => $"Name {session}").ToArray());
 
         public PersistentScriptedServer(DedicatedServerHost host, bool allowOccupiedBuildCell = false)
         {

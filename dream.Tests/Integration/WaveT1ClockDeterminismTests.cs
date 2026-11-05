@@ -61,6 +61,10 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
         long rightFinal;
         ServerPersistenceBundle rightBundle = right.OpenBundle();
         Assert.Equal(rightPersisted, rightBundle.WorldTimeTicks);
+        // The host constructor of PersistentScriptedServer cannot seed, and the left server (built from a
+        // bundle) is on the baseline: without this the right one joins at Strength 1000 and the two
+        // diverge on damage, not on the clock.
+        PersistentScriptedServer.SeedBaseline(rightBundle);
         DedicatedServerHost rightHost = ServerBootstrap.CreateAuthoritativeHost(rightBundle);
         // A different day length on top of the different world time (before the first tick).
         rightHost.Runtime!.ConfigureWorldClock(WorldClockSettings.FromDayLengthMinutes(1), rightPersisted);
