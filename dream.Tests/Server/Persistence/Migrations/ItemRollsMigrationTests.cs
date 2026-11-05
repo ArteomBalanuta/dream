@@ -55,7 +55,12 @@ public sealed class ItemRollsMigrationTests
     public void TheNewColumn_IsTheLastOne_AndExistingRowsAreByteEqualApartFromIt()
     {
         using MigrationTestDatabase database = V7WithData();
-        string before = DumpItems(database, includeRolls: false);
+        // visual_id is left out, the way DumpOtherTables leaves out player_inventory_slots: migration
+        // 0016 realigns it to the content catalog on purpose, so it is no longer byte-stable across the
+        // chain. This test is about 0008 appending rolled_modifiers without disturbing the rows, which
+        // every other column still proves. 0016's own behaviour is asserted below and in
+        // ItemVisualIdsMigrationTests.
+        string before = DumpItems(database, includeRolls: false, includeVisual: false);
         Assert.NotEmpty(before);
         string otherTablesBefore = DumpOtherTables(database);
 
@@ -63,9 +68,18 @@ public sealed class ItemRollsMigrationTests
 
         Assert.Equal(7, result.FromVersion);
         Assert.Equal(16, result.ToVersion);
-        Assert.Equal(before, DumpItems(database, includeRolls: false));
+        Assert.Equal(before, DumpItems(database, includeRolls: false, includeVisual: false));
         Assert.Equal(otherTablesBefore, DumpOtherTables(database));
         using SqliteConnection c = database.Open();
+        // What 0016 did to this fixture's rows, which happen to cover both of its branches: tool.torch
+        // is in the shipped catalog, so its seeded 'torch' is realigned; tool.pick is not in the
+        // catalog at all, so its 'pick' is left exactly as stored rather than guessed at.
+        Assert.Equal(
+            "held.tool.torch",
+            Scalar(c, "SELECT visual_id FROM item_instances WHERE item_kind = 'tool.torch';"));
+        Assert.Equal(
+            "pick",
+            Scalar(c, "SELECT DISTINCT visual_id FROM item_instances WHERE item_kind = 'tool.pick';"));
         Assert.Equal(3L, Scalar(c, "SELECT COUNT(*) FROM item_instances;"));
         Assert.Equal(3L, Scalar(c, "SELECT COUNT(*) FROM item_instances WHERE rolled_modifiers IS NULL;"));
         string lastColumn = (string)Scalar(c, "SELECT name FROM pragma_table_info('item_instances') ORDER BY cid DESC LIMIT 1;")!;
@@ -251,11 +265,13 @@ public sealed class ItemRollsMigrationTests
         new([.. SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory).Take(version)]);
 
     // Every item column that exists before 0008, row by row, as quoted text.
-    private static string DumpItems(MigrationTestDatabase database, bool includeRolls, bool includeTimes = true)
+    private static string DumpItems(MigrationTestDatabase database, bool includeRolls, bool includeTimes = true, bool includeVisual = true)
     {
         using SqliteConnection c = database.Open();
         List<string> columns = Rows(c, "SELECT name FROM pragma_table_info('item_instances') ORDER BY cid;")
-            .Where(name => (includeRolls || name != "rolled_modifiers") && (includeTimes || !name.EndsWith("_utc", StringComparison.Ordinal)))
+            .Where(name => (includeRolls || name != "rolled_modifiers")
+                && (includeTimes || !name.EndsWith("_utc", StringComparison.Ordinal))
+                && (includeVisual || name != "visual_id"))
             .ToList();
         return string.Join(";", Rows(c, $"SELECT {string.Join(" || '|' || ", columns.Select(name => $"quote({name})"))} FROM item_instances ORDER BY 1;"));
     }
