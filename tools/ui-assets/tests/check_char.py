@@ -79,6 +79,7 @@ CLIP_SHARE_MAX = 0.01      # see gate_clipping: at most 1% of a material's visib
 CLIP_MIN_PIXELS = 12       # a material shown in fewer pixels than this is too small for a share to mean anything
 WORN_SET_IDS = ("worn.head.greathelm", "worn.body.plate-cuirass", "worn.back.hooded-cloak")
 CATALOG = TOOLS.parents[1] / "dream" / "Rendering" / "Actors" / "ArmourMeshCatalog.cs"
+HELD_CATALOG = TOOLS.parents[1] / "dream" / "Rendering" / "Actors" / "WeaponMeshCatalog.cs"
 ENVELOPE_TOL = 0.015       # the worn-model contract's tolerance, engine units
 DIE_SPAN_FRACTION = 0.45   # the lying-down gate: a fraction of the figure's own standing height...
 DIE_REST_MAX = 0.012       # the held last frame may float at most this far (0.45 px) above y = 0
@@ -294,6 +295,88 @@ def worn_surfaces(asset: dict, ids, labels: list | None = None, lit_glow: bool =
             surfaces.append(L.Surface(np.array(pos) * k, nrm, alb, np.array(tri), None))
             if labels is not None:
                 labels.append(f"{vid}:{mat}")
+    return surfaces
+
+
+# WeaponMeshCatalog, read the same way. Held items are albedo too: the same gain multiplies them, and the torch and
+# axe a new character starts with blew out to a yellow head and a cyan blade when the palette was authored as if
+# it were final pixel colour. HeldWeaponRenderer draws a Hand model at HandScale in the fist frame
+# (Rx(90) then the fist offset) on the arm node, and a Shield model at ShieldScale on the off-hand arm.
+HELD_HAND_SCALE, HELD_SHIELD_SCALE = 1.7, 1.5
+HELD_FIST_X, HELD_FIST_Y, HELD_SHIELD_X, HELD_SHIELD_Y = 0.2, -0.9, 0.31, -0.55
+_HELD_BOX = re.compile(r"Box\(\s*((?:[-\d.]+f,\s*){5}[-\d.]+f),\s*WeaponMaterial\.(\w+)((?:,\s*(?:pitch|roll):\s*[-\d.]+f)*)\)")
+_HELD_COLOUR = re.compile(r"WeaponMaterial\.(\w+)\s*=>\s*new Vector4\(\s*([-\d.]+)f,\s*([-\d.]+)f,\s*([-\d.]+)f,\s*[-\d.]+f\)")
+_HELD_EMISSIVE = re.compile(r"WeaponMaterial\.(\w+)\s*=>\s*new Vector3\(")
+
+
+def held_palette() -> tuple:
+    """(name -> linear albedo, set of glowing material names) from WeaponMeshCatalog.BaseColor / Emissive."""
+    src = HELD_CATALOG.read_text(encoding="utf-8")
+    colours = {m.group(1): tuple(float(m.group(i)) for i in (2, 3, 4)) for m in _HELD_COLOUR.finditer(src)}
+    return colours, {m.group(1) for m in _HELD_EMISSIVE.finditer(src)}
+
+
+def held_ids() -> list:
+    return sorted(set(re.findall(r'(?:Hand|Shield)\("(held\.[^"]+)"', HELD_CATALOG.read_text(encoding="utf-8"))))
+
+
+def held_boxes(visual_id: str) -> tuple:
+    """(grip, [(centre, size, material, pitch, roll)]) for one held model, parsed from WeaponMeshCatalog.cs."""
+    src = HELD_CATALOG.read_text(encoding="utf-8")
+    m = re.search(r'(Hand|Shield)\("%s",(.*?)\);' % re.escape(visual_id), src, re.S)
+    if not m:
+        return "", []
+    out = []
+    for bm in _HELD_BOX.finditer(m.group(2)):
+        n = [float(x.strip().rstrip("f")) for x in bm.group(1).split(",")]
+        kw = {k: float(v.rstrip("f")) for k, v in re.findall(r"(pitch|roll):\s*([-\d.]+f)", bm.group(3))}
+        out.append((tuple(n[:3]), tuple(n[3:]), bm.group(2), kw.get("pitch", 0.0), kw.get("roll", 0.0)))
+    return m.group(1), out
+
+
+def held_surfaces(asset: dict, vid: str, labels: list | None = None) -> list:
+    """One held model as enginelook Surfaces on the bind-pose figure, placed as HeldWeaponRenderer places it:
+    a Hand model in the right fist (length turned forward), a Shield strapped to the left forearm. Lit albedo
+    only, glowing materials included (their emissive is added after the gain and is not what clips)."""
+    world = L.node_worlds(asset["nodes"])
+    names = [n.name for n in asset["nodes"]]
+    pts = fk_vertices(asset, None, None)
+    k = L.PLAYER_WORLD_HEIGHT / float(pts[:, 1].max() - pts[:, 1].min())
+    colours, _ = held_palette()
+    grip, boxes = held_boxes(vid)
+    if not boxes:
+        return []
+    if grip == "Shield":
+        W, side, scale = world[names.index("arm-left")], 1.0, HELD_SHIELD_SCALE
+        th = math.radians(90.0 * side)
+        Rg = np.array([[math.cos(th), 0, math.sin(th)], [0, 1, 0], [-math.sin(th), 0, math.cos(th)]])
+        tg = np.array([side * HELD_SHIELD_X, HELD_SHIELD_Y, 0.0])
+    else:
+        W, side, scale = world[names.index("arm-right")], -1.0, HELD_HAND_SCALE
+        Rg = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float64)
+        tg = np.array([side * HELD_FIST_X, HELD_FIST_Y, 0.0])
+    surfaces = []
+    for centre, size, mat, pitch, roll in boxes:
+        if mat not in colours:
+            fail(f"{vid}: material {mat} is unknown to WeaponMeshCatalog.BaseColor")
+            return []
+        cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
+        cr, sr = math.cos(math.radians(roll)), math.sin(math.radians(roll))
+        R = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]]) @ np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
+        pos, nrm, tri = [], [], []
+        for normal, corners in _FACES:
+            base = len(pos)
+            for q in corners:
+                local = R @ (np.array(q, dtype=np.float64) * 0.5 * np.array(size)) + np.array(centre)
+                pos.append(W[:3, :3] @ (Rg @ (local * scale) + tg) + W[:3, 3])
+            nrm += [W[:3, :3] @ (Rg @ (R @ np.array(normal, dtype=np.float64)))] * 4
+            tri += [(base, base + 1, base + 2), (base, base + 2, base + 3)]
+        nrm = np.array(nrm)
+        nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
+        surfaces.append(L.Surface(np.array(pos) * k, nrm, np.tile(np.array(colours[mat]), (len(pos), 1)),
+                                  np.array(tri), None))
+        if labels is not None:
+            labels.append(f"{vid}:{mat}")
     return surfaces
 
 
@@ -558,10 +641,33 @@ def main() -> int:
             env = L.m3_env(azimuth_deg=az)
             for sf in surfaces + piece:
                 peak_gain = max(peak_gain, float(L.gain(sf.normals, sf.positions, env).max()))
+    # the held items, on the same figure (right fist; shields on the left forearm), through the same gate
+    held = held_ids()
+    held_seen, held_total = set(), 0
+    for vid in held:
+        names = []
+        piece = held_surfaces(a, vid, names)
+        if not piece:
+            fail(f"{vid}: the held model could not be drawn by the clip gate")
+            continue
+        held_total += len(piece)
+        held_seen |= {n.split(":")[1] for n in names}
+        problems += clip_problems(clip_report(surfaces + piece, fig_names + names))
+        for az in L.M3_AZIMUTHS:
+            env = L.m3_env(azimuth_deg=az)
+            for sf in piece:
+                peak_gain = max(peak_gain, float(L.gain(sf.normals, sf.positions, env).max()))
     base = {m.group(1): tuple(float(m.group(i)) for i in (2, 3, 4)) for m in _BASE_COLOUR.finditer(catalog_src)}
     for mat, rgb in sorted(base.items()):
         if max(rgb) * peak_gain >= 1.0:
             problems.append(f"palette: {mat} albedo {rgb} x peak gain {peak_gain:.2f} = {max(rgb) * peak_gain:.2f} reaches 1.0")
+    held_base, _ = held_palette()
+    for mat, rgb in sorted(held_base.items()):
+        if max(rgb) * peak_gain >= 1.0:
+            problems.append(f"held palette: {mat} albedo {rgb} x peak gain {peak_gain:.2f} = {max(rgb) * peak_gain:.2f} reaches 1.0")
+    held_unseen = sorted(set(held_base) - held_seen)    # no exemption: every held material is used by some model
+    if held_unseen:
+        problems.append(f"held palette materials never drawn by the clip gate: {held_unseen}")
     # materials are named by their enum member here, and by their BuildModels alias in the box labels
     alias = dict(_ALIAS.findall(catalog_src))
     drawn = {alias.get(m, m) for m in seen_materials}
@@ -571,7 +677,8 @@ def main() -> int:
     for msg in problems:
         fail("clipping: " + msg)
     if not problems:
-        ok(f"no clipping: figure + {len(drawable)} worn pieces ({worn_total} boxes), every material under "
+        ok(f"no clipping: figure + {len(drawable)} worn pieces ({worn_total} boxes) + {len(held)} held items "
+           f"({held_total} boxes), every material under "
            f"{CLIP_SHARE_MAX:.0%} saturated at both azimuths, peak gain {peak_gain:.2f}, "
            f"palette max {max(max(c) for c in base.values()):.3f}")
     # live: the same figure lit 3x brighter (what loop 1's palette amounted to) must trip it. A gate that cannot

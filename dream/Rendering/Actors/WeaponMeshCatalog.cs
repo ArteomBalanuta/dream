@@ -98,17 +98,23 @@ public static class WeaponMeshCatalog
     public static bool IsRanged(string? visualId) =>
         visualId != null && Models.TryGetValue(visualId, out WeaponModel? model) && model.IsRanged;
 
+    // These are ALBEDO, not final pixel colour. The actor shader computes (ambient + lights) * albedo with no
+    // tonemap and clamps, and beside a brazier that gain reaches ~2.17, so any channel above ~0.46 clips to a flat
+    // patch (the torch used to render a saturated yellow head, the axe a cyan blade). Every channel stays at or
+    // under 0.40, enforced by gate_clipping in tools/ui-assets/tests/check_char.py. Materials are told apart by
+    // value (dark iron < leather < wood < steel < bone) and by shape, not by hue. The glowing materials keep
+    // their glow in Emissive() (added after the gain) and a dark body here: light on a dark piece.
     public static Vector4 BaseColor(WeaponMaterial material) => material switch
     {
-        WeaponMaterial.Steel => new Vector4(0.46f, 0.48f, 0.52f, 1f),
-        WeaponMaterial.DarkIron => new Vector4(0.17f, 0.17f, 0.20f, 1f),
-        WeaponMaterial.Wood => new Vector4(0.25f, 0.15f, 0.09f, 1f),
+        WeaponMaterial.Steel => new Vector4(0.33f, 0.34f, 0.365f, 1f),
+        WeaponMaterial.DarkIron => new Vector4(0.11f, 0.11f, 0.125f, 1f),
+        WeaponMaterial.Wood => new Vector4(0.20f, 0.125f, 0.07f, 1f),
         WeaponMaterial.Leather => new Vector4(0.13f, 0.08f, 0.06f, 1f),
-        WeaponMaterial.Gilt => new Vector4(0.50f, 0.37f, 0.14f, 1f),
-        WeaponMaterial.Cloth => new Vector4(0.36f, 0.05f, 0.06f, 1f),
-        WeaponMaterial.Arcane => new Vector4(0.35f, 0.18f, 0.55f, 1f),
-        WeaponMaterial.Ember => new Vector4(0.95f, 0.45f, 0.12f, 1f),
-        WeaponMaterial.Bone => new Vector4(0.62f, 0.58f, 0.48f, 1f),
+        WeaponMaterial.Gilt => new Vector4(0.32f, 0.23f, 0.09f, 1f),
+        WeaponMaterial.Cloth => new Vector4(0.20f, 0.055f, 0.045f, 1f),
+        WeaponMaterial.Arcane => new Vector4(0.10f, 0.06f, 0.17f, 1f),
+        WeaponMaterial.Ember => new Vector4(0.24f, 0.10f, 0.04f, 1f),
+        WeaponMaterial.Bone => new Vector4(0.40f, 0.36f, 0.29f, 1f),
         _ => new Vector4(0.3f, 0.3f, 0.3f, 1f)
     };
 
@@ -339,8 +345,9 @@ public static class WeaponMeshCatalog
         Hand("held.tool.torch", false,
             Box(0f, 0.30f, 0f, 0.07f, 0.85f, 0.07f, WeaponMaterial.Wood),
             Box(0f, 0.78f, 0f, 0.12f, 0.16f, 0.12f, WeaponMaterial.Leather),
-            Box(0f, 0.95f, 0f, 0.13f, 0.18f, 0.13f, WeaponMaterial.Ember),
-            Box(0f, 1.08f, 0f, 0.08f, 0.14f, 0.08f, WeaponMaterial.Ember, roll: 45f));
+            Box(0f, 0.95f, 0f, 0.13f, 0.18f, 0.13f, WeaponMaterial.DarkIron),
+            Box(0f, 1.07f, 0f, 0.09f, 0.16f, 0.09f, WeaponMaterial.Ember, roll: 45f),
+            Box(0f, 1.18f, 0f, 0.05f, 0.12f, 0.05f, WeaponMaterial.Ember, roll: 45f));
 
         Hand("held.tool.lantern", false,
             Box(0f, 0.20f, 0f, 0.025f, 0.30f, 0.025f, WeaponMaterial.DarkIron),

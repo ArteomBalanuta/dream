@@ -130,3 +130,21 @@ Measured: base 0.2780 (az 35 p10 0.0077 p90 0.2857, binding; az 145 p10 0.0083 p
 0.64 -> 0.25, from the art, with a comment that the number follows the art. Worn set 0.3906 (az 35 p10 0.0084 p90
 0.4063; az 145 p10 0.0135 p90 0.4041): `WORN_SET_SPREAD_MIN` 0.50 is NOT reached and was NOT moved or worked around;
 that check is red pending the owner's decision. GLB 253588 -> 258436 bytes.
+
+## Held items: the same albedo-as-pixel defect (fix/held-item-palette)
+
+`WeaponMeshCatalog` was authored as final pixel colour too. Before (albedo, x2.17 at the brazier): Steel
+(0.46,0.48,0.52) -> (1.00,1.04,1.13); DarkIron (0.17,0.17,0.20) -> 0.43 max; Wood (0.25,0.15,0.09) -> 0.54; Leather
+(0.13,0.08,0.06) -> 0.28; Gilt (0.50,0.37,0.14) -> 1.09; Cloth (0.36,0.05,0.06) -> 0.78; Arcane (0.35,0.18,0.55) ->
+1.19; Ember (0.95,0.45,0.12) -> 2.06; Bone (0.62,0.58,0.48) -> 1.35. Steel, Gilt, Arcane, Ember and Bone clipped. The
+starter torch rendered a saturated yellow head and the axe a cyan blade (blue clipped first on steel).
+
+After, all channels <= 0.40: Steel (0.33,0.34,0.365), DarkIron (0.11,0.11,0.125), Wood (0.20,0.125,0.07), Leather
+unchanged, Gilt (0.32,0.23,0.09), Cloth (0.20,0.055,0.045), Arcane body (0.10,0.06,0.17), Ember body (0.24,0.10,0.04),
+Bone (0.40,0.36,0.29). Emissive unchanged. The torch's 0.13x0.18 head block is now DarkIron (charred rag) and the flame
+is two small rolled Ember boxes on top, so the glow sits on a dark body.
+
+`gate_clipping` now also draws every held model (Hand models in the right fist at HandScale, shields on the left
+forearm at ShieldScale, as HeldWeaponRenderer places them) and applies the per-material saturation share and the
+palette bound to WeaponMeshCatalog. No held material is exempt (every one is used by some model); the armour catalog's
+Gilt exemption is unchanged. Extending the gate made no armour material newly fail. CLIP_SHARE_MAX unchanged.

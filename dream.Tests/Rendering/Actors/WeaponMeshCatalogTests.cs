@@ -106,6 +106,52 @@ public class WeaponMeshCatalogTests
     }
 
     [Fact]
+    public void Palette_IsAlbedoNotPixelColour_AndTheMaterialsStayApartByValue()
+    {
+        // Albedo, not final pixel colour: the shader multiplies by a gain of up to ~2.2 with no tonemap, so a lit
+        // channel above ~0.45 clips to a flat patch (the starter torch was a yellow head, the axe a cyan blade).
+        Assert.Equal(new Vector4(0.33f, 0.34f, 0.365f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Steel));
+        Assert.Equal(new Vector4(0.11f, 0.11f, 0.125f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.DarkIron));
+        Assert.Equal(new Vector4(0.20f, 0.125f, 0.07f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Wood));
+        Assert.Equal(new Vector4(0.13f, 0.08f, 0.06f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Leather));
+        Assert.Equal(new Vector4(0.24f, 0.10f, 0.04f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Ember));
+        Assert.Equal(new Vector4(0.10f, 0.06f, 0.17f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Arcane));
+        Assert.Equal(new Vector4(0.40f, 0.36f, 0.29f, 1f), WeaponMeshCatalog.BaseColor(WeaponMaterial.Bone));
+
+        foreach (WeaponMaterial material in Enum.GetValues<WeaponMaterial>())
+        {
+            Vector4 c = WeaponMeshCatalog.BaseColor(material);
+            Assert.True(MathF.Max(c.X, MathF.Max(c.Y, c.Z)) <= 0.44f, $"{material} albedo {c} would clip under the actor gain");
+        }
+
+        // Steel is a desaturated blue-grey, never a cyan: no channel more than ~12% off the mean.
+        Vector4 steel = WeaponMeshCatalog.BaseColor(WeaponMaterial.Steel);
+        float mean = (steel.X + steel.Y + steel.Z) / 3f;
+        Assert.True(MathF.Max(steel.X, MathF.Max(steel.Y, steel.Z)) / mean < 1.12f);
+
+        // Distinguished by value: blackened iron < leather < worn wood < steel.
+        static float Value(WeaponMaterial m) => WeaponMeshCatalog.BaseColor(m).X;
+        Assert.True(Value(WeaponMaterial.DarkIron) <= Value(WeaponMaterial.Leather));
+        Assert.True(Value(WeaponMaterial.Leather) < Value(WeaponMaterial.Wood));
+        Assert.True(Value(WeaponMaterial.Wood) < Value(WeaponMaterial.Steel));
+    }
+
+    [Fact]
+    public void TorchFlameGlows_AndItsBodyIsDark()
+    {
+        WeaponModel torch = WeaponMeshCatalog.Resolve("held.tool.torch");
+        Assert.Contains(torch.Parts, p => p.Material == WeaponMaterial.Ember);
+        foreach (WeaponPart part in torch.Parts.Where(p => p.Material != WeaponMaterial.Ember))
+        {
+            Assert.Equal(Vector3.Zero, WeaponMeshCatalog.Emissive(part.Material));
+        }
+
+        // The glow rides on a dark body (light on a dark piece); the flame's own albedo is not what lights it.
+        Assert.True(WeaponMeshCatalog.BaseColor(WeaponMaterial.Ember).X < 0.4f);
+        Assert.True(WeaponMeshCatalog.Emissive(WeaponMaterial.Ember).X > 0.8f);
+    }
+
+    [Fact]
     public void PartMatrix_ScalesThenTurnsThenMoves()
     {
         WeaponPart part = new(new Vector3(1f, 2f, 3f), new Vector3(2f, 4f, 6f), WeaponMaterial.Steel, 0f, 90f);
