@@ -8,7 +8,7 @@ PlayerModelAssetDefinition loads.
 
 Shape: a rigid part hierarchy, which is how dream's own player model is built - one mesh per part node, no
 skin, animation driven by node rotation. A node may carry several primitives (one per material), so a
-pauldron or a cloak rides the torso node and takes the engine's hit flinch with it: PlayerPoseLayers only
+tunic skirt or a tail rides the torso node and takes the engine's hit flinch with it: PlayerPoseLayers only
 overrides the torso, head and arm nodes, so a child node of the torso would be left behind in a flinch.
 The node names torso / head / arm-left / arm-right / leg-left / leg-right are the engine's contract.
 
@@ -64,6 +64,9 @@ CUSTOM = {
     "steel.cool": ("#5C6475", 0.50, 0.050, 0.26, "#7E869A"),
     "cloth.cold": ("#161A28", 0.92, 0.030, 0.28, None),
     "cloth.ash.cold": ("#1E2024", 0.94, 0.028, 0.24, None),
+    # The undyed wool of the traveller's tunic and sleeves: drab, low saturation, the one pale cloth on a figure
+    # that no longer has steel to carry its value range.
+    "cloth.tunic": ("#5E5748", 0.92, 0.030, 0.22, None),
     # The eye sockets' own surface. It is NOT baked into the atlas (it rides its own emissive material), but
     # bake_material has to answer for it anyway: the preview sheet renders every part build_parts returns.
     "ember.eye": ("#160A06", 0.95, 0.025, 0.30, None),
@@ -300,9 +303,9 @@ def quat_z(deg: float) -> tuple:
 
 
 # ---------------------------------------------------------------------------- the figure
-# A gaunt 1.9 m hooded figure: narrow shoulders, long limbs, a peaked hood with a pale mask under it, a dark
-# cloak behind, one dull red cloth tail in front. Asymmetry is the identity hook: the LEFT shoulder carries a
-# big plate and the right has none.
+# A gaunt 1.9 m unarmoured traveller: narrow shoulders, long limbs, a bare grey head with two dim ember eyes, an
+# undyed wool tunic, dark breeches and boots, one dull red cloth tail in front. Every piece of armour is a worn
+# model in the equipment layer (ArmourMeshCatalog); nothing here is baked plate, hood or cloak.
 
 PELVIS_Y = 0.92                      # hip height in m; the legs reach exactly this far down
 PELVIS_U = PELVIS_Y * U_PER_M        # 14.72
@@ -316,7 +319,7 @@ ARM_NODE_X = 0.7
 JOINTS = (
     ("root", None, (0.0, 0.0, 0.0)),
     ("torso", "root", (0.0, 0.0, PELVIS_U)),
-    ("head", "torso", (0.0, 0.4, 9.6)),
+    ("head", "torso", (0.0, 0.4, 10.97)),
     ("arm-left", "torso", (ARM_NODE_X, 0.0, 8.9)),
     ("arm-right", "torso", (-ARM_NODE_X, 0.0, 8.9)),
     ("leg-left", "root", (1.4, 0.0, PELVIS_U)),
@@ -334,124 +337,81 @@ def joint_world_u() -> dict:
 
 def _limb_arm(side: float):
     """Hangs from the shoulder, hand centre at -10.2 u (= -0.9 units, where the engine's grip is), and sits
-    ARM_OFFSET_U outboard of its node."""
-    sleeve = loft([(-9.4, 0.56, 0.56, 0.0, 0.1), (-7.2, 0.68, 0.68, 0.0, 0.25), (-5.0, 0.80, 0.80, 0.0, 0.35),
-                   (-2.6, 0.95, 0.95, 0.0, 0.15), (0.4, 1.02, 1.02, 0.0, 0.0), (1.0, 0.70, 0.70, 0.0, 0.0)], 8)
-    bracer = loft([(-9.0, 0.66, 0.66, 0.0, 0.12), (-7.8, 0.78, 0.78, 0.0, 0.18), (-5.4, 0.90, 0.90, 0.0, 0.30)], 8)
+    ARM_OFFSET_U outboard of its node. A loose tunic sleeve over a bare hand: no bracer, no couter."""
+    sleeve = loft([(-9.4, 0.58, 0.58, 0.0, 0.1), (-7.0, 0.95, 0.95, 0.0, 0.15), (-4.6, 1.05, 1.05, 0.0, 0.15),
+                   (-2.6, 1.05, 1.05, 0.0, 0.15), (0.4, 1.05, 1.05, 0.0, 0.0), (1.0, 0.70, 0.70, 0.0, 0.0)], 8)
     hand = loft([(-11.4, 0.40, 0.28, 0.0, 0.15), (-10.7, 0.58, 0.40, 0.0, 0.18), (-9.6, 0.58, 0.46, 0.0, 0.14),
                  (-9.1, 0.50, 0.44, 0.0, 0.12)], 6)
-    # A couter at the elbow: a small near-flat rondel in clear air, so it baked at full albedo where a plate
-    # tucked against the body does not.
-    couter = plate(_oct(0.98, 1.08, 0.38), 0.40, 0.66).xform(rot_deg=(-6.0, 0.0, 0.0), move=(0.0, 0.25, -5.30))
     mv = (side * ARM_OFFSET_U, 0.0, 0.0)
-    return [("cloth.cold", sleeve.xform(move=mv)), ("steel.cool", bracer.xform(move=mv)),
-            ("flesh.grey", hand.xform(move=mv)), ("steel.cool", couter.xform(move=mv))]
+    return [("cloth.tunic", sleeve.xform(move=mv)), ("flesh.grey", hand.xform(move=mv))]
 
 
 def _limb_leg():
-    trouser = loft([(-11.8, 0.76, 0.76, 0.0, 0.0), (-9.2, 0.92, 0.92, 0.0, -0.12), (-7.0, 0.86, 0.86, 0.0, 0.0),
-                    (-3.6, 1.10, 1.10, 0.0, 0.0), (0.0, 1.25, 1.25, 0.0, 0.0), (0.4, 0.95, 0.95, 0.0, 0.0)], 8)
-    boot = loft([(-LEG_U, 0.92, 1.45, 0.0, 0.70), (-14.0, 0.98, 1.50, 0.0, 0.70), (-13.0, 0.92, 1.10, 0.0, 0.50),
-                 (-11.5, 0.90, 0.96, 0.0, 0.08), (-10.2, 0.94, 0.94, 0.0, 0.0)], 8)
-    guard = loft([(-8.2, 0.98, 0.98, 0.0, 0.10), (-7.0, 1.08, 1.08, 0.0, 0.22), (-5.9, 0.99, 0.99, 0.0, 0.10)], 8)
-    # Knee cop and instep cap: two broad plates on a limb that is otherwise soft. The cop faces almost straight
-    # forward, so one key azimuth lights it and the mirrored one does not - the dark half, by design.
-    cop = plate(_oct(1.02, 0.86, 0.40), 0.42, 0.70).xform(rot_deg=(-58.0, 0.0, 0.0), move=(0.0, 1.00, -6.95))
-    # A broad near-flat sabaton over the instep and a cuisse over the thigh, both clear of the skirt and of
-    # each other by more than 2 u: on the legs there is nothing to occlude them, so they bake at full albedo.
-    sabaton = plate(_oct(1.30, 1.96, 0.34, front=1.05), 0.40, 0.66).xform(rot_deg=(-9.0, 0.0, 0.0),
-                                                                         move=(0.0, 0.70, -12.25))
-    cuisse = plate(_oct(1.38, 1.60, 0.36), 0.42, 0.68).xform(rot_deg=(-10.0, 0.0, 0.0), move=(0.0, 0.35, -5.60))
-    return [("cloth.ash.cold", trouser), ("leather", boot), ("steel.cool", guard),
-            ("steel.cool", cop), ("steel.cool", sabaton), ("steel.cool", cuisse)]
-
-
-def _torso_plates():
-    """The plated half of the torso: a chest lame, a flared gorget bib, two pauldron lamellae over the left
-    shoulder and one small cop over the right.
-
-    Two rules decide every angle and position here, and both are MEASURED, not taste.
-
-    1. NEARLY HORIZONTAL. The fixed play camera looks down at 50 degrees, so an up-facing facet is the one
-       surface both the camera and a light standing near the figure can see. DERIVED from C4 with the brazier
-       at 1.5 units: a horizontal facet takes N.L 0.672 whatever the light's screen azimuth, and a facet tilted
-       16 degrees outward takes 0.769 with the light on its side but only 0.483 with the light on the other -
-       a 1.6x swing in the rendered value. M3 gates on the WORSE azimuth, so a flat plate beats a flared one.
-
-    2. CLEAR AIR. bake_albedo's occlusion term is a cliff, not a ramp: MEASURED, a plate whose vertices sit at
-       ao 0.9 bakes at a linear albedo of 0.50, one at ao 0.6 bakes at 0.17, because the occlusion feeds the
-       ao multiplier, the cavity darkening AND the soot mask at once. A plate crowded under the hood or inside
-       the cloak is therefore a DARK plate however well it faces the light. Three plates were cut from this
-       figure for exactly that reason (a four-panel gorget's side and back panels, and a yoke across the upper
-       back behind the cloak), and the hood's base was narrowed to give the pauldron room."""
-    out = []
-    lame = plate(_oct(2.72, 1.72, 0.40, front=0.92), 0.46, 0.64)
-    out.append(lame.xform(rot_deg=(-11.0, 0.0, 0.0), move=(0.0, 0.40, 8.40)))
-    # the gorget bib: steeply flared, so it overhangs the chest. This one is for the DARK half - it is tucked
-    # under the mask and the pauldron, and it reads as the shadow the plates sit in.
-    out.append(plate(_oct(1.80, 0.92, 0.40), 0.42, 0.66).xform(rot_deg=(-30.0, 0.0, 0.0), move=(0.0, 2.00, 10.55)))
-    # the left pauldron: a broad near-flat upper lamella with a steeper one under its outboard edge
-    out.append(plate(_oct(2.42, 2.62, SHOULDER_CUT, front=0.94), 0.62, 0.62, bevel=PAULDRON_BEVEL)
-               .xform(rot_deg=(0.0, 3.0, 0.0), move=(4.15, 0.05, 9.95)))
-    out.append(plate(_oct(1.95, 2.05, SHOULDER_CUT, front=0.94), 0.58, 0.64, bevel=PAULDRON_BEVEL)
-               .xform(rot_deg=(0.0, 22.0, 0.0), move=(4.60, -0.05, 8.55)))
-    # the right shoulder carries a single small cop: the asymmetry is the figure's identity hook
-    out.append(plate(_oct(1.86, 1.96, SHOULDER_CUT), 0.54, 0.64, bevel=PAULDRON_BEVEL)
-               .xform(rot_deg=(0.0, -5.0, 0.0), move=(-3.10, 0.05, 9.70)))
-    return out
-
-
-def _head_plates():
-    """A kettle helm over the hood: a wide near-flat brim, a small crown above it, and a brow shelf over the
-    mask. The brim is the brightest thing on the figure under a close light - it is broad, horizontal and has
-    clear air above it, which is the one combination the bake does not darken. The brow is the deepest undercut:
-    it overhangs the eye sockets, so the mask's upper half faces down and inward and takes the 0.25 wrap alone."""
-    brim = plate(_oct(2.32, 2.52, 0.34), 0.46, 0.68).xform(rot_deg=(-5.0, 0.0, 0.0), move=(0.0, 0.05, 4.15))
-    crown = plate(_oct(1.22, 1.36, 0.38), 0.46, 0.62).xform(rot_deg=(-8.0, 0.0, 0.0), move=(0.0, 0.00, 5.25))
-    brow = plate(_oct(1.46, 0.78, 0.40, front=1.0), 0.42, 0.62).xform(rot_deg=(-34.0, 0.0, 0.0),
-                                                                     move=(0.0, 1.55, 2.95))
-    return [brim, crown, brow]
+    """Breeches into a turned boot: no shin guard, knee cop, sabaton or cuisse. The boot's cuff is the widest
+    thing in the foot row (1.4 u = 0.123 units) and its footprint is held inside the contract's z -0.05..+0.15."""
+    trouser = loft([(-11.8, 0.76, 0.76, 0.0, 0.25), (-10.0, 0.84, 0.84, 0.0, 0.25), (-9.2, 0.92, 0.92, 0.0, -0.12), (-7.0, 0.86, 0.86, 0.0, 0.0),
+                    (-3.6, 1.10, 1.10, 0.0, 0.0), (-1.2, 1.23, 1.23, 0.0, 0.0), (0.0, 1.25, 1.25, 0.0, 0.0), (0.4, 0.95, 0.95, 0.0, 0.0)], 8)
+    boot = loft([(-LEG_U, 1.05, 1.12, 0.0, 0.56), (-14.1, 1.10, 1.15, 0.0, 0.56), (-13.0, 1.00, 1.05, 0.0, 0.50),
+                 (-11.5, 1.05, 1.00, 0.0, 0.45), (-10.5, 1.40, 1.00, 0.0, 0.45), (-10.0, 1.10, 0.85, 0.0, 0.25)], 8)
+    return [("cloth.ash.cold", trouser), ("leather", boot)]
 
 
 def build_parts():
     """-> list of (node_name, local mesh in u, material key). Geometry is local to its node's joint.
 
-    Two kinds of part. The soft ones are loft()s - elliptical, 6 to 12 sided, smooth-normalled: cloth, leather,
-    flesh. The hard ones are plate()s - flat-faceted slabs with large coplanar faces and tapered undersides.
-    That division is the art direction and the measurement at once (see plate() and _torso_plates())."""
+    THE UNARMOURED TRAVELLER. This is the underlayer the worn armour (ArmourMeshCatalog) goes over: a tunic,
+    breeches, boots, a bare head and bare hands. Nothing here reads as armour - no plate, no helm, no hood, no
+    pauldron, no cloak - so an unequipped character is visibly unarmoured and equipping a piece changes the
+    figure from bare to armoured rather than from one shape to another. Unarmoured is not nude.
+
+    ENVELOPE TABLE (engine units = u * UNITS_PER_U, each node's own frame; the contract the worn models are
+    authored against; tolerance +-0.015; the measured values are read back from the built GLB by
+    tools/ui-assets/tests/check_char.py's envelope gate and recorded in
+    docs/ledger/work-log/2026-11-06-undressed-base-figure.md):
+
+        mount   region                                       base half-width
+        Head    y 0.00..0.42, |x|<=0.12, |z|<=0.13           0.12
+        Torso   y 0.00..0.86, |x|<=0.26 (hip skirt; chest    0.26
+                0.19), z -0.14..+0.14
+        Arm     (one arm, own axis) y -0.95..-0.55,          0.09
+                |x|<=0.09, |z|<=0.09
+        Leg     (one leg) y -0.75..-0.10, |x|<=0.11,         0.11
+                |z|<=0.11
+        Foot    (one leg) y -1.30..-0.88, |x|<=0.132,        0.132
+                z -0.05..+0.15
+        Back    torso back surface at z >= -0.14             0.26
+
+    The head node sits 1.37 u higher than the dressed figure's (10.97 u over the pelvis; it was 9.6 u under a
+    hood): with a bare 0.42 skull the authored top is held at 2.68 only by lengthening the neck, and doing it
+    in the node keeps the contract's head region (y 0.00 at the chin) true. The neck and a short cowl collar
+    bridge the gap. Two rules from the scale: the actor is 28x101 px, 1 px = 0.0265 units, so nothing here is
+    thinner than ~0.05 units and there is no face, hair, lace or stitching - the visible payoff is the head's,
+    the torso's and the cloak's width.
+    """
     parts = []
 
-    # torso, local origin at the pelvis: a narrow cuirass under the lame, belt, hip skirt, red tail, cloak,
-    # backplate and the plated shoulders. The cuirass is deliberately NARROWER than the plates over it, so the
-    # lame and the gorget overhang it instead of sitting flush.
-    cuirass = loft([(0.0, 2.00, 1.35, 0.0, 0.0), (2.6, 1.75, 1.25, 0.0, 0.0), (5.2, 2.05, 1.45, 0.0, 0.1),
-                    (7.6, 2.18, 1.48, 0.0, 0.2), (9.0, 2.00, 1.32, 0.0, 0.3), (9.7, 1.10, 0.95, 0.0, 0.35)], 8)
-    belt = loft([(1.0, 2.10, 1.50, 0.0, 0.0), (2.3, 2.00, 1.45, 0.0, 0.0)], 10)
-    skirt = loft([(-2.0, 2.95, 1.75, 0.0, 0.0), (-0.5, 2.75, 1.70, 0.0, 0.0), (1.3, 2.05, 1.45, 0.0, 0.0)], 10)
-    tail = loft([(-4.6, 0.90, 0.30, 0.0, 2.15), (-2.5, 0.96, 0.33, 0.0, 2.00), (0.2, 1.02, 0.36, 0.0, 1.95),
-                 (2.3, 1.06, 0.40, 0.0, 1.85)], 8)
-    cloak = loft([(-5.4, 3.70, 0.90, 0.0, -3.20), (-1.0, 3.25, 0.95, 0.0, -2.75), (4.0, 2.95, 1.00, 0.0, -2.30),
-                  (8.6, 2.90, 1.00, 0.0, -1.55), (9.5, 2.00, 0.80, 0.0, -1.00)], 12)
-    backplate = loft([(3.2, 1.55, 0.50, 0.0, -3.35), (5.6, 1.95, 0.55, 0.0, -3.00), (8.2, 2.05, 0.55, 0.0, -2.45),
-                      (8.9, 1.20, 0.40, 0.0, -2.20)], 8)
-    parts += [("torso", cuirass, "steel.cool"), ("torso", belt, "leather"), ("torso", skirt, "cloth.ash.cold"),
-              ("torso", tail, "cloth.red"), ("torso", cloak, "cloth.cold"), ("torso", backplate, "steel.cool")]
-    parts += [("torso", m, "steel.cool") for m in _torso_plates()]
+    # torso, local origin at the pelvis: cloth tunic body (belt to collar), wide belt, tunic skirt, red tail.
+    tunic = loft([(1.0, 2.35, 1.48, 0.0, 0.0), (2.6, 2.15, 1.42, 0.0, 0.0), (5.2, 2.05, 1.40, 0.0, 0.05),
+                  (7.6, 2.16, 1.45, 0.0, 0.10), (9.0, 2.00, 1.35, 0.0, 0.10), (9.75, 1.20, 1.00, 0.0, 0.10)], 8)
+    belt = loft([(0.9, 2.50, 1.58, 0.0, 0.0), (2.4, 2.45, 1.57, 0.0, 0.0)], 10)
+    skirt = loft([(-3.0, 3.05, 1.65, 0.0, 0.0), (-1.0, 3.00, 1.68, 0.0, 0.0), (0.0, 2.95, 1.68, 0.0, 0.0),
+                  (1.2, 2.45, 1.55, 0.0, 0.0)], 10)
+    tail = loft([(-3.4, 0.86, 0.30, 0.0, 1.40), (-1.8, 0.92, 0.33, 0.0, 1.38), (0.2, 1.00, 0.36, 0.0, 1.34),
+                 (2.3, 1.04, 0.40, 0.0, 1.30)], 8)
+    parts += [("torso", tunic, "cloth.tunic"), ("torso", belt, "leather"), ("torso", skirt, "cloth.tunic"),
+              ("torso", tail, "cloth.red")]
 
-    # head, local origin at the neck base: peaked hood, pale mask, the plated helm, two ember sockets
-    # The cowl's base is narrower than it was (2.70 -> 2.00 u): at that radius it sat a unit above the pauldron
-    # and occluded it, and the occlusion cost the pauldron two thirds of its baked albedo. The plated gorget is
-    # the collar now; the cloth only has to meet it.
-    hood = loft([(-0.8, 2.00, 1.80, 0.0, -0.2), (0.6, 1.90, 1.85, 0.0, 0.0), (2.2, 1.95, 2.15, 0.0, 0.0),
-                 (3.8, 1.70, 2.00, 0.0, -0.2), (5.0, 1.15, 1.50, 0.0, -0.7), (5.7, 0.55, 0.90, 0.0, -1.4),
-                 (6.1, 0.12, 0.30, 0.0, -2.1)], 10)
-    mask = loft([(0.2, 0.60, 0.50, 0.0, 1.45), (1.2, 1.15, 0.90, 0.0, 1.50), (2.4, 1.25, 1.00, 0.0, 1.50),
-                 (3.6, 1.00, 0.80, 0.0, 1.45), (4.3, 0.40, 0.40, 0.0, 1.30)], 8)
-    parts += [("head", hood, "cloth.cold"), ("head", mask, "bone")]
-    parts += [("head", m, "steel.cool") for m in _head_plates()]
+    # head, local origin at the chin: a bare skull-and-jaw loft in grey flesh, a neck, a short cowl collar and
+    # the two ember sockets. y 0.00..4.77 u (0.42 units), |x| 1.36 u (0.12), |z| 1.48 u (0.13).
+    skull = loft([(0.0, 0.75, 0.85, 0.0, 0.35), (0.9, 1.15, 1.20, 0.0, 0.15), (2.0, 1.34, 1.42, 0.0, 0.0),
+                  (3.2, 1.36, 1.46, 0.0, -0.02), (4.1, 1.18, 1.28, 0.0, -0.08), (4.45, 0.95, 1.05, 0.0, -0.10),
+                  (4.77, 0.45, 0.55, 0.0, -0.12)], 8)
+    neck = loft([(-2.0, 0.66, 0.62, 0.0, 0.05), (0.4, 0.64, 0.60, 0.0, 0.15)], 8)
+    collar = loft([(-1.7, 1.40, 1.20, 0.0, 0.05), (-0.7, 1.15, 1.02, 0.0, 0.10), (0.1, 0.90, 0.84, 0.0, 0.15)], 8)
+    parts += [("head", neck, "flesh.grey"), ("head", collar, "cloth.tunic"), ("head", skull, "flesh.grey")]
     for sx in (1.0, -1.0):
         socket = loft([(-0.25, 0.30, 0.22, 0.0, 0.0), (0.0, 0.34, 0.26, 0.0, 0.0), (0.25, 0.30, 0.22, 0.0, 0.0)], 6)
-        parts.append(("head", socket.xform(move=(sx * 0.58, 2.38, 2.95)), "ember.eye"))
+        parts.append(("head", socket.xform(move=(sx * 0.50, 1.30, 2.70)), "ember.eye"))
 
     for node, side in (("arm-left", 1.0), ("arm-right", -1.0)):
         for key, mesh in _limb_arm(side):
@@ -618,6 +578,30 @@ def clip_die(n: dict, lift: float) -> G.GltfAnimation:
 
 # ---------------------------------------------------------------------------- build
 
+def _die_lift(nodes, primitives, index: dict, back: float) -> float:
+    """How far the die clip must lift the root so no vertex of the falling body goes under the ground.
+
+    `back` (how far behind the pelvis axis the body reaches) was the whole answer while a cloak stood behind the
+    figure and was the deepest thing on its back. The bare figure has no cloak, so the head - which the fall
+    tips back a further 10 to 18 degrees on a long neck - is the deepest thing instead, and `back` alone left it
+    0.13 units under the ground. The root's lift is linear (lift * sin of the fall angle), so the lowest vertex
+    of each key at zero lift gives the lift that key needs. The result is never below `back`."""
+    import enginelook as L
+    base = clip_die(index, 0.0)
+    unit = clip_die(index, 1.0)
+    need = back
+    for k, v in enumerate(unit.translations[index["root"]][1]):
+        s = float(v[1])
+        if s < 0.05:
+            continue
+        world = L.node_worlds(nodes, base, k)
+        low = min(float((np.asarray(p.positions, dtype=np.float64) @ world[p.node][:3, :3].T
+                         + world[p.node][:3, 3])[:, 1].min()) for p in primitives)
+        if low < 0.0:
+            need = max(need, -low / s)
+    return need
+
+
 def build_asset():
     """-> dict with nodes, primitives, materials, animations, the atlas and a stats blurb. Pure function of the
     source: nothing here reads the clock, the environment or the filesystem."""
@@ -656,7 +640,8 @@ def build_asset():
             pos, nrm, uvo, idx = _render_arrays(local, np.zeros((len(local.v), 2), dtype=np.float32))
             primitives.append(G.GltfPrimitive(positions=pos, normals=nrm, uvs=uvo, indices=idx, joints=None,
                                               weights=None, material=len(materials) - 1, node=index[node]))
-    animations = [clip_idle(index), clip_walk(index), clip_sprint(index), clip_die(index, back),
+    lift = _die_lift(nodes, primitives, index, back)
+    animations = [clip_idle(index), clip_walk(index), clip_sprint(index), clip_die(index, lift),
                   clip_melee(index), clip_shoot(index), clip_walk_back(index), clip_strafe(index, 1.0),
                   clip_strafe(index, -1.0)]
     return dict(nodes=nodes, primitives=primitives, materials=materials, animations=animations,
