@@ -72,6 +72,8 @@ public class AnimatedModel : IDisposable
     // The view and projection of the current BeginRender, for a switch to an alpha-mask program.
     private Matrix4 _renderView = Matrix4.Identity;
     private Matrix4 _renderProjection = Matrix4.Identity;
+    // True between a depthOnly BeginRender and its EndRender (see BeginRender).
+    private bool _depthOnly;
     // The rest pose, drawn when no instance is given; never animated.
     private readonly AnimatedModelPose _pose;
     // Joint matrices of the rest pose, filled per skinned node when no instance is given.
@@ -269,9 +271,21 @@ public class AnimatedModel : IDisposable
         EndRender();
     }
 
+    // The shadow caster pass's BeginRender (Rendering/Shadows): culling off (chunk meshes are open shells and flora is double
+    // sided), and the draws feed a depth-only program, so the per-primitive material uploads and texture binds are skipped
+    // and MASK primitives are not drawn at all (the shadowDepth MASK variant discards every fragment, so drawing them would
+    // only cost a call). The mode lasts until EndRender, and every BeginRender starts by clearing it, so a visible draw can
+    // never inherit it.
+    public void BeginDepthRender(Shader shader, Matrix4 view, Matrix4 projection)
+    {
+        BeginRender(shader, view, projection, enableCulling: false);
+        _depthOnly = true;
+    }
+
     public void BeginRender(Shader shader, Matrix4 view, Matrix4 projection, bool enableCulling = true)
     {
         ThrowIfDisposed();
+        _depthOnly = false;
         GL.Enable(EnableCap.DepthTest);
         if (enableCulling)
         {
@@ -408,6 +422,7 @@ public class AnimatedModel : IDisposable
 
     public void EndRender()
     {
+        _depthOnly = false;
         GL.BindVertexArray(0);
     }
 
@@ -428,6 +443,11 @@ public class AnimatedModel : IDisposable
         foreach (var primitive in primitives)
         {
             MaterialData material = ResolveMaterial(primitive.MaterialIndex);
+            if (_depthOnly && UsesAlphaMaskProgram(material.AlphaMode))
+            {
+                continue;
+            }
+
             Shader program = SelectProgram(shader, material);
             if (!ReferenceEquals(program, bound))
             {
@@ -437,7 +457,10 @@ public class AnimatedModel : IDisposable
 
             ApplySkinning(program, primitive, pose, jointMatrices, meshWorldMatrix, ref jointsComposed);
 
-            SetMaterialProperties(program, material);
+            if (!_depthOnly)
+            {
+                SetMaterialProperties(program, material);
+            }
 
             GL.BindVertexArray(primitive.VAO);
             GL.DrawElements(primitive.PrimitiveType, primitive.IndexCount,
@@ -466,6 +489,11 @@ public class AnimatedModel : IDisposable
         foreach (MeshBuffers primitive in primitives)
         {
             MaterialData material = ResolveMaterial(primitive.MaterialIndex);
+            if (_depthOnly && UsesAlphaMaskProgram(material.AlphaMode))
+            {
+                continue;
+            }
+
             Shader program = SelectProgram(shader, material);
             if (!ReferenceEquals(program, bound))
             {
@@ -475,7 +503,10 @@ public class AnimatedModel : IDisposable
 
             ApplySkinning(program, primitive, _pose, _restJointMatrices, meshWorldMatrix, ref jointsComposed);
 
-            SetMaterialProperties(program, material);
+            if (!_depthOnly)
+            {
+                SetMaterialProperties(program, material);
+            }
 
             GL.BindVertexArray(primitive.VAO);
             _instanceMatrixBuffer.BindAttributes();

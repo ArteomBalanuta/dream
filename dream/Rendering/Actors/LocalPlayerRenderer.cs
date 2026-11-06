@@ -3,6 +3,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using Dream.Rendering.Core;
 using Dream.Rendering.Models;
+using Dream.Rendering.Shadows;
 using Dream.Simulation.Players;
 
 namespace Dream.Rendering.Actors;
@@ -30,6 +31,7 @@ public sealed class LocalPlayerRenderer : IDisposable
     private readonly PlayerPoseLayers _layers = new();
     private readonly HeldWeaponRenderer _heldWeapons = new();
     private readonly WornArmourRenderer _wornArmour = new();
+    private readonly ShadowActorCasters _casters = new();
     private LocalPlayerFrameInputs _inputs = new(default, true, 0f, false, 0, 0);
     private AnimatedModelInstanceHandle? _model;
     private Matrix4 _lastModelMatrix = Matrix4.Identity;
@@ -46,6 +48,12 @@ public sealed class LocalPlayerRenderer : IDisposable
         _inputs = inputs;
     }
 
+    // The player the last Draw put on screen, drawn depth-only into a shadow map (see ShadowActorCasters). The worn and
+    // held items are separate geometry drawn by their own renderers and do not cast.
+    public int DrawCasters(in ShadowCasterView view) => _casters.Draw(_render, in view);
+
+    public void ClearCasters() => _casters.Clear();
+
     // The animation frame the last Draw selected, and the raw travel-minus-facing delta it was
     // selected from. The capture's status line logs them (acceptance M6): without this the chosen
     // clip is nowhere in the output, so "the state machine selects by C2" could only be DERIVED
@@ -58,6 +66,7 @@ public sealed class LocalPlayerRenderer : IDisposable
 
     public void Draw(LocalPlayerPresentationState localPlayer, Camera camera, float deltaTime, bool silhouette = false)
     {
+        _casters.Clear();
         if (_disposed)
         {
             return;
@@ -138,6 +147,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
         model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
         model.EndRender();
+        _casters.Add(model, instance, renderState.ModelMatrix, _layers.Overrides);
         _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
         _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
         if (flashing)

@@ -1,6 +1,7 @@
 using Dream.Client.Replication;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Hud;
+using Dream.Rendering.Shadows;
 using Dream.Rendering.Ui;
 using Dream.Simulation.Players;
 using OpenTK.Mathematics;
@@ -66,6 +67,40 @@ public partial class Render
             shader.SetVector3("color", box.Color);
             DrawCubeInternal(shader, Matrix4.CreateScale(box.Size) * Matrix4.CreateTranslation(box.Center), view);
         }
+    }
+
+    // The ground items' boxes as shadow casters: the boxes DrawWorldEntities collected last frame, drawn depth-only with the
+    // fallback cube mesh (one call per box, where the visible pass's debug cube costs six). Returns the boxes drawn.
+    internal int DrawShadowGroundItems(in ShadowCasterView view)
+    {
+        Shader? shader = null;
+        int drawn = 0;
+        try
+        {
+            for (int n = 0; n < _worldEntityBoxes.Count; n++)
+            {
+                WorldBox box = _worldEntityBoxes[n];
+                Vector3 half = box.Size * 0.5f;
+                if (!view.Accepts(box.Center - half, box.Center + half))
+                {
+                    continue;
+                }
+
+                shader ??= BeginShadowDepthProgram(in view.View, in view.Projection);
+                shader.SetModelMatrix(Matrix4.CreateScale(box.Size) * Matrix4.CreateTranslation(box.Center));
+                _fallbackCubeBuffer.DrawBatched();
+                drawn++;
+            }
+        }
+        finally
+        {
+            if (shader is not null)
+            {
+                StaticMeshBuffer.EndBatchedDraws();
+            }
+        }
+
+        return drawn;
     }
 
     // Projects the ground-item and NPC labels into the classic HUD's label list.

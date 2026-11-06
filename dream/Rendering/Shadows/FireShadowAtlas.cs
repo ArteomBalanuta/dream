@@ -1,0 +1,234 @@
+using Dream.Rendering.Lighting;
+using Dream.Rendering.Sky;
+using OpenTK.Mathematics;
+
+namespace Dream.Rendering.Shadows;
+
+// The fire shadow atlas's mathematics: which of the frame's lights cast, and the four face cameras each renders
+// through. Pure, no GL. The tile layout is ShadowMapTargets.TileOrigin's (slot-major, row-major); TileRect below is an
+// INDEPENDENT derivation of the same layout in UV units, and a test pins the two to each other.
+//
+// Faces: 0 = +X, 1 = -X, 2 = +Z, 3 = -Z. Each is a perspective frustum from the light, widened to
+// ShadowSettings.FaceFovRadians so the 90 degree cone lands inside the tile minus its gutter. The polar cones (+-Y) are
+// not rendered, and the lookup treats them as lit.
+//
+// THE LOOKUP CONTRACT (what fireShadows.glsl must mirror). For a fragment at offset d = fragPos - lightPos with
+// a = abs(d), when a.y < max(a.x, a.z):
+//     faces 0/1 (a.x > a.z): ndc = (d.z, d.y) / a.x      faces 2/3: ndc = (d.x, d.y) / a.z
+// and the stored depth is the perspective depth of `major` (see Depth). The face cameras below are built to produce
+// exactly that mapping, so the GLSL needs no per-face sign. That makes the -X and +Z cameras MIRRORED (negative
+// determinant: right x up points along the view direction instead of against it). Depth-only rendering with culling
+// off is blind to winding, so the mirror costs nothing, and FaceUvTests pins the mapping.
+public static class FireShadowAtlas
+{
+    public const int FaceCount = ShadowSettings.FacesPerLight;
+
+    public const int PositiveX = 0;
+    public const int NegativeX = 1;
+    public const int PositiveZ = 2;
+    public const int NegativeZ = 3;
+
+    // The light's face planes. Past Radius the windowed falloff of pointLights.glsl is exactly 0, so clipping at
+    // 1.15 x Radius is invisible, and the pass and the lookup both derive far from the same flickered radius.
+    public const float NearPlane = 0.10f;
+    public const float FarRadiusScale = 1.15f;
+
+    public static float FarPlane(float radius) => radius * FarRadiusScale;
+
+    /// <summary>The luminance a light is scored by: the same Rec. 709 luma the sky model measures brightness in.</summary>
+    public static float Luminance(Vector3 color) => SkyModelKeyframes.Luminance(color);
+
+    /// <summary>
+    /// pointLights.glsl's window, line for line: s = d^2 / r^2; f = clamp(1 - s, 0, 1); f = f * f / (1 + 1.5 s).
+    /// It is exactly 0 at and beyond the radius. A non-positive radius (a dead light) contributes nothing.
+    /// </summary>
+    public static float WindowedFalloff(float distance, float radius)
+    {
+        if (!(radius > 0f))
+        {
+            return 0f;
+        }
+
+        float s = distance * distance / (radius * radius);
+        float f = Math.Clamp(1f - s, 0f, 1f);
+        return f * f / (1f + 1.5f * s);
+    }
+
+    /// <summary>A light's contribution at the focus: luminance times the windowed falloff of its distance.</summary>
+    public static float Score(Vector3 color, Vector3 position, float radius, Vector3 focus) =>
+        Luminance(color) * WindowedFalloff((position - focus).Length, radius);
+
+    /// <summary>
+    /// Picks up to <paramref name="maxSlots"/> entries of the frame's light list, highest score first, and writes their
+    /// LIST INDICES to <paramref name="slots"/>. Ties keep the lower list index (the order is stable like LightSelection's),
+    /// so a light does not swap slots with an equally bright one from frame to frame. Picks from the list the shaders
+    /// light with, never from LightCollector, so the shadowing set cannot disagree with the lit set. Returns the count.
+    /// A light with no score still takes a free slot (the score is a ranking, not a threshold): it is a visible light the
+    /// camera selected, and over-lighting an unshadowed pool is the failure the design wants to avoid.
+    /// </summary>
+    public static int SelectSlots(in LightList list, Vector3 focus, int maxSlots, Span<int> slots)
+    {
+        int capacity = Math.Min(Math.Min(maxSlots, slots.Length), ShadowSettings.MaxCastingFireCount);
+        int available = Math.Clamp(list.Count, 0, LightList.MaxLights);
+        if (capacity <= 0 || available == 0)
+        {
+            return 0;
+        }
+
+        Span<float> scores = stackalloc float[ShadowSettings.MaxCastingFireCount];
+        int count = 0;
+        for (int i = 0; i < available; i++)
+        {
+            Vector4 positionRadius = list.PositionRadius[i];
+            float score = Score(list.Color[i].Xyz, positionRadius.Xyz, positionRadius.W, focus);
+            if (!float.IsFinite(score))
+            {
+                continue;
+            }
+
+            // Insertion into the descending kept list. A later light never displaces an earlier one at an equal score.
+            int at = count;
+            while (at > 0 && score > scores[at - 1])
+            {
+                at--;
+            }
+
+            if (at >= capacity)
+            {
+                continue;
+            }
+
+            int last = Math.Min(count, capacity - 1);
+            for (int j = last; j > at; j--)
+            {
+                scores[j] = scores[j - 1];
+                slots[j] = slots[j - 1];
+            }
+
+            scores[at] = score;
+            slots[at] = i;
+            count = Math.Min(count + 1, capacity);
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Fills the fire half of <paramref name="frame"/> from the frame's selected lights: which entries, their FLICKERED
+    /// world positions (the depth map's origin moves with the flame) and far planes (they breathe with the radius). The
+    /// list entries already carry the flicker, applied when the lights were collected; nothing is sampled again here.
+    /// </summary>
+    public static void FillSlots(in LightList list, Vector3 focus, int maxSlots, float strength, ref ShadowFrame frame)
+    {
+        Span<int> chosen = stackalloc int[ShadowSettings.MaxCastingFireCount];
+        int count = SelectSlots(in list, focus, maxSlots, chosen);
+        Span<FireShadowSlot> fires = frame.Fires;
+        for (int s = 0; s < count; s++)
+        {
+            Vector4 positionRadius = list.PositionRadius[chosen[s]];
+            fires[s] = new FireShadowSlot
+            {
+                LightIndex = chosen[s],
+                Position = positionRadius.Xyz,
+                Near = NearPlane,
+                Far = FarPlane(positionRadius.W),
+                Strength = strength,
+            };
+        }
+
+        for (int s = count; s < fires.Length; s++)
+        {
+            fires[s] = default;
+        }
+
+        frame.FireCount = count;
+    }
+
+    // Direction the face looks along, and the world axis that is the face's screen-right (the lookup contract above).
+    public static Vector3 Forward(int face) => face switch
+    {
+        PositiveX => Vector3.UnitX,
+        NegativeX => -Vector3.UnitX,
+        PositiveZ => Vector3.UnitZ,
+        NegativeZ => -Vector3.UnitZ,
+        _ => throw new ArgumentOutOfRangeException(nameof(face)),
+    };
+
+    public static Vector3 Right(int face) => face switch
+    {
+        PositiveX or NegativeX => Vector3.UnitZ,
+        PositiveZ or NegativeZ => Vector3.UnitX,
+        _ => throw new ArgumentOutOfRangeException(nameof(face)),
+    };
+
+    /// <summary>
+    /// World to face-view. Row-vector convention (p * M), view space looks down -Z, so the backward axis is -Forward.
+    /// Built from the basis directly rather than with LookAt, because the right axis is fixed by the lookup contract.
+    /// </summary>
+    public static Matrix4 FaceView(Vector3 lightPos, int face)
+    {
+        Vector3 right = Right(face);
+        Vector3 up = Vector3.UnitY;
+        Vector3 back = -Forward(face);
+        return new Matrix4(
+            right.X, up.X, back.X, 0f,
+            right.Y, up.Y, back.Y, 0f,
+            right.Z, up.Z, back.Z, 0f,
+            -Vector3.Dot(right, lightPos), -Vector3.Dot(up, lightPos), -Vector3.Dot(back, lightPos), 1f);
+    }
+
+    /// <summary>The face projection: square, widened to FaceFovRadians so the 90 degree cone sits inside the gutter.</summary>
+    public static Matrix4 FaceProjection(float near, float far) =>
+        Matrix4.CreatePerspectiveFieldOfView(ShadowSettings.FaceFovRadians, 1f, near, far);
+
+    /// <summary>The face a direction falls in, or -1 inside a polar cone (|d.y| is the major axis, or d is zero): unshadowed.</summary>
+    public static int FaceOf(Vector3 d)
+    {
+        Vector3 a = new(MathF.Abs(d.X), MathF.Abs(d.Y), MathF.Abs(d.Z));
+        if (a.Y >= MathF.Max(a.X, a.Z))
+        {
+            return -1;
+        }
+
+        return a.X > a.Z ? (d.X > 0f ? PositiveX : NegativeX) : (d.Z > 0f ? PositiveZ : NegativeZ);
+    }
+
+    /// <summary>The lookup contract's tile-local NDC of an offset (xy in -1..1 across the 90 degree cone) and its major distance.</summary>
+    public static (Vector2 Ndc, float Major) FaceNdc(int face, Vector3 d)
+    {
+        bool xFace = face is PositiveX or NegativeX;
+        float major = xFace ? MathF.Abs(d.X) : MathF.Abs(d.Z);
+        Vector2 across = xFace ? new Vector2(d.Z, d.Y) : new Vector2(d.X, d.Y);
+        return (across / major, major);
+    }
+
+    /// <summary>The stored (0..1) depth of a surface <paramref name="major"/> in front of a face with these planes.</summary>
+    public static float Depth(float major, float near, float far)
+    {
+        float ndc = ((far + near) / (far - near)) + ((2f * far * near / (far - near)) / -major);
+        return (0.5f * ndc) + 0.5f;
+    }
+
+    /// <summary>
+    /// The tile's rectangle in atlas UV units: x, y the lower-left corner and z, w the size. Slot-major, row-major in the
+    /// GridSide x GridSide grid, derived here independently of ShadowMapTargets.TileOrigin and pinned equal to it.
+    /// </summary>
+    public static Vector4 TileRect(int slot, int face)
+    {
+        if ((uint)slot >= ShadowSettings.MaxCastingFireCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slot));
+        }
+
+        if ((uint)face >= FaceCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(face));
+        }
+
+        int index = (slot * FaceCount) + face;
+        int column = index % ShadowSettings.GridSide;
+        int row = index / ShadowSettings.GridSide;
+        float size = 1f / ShadowSettings.GridSide;
+        return new Vector4(column * size, row * size, size, size);
+    }
+}

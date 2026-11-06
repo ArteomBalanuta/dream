@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Dream.Client.Presentation;
 using Dream.Rendering.Core;
 using Dream.Rendering.Models;
+using Dream.Rendering.Shadows;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -14,11 +15,17 @@ public sealed class EnemyRenderer
     private readonly Render _render;
     private readonly EnemyVisualStateCache _visualStates = new();
     private readonly HashSet<int> _currentIds = new();
+    private readonly ShadowActorCasters _casters = new();
 
     public EnemyRenderer(Render render)
     {
         _render = render;
     }
+
+    // The enemies the last Draw put on screen, drawn depth-only into a shadow map (see ShadowActorCasters).
+    public int DrawCasters(in ShadowCasterView view) => _casters.Draw(_render, in view);
+
+    public void ClearCasters() => _casters.Clear();
 
     // Draws every enemy at its authoritative pose.
     public void Draw(Camera camera, IReadOnlyList<EnemyActor> actors, float deltaTime, bool showCollisionGeometry)
@@ -38,6 +45,7 @@ public sealed class EnemyRenderer
         double renderTick)
     {
         _currentIds.Clear();
+        _casters.Clear();
         foreach (EnemyActor actor in actors)
         {
             if (!actor.IsActive)
@@ -82,6 +90,7 @@ public sealed class EnemyRenderer
                 ApplyTint(model, shader, visual.TintOffset);
                 model.RenderPrepared(shader, instance, renderState.ModelMatrix);
                 model.EndRender();
+                _casters.Add(model, instance, renderState.ModelMatrix);
             }
 
             if (showCollisionGeometry)

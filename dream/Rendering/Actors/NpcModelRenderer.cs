@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Dream.Client.Replication;
 using Dream.Rendering.Core;
 using Dream.Rendering.Models;
+using Dream.Rendering.Shadows;
 using Dream.Simulation.Players;
 
 namespace Dream.Rendering.Actors;
@@ -81,12 +82,18 @@ public sealed class NpcModelRenderer
     private readonly Render _render;
     private readonly EnemyVisualStateCache _visualStates = new();
     private readonly HashSet<int> _currentIds = new();
+    private readonly ShadowActorCasters _casters = new();
 
     public NpcModelRenderer(Render render)
     {
         ArgumentNullException.ThrowIfNull(render);
         _render = render;
     }
+
+    // The villagers the last Draw put on screen, drawn depth-only into a shadow map (see ShadowActorCasters).
+    public int DrawCasters(in ShadowCasterView view) => _casters.Draw(_render, in view);
+
+    public void ClearCasters() => _casters.Clear();
 
     public int DrawnCount { get; private set; }
 
@@ -96,6 +103,7 @@ public sealed class NpcModelRenderer
         ArgumentNullException.ThrowIfNull(npcs);
 
         _currentIds.Clear();
+        _casters.Clear();
         DrawnCount = 0;
 
         // Zero the shared tint once, before the loop: whatever the enemy pass left in
@@ -137,8 +145,10 @@ public sealed class NpcModelRenderer
                 deltaTime);
 
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-            model.RenderPrepared(shader, instance, BuildModelMatrix(in visual, npc.Position, npc.Facing));
+            Matrix4 modelMatrix = BuildModelMatrix(in visual, npc.Position, npc.Facing);
+            model.RenderPrepared(shader, instance, modelMatrix);
             model.EndRender();
+            _casters.Add(model, instance, modelMatrix);
             DrawnCount++;
         }
 

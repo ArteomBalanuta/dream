@@ -4,6 +4,7 @@ using Dream.Client.Presentation;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Rendering.Core;
 using Dream.Rendering.Models;
+using Dream.Rendering.Shadows;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
@@ -39,6 +40,12 @@ public sealed class RemotePlayerRenderer : IDisposable
     private readonly List<int> _staleAnimationIds = [];
     private readonly HeldWeaponRenderer _heldWeapons = new();
     private readonly WornArmourRenderer _wornArmour = new();
+    private readonly ShadowActorCasters _casters = new();
+
+    // The remote players the last Draw put on screen, drawn depth-only into a shadow map (see ShadowActorCasters).
+    public int DrawCasters(in ShadowCasterView view) => _casters.Draw(_render, in view);
+
+    public void ClearCasters() => _casters.Clear();
 
     // A player that died stays drawn this long, so its death animation plays out.
     public const float DeathLingerSeconds = 3f;
@@ -60,6 +67,8 @@ public sealed class RemotePlayerRenderer : IDisposable
 
     public RemotePlayerRenderStats Draw(Camera camera, IReadOnlyList<RemotePlayerPresentationState> remotePlayers, float deltaTime)
     {
+        // Recorded afresh below: a pruned or released player must not leave a ghost shadow.
+        _casters.Clear();
         PruneModelEntries(remotePlayers);
         ReleaseReassignedActors(remotePlayers);
         ReleaseFarModels(camera.Position, remotePlayers);
@@ -115,6 +124,7 @@ public sealed class RemotePlayerRenderer : IDisposable
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
             model.RenderPrepared(shader, instance, renderState.ModelMatrix, animation.Layers.Overrides);
             model.EndRender();
+            _casters.Add(model, instance, renderState.ModelMatrix, animation.Layers.Overrides);
             _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
             _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
             if (flashing)
