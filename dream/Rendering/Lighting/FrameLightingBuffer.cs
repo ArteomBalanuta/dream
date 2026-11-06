@@ -9,7 +9,7 @@ namespace Dream.Rendering.Lighting;
 // The GL uniform buffer behind the FrameLighting block (shaders/lighting.glsl). One buffer holds
 // two ranges of FrameLighting.SizeInBytes each:
 // - the world range at offset 0: world-space directions, CameraPosition.xyz = the camera;
-// - the view-model range at ViewModelOffset (176 rounded up to GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT):
+// - the view-model range at ViewModelOffset (FrameLighting.SizeInBytes, 256, rounded up to GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT):
 //   the view model draws with view = identity, so its fragPos is in eye space. Its sun and moon
 //   directions are rotated into eye space, its camera sits at the origin, and its ambient never
 //   drops below ViewModelAmbientFloor so the hands stay visible at night.
@@ -69,6 +69,7 @@ public sealed class FrameLightingBuffer : IDisposable
     }
 
     // The world range: the frame's lighting with the camera position filled in (fog start kept).
+    // FrameLighting.FrameTime is OUTPUT-ONLY: whatever the caller put there is discarded and rebuilt here.
     // `rawClockSeconds` is the UNWRAPPED clock: the sway clock and the cloud drift are each reduced in double
     // precision by the period that makes them seamless (GroundWind.ClockPeriodSeconds, CloudLayer.PeriodCells).
     public static FrameLighting ForWorld(in FrameLighting lighting, Vector3 cameraPosition, double rawClockSeconds = 0d)
@@ -91,6 +92,10 @@ public sealed class FrameLightingBuffer : IDisposable
         // The cloud shadow is a function of WORLD position and the world-space sun; the view-model pass has
         // eye-space fragPos and sun, so it would sample the sheet at an arbitrary point. No clouds, no shadow.
         viewModel.CloudParams = Vector4.Zero;
+        // The same holds for the sun shadow map: its matrix maps WORLD positions, so a lookup with an eye-space fragPos
+        // would read an arbitrary texel. Strength 0 makes dreamSunVisibility return 1 (no shadow), and the matrix goes too.
+        viewModel.SunShadowMatrix = Matrix4.Zero;
+        viewModel.SunShadowParams = Vector4.Zero;
         viewModel.AmbientSky = FloorAmbient(lighting.AmbientSky);
         viewModel.AmbientGround = FloorAmbient(lighting.AmbientGround);
         return viewModel;
@@ -100,7 +105,7 @@ public sealed class FrameLightingBuffer : IDisposable
     public void Upload(in FrameLighting lighting, Vector3 cameraPosition, in Matrix4 view, double rawClockSeconds = 0d)
     {
         FrameLighting world = ForWorld(in lighting, cameraPosition, rawClockSeconds);
-        // The cloud term is a world-space function and cannot ride the eye-space view-model range: ForViewModel zeroes it.
+        // The cloud and sun-shadow terms are world-space functions and cannot ride the eye-space view-model range: ForViewModel zeroes them.
         FrameLighting viewModel = ForViewModel(in world, in view);
 
         GL.BindBuffer(BufferTarget.UniformBuffer, _handle);
