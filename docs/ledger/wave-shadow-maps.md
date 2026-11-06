@@ -611,3 +611,67 @@ What this design **cannot** do, and what fixing it would cost.
 3. **Is the shadow fade-out at the 40-unit boundary acceptable**, or do you want the second cascade now (limit 4, ~+80-130 draws)?
 4. **"Shadowed → pure ambient" with no AO** — is that the grim look you want, or should SSAO be in scope?
 5. **If the measured shadowed night saturation exceeds `GrimLookHistogramTests.MeanSatMax = 0.38`**, may the band move, or should the night ambient be desaturated to compensate? I would not widen an art gate without your word.
+
+---
+
+# Outcome (shipped on `integrate/living-world`)
+
+Three workstreams merged and reconciled. Suite: **8602 passed, 0 failed, 47 skipped**. Build clean,
+all python gates pass, `enginelook.py` self-test passes with its new contract tripwire.
+
+## Measured in the running game, not estimated
+
+Camp at night, 4 casting fires, 2048 sun map, 2048 fire atlas, 1440x1024, MSAA 4x:
+
+| | shadows off | shadows on |
+|---|---|---|
+| GPU world | 0.99-1.65 ms | 0.80-1.37 ms |
+| GPU actors | 0.41-0.65 ms | 0.23-0.41 ms |
+| **GPU shadows** | 0.00 ms | **0.95-1.59 ms** |
+| draw calls | 301 | **~1,510** |
+| CPU frame total | — | 1.30-2.81 ms (cap is 6.94 ms at 144 FPS) |
+
+**The fire count stays at 4.** WS-D2's pre-merge estimate was +3-6 ms CPU from a Debug-build
+extrapolation; the real cost is **+1.0-1.6 ms GPU** and the frame still sits at its cap with 1.3-2.8 ms
+of CPU work. The decision is now data-backed rather than hopeful. `DREAM_SHADOW_FIRES` remains the
+first knob to turn down, and skipping the cover layer in fire faces would remove ~425 of ~490 scatter
+draws across the 16 tiles if it is ever needed.
+
+Noon, same spot, against the pre-shadow branch: ground mean **-8.1 %** overall (lit gravel -8.3 %,
+far cobble -11.3 %), i.e. real occlusion rather than a blanket dim.
+
+## What the implementation found that the design got wrong
+
+The design document in this file was wrong in six places; every one was caught by the workstream that
+had to implement it, with evidence, and fixed:
+
+1. **Texel snapping was a no-op as specified.** `LookAt(centre + L*backoff, centre)` re-centres on the
+   focus each frame, so quantising it changes nothing — the shimmer it exists to prevent would have
+   survived. Fixed by fixing the view origin at the world origin. Unsnapped slides >0.2 texel; snapped
+   stays under 0.01.
+2. **The slope bias failed at 512 and 1024.** A fixed world-space bias does not scale with the texel;
+   the CPU mirror showed hundreds of acne points at those resolutions while 2048 looked fine — i.e. it
+   would have shipped broken for anyone who turned the knob down. Now texel-based.
+3. **`ViewAzimuthUnit (cos45, 0, sin45)` points toward the camera**, not along the view.
+4. **"OrthoSide bounds the receiver box" holds for one light-space axis only.** At a diagonal azimuth
+   the box's horizontal extent reaches 56.6 against 47.7. The visible footprint still fits at every
+   tested azimuth and elevation, but by 0.02 world units at the worst corner.
+5. **The fire-atlas UV snippet was wrong for faces -X and +Z.** It only reproduces under mirrored
+   (determinant -1) bases. Corrected in place above; **plain `Matrix4.LookAt` is the convention**,
+   because a determinant-negative view silently inverts winding and front-face culling is a standard
+   peter-panning fix someone will add later.
+6. **`w2` in the shader sketch had no slot** in `SunShadowParams`.
+
+## Honest limits
+
+- **Held weapons and worn armour do not cast** — they render outside the caster pass's ownership, so a
+  figure casts a shadow without its sword. The baked helm and cloak do cast.
+- **Actor shadows lag one frame**: the pass runs before actors animate and replays the previous pose.
+- **The moon is never shadowed** (the sun term only), which is what keeps the grim-look CPU mirror
+  truthful at hours 0, 20, 19 and 5.
+- **Fire shadows move very little.** Measured edge motion is 0.045 world units (~1.4 texels) at 8 units.
+  The flicker reads mostly as intensity (+-25 %) and reach (+-9 %). `FireFlicker.OffsetLateral` (2 cm)
+  is the knob if they should visibly dance.
+- Polar cones unshadowed by design; 4 fires of ~11-13; no AO; no shadow beyond the 40-unit sun volume.
+- **The GLSL face signs are pinned C#-against-C# plus a hard-coded expectation.** A GLSL-only edit to
+  those two ternaries would not be caught. A parsing assertion would close the loop.
