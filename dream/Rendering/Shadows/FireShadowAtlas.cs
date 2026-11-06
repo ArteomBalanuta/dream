@@ -12,13 +12,23 @@ namespace Dream.Rendering.Shadows;
 // ShadowSettings.FaceFovRadians so the 90 degree cone lands inside the tile minus its gutter. The polar cones (+-Y) are
 // not rendered, and the lookup treats them as lit.
 //
-// THE LOOKUP CONTRACT (what fireShadows.glsl must mirror). For a fragment at offset d = fragPos - lightPos with
-// a = abs(d), when a.y < max(a.x, a.z):
-//     faces 0/1 (a.x > a.z): ndc = (d.z, d.y) / a.x      faces 2/3: ndc = (d.x, d.y) / a.z
-// and the stored depth is the perspective depth of `major` (see Depth). The face cameras below are built to produce
-// exactly that mapping, so the GLSL needs no per-face sign. That makes the -X and +Z cameras MIRRORED (negative
-// determinant: right x up points along the view direction instead of against it). Depth-only rendering with culling
-// off is blind to winding, so the mirror costs nothing, and FaceUvTests pins the mapping.
+// THE LOOKUP CONTRACT (what fireShadows.glsl mirrors). For a fragment at offset d = fragPos - lightPos with
+// a = abs(d), when a.y < max(a.x, a.z) the face is chosen by the major horizontal axis and the lateral coordinate is
+// d projected on THAT FACE'S right axis, which is the right axis of a plain Matrix4.LookAt down the face forward with
+// +Y up (Right below):
+//     face 0 (+X): ndc = ( d.z, d.y) / a.x      face 1 (-X): ndc = (-d.z, d.y) / a.x
+//     face 2 (+Z): ndc = (-d.x, d.y) / a.z      face 3 (-Z): ndc = ( d.x, d.y) / a.z
+// and the stored depth is the perspective depth of `major` (see Depth).
+//
+// WHY THE PER-FACE SIGN RATHER THAN A MIRRORED CAMERA. A sign-free lookup (ndc = (d.z, d.y) / a.x for BOTH x faces and
+// (d.x, d.y) / a.z for BOTH z faces) is achievable, but only by building the -X and +Z cameras with a right axis of
+// +Z and +X respectively, which makes those two view matrices MIRRORED: determinant -1. A determinant-negative view
+// matrix silently inverts triangle winding, so front faces come out as back faces in exactly two of the sixteen tiles.
+// Today's caster pass renders depth only with culling off and does not care — but front-face culling in the caster
+// pass is the standard peter-panning fix, and someone will plausibly add it; it would then quietly cull the wrong
+// faces in those two tiles. So every face camera here is a plain right-handed LookAt and the four signs live in the
+// GLSL, where they are visible. FireShadowList.FaceForward is the one definition of the forwards, and
+// FireShadowAtlasAgreementTests pins FaceView against LookAt of it for all four faces.
 public static class FireShadowAtlas
 {
     public const int FaceCount = ShadowSettings.FacesPerLight;
@@ -144,38 +154,25 @@ public static class FireShadowAtlas
         frame.FireCount = count;
     }
 
-    // Direction the face looks along, and the world axis that is the face's screen-right (the lookup contract above).
-    public static Vector3 Forward(int face) => face switch
-    {
-        PositiveX => Vector3.UnitX,
-        NegativeX => -Vector3.UnitX,
-        PositiveZ => Vector3.UnitZ,
-        NegativeZ => -Vector3.UnitZ,
-        _ => throw new ArgumentOutOfRangeException(nameof(face)),
-    };
-
-    public static Vector3 Right(int face) => face switch
-    {
-        PositiveX or NegativeX => Vector3.UnitZ,
-        PositiveZ or NegativeZ => Vector3.UnitX,
-        _ => throw new ArgumentOutOfRangeException(nameof(face)),
-    };
+    /// <summary>
+    /// Direction the face looks along. Delegates to <see cref="FireShadowList.FaceForward"/>, the one definition, so the
+    /// caster pass and the lookup block can never disagree about which axis a tile holds.
+    /// </summary>
+    public static Vector3 Forward(int face) => FireShadowList.FaceForward(face);
 
     /// <summary>
-    /// World to face-view. Row-vector convention (p * M), view space looks down -Z, so the backward axis is -Forward.
-    /// Built from the basis directly rather than with LookAt, because the right axis is fixed by the lookup contract.
+    /// The world axis that is the face's screen-right: cross(+Y, -Forward), the right axis a plain LookAt produces,
+    /// and the lateral axis of the lookup contract above. Derived, not chosen - FaceView is the LookAt itself.
     /// </summary>
-    public static Matrix4 FaceView(Vector3 lightPos, int face)
-    {
-        Vector3 right = Right(face);
-        Vector3 up = Vector3.UnitY;
-        Vector3 back = -Forward(face);
-        return new Matrix4(
-            right.X, up.X, back.X, 0f,
-            right.Y, up.Y, back.Y, 0f,
-            right.Z, up.Z, back.Z, 0f,
-            -Vector3.Dot(right, lightPos), -Vector3.Dot(up, lightPos), -Vector3.Dot(back, lightPos), 1f);
-    }
+    public static Vector3 Right(int face) => Vector3.Normalize(Vector3.Cross(Vector3.UnitY, -Forward(face)));
+
+    /// <summary>
+    /// World to face-view: a plain right-handed LookAt from the light down the face forward with +Y up (row-vector
+    /// convention, p * M, view space looking down -Z). See the per-face sign note at the top of the file for why this is
+    /// LookAt and not a basis chosen to make the GLSL sign-free.
+    /// </summary>
+    public static Matrix4 FaceView(Vector3 lightPos, int face) =>
+        Matrix4.LookAt(lightPos, lightPos + Forward(face), Vector3.UnitY);
 
     /// <summary>The face projection: square, widened to FaceFovRadians so the 90 degree cone sits inside the gutter.</summary>
     public static Matrix4 FaceProjection(float near, float far) =>
@@ -193,12 +190,15 @@ public static class FireShadowAtlas
         return a.X > a.Z ? (d.X > 0f ? PositiveX : NegativeX) : (d.Z > 0f ? PositiveZ : NegativeZ);
     }
 
-    /// <summary>The lookup contract's tile-local NDC of an offset (xy in -1..1 across the 90 degree cone) and its major distance.</summary>
+    /// <summary>
+    /// The lookup contract's tile-local NDC of an offset (xy in -1..1 across the 90 degree cone) and its major distance.
+    /// The lateral coordinate is d on the face's Right axis, which carries the per-face sign fireShadows.glsl spells out.
+    /// </summary>
     public static (Vector2 Ndc, float Major) FaceNdc(int face, Vector3 d)
     {
         bool xFace = face is PositiveX or NegativeX;
         float major = xFace ? MathF.Abs(d.X) : MathF.Abs(d.Z);
-        Vector2 across = xFace ? new Vector2(d.Z, d.Y) : new Vector2(d.X, d.Y);
+        Vector2 across = new(Vector3.Dot(d, Right(face)), d.Y);
         return (across / major, major);
     }
 

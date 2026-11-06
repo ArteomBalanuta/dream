@@ -116,15 +116,16 @@ public class FireShadowAtlasLayoutTests
     }
 
     [Fact]
-    public void The_Faces_Are_Right_Handed_Except_Where_The_Lookup_Contract_Needs_A_Mirror()
+    public void Every_Face_Camera_Is_Right_Handed_So_The_Caster_Pass_Can_Cull_Later()
     {
-        // The contract fixes ndc.x = d.z / |d.x| for BOTH x faces and d.x / |d.z| for BOTH z faces, so the -X and +Z cameras
-        // are mirrored (determinant -1). Depth-only with culling off does not care, and the GLSL needs no per-face sign.
-        int[] expected = [1, -1, -1, 1];
+        // All four faces are plain LookAt, so all four determinants are +1. A mirrored face (determinant -1) would make a
+        // sign-free GLSL lookup possible, but it silently inverts winding: front-face culling in the caster pass, the
+        // standard peter-panning fix, would then cull the wrong faces in exactly the -X and +Z tiles. The four signs live
+        // in fireShadows.glsl instead, where they are visible.
         for (int face = 0; face < FireShadowAtlas.FaceCount; face++)
         {
             Matrix4 view = FireShadowAtlas.FaceView(Vector3.Zero, face);
-            Assert.Equal(expected[face], MathF.Sign(view.Determinant));
+            Assert.Equal(1, MathF.Sign(view.Determinant));
             Assert.Equal(1f, MathF.Abs(view.Determinant), 4);
         }
     }

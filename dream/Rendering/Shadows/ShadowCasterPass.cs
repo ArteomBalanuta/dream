@@ -42,10 +42,12 @@ public readonly record struct ShadowPassStats(int SunDraws, int FireDraws, int F
 // sway), and no other program, texture binding or VAO is left changed.
 public static class ShadowCasterPass
 {
-    // D3 TURNS THIS ON when the receivers sample the maps. Until then the sun strength and every fire slot's strength are
-    // zero (the shaders return visibility 1.0), and the ground-blob shadows stay on, so the frame is pixel-identical
-    // to the frame before the pass existed. It is the single switch between "maps written, unread" and "maps read".
-    public static readonly bool MapsAreSampled = false;
+    // ON since integration: the receivers sample both maps (lighting.glsl's dreamSunVisibility with
+    // DREAM_SUN_SHADOW_LIVE = 1, and fireShadows.glsl's dreamFireVisibility through pointLights.glsl). While it was false
+    // the sun strength and every fire slot's strength were zero (the shaders returned visibility 1.0) and the ground-blob
+    // shadows stayed on, so the frame was pixel-identical to the frame before the pass existed. It is the single switch
+    // between "maps written, unread" and "maps read"; DREAM_SHADOWS=0 still turns the whole system off and the blobs back on.
+    public static readonly bool MapsAreSampled = true;
 
     public static float Strength => MapsAreSampled ? 1f : 0f;
 

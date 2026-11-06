@@ -23,6 +23,9 @@ public partial class Render
     // The BoundaryMist uniform buffer (shaders/boundaryMist.glsl). Same lifetime as _frameLightingBuffer.
     private BoundaryMistBuffer? _boundaryMistBuffer;
 
+    // The FireShadowList uniform buffer (shaders/fireShadows.glsl). Same lifetime as _frameLightingBuffer.
+    private Dream.Rendering.Shadows.FireShadowListBuffer? _fireShadowListBuffer;
+
     // The map size, clock and switch of the boundary mist wall. The scene sets it each frame before
     // DrawWorld; the default (no map) uploads strength 0.
     // Under DREAM_FX_CLOCK the setter swaps in the pinned clock (FxClockPin), so the animated void mist holds still.
@@ -52,6 +55,10 @@ public partial class Render
         SelectPointLights(cameraPosition, in view);
         _lightListBuffer?.Upload(in _selectedLights, in view);
         _boundaryMistBuffer?.Upload(BoundaryMist, camera.Position);
+        // The fire half of the shadow frame PrepareShadows just filled and rendered the atlas for. It has to be uploaded
+        // after that pass (the slots and their flickered positions are only known then) and before any world draw samples
+        // the atlas, and this is the one point in the frame between the two. Upload binds the world range itself.
+        _fireShadowListBuffer?.Upload(in _shadowFrame);
     }
 
     public void BindWorldLighting()
@@ -59,6 +66,7 @@ public partial class Render
         _frameLightingBuffer?.BindWorld();
         _lightListBuffer?.BindWorld();
         _boundaryMistBuffer?.BindWorld();
+        _fireShadowListBuffer?.BindWorld();
     }
 
     public void BindViewModelLighting()
@@ -66,6 +74,9 @@ public partial class Render
         _frameLightingBuffer?.BindViewModel();
         _lightListBuffer?.BindViewModel();
         _boundaryMistBuffer?.BindViewModel();
+        // Count 0 by construction: the view model's fragPos is in eye space and the atlas holds world-space depth, so
+        // dreamFireVisibility must return a literal 1.0 there rather than read an arbitrary tile.
+        _fireShadowListBuffer?.BindViewModel();
     }
 
     // Creates the buffers and fills both ranges of each with the current lighting (camera at the
@@ -80,6 +91,8 @@ public partial class Render
         _lightListBuffer.Upload(in _selectedLights, Matrix4.Identity);
         _boundaryMistBuffer = new BoundaryMistBuffer();
         _boundaryMistBuffer.Upload(default, Vector3.Zero);
+        _fireShadowListBuffer = new Dream.Rendering.Shadows.FireShadowListBuffer();
+        _fireShadowListBuffer.Upload(Dream.Rendering.Shadows.ShadowFrame.None);
         InitializeDebugPointLights();
     }
 
@@ -87,8 +100,16 @@ public partial class Render
     {
         try
         {
-            _boundaryMistBuffer?.Dispose();
-            _boundaryMistBuffer = null;
+            try
+            {
+                _fireShadowListBuffer?.Dispose();
+                _fireShadowListBuffer = null;
+            }
+            finally
+            {
+                _boundaryMistBuffer?.Dispose();
+                _boundaryMistBuffer = null;
+            }
         }
         finally
         {

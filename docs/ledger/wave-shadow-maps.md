@@ -172,12 +172,14 @@ vec3  d = fragPos - lightPos;
 vec3  a = abs(d);
 if (a.y >= max(a.x, a.z)) return 1.0;                       // polar cone: unshadowed
 int   face; vec2 uv; float major;
-if (a.x > a.z) { face = d.x > 0.0 ? 0 : 1; major = a.x; uv = vec2(d.z, d.y) / major; }
-else           { face = d.z > 0.0 ? 2 : 3; major = a.z; uv = vec2(d.x, d.y) / major; }
+if (a.x > a.z) { face = d.x > 0.0 ? 0 : 1; major = a.x; uv = vec2(d.x > 0.0 ?  d.z : -d.z, d.y) / major; }
+else           { face = d.z > 0.0 ? 2 : 3; major = a.z; uv = vec2(d.z > 0.0 ? -d.x :  d.x, d.y) / major; }
 uv = uv * (0.5 * uFireShadowTile.z) + 0.5;                  // .z = the gutter-shrunk half-scale
 float zn    = ((f + n) / (f - n)) + (2.0*f*n / (f - n)) / (-major);   // the same perspective depth the pass wrote
 float depth = 0.5 * zn + 0.5;
 ```
+
+> **Correction (integration of WS-D2/D3).** The sign-free form this snippet originally carried — `uv = vec2(d.z, d.y) / major` for *both* x faces and `vec2(d.x, d.y) / major` for *both* z faces — **was wrong for `-X` (face 1) and `+Z` (face 2)**; `+X` and `-Z` were already right. It only works if the `-X` and `+Z` face cameras are built with right axes of `+Z` and `+X`, which makes those two view matrices **mirrored (determinant -1)** and silently inverts triangle winding in two of the sixteen tiles. The convention is therefore **plain `Matrix4.LookAt(lightPos, lightPos + FaceForward(face), +Y)` for all four faces** (`FireShadowList.FaceForward` is the one definition, `FireShadowAtlas.FaceView` is the LookAt), with the per-face lateral sign carried in the GLSL as corrected above. The reason to keep every face right-handed: front-face culling in the caster pass is the standard peter-panning fix and would otherwise cull the wrong faces in exactly those two tiles.
 
 - `near = 0.10f`, `far = light.Radius * 1.15f`. Past the radius the windowed falloff in `pointLights.glsl:18` is exactly 0, so far-plane clipping is invisible. The pass and the lookup read `near`/`far` from the **same UBO value**, so the encode round-trips exactly.
 - **Gutter**, derived: `TileGutter = 4` texels, rendered FOV widened so the 90° cone lands inside the inner 504², and the gutter cleared to 1.0, so a 4-tap PCF kernel at a face edge can never read the neighbouring tile:

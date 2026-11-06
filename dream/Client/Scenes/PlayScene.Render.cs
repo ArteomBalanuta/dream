@@ -88,7 +88,9 @@ public partial class PlayScene
         // picked from the frame's point lights, so the shadows can never disagree with what is lit) and before DrawWorld
         // uploads the frame lighting and samples the maps. Timed as its own GPU section; BeginSection(World) below ends it.
         gpuTimer.BeginSection(GpuTimerSection.Shadows);
-        _render.PrepareShadows(presentation);
+        // SetFrameLighting ran above (PrepareShadows writes the sun matrix into that block and uploads it), and the focus is
+        // the one the fog and the props use: the camera's isometric focus, else the camera itself.
+        _render.PrepareShadows(presentation.Camera, _render.FogOrigin ?? presentation.Camera.Position, presentation.VisibleWorld);
         long worldDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.World);
         // The boundary mist wall's inputs go up with the frame lighting inside DrawWorld.
