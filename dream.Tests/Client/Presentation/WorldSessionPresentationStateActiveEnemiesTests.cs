@@ -100,6 +100,8 @@ public class WorldSessionPresentationStateActiveEnemiesTests
         // same state allocation (768 B -> 776 B).
         // The FX wave added GpuEffectsMilliseconds (one double) to FramePerformanceSnapshot: +8 B in
         // the same state allocation (776 B -> 784 B).
+        // The shadow-map wave added GpuShadowMilliseconds (one double) to FramePerformanceSnapshot: +8 B in
+        // the same state allocation (824 B -> 832 B, which is the ceiling below, with no slack left).
         // No additional per-frame allocation was introduced.
         using ClientWorldSession session = new(
             floorSize: 10,

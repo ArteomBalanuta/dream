@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Dream.Rendering.Lighting;
 using Dream.Rendering.Mist;
 using Dream.Rendering.Models;
+using Dream.Rendering.Shadows;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 
@@ -142,10 +143,12 @@ public sealed class Shader : IDisposable
         _timeLocation = GetUniformLocation(TimeUniformName);
         // GL 3.3 core has no layout(binding = N) on a block, so the FrameLighting block (from
         // lighting.glsl) and the LightList block (pointLights.glsl) are pointed at their binding
-        // points here, once per program; the BoundaryMist block (boundaryMist.glsl) too. Programs that do not declare a block are left alone.
+        // points here, once per program; the BoundaryMist block (boundaryMist.glsl) and the FireShadowList block
+        // (fireShadows.glsl) too. Programs that do not declare a block are left alone.
         FrameLightingBuffer.BindProgramBlock(program);
         LightListBuffer.BindProgramBlock(program);
         BoundaryMistBuffer.BindProgramBlock(program);
+        FireShadowListBuffer.BindProgramBlock(program);
         GLUtils.CheckGLError("Shader creation");
     }
 

@@ -78,6 +78,6 @@ vec3 dreamDirectShaded(vec3 n, vec3 fragPos)
         vec3 onPlane = fragPos + uSunDirection.xyz * ((CloudPlaneY - fragPos.y) / uSunDirection.y);
         sunMask = 1.0 - uCloudParams.z * dreamCloudCover(onPlane.xz);
     }
-    return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask
+    return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask * dreamSunVisibility(fragPos, n)
          + max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;
 }

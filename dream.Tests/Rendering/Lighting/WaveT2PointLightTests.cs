@@ -354,11 +354,11 @@ public class WaveT2PointLightTests
     [Theory]
     [InlineData("cubeFragment.glsl")]
     [InlineData("enemyFragment.glsl")]
-    public void World_Fragment_Shaders_Include_Point_Lights_Right_After_Lighting(string fileName)
+    public void World_Fragment_Shaders_Include_Point_Lights_Right_After_Lighting_And_The_Fire_Shadows(string fileName)
     {
         string source = File.ReadAllText(Path.Combine(ShaderDirectory(), fileName));
 
-        Assert.Matches(new Regex(@"^#include ""lighting\.glsl""\r?\n#include ""pointLights\.glsl""\r?$", RegexOptions.Multiline), source);
+        Assert.Matches(new Regex(@"^#include ""lighting\.glsl""\r?\n(?://[^\r\n]*\r?\n)?#include ""fireShadows\.glsl""\r?\n#include ""pointLights\.glsl""\r?$", RegexOptions.Multiline), source);
         Assert.Single(Regex.Matches(source, @"dreamPointLights\(n, fragPos\)"));
 
         string resolved = Shader.ResolveIncludes(source, ShaderDirectory());

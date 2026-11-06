@@ -45,16 +45,14 @@ const float SunShadowSlopePerInvRes = 6826.667;
 const int SunShadowTapsPerSide = 3;
 const float SunShadowTapSpacing = 1.5;
 
-// Compile-time switch: 0 until the shadow pass is wired (workstream D3). While it is 0 the function below is a bare
-// `return 1.0` with no texture fetch and no use of the shadow members, so the frame is pixel-identical to a build with
-// no shadow code at all.
-#define DREAM_SUN_SHADOW_LIVE 0
+// Compile-time switch. 1: the live lookup below. 0: the function is a bare `return 1.0` with no texture fetch and no use of
+// the shadow members, i.e. a build with no sun shadow code at all (kept so the identity can be proved: ShadowDisabledIsIdentityTests).
+// Even live, strength 0 (DREAM_SHADOWS=0, the view-model range) returns a literal 1.0 before any fetch.
+#define DREAM_SUN_SHADOW_LIVE 1
 
 // 1.0 = fully lit, 0.0 = fully shadowed, of the SUN term (the dominant light: sun, else moon, matching the map).
-// TODO(D3): this is NOT yet multiplied into any lighting. dreamDirect stays textually unchanged (the engine contract
-// enginelook.py restates), and the seam is dreamDirectShaded in clouds.glsl (workstream-D3-owned):
-//     return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask      // the sun line
-// becomes `... * uSunColor.rgb * sunMask * dreamSunVisibility(fragPos, n)`, and DREAM_SUN_SHADOW_LIVE flips to 1.
+// It multiplies the SUN term in dreamDirectShaded (clouds.glsl), the one call site. dreamDirect stays textually unchanged
+// (the engine contract enginelook.py restates), and so does the moon term.
 float dreamSunVisibility(vec3 fragPos, vec3 n)
 {
 #if DREAM_SUN_SHADOW_LIVE

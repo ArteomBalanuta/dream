@@ -133,7 +133,9 @@ public class PresentationCameraScratchTests(ITestOutputHelper output)
         // Stats sheet: agility, energy (effective and base), stat points, mana, max mana, defense and
         // magic min/max (ten ints) in HudStatusSnapshot, +40 B in the same allocation.
         const int StatsSheetHudGrowthBytes = 40;
-        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes + WaveH3HudSnapshotGrowthBytes + WaveI3HudDeathGrowthBytes + FxWaveEffectsTimingGrowthBytes + StatsSheetHudGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
+        // Shadow maps: GpuShadowMilliseconds (one double) in the FramePerformanceSnapshot, +8 B.
+        const int ShadowTimingGrowthBytes = 8;
+        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes + WaveH3HudSnapshotGrowthBytes + WaveI3HudDeathGrowthBytes + FxWaveEffectsTimingGrowthBytes + StatsSheetHudGrowthBytes + ShadowTimingGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
         Assert.True(
             captureBytes <= budget,
             $"CapturePresentationState allocated {captureBytes} B; expected at most {budget} B.");

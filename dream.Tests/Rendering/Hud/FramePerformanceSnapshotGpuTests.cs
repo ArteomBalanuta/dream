@@ -17,6 +17,7 @@ public class FramePerformanceSnapshotGpuTests(ITestOutputHelper output)
         GpuWorldMilliseconds = 4.25,
         GpuActorsMilliseconds = 1.5,
         GpuEffectsMilliseconds = 0.75,
+        GpuShadowMilliseconds = 0.625,
         GpuHudMilliseconds = 0.375,
         GpuPrimitives = 987654,
         DrawCalls = 640,
@@ -34,7 +35,7 @@ public class FramePerformanceSnapshotGpuTests(ITestOutputHelper output)
         Assert.Equal(15, FramePerformanceSnapshot.HudLineCount);
         Assert.Equal(GpuLineIndex, lines.Length - 1);
         Assert.Equal(
-            "GPU: world 4.25 ms, actors 1.50 ms, fx 0.75 ms, hud 0.38 ms, prims 987654, draws 640, programs 37, uniforms 1500",
+            "GPU: world 4.25 ms, actors 1.50 ms, shadows 0.63 ms, fx 0.75 ms, hud 0.38 ms, prims 987654, draws 640, programs 37, uniforms 1500",
             lines[GpuLineIndex]);
     }
 
@@ -45,6 +46,7 @@ public class FramePerformanceSnapshotGpuTests(ITestOutputHelper output)
         Assert.True((FramePerformanceSnapshot.Empty with { GpuActorsMilliseconds = 0.01 }).HasCounters);
         Assert.True((FramePerformanceSnapshot.Empty with { GpuHudMilliseconds = 0.01 }).HasCounters);
         Assert.True((FramePerformanceSnapshot.Empty with { GpuEffectsMilliseconds = 0.01 }).HasCounters);
+        Assert.True((FramePerformanceSnapshot.Empty with { GpuShadowMilliseconds = 0.01 }).HasCounters);
         Assert.True((FramePerformanceSnapshot.Empty with { GpuPrimitives = 1 }).HasCounters);
         Assert.True((FramePerformanceSnapshot.Empty with { DrawCalls = 1 }).HasCounters);
         Assert.True((FramePerformanceSnapshot.Empty with { ProgramBinds = 1 }).HasCounters);
@@ -68,6 +70,7 @@ public class FramePerformanceSnapshotGpuTests(ITestOutputHelper output)
                     GpuWorldMilliseconds = 99999.995,
                     GpuActorsMilliseconds = double.NaN,
                     GpuEffectsMilliseconds = double.PositiveInfinity,
+                    GpuShadowMilliseconds = double.NaN,
                     GpuHudMilliseconds = double.NegativeInfinity,
                     GpuPrimitives = long.MinValue,
                     DrawCalls = int.MaxValue,
@@ -81,7 +84,7 @@ public class FramePerformanceSnapshotGpuTests(ITestOutputHelper output)
             {
                 string expected = snapshot.FormatHudLine(GpuLineIndex);
                 Assert.Equal(
-                    $"GPU: world {snapshot.GpuWorldMilliseconds:0.00} ms, actors {snapshot.GpuActorsMilliseconds:0.00} ms, fx {snapshot.GpuEffectsMilliseconds:0.00} ms, hud {snapshot.GpuHudMilliseconds:0.00} ms, prims {snapshot.GpuPrimitives}, draws {snapshot.DrawCalls}, programs {snapshot.ProgramBinds}, uniforms {snapshot.UniformUploads}",
+                    $"GPU: world {snapshot.GpuWorldMilliseconds:0.00} ms, actors {snapshot.GpuActorsMilliseconds:0.00} ms, shadows {snapshot.GpuShadowMilliseconds:0.00} ms, fx {snapshot.GpuEffectsMilliseconds:0.00} ms, hud {snapshot.GpuHudMilliseconds:0.00} ms, prims {snapshot.GpuPrimitives}, draws {snapshot.DrawCalls}, programs {snapshot.ProgramBinds}, uniforms {snapshot.UniformUploads}",
                     expected);
                 Assert.True(snapshot.TryFormatHudLine(GpuLineIndex, buffer, out int written));
                 Assert.Equal(expected, Encoding.UTF8.GetString(buffer, 0, written));
@@ -101,7 +104,7 @@ public class FramePerformanceSnapshotGpuTests(ITestOutputHelper output)
         try
         {
             Assert.Equal(
-                "GPU: world 4,25 ms, actors 1,50 ms, fx 0,75 ms, hud 0,38 ms, prims 987654, draws 640, programs 37, uniforms 1500",
+                "GPU: world 4,25 ms, actors 1,50 ms, shadows 0,63 ms, fx 0,75 ms, hud 0,38 ms, prims 987654, draws 640, programs 37, uniforms 1500",
                 Snapshot.FormatHudLine(GpuLineIndex));
         }
         finally

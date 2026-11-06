@@ -1,4 +1,4 @@
-// pointLights.glsl - `#include "pointLights.glsl"` after lighting.glsl (one level, no #version).
+// pointLights.glsl - `#include "pointLights.glsl"` after lighting.glsl and fireShadows.glsl (one level, no #version).
 // Mirrors Rendering/Lighting/LightList.cs (std140, 528 B, binding LightList.BindingPoint = 1).
 // World range: world-space positions. View-model range: eye-space positions (view model draws with view = identity).
 layout(std140) uniform LightList {
@@ -18,7 +18,10 @@ vec3 dreamPointLights(vec3 n, vec3 fragPos) {
         float f = clamp(1.0 - s, 0.0, 1.0);
         f = f * f / (1.0 + 1.5 * s); // windowed to 0 at r; the 1/(1+1.5s) term keeps the core and thins the middle, so a pool punches
         float lambert = max(dot(n, toLight * inversesqrt(max(d2, 1e-4))), 0.0);
-        sum += uPointLightColor[i].rgb * (f * (0.25 + 0.75 * lambert)); // 0.25 wrap keeps faces readable
+        // The fire shadow multiplies the lit term of a casting light (fireShadows.glsl); 1.0, with no fetch, for every other
+        // light and whenever no fire casts, so a build with shadows off sums exactly what it summed before.
+        float visibility = f > 0.0 ? dreamFireVisibility(i, fragPos, n) : 1.0;
+        sum += uPointLightColor[i].rgb * (f * (0.25 + 0.75 * lambert)) * visibility; // 0.25 wrap keeps faces readable
     }
     return sum;
 }

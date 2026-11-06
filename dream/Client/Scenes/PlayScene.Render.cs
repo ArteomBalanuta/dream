@@ -84,6 +84,11 @@ public partial class PlayScene
 
         UpdateAudioFrame(presentation, remotePlayerStates, sky.StarVisibility, (float)args.Time);
         CollectFrameLights(in presentation, remotePlayerStates);
+        // The shadow maps: the sun's map and the casting fires' faces. After the lights are collected (the fire slots are
+        // picked from the frame's point lights, so the shadows can never disagree with what is lit) and before DrawWorld
+        // uploads the frame lighting and samples the maps. Timed as its own GPU section; BeginSection(World) below ends it.
+        gpuTimer.BeginSection(GpuTimerSection.Shadows);
+        _render.PrepareShadows(presentation);
         long worldDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.World);
         // The boundary mist wall's inputs go up with the frame lighting inside DrawWorld.
@@ -192,6 +197,7 @@ public partial class PlayScene
             GpuWorldMilliseconds = gpuTimer.Latest.WorldMilliseconds,
             GpuActorsMilliseconds = gpuTimer.Latest.ActorsMilliseconds,
             GpuEffectsMilliseconds = gpuTimer.Latest.EffectsMilliseconds,
+            GpuShadowMilliseconds = gpuTimer.Latest.ShadowMilliseconds,
             GpuHudMilliseconds = gpuTimer.Latest.HudMilliseconds,
             GpuPrimitives = gpuTimer.Latest.PrimitivesGenerated,
             DrawCalls = _lastFrameCounters.DrawCalls,
