@@ -128,6 +128,92 @@ public sealed class PropRenderer
         }
     }
 
+    // The shadow caster counterpart of Draw (Draw itself is untouched): the ground scatter, then the props, into the
+    // depth-only target the view describes. Props are rigid and do not sway, so nothing here sets uWind (the scatter
+    // caster resets it before returning). Returns the number of props drawn.
+    public int DrawCasters(in Dream.Rendering.Shadows.ShadowCasterView view)
+    {
+        _ground.DrawCasters(in view);
+
+        IReadOnlyList<PropPlacement> placements = _index.Placements;
+        if (placements.Count == 0 || !_enabled)
+        {
+            return 0;
+        }
+
+        Shader shader = _render.GetShader(Render.ShadowDepthShaderName);
+        int drawn = 0;
+        int cursor = 0;
+        while (cursor < placements.Count)
+        {
+            // Placements are sorted by kind: one contiguous run, one BeginRender, as in Draw.
+            PropKind kind = placements[cursor].Kind;
+            int end = cursor;
+            while (end < placements.Count && placements[end].Kind == kind)
+            {
+                end++;
+            }
+
+            AnimatedModel? model = null;
+            bool begun = false;
+            try
+            {
+                for (int i = cursor; i < end; i++)
+                {
+                    PropPlacement p = placements[i];
+                    CasterBounds(in p, out Vector3 min, out Vector3 max, out float reach);
+                    if (!view.Accepts(min, max, reach))
+                    {
+                        continue;
+                    }
+
+                    if (!begun)
+                    {
+                        // Not decoded yet: skipped this frame, like the visible draw.
+                        if (!ModelAssets.TryGet(PropCatalog.ModelPath(kind), out model))
+                        {
+                            break;
+                        }
+
+                        model.BeginDepthRender(shader, view.View, view.Projection);
+                        begun = true;
+                    }
+
+                    // The same matrix Draw builds: scale, then yaw, then translation.
+                    Matrix4 matrix =
+                        Matrix4.CreateScale(p.Scale) *
+                        Matrix4.CreateRotationY(MathHelper.DegreesToRadians(p.YawDegrees)) *
+                        Matrix4.CreateTranslation(p.Position);
+                    model!.RenderPrepared(shader, matrix);
+                    drawn++;
+                }
+            }
+            finally
+            {
+                if (begun)
+                {
+                    model!.EndRender();
+                }
+            }
+
+            cursor = end;
+        }
+
+        return drawn;
+    }
+
+    // The box IsVisible tests, and the distance a caster of this prop is accepted at: the visible pass's draw distance
+    // (plus the prop's radius) capped at the caster distance, so a prop the camera never draws does not cast either.
+    public static void CasterBounds(in PropPlacement placement, out Vector3 min, out Vector3 max, out float reach)
+    {
+        PropBounds bounds = PropCatalog.Bounds(placement.Kind);
+        float radius = bounds.HorizontalRadius * placement.Scale;
+        Vector3 p = placement.Position;
+        min = new Vector3(p.X - radius, p.Y - 0.3f, p.Z - radius);
+        max = new Vector3(p.X + radius, p.Y + (bounds.Height * placement.Scale) + 0.3f, p.Z + radius);
+        reach = MathF.Min(Dream.Rendering.Shadows.ShadowCasterSelection.CasterDistance, DrawDistance + radius);
+    }
+
     // Within the draw distance of the focus, and the prop's coarse box touches the view frustum.
     public static bool IsVisible(in PropPlacement placement, Vector3 focus, in ViewFrustum frustum)
     {

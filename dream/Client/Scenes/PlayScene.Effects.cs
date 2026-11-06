@@ -4,6 +4,7 @@ using Dream.Rendering.Actors;
 using Dream.Rendering.Core;
 using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
+using Dream.Rendering.Shadows;
 using Dream.Rendering.Sky;
 using Dream.Simulation.Enemies;
 
@@ -66,8 +67,16 @@ public partial class PlayScene
         simulation.Advance(in inputs, _render.Lights.Lights);
 
         Vector3 viewCentre = FxSimulation.ViewCentre(in inputs);
-        CollectShadows(shadows, in presentation, viewCentre);
-        int shadowCount = shadows.Write(_fxInstances, presentation.Camera.Position, viewCentre, sky.StarVisibility);
+        // The ground blobs are the FALLBACK shadow: they draw whenever the shadow maps are not the shadow source (DREAM_SHADOWS=0,
+        // so that frame reproduces the pre-shadow-map output exactly, and until the receivers sample the maps), and they stay
+        // the only shadow beyond the sun map's reach. FxShadowList, FxShadowRules and fxVertex.glsl are untouched.
+        int shadowCount = 0;
+        if (!ShadowCasterPass.ShadowMapsReplaceBlobs)
+        {
+            CollectShadows(shadows, in presentation, viewCentre);
+            shadowCount = shadows.Write(_fxInstances, presentation.Camera.Position, viewCentre, sky.StarVisibility);
+        }
+
         int count = simulation.WriteInstances(_fxInstances, shadowCount);
 
         gpuTimer.BeginSection(GpuTimerSection.Effects);

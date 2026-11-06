@@ -1,6 +1,7 @@
 using Dream.Client.Presentation;
 using Dream.Rendering.Core;
 using Dream.Rendering.Models;
+using Dream.Rendering.Shadows;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
@@ -20,6 +21,9 @@ public class WorldRenderer : IDisposable
     // frame's visible items, and nothing here or in Render keeps them past the draw calls.
     private readonly List<Cube> _visibleCubes = new();
     private readonly List<GeometryRenderBlockDescriptor> _visibleBlocks = new();
+    // The shadow caster pass's own accepted cubes and blocks, so it never touches the visible pass's lists.
+    private readonly List<Cube> _casterCubes = new();
+    private readonly List<GeometryRenderBlockDescriptor> _casterBlocks = new();
     private bool _disposed;
 
     public WorldRenderer(Render render)
@@ -154,6 +158,54 @@ public class WorldRenderer : IDisposable
             StaticChunkDrawMilliseconds: staticStats.DrawMilliseconds,
             StaticChunkRebuiltMeshes: staticStats.RebuiltMeshes,
             StaticChunkReusedMeshes: staticStats.ReusedMeshes);
+    }
+
+    // The shadow caster entry (Rendering/Shadows/ShadowCasterPass): the static chunk meshes, then the dynamic cubes and
+    // blocks, drawn depth-only into the target the view describes. Culling is the light's own frustum (not the camera's), so
+    // a cube behind the camera still casts. The batch planner and the instanced drawer are the visible pass's, unchanged:
+    // grouping by material and model is just as valid a grouping for depth, and the pass is sequential with DrawWorld.
+    // Returns the number of static meshes drawn.
+    public int DrawCasters(Camera camera, in ShadowCasterView view, in GeometryRenderExport export)
+    {
+        ArgumentNullException.ThrowIfNull(camera);
+        int meshes = _staticChunkRenderer.DrawDepth(_render, in view);
+
+        IWorldInstanceDrawTarget target = _render.ShadowInstanceTarget(in view);
+        _casterCubes.Clear();
+        IReadOnlyList<Cube>? dynamicCubes = export.DynamicCompatibilityCubes;
+        for (int i = 0; dynamicCubes != null && i < dynamicCubes.Count; i++)
+        {
+            Cube cube = dynamicCubes[i];
+            Vector3 half = new(cube.Side * CubeBoundingRadiusPerSide);
+            if (view.Accepts(cube.Position - half, cube.Position + half))
+            {
+                _casterCubes.Add(cube);
+            }
+        }
+
+        if (_casterCubes.Count > 0)
+        {
+            _instanceDrawer.DrawCubeBatches(target, camera, _batchPlanner.PlanCubeBatches(_casterCubes));
+        }
+
+        _casterBlocks.Clear();
+        IReadOnlyList<GeometryRenderBlockDescriptor>? dynamicBlocks = export.DynamicBlocks;
+        for (int i = 0; dynamicBlocks != null && i < dynamicBlocks.Count; i++)
+        {
+            GeometryRenderBlockDescriptor block = dynamicBlocks[i];
+            Vector3 half = new(block.Size.Length * 0.5f);
+            if (view.Accepts(block.Center - half, block.Center + half))
+            {
+                _casterBlocks.Add(block);
+            }
+        }
+
+        if (_casterBlocks.Count > 0)
+        {
+            _instanceDrawer.DrawGeometryBlockBatches(target, camera, _batchPlanner.PlanGeometryBlockBatches(_casterBlocks));
+        }
+
+        return meshes;
     }
 
     // Releases the static chunk meshes. Render calls this on the render thread at teardown.

@@ -29,6 +29,7 @@ public partial class Render
         RunDisposeStep(_worldRenderer.Dispose, ref failures);
         RunDisposeStep(_localPlayerRenderer.Dispose, ref failures);
         RunDisposeStep(_remotePlayerRenderer.Dispose, ref failures);
+        RunDisposeStep(DisposeShadows, ref failures);
         RunDisposeStep(_shaders.DisposeAll, ref failures);
         RunDisposeStep(DisposeFrameLighting, ref failures);
         RunDisposeStep(DeleteDebugCubeBuffers, ref failures);
@@ -130,6 +131,7 @@ public partial class Render
 
         InitializeShaders();
         InitializeFrameLighting();
+        InitializeShadows();
 
         UpdateProjectionForSettings(settings);
 

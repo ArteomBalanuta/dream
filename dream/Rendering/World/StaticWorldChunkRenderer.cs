@@ -1,4 +1,5 @@
 using Dream.Rendering.Core;
+using Dream.Rendering.Shadows;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -333,6 +334,52 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         _meshStore.EndPass(render);
         return materialBinds;
+    }
+
+    // The shadow caster walk (Rendering/Shadows): every mesh whose bounds are accepted by the target's light-space
+    // frustum is drawn depth-only, with NO material bind, no sort and no camera-direction cull (a mesh behind the camera
+    // can still cast into view). Returns the number of meshes drawn. It reuses the visible pass's scratch arrays, which is
+    // safe because the two passes never overlap, and clears the handles again for the same reason Draw does.
+    public int DrawDepth(Render render, in ShadowCasterView view)
+    {
+        ArgumentNullException.ThrowIfNull(render);
+        EnsureDrawCapacity(_meshes.Count);
+        int count = 0;
+        foreach (StaticWorldChunkDrawEntry entry in _meshes.Values)
+        {
+            StaticWorldChunkMeshInfo mesh = entry.Info;
+            if (mesh.ExposedFaceCount <= 0 ||
+                !view.Accepts(mesh.Bounds.Min, mesh.Bounds.Max) ||
+                !_meshStore.TryGetDrawHandle(mesh.Key, out object? handle))
+            {
+                continue;
+            }
+
+            _visibleMeshes[count] = mesh;
+            _visibleHandles[count] = handle;
+            count++;
+        }
+
+        if (count == 0)
+        {
+            return 0;
+        }
+
+        try
+        {
+            _meshStore.BeginDepthPass(render, view.View, view.Projection);
+            for (int i = 0; i < count; i++)
+            {
+                _meshStore.DrawDepth(render, in _visibleMeshes[i], _visibleHandles[i]);
+            }
+        }
+        finally
+        {
+            _meshStore.EndPass(render);
+            Array.Clear(_visibleHandles, 0, count);
+        }
+
+        return count;
     }
 
     private void EnsureDrawCapacity(int meshCount)
@@ -856,6 +903,16 @@ internal interface IStaticWorldChunkMeshStore
 
     void EndPass(Render render);
 
+    // The shadow caster pass: BeginDepthPass sets the depth program's matrices once, DrawDepth draws one mesh with no
+    // material, EndPass closes it. Stores that draw nothing (the tests') keep the no-op defaults.
+    void BeginDepthPass(Render render, in Matrix4 view, in Matrix4 projection)
+    {
+    }
+
+    void DrawDepth(Render render, in StaticWorldChunkMeshInfo mesh, object? handle)
+    {
+    }
+
     // Brings the store's copy of the terrain material map up to date. Called before BeginPass, only
     // when the map changed since the last call. Stores without a GPU copy keep the no-op default.
     void SyncMaterialMap(TerrainMaterialMap map)
@@ -938,6 +995,16 @@ internal sealed class GlStaticWorldChunkMeshStore : IStaticWorldChunkMeshStore
     public void EndPass(Render render)
     {
         Render.EndStaticTerrainPass();
+    }
+
+    public void BeginDepthPass(Render render, in Matrix4 view, in Matrix4 projection)
+    {
+        render.BeginShadowDepthProgram(in view, in projection);
+    }
+
+    public void DrawDepth(Render render, in StaticWorldChunkMeshInfo mesh, object? handle)
+    {
+        ((StaticMeshBuffer)handle!).DrawBatched();
     }
 
     public void Clear()

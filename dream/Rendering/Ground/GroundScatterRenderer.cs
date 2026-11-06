@@ -30,6 +30,10 @@ public sealed class GroundScatterRenderer
     private GroundAssetSet? _preloaded;
     private readonly WindUniform _terrainWind;
     private readonly WindUniform _actorWind;
+    // The shadow caster pass's own state: its matrices and its cell visibility. The sway tracker of the shadowDepth program
+    // is Render.ShadowWind, owned with the program (this class keeps one tracker per program it writes in its own file).
+    private Matrix4[] _casterMatrices = new Matrix4[256];
+    private bool[] _casterCellVisible = [];
 
     public GroundScatterRenderer(Render render)
     {
@@ -54,6 +58,10 @@ public sealed class GroundScatterRenderer
             shader.Use();
         }
     }
+
+    // The same writer for the shadowDepth program (Render.ShadowWind), so its sway reaches the program and its MASK variant by
+    // exactly the code that reaches cube and enemy.
+    internal static void ApplyShadowWind(Shader shader, Vector2 wind) => ApplyWind(shader, wind);
 
     // Instances and instanced draws the last Draw submitted (tests and diagnostics).
     public int LastDrawnCount { get; private set; }
@@ -161,8 +169,10 @@ public sealed class GroundScatterRenderer
                 {
                     bool terrain = info.Layer <= GroundLayer.Cover;
                     Shader shader = _render.GetShader(terrain ? TerrainShaderName : ActorShaderName);
-                    (terrain ? _terrainWind : _actorWind).Set(GroundWind.Uniform(info.Class, info.Height));
-                    model.Wind = GroundWind.Uniform(info.Class, info.Height);
+                    // WindFor is shared with DrawCasters: the shadow of a canopy sways with exactly this value.
+                    Vector2 wind = WindFor(info);
+                    (terrain ? _terrainWind : _actorWind).Set(wind);
+                    model.Wind = wind;
                     drawnModel = model;
                     model.BeginRender(shader, view, projection, enableCulling: false);
                     model.RenderPreparedInstanced(shader, _matrices, count);
@@ -187,6 +197,128 @@ public sealed class GroundScatterRenderer
                 drawnModel.Wind = Vector2.Zero;
             }
         }
+    }
+
+    // The uWind value an asset is drawn with: the ONE definition both Draw and DrawCasters use, so the shadow of a
+    // swaying plant is displaced by the same amount as the plant (ShadowWindParityTests pins both call sites).
+    public static Vector2 WindFor(GroundAsset asset) => GroundWind.Uniform(asset.Class, asset.Height);
+
+    // The shadow caster counterpart of Draw: the same placements, the same sway, drawn depth-only into the target the view
+    // describes. Decals are skipped (flat stains on the ground, and MASK, so they cast nothing); everything else casts. The
+    // sway goes to the shadowDepth program and its MASK variant exactly as Draw sends it to cube / enemy, and it is reset in
+    // a finally on every path, because that program also draws the terrain, the props and every actor's shadow.
+    // Returns the number of instances submitted.
+    public int DrawCasters(in Dream.Rendering.Shadows.ShadowCasterView view)
+    {
+        IReadOnlyList<GroundPlacement> placements = _index.Placements;
+        if (!_enabled || placements.Count == 0)
+        {
+            return 0;
+        }
+
+        IReadOnlyList<GroundAsset> assets = _index.Assets.Assets;
+        IReadOnlyList<GroundScatterIndex.Block> blocks = _index.Blocks;
+        IReadOnlyList<GroundScatterIndex.Cell> cells = _index.Cells;
+        if (_casterCellVisible.Length < cells.Count)
+        {
+            _casterCellVisible = new bool[cells.Count];
+        }
+
+        ViewFrustum frustum = view.Frustum;
+        for (int c = 0; c < cells.Count; c++)
+        {
+            GroundScatterIndex.Cell cell = cells[c];
+            _casterCellVisible[c] = CellVisible(in cell, LandmarkDrawDistance, view.Focus, in frustum);
+        }
+
+        Shader shader = _render.GetShader(Render.ShadowDepthShaderName);
+        int submitted = 0;
+        AnimatedModel? drawnModel = null;
+        try
+        {
+            int cursor = 0;
+            while (cursor < blocks.Count)
+            {
+                int asset = blocks[cursor].Asset;
+                int end = cursor;
+                while (end < blocks.Count && blocks[end].Asset == asset)
+                {
+                    end++;
+                }
+
+                GroundAsset info = assets[asset];
+                if (info.Layer != GroundLayer.Decal)
+                {
+                    int count = 0;
+                    for (int b = cursor; b < end; b++)
+                    {
+                        GroundScatterIndex.Block block = blocks[b];
+                        if (!_casterCellVisible[block.Cell])
+                        {
+                            continue;
+                        }
+
+                        for (int i = block.Start; i < block.Start + block.Count; i++)
+                        {
+                            GroundPlacement p = placements[i];
+                            CasterBounds(in p, info, out Vector3 min, out Vector3 max, out float reach);
+                            if (!view.Accepts(min, max, reach))
+                            {
+                                continue;
+                            }
+
+                            if (count == _casterMatrices.Length)
+                            {
+                                Array.Resize(ref _casterMatrices, count * 2);
+                            }
+
+                            _casterMatrices[count++] =
+                                Matrix4.CreateScale(p.Scale) *
+                                Matrix4.CreateRotationY(MathHelper.DegreesToRadians(p.YawDegrees)) *
+                                Matrix4.CreateTranslation(p.Position);
+                        }
+                    }
+
+                    if (count > 0 && ModelAssets.TryGet(info.ModelPath, out AnimatedModel? model))
+                    {
+                        Vector2 wind = WindFor(info);
+                        _render.ShadowWind.Set(wind);
+                        model.Wind = wind;
+                        drawnModel = model;
+                        model.BeginDepthRender(shader, view.View, view.Projection);
+                        model.RenderPreparedInstanced(shader, _casterMatrices, count);
+                        model.EndRender();
+                        model.Wind = Vector2.Zero;
+                        drawnModel = null;
+                        submitted += count;
+                    }
+                }
+
+                cursor = end;
+            }
+        }
+        finally
+        {
+            _render.ShadowWind.Reset();
+            if (drawnModel != null)
+            {
+                drawnModel.Wind = Vector2.Zero;
+                drawnModel.EndRender();
+            }
+        }
+
+        return submitted;
+    }
+
+    // IsVisible's box, and the distance a caster of this placement is accepted at: its layer's draw distance (plus its
+    // radius) capped at the caster distance, so a plant the camera never draws does not cast either.
+    public static void CasterBounds(in GroundPlacement placement, GroundAsset asset, out Vector3 min, out Vector3 max, out float reach)
+    {
+        float radius = asset.Radius * placement.Scale;
+        Vector3 p = placement.Position;
+        min = new Vector3(p.X - radius, p.Y - 0.3f, p.Z - radius);
+        max = new Vector3(p.X + radius, p.Y + (asset.Height * placement.Scale) + 0.3f, p.Z + radius);
+        reach = MathF.Min(Dream.Rendering.Shadows.ShadowCasterSelection.CasterDistance, DrawDistance(asset.Layer) + radius);
     }
 
     public static float DrawDistance(GroundLayer layer) => layer switch
