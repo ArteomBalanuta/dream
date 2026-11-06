@@ -35,6 +35,8 @@ uniform Material material;
 uniform vec3 uActorTintOffset;
 
 #include "lighting.glsl"
+// The fire shadow atlas lookup: pointLights.glsl calls dreamFireVisibility, so this goes above it.
+#include "fireShadows.glsl"
 #include "pointLights.glsl"
 // The boundary mist wall: the final colour is mixed toward smoke at and near the map edge.
 #include "boundaryMist.glsl"

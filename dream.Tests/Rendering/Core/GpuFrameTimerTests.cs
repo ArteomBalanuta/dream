@@ -141,7 +141,7 @@ public class GpuFrameTimerTests
     {
         FakeGpuQueryApi api = new();
         GpuFrameTimer timer = new(api, ringSize: 3);
-        Assert.Equal(3 * 5, api.Created.Count);
+        Assert.Equal(3 * (GpuFrameTimer.SectionCount + 1), api.Created.Count);
 
         timer.BeginFrame();
         timer.BeginSection(GpuTimerSection.Hud);
@@ -204,6 +204,57 @@ public class GpuFrameTimerTests
         Assert.Equal(1.0, timer.Latest.ActorsMilliseconds, 6);
         Assert.Equal(2.5, timer.Latest.EffectsMilliseconds, 6);
         Assert.Equal(4.0, timer.Latest.HudMilliseconds, 6);
+    }
+
+    [Fact]
+    public void Shadows_Section_Is_Timed_Before_The_World_And_Resolves_On_Its_Own()
+    {
+        FakeGpuQueryApi api = new() { AvailableAfterFrames = 2 };
+        using GpuFrameTimer timer = new(api);
+
+        for (int frame = 0; frame < 4; frame++)
+        {
+            timer.BeginFrame();
+            api.CurrentFrame++;
+            timer.BeginSection(GpuTimerSection.Shadows);
+            api.NextTimeElapsed = 600_000;
+            timer.BeginSection(GpuTimerSection.World);
+            api.NextTimeElapsed = 3_000_000;
+            timer.BeginSection(GpuTimerSection.Actors);
+            api.NextTimeElapsed = 1_000_000;
+            timer.EndFrame();
+        }
+
+        timer.BeginFrame();
+        Assert.True(timer.Latest.HasValue);
+        Assert.Equal(0.6, timer.Latest.ShadowMilliseconds, 6);
+        Assert.Equal(3.0, timer.Latest.WorldMilliseconds, 6);
+        Assert.Equal(1.0, timer.Latest.ActorsMilliseconds, 6);
+    }
+
+    [Fact]
+    public void A_Frame_With_No_Shadow_Section_Reports_Zero_Shadow_Milliseconds()
+    {
+        FakeGpuQueryApi api = new() { AvailableAfterFrames = 2 };
+        using GpuFrameTimer timer = new(api);
+
+        for (int frame = 0; frame < 4; frame++)
+        {
+            RunFrame(timer, api, worldNs: 2_000_000, actorsNs: 1_000_000, hudNs: 500_000, primitives: 10);
+        }
+
+        timer.BeginFrame();
+        Assert.True(timer.Latest.HasValue);
+        Assert.Equal(0d, timer.Latest.ShadowMilliseconds);
+        Assert.Equal(2.0, timer.Latest.WorldMilliseconds, 6);
+    }
+
+    [Fact]
+    public void The_Timer_Has_One_Query_Per_Section_And_Shadows_Is_The_Fifth()
+    {
+        Assert.Equal(5, GpuFrameTimer.SectionCount);
+        Assert.Equal(4, (int)GpuTimerSection.Shadows);
+        Assert.Equal(GpuFrameTimer.SectionCount, Enum.GetValues<GpuTimerSection>().Length);
     }
 
     private static void RunFrame(GpuFrameTimer timer, FakeGpuQueryApi api, long worldNs, long actorsNs, long hudNs, long primitives)

@@ -83,17 +83,17 @@ public class ShadowFrameContractTests
     }
 
     [Fact]
-    public void The_Sun_Visibility_Is_A_Literal_One_With_No_Fetch_Until_The_Live_Switch_Is_Thrown()
+    public void The_Sun_Visibility_Is_Live_And_Compiles_To_A_Literal_One_With_No_Fetch_With_The_Switch_Off()
     {
         string lighting = Normalise(Read("dream", "shaders", "lighting.glsl"));
-        Assert.Matches(@"#define DREAM_SUN_SHADOW_LIVE 0\n", lighting);
+        Assert.Matches(@"#define DREAM_SUN_SHADOW_LIVE 1\n", lighting); // D3 threw the switch; the 0 build is still pinned below
 
         Match function = Regex.Match(lighting, @"float dreamSunVisibility\(vec3 fragPos, vec3 n\)\n\{\n(.*?)\n\}\n", RegexOptions.Singleline);
         Assert.True(function.Success, "dreamSunVisibility(vec3 fragPos, vec3 n) not found.");
         string body = function.Groups[1].Value;
         Assert.Contains("#if DREAM_SUN_SHADOW_LIVE", body);
 
-        // What the compiler sees with the switch at 0: everything between #if and #else is gone.
+        // What the compiler sees with the switch at 0 (not the shipped value): everything between #if and #else is gone.
         string inert = Regex.Replace(body, @"#if DREAM_SUN_SHADOW_LIVE\n.*?#else\n", string.Empty, RegexOptions.Singleline);
         inert = inert.Replace("#endif", string.Empty);
         Assert.Equal("return 1.0;", inert.Trim());
@@ -102,18 +102,18 @@ public class ShadowFrameContractTests
     }
 
     [Fact]
-    public void The_Sun_Visibility_Is_Not_Yet_Multiplied_Into_Any_Lighting()
+    public void The_Sun_Visibility_Is_Multiplied_Into_The_Sun_Term_At_Exactly_One_Place()
     {
-        // D1 ships pixel-identical: nothing outside its own definition calls the function. D3 adds the one call in
-        // clouds.glsl's dreamDirectShaded.
+        // D1 shipped pixel-identical: nothing outside its own definition called the function. D3 added the one call in
+        // clouds.glsl's dreamDirectShaded, on the sun term only.
         foreach (string file in Directory.GetFiles(Path.Combine(RepoRoot(), "dream", "shaders"), "*.glsl"))
         {
             string text = Regex.Replace(File.ReadAllText(file), @"//[^
 ]*", string.Empty);
             int calls = Regex.Matches(text, @"dreamSunVisibility\s*\(").Count;
-            if (Path.GetFileName(file) == "lighting.glsl")
+            if (Path.GetFileName(file) is "lighting.glsl" or "clouds.glsl")
             {
-                Assert.Equal(1, calls);   // its own definition
+                Assert.Equal(1, calls);   // lighting.glsl: its own definition; clouds.glsl: dreamDirectShaded
             }
             else
             {

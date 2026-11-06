@@ -1,5 +1,6 @@
 using Dream.Client.Presentation;
 using Dream.Rendering.Lighting;
+using Dream.Rendering.Shadows;
 using Dream.Rendering.Sky;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -69,6 +70,68 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
     [InlineData(5f, "05:00 blue hour")]
     public void NightAndDusk_ReachTheBimodalBands_OnTheGroundAroundABrazier(float hour, string name)
     {
+        Tally tally = Measure(hour, fireShadows: false);
+
+        output.WriteLine($"{name}: near-black {tally.BlackShare:F3} (>= {BlackShareMin}), bright {tally.BrightShare:F3} (>= {BrightShareMin}), mean v {tally.MeanV:F3} (<= {MeanVMax}), mean sat {tally.MeanSat:F3} (<= {MeanSatMax})");
+
+        Assert.True(tally.BlackShare >= BlackShareMin, $"{name}: near-black share {tally.BlackShare}");
+        // The 0.020 bright share is met by the captured frame only with the lamp-class fire halo
+        // (FxSimulation) on top of the light: with the brazier intensity held low enough that the pool does
+        // not clip to white, the lights alone give a bright tail of about 0.004. The model has no FX, so it
+        // asserts the tail exists and is not the no-brazier tail; check_look.py on a capture owns 0.020.
+        Assert.True(tally.BrightShare >= ModelBrightShareMin, $"{name}: bright share {tally.BrightShare}");
+        Assert.True(tally.MeanV <= MeanVMax, $"{name}: mean value {tally.MeanV}");
+        Assert.True(tally.MeanSat <= MeanSatMax, $"{name}: mean saturation {tally.MeanSat}");
+    }
+
+    // The same four gates with the fire shadows live (docs/ledger/wave-shadow-maps.md section 6): the casting fires (the
+    // ShadowSettings.DefaultCastingFireCount best-scoring lights at the focus) are occluded by the same column heightfield the
+    // ray march renders, so a surface behind a column falls to ambient. The bands are the SAME constants, not widened: the
+    // test prints both measurements so the movement is on record, and asserts only that the gate still holds.
+    [Theory]
+    [InlineData(0f, "midnight")]
+    [InlineData(20f, "20:00 night")]
+    [InlineData(19f, "19:00 dusk")]
+    [InlineData(5f, "05:00 blue hour")]
+    public void NightAndDusk_StillReachTheBimodalBands_WithTheFireShadowsLive(float hour, string name)
+    {
+        Tally open = Measure(hour, fireShadows: false);
+        Tally shadowed = Measure(hour, fireShadows: true);
+
+        output.WriteLine($"{name} unshadowed: near-black {open.BlackShare:F4}, bright {open.BrightShare:F4}, mean v {open.MeanV:F4}, mean sat {open.MeanSat:F4}");
+        output.WriteLine($"{name} shadowed:   near-black {shadowed.BlackShare:F4}, bright {shadowed.BrightShare:F4}, mean v {shadowed.MeanV:F4}, mean sat {shadowed.MeanSat:F4}");
+
+        // Shadows only remove light: they cannot lower the black share or raise the mean value or the bright tail.
+        Assert.True(shadowed.BlackShare >= open.BlackShare - 1e-6f, $"{name}: shadows lowered the black share");
+        Assert.True(shadowed.MeanV <= open.MeanV + 1e-6f, $"{name}: shadows raised the mean value");
+        Assert.True(shadowed.BrightShare <= open.BrightShare + 1e-6f, $"{name}: shadows raised the bright share");
+        // ...and they are really live: a mirror whose occlusion never fires would pass everything above.
+        Assert.True(shadowed.MeanV < open.MeanV - 0.005f, $"{name}: the fire shadows did not darken the frame ({open.MeanV} -> {shadowed.MeanV})");
+
+        Assert.True(shadowed.BlackShare >= BlackShareMin, $"{name}: near-black share {shadowed.BlackShare}");
+        Assert.True(shadowed.BrightShare >= ModelBrightShareMin, $"{name}: bright share {shadowed.BrightShare}");
+        Assert.True(shadowed.MeanV <= MeanVMax, $"{name}: mean value {shadowed.MeanV}");
+        Assert.True(shadowed.MeanSat <= MeanSatMax, $"{name}: mean saturation {shadowed.MeanSat}");
+    }
+
+    // The sun and cloud shadows multiply the SUN term only (dreamDirectShaded), so the unshadowed mirror stays truthful only
+    // while the sun contributes nothing at these hours. Pin that: if the sky keyframes ever put real sun here, this fails and
+    // the mirror must gain the sun visibility and the cloud mask.
+    [Theory]
+    [InlineData(0f, 0f)]
+    [InlineData(20f, 0f)]
+    [InlineData(19f, 0f)]
+    [InlineData(5f, 0f)]
+    public void TheSunTermIsNegligibleAtTheGatedHours_SoTheSunAndCloudShadowsCannotMoveTheGate(float hour, float maxSunIntensity)
+    {
+        FrameLighting sky = SkyModel.Evaluate(hour / 24f).Lighting;
+        output.WriteLine($"hour {hour}: sun intensity {sky.SunDirection.W:F4}, moon intensity {sky.MoonDirection.W:F4}");
+
+        Assert.True(sky.SunDirection.W <= maxSunIntensity, $"hour {hour}: sun intensity {sky.SunDirection.W} exceeds {maxSunIntensity}");
+    }
+
+    private Tally Measure(float hour, bool fireShadows)
+    {
         PlacedLightIndex index = new();
         LightCollector collector = new();
         // The game's own startup world: the default generator at the integrated server's 56 x 56 size.
@@ -105,6 +168,7 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
             Vector3 camera = focus + IsometricView.FocusToCamera;
             FrameLighting world = FrameLightingBuffer.ForWorld(in sky, camera);
             PointLight[] lights = SelectLights(index.Placements, camera);
+            FireOcclusion? occlusion = fireShadows ? new FireOcclusion(columns, lights, focus, ShadowSettings.DefaultCastingFireCount) : null;
             Matrix4 view = Matrix4.LookAt(camera, focus, Vector3.UnitY);
             Matrix4 inverseView = view.Inverted();
             float tanHalfFov = MathF.Tan(MathHelper.DegreesToRadians(IsometricView.FieldOfViewDegrees) / 2f);
@@ -117,21 +181,12 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
                     float ndcY = 1f - (py + 0.5f) / WindowHeight * 2f;
                     Vector3 rayView = new(ndcX * tanHalfFov * Aspect, ndcY * tanHalfFov, -1f);
                     Vector3 direction = Vector3.Normalize(Vector3.TransformVector(rayView, inverseView));
-                    tally.Add(Trace(in world, lights, columns, camera, direction, voidColour));
+                    tally.Add(Trace(in world, lights, columns, camera, direction, voidColour, occlusion));
                 }
             }
         }
 
-        output.WriteLine($"{name}: near-black {tally.BlackShare:F3} (>= {BlackShareMin}), bright {tally.BrightShare:F3} (>= {BrightShareMin}), mean v {tally.MeanV:F3} (<= {MeanVMax}), mean sat {tally.MeanSat:F3} (<= {MeanSatMax})");
-
-        Assert.True(tally.BlackShare >= BlackShareMin, $"{name}: near-black share {tally.BlackShare}");
-        // The 0.020 bright share is met by the captured frame only with the lamp-class fire halo
-        // (FxSimulation) on top of the light: with the brazier intensity held low enough that the pool does
-        // not clip to white, the lights alone give a bright tail of about 0.004. The model has no FX, so it
-        // asserts the tail exists and is not the no-brazier tail; check_look.py on a capture owns 0.020.
-        Assert.True(tally.BrightShare >= ModelBrightShareMin, $"{name}: bright share {tally.BrightShare}");
-        Assert.True(tally.MeanV <= MeanVMax, $"{name}: mean value {tally.MeanV}");
-        Assert.True(tally.MeanSat <= MeanSatMax, $"{name}: mean saturation {tally.MeanSat}");
+        return tally;
     }
 
     // The same night without braziers: darkness alone fails the bright tail, which is what the gate
@@ -209,7 +264,7 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
     private static Vector3 Trace(
         in FrameLighting world, PointLight[] lights,
         Dictionary<(int, int), (int Top, GeometryMaterialId Material)> columns,
-        Vector3 origin, Vector3 direction, Vector3 voidColour)
+        Vector3 origin, Vector3 direction, Vector3 voidColour, FireOcclusion? occlusion = null)
     {
         const float Step = 0.05f;
         Vector3 previous = origin;
@@ -228,7 +283,7 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
                         : new Vector3(0f, 0f, -MathF.Sign(direction.Z));
                 }
 
-                return Shade(in world, lights, normal, p, MaterialAlbedo(column.Material));
+                return Shade(in world, lights, normal, p, MaterialAlbedo(column.Material), occlusion);
             }
 
             if (p.Y < 0f)
@@ -244,9 +299,9 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
         return voidColour;
     }
 
-    private static Vector3 Shade(in FrameLighting world, PointLight[] lights, Vector3 normal, Vector3 fragPos, Vector3 albedo)
+    private static Vector3 Shade(in FrameLighting world, PointLight[] lights, Vector3 normal, Vector3 fragPos, Vector3 albedo, FireOcclusion? occlusion = null)
     {
-        Vector3 lit = (Ambient(in world, normal) + Direct(in world, normal) + PointLights(lights, normal, fragPos)) * albedo * world.Params.X;
+        Vector3 lit = (Ambient(in world, normal) + Direct(in world, normal) + PointLights(lights, normal, fragPos, occlusion)) * albedo * world.Params.X;
         return Quantize(ApplyFog(in world, lit, fragPos));
     }
 
@@ -258,21 +313,83 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
 
     // CPU mirrors, as in WaveT1DayCycleLightingTests (cubeFragment.glsl over lighting.glsl and
     // pointLights.glsl).
-    private static Vector3 PointLights(PointLight[] lights, Vector3 n, Vector3 fragPos)
+    private static Vector3 PointLights(PointLight[] lights, Vector3 n, Vector3 fragPos, FireOcclusion? occlusion = null)
     {
         Vector3 sum = Vector3.Zero;
-        foreach (PointLight light in lights)
+        for (int i = 0; i < lights.Length; i++)
         {
+            PointLight light = lights[i];
             Vector3 toLight = light.Position - fragPos;
             float d2 = Vector3.Dot(toLight, toLight);
             float s = d2 / (light.Radius * light.Radius);
             float f = Math.Clamp(1f - s, 0f, 1f);
             f = f * f / (1f + 1.5f * s);
             float lambert = MathF.Max(Vector3.Dot(n, toLight / MathF.Sqrt(MathF.Max(d2, 1e-4f))), 0f);
-            sum += light.Color * (f * (0.25f + 0.75f * lambert));
+            float visibility = occlusion != null && f > 0f ? occlusion.Visibility(i, light.Position, fragPos, n) : 1f;
+            sum += light.Color * (f * (0.25f + 0.75f * lambert)) * visibility;
         }
 
         return sum;
+    }
+
+    // dreamFireVisibility against the heightfield the ray march renders: the casting fires are the best-scoring lights at the focus
+    // (luminance x the windowed falloff, as FireShadowAtlas.SelectSlots is specified), a fragment in a polar cone is lit, and any
+    // other fragment is lit unless a column stands between it and the fire. The map lookup converges on this exact test (see
+    // FireShadowSamplingMirrorTests, where the atlas is rendered and the lookup is checked against exact geometry).
+    private sealed class FireOcclusion
+    {
+        private readonly Dictionary<(int, int), (int Top, GeometryMaterialId Material)> _columns;
+        private readonly HashSet<int> _casting = [];
+
+        public FireOcclusion(Dictionary<(int, int), (int Top, GeometryMaterialId Material)> columns, PointLight[] lights, Vector3 focus, int maxSlots)
+        {
+            _columns = columns;
+            List<(int Index, float Score)> scored = [];
+            for (int i = 0; i < lights.Length; i++)
+            {
+                float s = Vector3.DistanceSquared(lights[i].Position, focus) / (lights[i].Radius * lights[i].Radius);
+                float falloff = MathF.Pow(Math.Clamp(1f - s, 0f, 1f), 2f) / (1f + 1.5f * s);
+                float luminance = 0.2126f * lights[i].Color.X + 0.7152f * lights[i].Color.Y + 0.0722f * lights[i].Color.Z;
+                scored.Add((i, luminance * falloff));
+            }
+
+            foreach ((int index, float score) in scored.OrderByDescending(e => e.Score).ThenBy(e => e.Index).Take(maxSlots))
+            {
+                if (score > 0f)
+                {
+                    _casting.Add(index);
+                }
+            }
+        }
+
+        public float Visibility(int light, Vector3 lightPosition, Vector3 fragPos, Vector3 n)
+        {
+            if (!_casting.Contains(light))
+            {
+                return 1f;
+            }
+
+            Vector3 d = fragPos - lightPosition;
+            if (MathF.Abs(d.Y) >= MathF.Max(MathF.Abs(d.X), MathF.Abs(d.Z)))
+            {
+                return 1f;
+            }
+
+            // Normal offset, as the shader does, so the receiver's own column does not shadow it.
+            Vector3 target = fragPos + n * 0.03f;
+            float length = (target - lightPosition).Length;
+            Vector3 direction = (target - lightPosition) / length;
+            for (float t = 0.05f; t < length - 0.02f; t += 0.05f)
+            {
+                Vector3 p = lightPosition + direction * t;
+                if (_columns.TryGetValue(((int)MathF.Floor(p.X), (int)MathF.Floor(p.Z)), out var column) && p.Y <= column.Top)
+                {
+                    return 0f;
+                }
+            }
+
+            return 1f;
+        }
     }
 
     private static Vector3 Ambient(in FrameLighting l, Vector3 n) =>
