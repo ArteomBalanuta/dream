@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Presentation;
 using Dream.Client.Scenes;
+using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
 using Dream.Rendering.World;
 using Dream.Simulation.World;
@@ -169,9 +170,33 @@ public class LampLightIndexTests
 
         Assert.Equal(LightCollector.Capacity, lights.Count);
         Assert.True(lights.Dropped > 0);
-        Assert.True((HeldLightAnchor.FirstPerson(camera, front, Vector3.UnitX, Vector3.UnitY) - lights.Lights[0].Position).Length < 0.04f);
+
+        // HeldLightCatalog emits the torch at anchor + FireFlicker's wander offset, so the only
+        // bound the slot-0 light obeys is the corner of the wander box: the lateral constant on X
+        // and Z, the vertical one on Y. Derive it; never restate it as a number.
+        Vector3 drift = lights.Lights[0].Position - HeldLightAnchor.FirstPerson(camera, front, Vector3.UnitX, Vector3.UnitY);
+        Assert.True(MathF.Abs(drift.X) <= FireFlicker.OffsetLateral + WanderEpsilon, $"lateral X drift {drift.X}");
+        Assert.True(MathF.Abs(drift.Z) <= FireFlicker.OffsetLateral + WanderEpsilon, $"lateral Z drift {drift.Z}");
+        Assert.True(MathF.Abs(drift.Y) <= FireFlicker.OffsetVertical + WanderEpsilon, $"vertical drift {drift.Y}");
+        Assert.True(drift.Length <= WanderReach + WanderEpsilon, $"drift {drift.Length} exceeds the wander reach {WanderReach}");
         Assert.InRange(lights.Lights[0].Radius, 7.29f, 8.71f);
     }
+
+    // The wander's reach is the diagonal of its own box, so this relation is what the drift bound
+    // above means. Pinned as a relation rather than a value.
+    [Fact]
+    public void TheWanderReach_IsTheDiagonalOfTheWanderBox()
+    {
+        Vector3 corner = new(FireFlicker.OffsetLateral, FireFlicker.OffsetVertical, FireFlicker.OffsetLateral);
+        Assert.Equal(corner.Length, WanderReach, 6);
+        Assert.True(WanderReach > FireFlicker.OffsetLateral);
+    }
+
+    private const float WanderEpsilon = 1e-5f;
+
+    private static readonly float WanderReach = MathF.Sqrt(
+        (2f * FireFlicker.OffsetLateral * FireFlicker.OffsetLateral)
+        + (FireFlicker.OffsetVertical * FireFlicker.OffsetVertical));
 
     [Fact]
     public void PartlyMinedLamp_StillLights_FromItsSolidSubcells_AndAFullyMinedOneDoesNot()
