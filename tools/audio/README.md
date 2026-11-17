@@ -13,8 +13,8 @@ python tools/audio/build_all.py --plots artifacts/audio-report   # waveform PNGs
 | Folder | Format | Contents |
 | --- | --- | --- |
 | `dream/audio/sfx` | 16-bit PCM, 44.1 kHz, mono | one-shots; variants are `name_1.wav`, `name_2.wav`, ... |
-| `dream/audio/ambience` | 16-bit PCM, 22.05 kHz, mono | `wind`, `night` (seamless 8 s loops) |
-| `dream/audio/music` | 16-bit PCM, 22.05 kHz, stereo | `world`, `menu` (seamless 20 s loops) |
+| `dream/audio/ambience` | 16-bit PCM, 22.05 kHz, mono | `wind`, `night` (seamless 16 s loops) |
+| `dream/audio/music` | 16-bit PCM, 22.05 kHz, stereo | `world`, `menu` (seamless 24 s loops) |
 
 Generators are split by sound family; each module exposes `build(out_root: Path) -> list[Path]`, and
 `build_all.py` runs them all and then deletes any `.wav` no family wrote (so a renamed sound never

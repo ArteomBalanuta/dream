@@ -78,6 +78,13 @@ public sealed class MixerGameAudio : IGameAudio
         _mixer.SetLoopTarget(AudioLoopId.MusicMenu, track == MusicTrack.Menu ? 1f : 0f, AudioMixer.MusicFadeSeconds);
         _mixer.SetLoopTarget(AudioLoopId.MusicWorld, track == MusicTrack.World ? 1f : 0f, AudioMixer.MusicFadeSeconds);
         _mixer.SetLoopTarget(AudioLoopId.Wind, track == MusicTrack.World ? WorldWindLevel : 0f, AudioMixer.AmbienceFadeSeconds);
+        if (track != MusicTrack.World)
+        {
+            // Night is driven per frame by the world; outside it, fade it out and forget the level so
+            // the next world frame sends it again.
+            _mixer.SetLoopTarget(AudioLoopId.Night, 0f, AudioMixer.AmbienceFadeSeconds);
+            _nightTarget = -1f;
+        }
     }
 
     public void SetAmbience(float night01)

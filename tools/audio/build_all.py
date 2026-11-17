@@ -44,7 +44,7 @@ assert len(PACK) == 30 and len(set(PACK)) == 30
 
 
 def generate(out_root: Path) -> list[Path]:
-    """Run every family build(), then delete any wav under out_root that no build() returned."""
+    """Run every family build(), then delete any wav in out_root/{sfx,ambience,music} that no build() returned."""
     import importlib
 
     written: list[Path] = []
@@ -52,7 +52,8 @@ def generate(out_root: Path) -> list[Path]:
         written.extend(importlib.import_module(name).build(out_root))
     keep = {p.resolve() for p in written}
     assert len(keep) == len(written), "two families wrote the same file"
-    for stale in sorted(out_root.rglob("*.wav")):
+    # Sweep only the three audio folders, so a stray --out never deletes unrelated wavs.
+    for stale in sorted(w for d in ("sfx", "ambience", "music") for w in (out_root / d).glob("*.wav")):
         if stale.resolve() not in keep:
             print(f"removed stale {stale.relative_to(out_root).as_posix()}")
             stale.unlink()
