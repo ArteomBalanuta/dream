@@ -5,7 +5,10 @@ public static class MainMenuPanel
 {
     public const int FirstId = 0x5000;
     public const string SinglePlayerLabel = "Single Player";
-    public const string JoinServerLabel = "Join Server";
+    public const string MultiplayerLabel = "Multiplayer";
+    public const string JoinLabel = "Join";
+    public const string HostLabel = "Host";
+    public const string BackLabel = "Back";
     public const string OptionsLabel = "Options";
     public const string CreditsLabel = "Credits";
     public const string ExitLabel = "Exit";
@@ -36,7 +39,7 @@ public static class MainMenuPanel
         (string Label, MenuAction Action)[] buttons =
         [
             (SinglePlayerLabel, MenuAction.SinglePlayer),
-            (JoinServerLabel, MenuAction.JoinServer),
+            (MultiplayerLabel, MenuAction.Multiplayer),
             (OptionsLabel, MenuAction.Options),
             (CreditsLabel, MenuAction.Credits),
             (ExitLabel, MenuAction.Exit)
@@ -58,6 +61,12 @@ public static class MainMenuPanel
 
         return result;
     }
+
+    // The Multiplayer screen. Ids FirstId+40 .. FirstId+59. Writes form.Focused when a field is clicked.
+    // Returns Join, Host, Back or None. busy disables fields and buttons. status shows under the panel,
+    // coloured as an error when statusIsError.
+    // CONTRACT-STUB: WS-A replaces this body.
+    public static MenuAction BuildMultiplayer(MenuWidgets w, MultiplayerFormState form, bool busy, string? status, bool statusIsError) => MenuAction.None;
 
     public static MenuAction BuildCredits(MenuWidgets w)
     {

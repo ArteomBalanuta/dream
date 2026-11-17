@@ -79,6 +79,17 @@ public sealed class SinglePlayerLauncher
         Phase = SinglePlayerPhase.Waking;
     }
 
+    // Host: starts the integrated server on every interface at port, then joins it over loopback as
+    // playerName, through the same Waking -> Starting -> Connecting path as RequestStart.
+    // CONTRACT-STUB: WS-B replaces these three bodies.
+    public void RequestHost(int port, string playerName) => throw new NotImplementedException();
+
+    // Join: no local server and no content-error gate; straight to Connecting.
+    public void RequestJoin(ClientConnectionOptions options) => throw new NotImplementedException();
+
+    // Clears a Failed phase back to Idle, so a stale failure is not shown on another screen.
+    public void Dismiss() => throw new NotImplementedException();
+
     // Called by the scene after it presented a frame.
     public void NotifyFramePresented()
     {

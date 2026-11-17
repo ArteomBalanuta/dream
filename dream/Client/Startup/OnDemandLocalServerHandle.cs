@@ -29,6 +29,18 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
         _startAfter = startAfter;
     }
 
+    // The start receives the listen options configured last (Loopback until TryConfigureListen).
+    // CONTRACT-STUB: WS-B makes this the primary constructor and passes the options to start.
+    public OnDemandLocalServerHandle(Func<LocalServerListenOptions, ILocalServerHandle> start, Func<Task>? startAfter = null)
+        : this(start is null ? null! : () => start(LocalServerListenOptions.Loopback), startAfter)
+    {
+    }
+
+    // CONTRACT-STUB: WS-B replaces these two.
+    public LocalServerListenOptions ListenOptions => LocalServerListenOptions.Loopback;
+
+    public bool TryConfigureListen(LocalServerListenOptions options) => false;
+
     public bool IsStarted => _started != null || _pendingStart != null;
 
     public bool IsReady => _started?.IsReady ?? false;

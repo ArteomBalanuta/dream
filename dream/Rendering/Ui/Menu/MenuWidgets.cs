@@ -294,6 +294,11 @@ public sealed class MenuWidgets
         return clicked;
     }
 
+    // A single-line text box: a plate, left-aligned text clipped to the box (the tail stays visible), a
+    // caret when focused. Returns true on the frame it is clicked (the caller moves focus).
+    // CONTRACT-STUB: WS-A replaces this body.
+    public bool TextField(int id, UiRect r, MenuTextField field, bool focused, bool enabled = true) => false;
+
     // A horizontal slider. track is where the groove is drawn, hit the (taller) pointer area. unit is 0..1.
     // While the left button is held after a press inside hit, the slider follows the pointer.
     public MenuSliderResult Slider(int id, UiRect track, UiRect hit, float unit, bool enabled = true)

@@ -11,6 +11,9 @@ public sealed class DesktopClientConfig
 
     public int Port { get; set; } = ServerBootstrap.DefaultPort;
 
+    // The port Host on the Multiplayer screen listens on (config key host_port).
+    public int HostPort { get; set; } = ServerBootstrap.DefaultPort;
+
     public string PlayerName { get; set; } = "dream-client";
 
     public float FieldOfViewDegrees { get; set; } = 70f;

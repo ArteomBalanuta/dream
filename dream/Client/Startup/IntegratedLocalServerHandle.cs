@@ -50,14 +50,21 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
 
     public string? ErrorMessage { get; }
 
+    // CONTRACT-STUB: WS-B sets these from the start.
+    public LocalServerListenOptions ListenOptions { get; } = LocalServerListenOptions.Loopback;
+
+    public ServerConnectionOptions ConnectionOptions { get; } = DefaultConnectionOptions;
+
     public DedicatedServerPerformanceSnapshot LatestPerformance =>
         _service?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
 
     public static ValueTask<IntegratedLocalServerHandle> StartAsync(
         int preferredPort = 0,
         Func<DedicatedServerHost>? hostFactory = null,
-        ServerConnectionOptions? connectionOptions = null)
+        ServerConnectionOptions? connectionOptions = null,
+        LocalServerListenOptions? listen = null)
     {
+        // CONTRACT-STUB: WS-B honours listen (bind address, port, hosted connection rules).
         hostFactory ??= ServerBootstrap.CreateAuthoritativeHost;
         // DREAM_SNAPSHOT_INTERVAL_TICKS applies to the integrated server as to the dedicated one;
         // options passed in are used as given.

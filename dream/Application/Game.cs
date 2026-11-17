@@ -246,19 +246,6 @@ public class Game : GameWindow
         GameAudio.Current.SetMusic(MusicTrack.Menu);
     }
 
-    // Join Server: the existing connection screen, with a Back button to the title screen.
-    private void OpenJoinServerScreen()
-    {
-        _mainMenu = null;
-        ShowStartupScene(
-            ClientSize,
-            _desktopClientConfig.ToConnectionOptions(),
-            resolveLocalPort: false,
-            autoConnectUsesInitialOptions: false,
-            sessionEndReason: null,
-            allowBack: true);
-    }
-
     // The handle reads the shutdown gate when it is asked to start, not now: the ended session's
     // server is stopped (and tracked) only after its replacement handle exists.
     private ILocalServerHandle CreateLocalServerHandle()
@@ -655,9 +642,6 @@ public class Game : GameWindow
 
         switch (action)
         {
-            case MenuAction.JoinServer:
-                OpenJoinServerScreen();
-                break;
             case MenuAction.Exit:
                 Close();
                 break;

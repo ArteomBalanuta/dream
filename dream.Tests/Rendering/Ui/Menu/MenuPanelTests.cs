@@ -78,7 +78,7 @@ public sealed class MenuPanelTests
 
     [Theory]
     [InlineData(0, MenuAction.SinglePlayer)]
-    [InlineData(1, MenuAction.JoinServer)]
+    [InlineData(1, MenuAction.Multiplayer)]
     [InlineData(2, MenuAction.Options)]
     [InlineData(3, MenuAction.Credits)]
     [InlineData(4, MenuAction.Exit)]

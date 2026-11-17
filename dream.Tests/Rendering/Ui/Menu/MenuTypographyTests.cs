@@ -109,7 +109,7 @@ public sealed class MenuTypographyTests
         string[] labels =
         [
             MainMenuPanel.SinglePlayerLabel,
-            MainMenuPanel.JoinServerLabel,
+            MainMenuPanel.MultiplayerLabel,
             MainMenuPanel.OptionsLabel,
             MainMenuPanel.CreditsLabel,
             MainMenuPanel.ExitLabel

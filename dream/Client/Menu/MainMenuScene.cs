@@ -7,7 +7,7 @@ using OpenTK.Windowing.Common;
 namespace Dream.Client.Menu;
 
 // The title screen at launch and after a play session ends. Single Player and the screen navigation
-// (Options, Key Bindings, Credits) are handled here; Join Server and Exit are returned to Game.
+// (Options, Key Bindings, Credits, Multiplayer) are handled here; Exit is returned to Game.
 public sealed class MainMenuScene
 {
     private readonly SinglePlayerLauncher _launcher;
@@ -17,7 +17,12 @@ public sealed class MainMenuScene
     private string? _notice;
     private bool _noticeIsError;
 
-    public MainMenuScene(SinglePlayerLauncher launcher, IReadOnlyList<MenuOptionRow> optionRows, string? sessionEndReason = null)
+    public MainMenuScene(
+        SinglePlayerLauncher launcher,
+        IReadOnlyList<MenuOptionRow> optionRows,
+        string? sessionEndReason = null,
+        MultiplayerDefaults? multiplayer = null,
+        Action<MultiplayerDefaults>? persistMultiplayer = null)
     {
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _optionRows = optionRows ?? throw new ArgumentNullException(nameof(optionRows));
@@ -38,7 +43,16 @@ public sealed class MainMenuScene
 
     public bool TryTakeConnectedSession(out RemoteClientSession? session) => _launcher.TryTakeConnectedSession(out session);
 
-    // Draws the current screen. Returns JoinServer or Exit when the player chose them, else None. Never
+    // A typed character, applied at once to the focused field (Multiplayer screen only).
+    // CONTRACT-STUB: WS-C replaces these two bodies.
+    public void QueueTextInput(uint unicode)
+    {
+    }
+
+    // A key press. Returns what Render would return (None or Exit); never throws on Root.
+    public MenuAction HandleKey(MenuKey key) => MenuAction.None;
+
+    // Draws the current screen. Returns Exit when the player chose them, else None. Never
     // draws and returns None while the renderer is not ready (the window shows a dark frame).
     public MenuAction Render(MenuUiRenderer renderer, int width, int height, float uiScaleSetting, UiPointer pointer)
     {
@@ -74,7 +88,6 @@ public sealed class MainMenuScene
                 _notice = null;
                 _launcher.RequestStart();
                 return MenuAction.None;
-            case MenuAction.JoinServer:
             case MenuAction.Exit:
                 return action;
             default:
