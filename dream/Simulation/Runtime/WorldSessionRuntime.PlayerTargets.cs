@@ -111,7 +111,8 @@ public sealed partial class WorldSessionRuntime
             Player.Combatant,
             () => GetSessionInteractionMode(sessionId),
             Player.SetWorldPosition,
-            () => Player.Camera.Position);
+            () => Player.Camera.Position,
+            isNoclipEnabledProvider: () => Player.IsNoclipEnabled);
     }
 
     private bool TryResolveAuthoritativePlayerTarget(

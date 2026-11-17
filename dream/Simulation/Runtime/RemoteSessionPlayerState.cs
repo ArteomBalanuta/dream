@@ -82,6 +82,10 @@ public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisp
     // The runtime disposes this state when the session detaches and lists only spawned sessions.
     bool IAuthoritativePlayerTarget.IsSpawned => !_disposed;
 
+    // This seat's own noclip toggle: a secondary seat in noclip is exempt from the wolf separation
+    // push exactly as the primary seat is.
+    bool IAuthoritativePlayerTarget.IsNoclipEnabled => _player.IsNoclipEnabled;
+
     public Player PhysicsPlayer => _player;
 
     // Whether the last Simulate triggered this seat's primary use, after the same attack-interval
