@@ -139,6 +139,31 @@ public sealed class JoinProtectionHoldTests
     }
 
     [Fact]
+    public void AReconnectWithinTheCooldown_GetsNoHold_ButOneAfterItDoes()
+    {
+        using WorldSessionRuntime runtime = Join(true, out _, out _);
+        Assert.True(runtime.Sessions.TryGet(A, out ConnectedPlayer? player));
+        player!.ProtectionHeldSinceTick = 0;
+        ulong tick = 0;
+
+        // A quick drop and reconnect (a mid-fight re-arm attempt): no hold.
+        runtime.DetachRemoteSession(A);
+        WaveIRuntimeKit.Tick(runtime, ref tick, 10);
+        runtime.AttachRemoteSession(A, A.Value);
+        runtime.HoldSpawnProtectionUntilInput(A);
+        Assert.True(runtime.Sessions.TryGet(A, out player));
+        Assert.Equal(0UL, player!.ProtectionHeldSinceTick);
+
+        // A reconnect after the cooldown (a relaunch after a crash): the hold again.
+        runtime.DetachRemoteSession(A);
+        WaveIRuntimeKit.Tick(runtime, ref tick, PlayerRespawnRules.JoinHoldReattachCooldownTicks + 10);
+        runtime.AttachRemoteSession(A, A.Value);
+        runtime.HoldSpawnProtectionUntilInput(A);
+        Assert.True(runtime.Sessions.TryGet(A, out player));
+        Assert.NotEqual(0UL, player!.ProtectionHeldSinceTick);
+    }
+
+    [Fact]
     public void TheHold_PastTheCap_GrantsNothingToALateFirstInput()
     {
         using WorldSessionRuntime runtime = Join(true, out IAuthoritativePlayerTarget target, out EnemyActor wolf);

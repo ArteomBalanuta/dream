@@ -14,4 +14,10 @@ public static class PlayerRespawnRules
     // The longest a join's opt-in hold keeps protection without any input (5 minutes). The hold ends at the
     // cap even without input, and an input after the cap grants no window (an AFK player is not protected).
     public const int JoinHoldMaxTicks = 300 * SimulationClock.AuthoritativeTicksPerSecond;
+
+    // A seat that re-attaches within this long of its last fresh attach gets no hold (30 s). It stops a
+    // client from re-arming the hold mid-fight by reconnecting, while a real reconnect after a crash or a
+    // dropped connection (a relaunch takes longer) still gets it. A disconnected player is not a target
+    // anyway, so the short window costs little.
+    public const int JoinHoldReattachCooldownTicks = 30 * SimulationClock.AuthoritativeTicksPerSecond;
 }

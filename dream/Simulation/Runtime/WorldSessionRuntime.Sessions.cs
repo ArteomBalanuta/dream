@@ -43,7 +43,7 @@ public sealed partial class WorldSessionRuntime
         // session (a takeover detaches, then attaches fresh): see ConnectedPlayer.LastFreshAttachTick.
         attached.FreshlyAttached = !alreadyAttached
             && (attached.LastFreshAttachTick == 0
-                || CurrentServerTick >= attached.LastFreshAttachTick + PlayerRespawnRules.JoinHoldMaxTicks);
+                || CurrentServerTick >= attached.LastFreshAttachTick + PlayerRespawnRules.JoinHoldReattachCooldownTicks);
         if (!alreadyAttached)
         {
             attached.LastFreshAttachTick = Math.Max(1UL, CurrentServerTick);

@@ -63,7 +63,8 @@ public sealed class ConnectedPlayer
 
     // The server tick of this session's last fresh attach (at least 1), or 0 for none. A takeover detaches
     // the old connection and attaches the new one fresh, so "already attached" alone cannot tell it from a
-    // first join: a fresh attach within PlayerRespawnRules.JoinHoldMaxTicks of the previous one gets no hold.
+    // first join: a fresh attach within PlayerRespawnRules.JoinHoldReattachCooldownTicks of the previous one gets
+    // no hold.
     internal ulong LastFreshAttachTick;
 
     // M4: the running skill and consumable cooldowns of this session. On the session, not the combatant,
