@@ -77,6 +77,13 @@ public sealed class MenuCapture
                 break;
             case 120:
                 scene.Handle(MenuAction.Back);
+                scene.Handle(MenuAction.Multiplayer);
+                break;
+            case 125:
+                capture(Path.Combine(_directory, "menu-multiplayer.png"));
+                break;
+            case 128:
+                scene.Handle(MenuAction.Back);
                 break;
             case 130:
                 // The pause menu drawn over the title screen's last frame.

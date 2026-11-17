@@ -1,5 +1,10 @@
 using Dream.Application;
 using Dream.Client.Menu;
+using Dream.Client.Networking;
+using Dream.Client.Startup;
+using Dream.Multiplayer.Protocol;
+using Dream.Multiplayer.Transport;
+using Dream.Server;
 using Dream.Configuration;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui.Menu;
@@ -59,6 +64,179 @@ public class MenuFlowTests
         state.Apply(MenuAction.Options);
         state.Reset();
         Assert.Equal(MenuScreen.Root, state.Current);
+    }
+
+    private sealed class FakeServer : ILocalServerHandle
+    {
+        private bool _started;
+
+        public bool IsStarted => _started;
+
+        public bool IsReady => _started && ErrorMessage == null;
+
+        public int BoundPort => IsReady ? 6123 : 0;
+
+        public string? ErrorMessage { get; set; }
+
+        public string? StartingStatus => null;
+
+        public DedicatedServerPerformanceSnapshot LatestPerformance => DedicatedServerPerformanceSnapshot.Empty;
+
+        public void EnsureStarted() => _started = true;
+
+        public void ResetFailure()
+        {
+            ErrorMessage = null;
+            _started = false;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FakeConnector : IRemoteSessionConnector
+    {
+        public List<RemoteClientOptions> Connects { get; } = [];
+
+        public ValueTask<RemoteClientSession> ConnectAsync(RemoteClientOptions options, CancellationToken cancellationToken = default)
+        {
+            Connects.Add(options);
+            return ValueTask.FromResult(new RemoteClientSession(
+                new FakeTransport(),
+                new TransportJsonCodec(),
+                new LengthPrefixedMessageFramer(),
+                options));
+        }
+    }
+
+    private sealed class FakeTransport : ITransportConnection
+    {
+        public string ConnectionId => "menu-flow-test";
+
+        public ValueTask<int> ReceiveAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => ValueTask.FromResult(0);
+
+        public ValueTask SendAsync(ReadOnlyMemory<byte> payload, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private static (MainMenuScene Scene, SinglePlayerLauncher Launcher, FakeConnector Connector, List<MultiplayerDefaults> Saved) CreateScene(MultiplayerDefaults? defaults = null)
+    {
+        FakeServer server = new();
+        FakeConnector connector = new();
+        NetworkSessionCoordinator coordinator = new(server, connector, null);
+        SinglePlayerLauncher launcher = new(coordinator, server, null, () => "hero");
+        List<MultiplayerDefaults> saved = [];
+        MainMenuScene scene = new(launcher, new List<MenuOptionRow>(), null, defaults, saved.Add);
+        return (scene, launcher, connector, saved);
+    }
+
+    [Fact]
+    public void ScreenState_NavigatesRootToMultiplayerAndBack()
+    {
+        MenuScreenState state = new();
+
+        Assert.True(state.Apply(MenuAction.Multiplayer));
+        Assert.Equal(MenuScreen.Multiplayer, state.Current);
+        Assert.True(state.Apply(MenuAction.Back));
+        Assert.Equal(MenuScreen.Root, state.Current);
+    }
+
+    [Fact]
+    public void Scene_MultiplayerActionOpensTheScreen_AndEscapeGoesBack()
+    {
+        var (scene, _, _, _) = CreateScene();
+
+        Assert.Equal(MenuAction.None, scene.Handle(MenuAction.Multiplayer));
+        Assert.Equal(MenuScreen.Multiplayer, scene.Screen);
+        Assert.Equal(MenuAction.None, scene.HandleKey(MenuKey.Escape));
+        Assert.Equal(MenuScreen.Root, scene.Screen);
+    }
+
+    [Fact]
+    public void Scene_EscapeOnRootDoesNothing()
+    {
+        var (scene, _, _, _) = CreateScene();
+
+        Assert.Equal(MenuAction.None, scene.HandleKey(MenuKey.Escape));
+        Assert.Equal(MenuScreen.Root, scene.Screen);
+    }
+
+    [Fact]
+    public void Scene_EscapeOnOptionsGoesBack()
+    {
+        var (scene, _, _, _) = CreateScene();
+
+        scene.Handle(MenuAction.Options);
+        scene.HandleKey(MenuKey.Escape);
+
+        Assert.Equal(MenuScreen.Root, scene.Screen);
+    }
+
+    // Needs WS-A's MultiplayerFormState: typing goes through it.
+    [Fact]
+    public void Scene_TypedCharactersAndBackspaceEditTheFocusedField()
+    {
+        var (scene, _, _, _) = CreateScene(new MultiplayerDefaults("host", 7000, 7001, "hero"));
+        scene.Handle(MenuAction.Multiplayer);
+
+        scene.QueueTextInput('a');
+        scene.QueueTextInput('b');
+        scene.HandleKey(MenuKey.Backspace);
+
+        Assert.Equal("hosta", scene.Form.FocusedField!.Text);
+    }
+
+    [Fact]
+    public void Scene_JoinWithABadPortSetsAnErrorAndDoesNotConnect()
+    {
+        var (scene, launcher, connector, saved) = CreateScene(new MultiplayerDefaults("example.org", 70000, 7001, "hero"));
+        scene.Handle(MenuAction.Multiplayer);
+
+        scene.Handle(MenuAction.Join);
+
+        Assert.False(launcher.IsBusy);
+        Assert.Empty(connector.Connects);
+        Assert.Empty(saved);
+        Assert.Equal(MenuScreen.Multiplayer, scene.Screen);
+    }
+
+    [Fact]
+    public void Scene_JoinValid_PersistsTheTypedValuesAndConnects()
+    {
+        var (scene, launcher, _, saved) = CreateScene(new MultiplayerDefaults(" example.org ", 7000, 7001, " hero "));
+        scene.Handle(MenuAction.Multiplayer);
+
+        scene.Handle(MenuAction.Join);
+
+        MultiplayerDefaults persisted = Assert.Single(saved);
+        Assert.Equal(new MultiplayerDefaults("example.org", 7000, 7001, "hero"), persisted);
+        Assert.Equal(SinglePlayerPhase.Connecting, launcher.Phase);
+    }
+
+    [Fact]
+    public void Scene_HostValid_PersistsTheHostPortAndWakes()
+    {
+        var (scene, launcher, _, saved) = CreateScene(new MultiplayerDefaults("example.org", 7000, 7001, "hero"));
+        scene.Handle(MenuAction.Multiplayer);
+
+        scene.Handle(MenuAction.Host);
+
+        Assert.Equal(7001, Assert.Single(saved).HostPort);
+        Assert.Equal(SinglePlayerPhase.Waking, launcher.Phase);
+    }
+
+    [Fact]
+    public void Scene_BackIsIgnoredWhileBusy()
+    {
+        var (scene, launcher, _, _) = CreateScene(new MultiplayerDefaults("example.org", 7000, 7001, "hero"));
+        scene.Handle(MenuAction.Multiplayer);
+        scene.Handle(MenuAction.Host);
+        Assert.True(launcher.IsBusy);
+
+        scene.Handle(MenuAction.Back);
+        scene.HandleKey(MenuKey.Escape);
+
+        Assert.Equal(MenuScreen.Multiplayer, scene.Screen);
     }
 
     [Fact]

@@ -33,6 +33,42 @@ public class DesktopClientTextConfigTests
     }
 
     [Fact]
+    public void HostPort_RoundTripsThroughSerializeAndLoad()
+    {
+        string path = Path.Combine(Directory.CreateTempSubdirectory().FullName, "desktop-client.txt");
+        DesktopClientConfig config = new() { HostPort = 7123 };
+
+        File.WriteAllText(path, DesktopClientTextConfig.Serialize(config));
+
+        Assert.Contains("host_port=7123", File.ReadAllText(path));
+        Assert.Equal(7123, DesktopClientTextConfig.LoadOrCreate(path).HostPort);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("70000")]
+    [InlineData("-5")]
+    public void HostPort_OutOfRangeFallsBackToTheDefaultPort(string value)
+    {
+        string path = Path.Combine(Directory.CreateTempSubdirectory().FullName, "desktop-client.txt");
+        File.WriteAllText(path, "host_port=" + value);
+
+        Assert.Equal(ServerBootstrap.DefaultPort, DesktopClientTextConfig.LoadOrCreate(path).HostPort);
+    }
+
+    [Fact]
+    public void HostPort_MissingKeyKeepsTheDefault()
+    {
+        string path = Path.Combine(Directory.CreateTempSubdirectory().FullName, "desktop-client.txt");
+        File.WriteAllText(path, "host=10.0.0.4\nplayer_name=ranger");
+
+        DesktopClientConfig settings = DesktopClientTextConfig.LoadOrCreate(path);
+
+        Assert.Equal(ServerBootstrap.DefaultPort, settings.HostPort);
+        Assert.Equal("ranger", settings.PlayerName);
+    }
+
+    [Fact]
     public void LoadOrCreate_Overrides_Recognized_Values_And_Clamps_Invalid_Ranges()
     {
         string tempDir = Directory.CreateTempSubdirectory().FullName;
