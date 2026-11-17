@@ -21,6 +21,7 @@ public sealed class MainMenuScene
     private readonly MultiplayerFormState _form;
     private readonly Action<MultiplayerDefaults>? _persistMultiplayer;
     private MultiplayerDefaults _saved;
+    private readonly IMenuClipboard? _clipboard;
 
     public MainMenuScene(
         SinglePlayerLauncher launcher,
@@ -33,6 +34,7 @@ public sealed class MainMenuScene
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _optionRows = optionRows ?? throw new ArgumentNullException(nameof(optionRows));
         _persistMultiplayer = persistMultiplayer;
+        _clipboard = clipboard;
         _saved = multiplayer ?? new MultiplayerDefaults("127.0.0.1", ServerBootstrap.DefaultPort, ServerBootstrap.DefaultPort, "dream-client");
         _form = new MultiplayerFormState(_saved.PlayerName, _saved.Address, _saved.JoinPort, _saved.HostPort);
         if (!string.IsNullOrWhiteSpace(sessionEndReason))
@@ -64,11 +66,10 @@ public sealed class MainMenuScene
     }
 
     // A key press with its modifiers; the Multiplayer screen passes them and the clipboard to the form.
-    // CONTRACT-STUB: WS-A routes modifiers and the clipboard.
-    public MenuAction HandleKey(MenuKey key, MenuKeyModifiers modifiers) => HandleKey(key);
-
     // A key press. Returns what Render would return (None or Exit); never throws on Root.
-    public MenuAction HandleKey(MenuKey key)
+    public MenuAction HandleKey(MenuKey key) => HandleKey(key, MenuKeyModifiers.None);
+
+    public MenuAction HandleKey(MenuKey key, MenuKeyModifiers modifiers)
     {
         switch (_screen.Current)
         {
@@ -78,7 +79,7 @@ public sealed class MainMenuScene
                     return MenuAction.None;
                 }
 
-                return Handle(key == MenuKey.Escape ? MenuAction.Back : _form.HandleKey(key));
+                return Handle(key == MenuKey.Escape ? MenuAction.Back : _form.HandleKey(key, modifiers, _clipboard));
             case MenuScreen.Options:
             case MenuScreen.Credits:
             case MenuScreen.KeyBindings:
