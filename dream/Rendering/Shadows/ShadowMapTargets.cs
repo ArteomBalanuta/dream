@@ -14,6 +14,7 @@ public sealed class ShadowMapTargets : IDisposable
 {
     private readonly bool _enabled;
     private readonly int[] _savedViewport = new int[4];
+    private readonly int[] _savedScissorBox = new int[4];
     private int _sunTexture;
     private int _sunFramebuffer;
     private int _atlasTexture;
@@ -27,6 +28,7 @@ public sealed class ShadowMapTargets : IDisposable
     private bool _savedBlend;
     private bool _savedDepthMask;
     private int _savedDepthFunc;
+    private bool _savedScissorTest;
 
     public ShadowMapTargets(bool enabled, int sunResolution, int atlasResolution)
     {
@@ -116,6 +118,8 @@ public sealed class ShadowMapTargets : IDisposable
         SetCap(EnableCap.Blend, _savedBlend);
         GL.DepthMask(_savedDepthMask);
         GL.DepthFunc((DepthFunction)_savedDepthFunc);
+        GL.Scissor(_savedScissorBox[0], _savedScissorBox[1], _savedScissorBox[2], _savedScissorBox[3]);
+        SetCap(EnableCap.ScissorTest, _savedScissorTest);
         GL.BindFramebuffer(FramebufferTarget.Framebuffer, _savedFramebuffer);
         GL.Viewport(_savedViewport[0], _savedViewport[1], _savedViewport[2], _savedViewport[3]);
     }
@@ -163,6 +167,9 @@ public sealed class ShadowMapTargets : IDisposable
         _savedBlend = GL.IsEnabled(EnableCap.Blend);
         GL.GetBoolean(GetPName.DepthWritemask, out _savedDepthMask);
         GL.GetInteger(GetPName.DepthFunc, out _savedDepthFunc);
+        // BeginFireTile scissors its tile clear, so the flag and the box belong in the snapshot too.
+        _savedScissorTest = GL.IsEnabled(EnableCap.ScissorTest);
+        GL.GetInteger(GetPName.ScissorBox, _savedScissorBox);
 
         GL.BindFramebuffer(FramebufferTarget.Framebuffer, framebuffer);
         GL.Viewport(x, y, width, height);

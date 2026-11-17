@@ -42,6 +42,7 @@ public sealed class UiAtlasStore : IDisposable
     private readonly IUiAtlasLoader _loader;
     private readonly IUiTextureUploader _uploader;
     private readonly TimeProvider _time;
+    private readonly IRenderFaultSink _faultSink;
     private readonly UiPage[] _pages;
     private readonly int[] _textures = new int[Enum.GetValues<UiPage>().Length];
     private readonly Task<DecodedTexture>?[] _pageTasks;
@@ -52,7 +53,12 @@ public sealed class UiAtlasStore : IDisposable
     private bool _disposed;
 
     // pages: the file pages to load; null is FilePages (the HUD). The front end passes its own subset.
-    public UiAtlasStore(IUiAtlasLoader loader, IUiTextureUploader uploader, TimeProvider? time = null, IReadOnlyList<UiPage>? pages = null)
+    public UiAtlasStore(
+        IUiAtlasLoader loader,
+        IUiTextureUploader uploader,
+        TimeProvider? time = null,
+        IReadOnlyList<UiPage>? pages = null,
+        IRenderFaultSink? faultSink = null)
     {
         _pages = pages is null ? FilePages : [.. pages];
         _pageTasks = new Task<DecodedTexture>?[_pages.Length];
@@ -60,6 +66,7 @@ public sealed class UiAtlasStore : IDisposable
         _loader = loader ?? throw new ArgumentNullException(nameof(loader));
         _uploader = uploader ?? throw new ArgumentNullException(nameof(uploader));
         _time = time ?? TimeProvider.System;
+        _faultSink = faultSink ?? RenderFaultLog.Shared;
     }
 
     public UiAtlasState State { get; private set; }
@@ -193,7 +200,23 @@ public sealed class UiAtlasStore : IDisposable
         State = UiAtlasState.Failed;
         FailureReason = reason;
         DeleteTextures();
+        AbandonTasks();
     }
+
+    // Nothing drains the decodes once the store has left Loading, so hand the ones still in flight to
+    // the fault log: an abandoned decode that throws must reach RenderFaultLog, not the finalizer.
+    private void AbandonTasks()
+    {
+        BackgroundWork.ObserveAndForget(_tableTask, _faultSink, FaultSource);
+        _tableTask = null;
+        for (int i = 0; i < _pageTasks.Length; i++)
+        {
+            BackgroundWork.ObserveAndForget(_pageTasks[i], _faultSink, FaultSource);
+            _pageTasks[i] = null;
+        }
+    }
+
+    private const string FaultSource = "ui-atlas";
 
     private void DeleteTextures()
     {
@@ -227,6 +250,7 @@ public sealed class UiAtlasStore : IDisposable
 
         _disposed = true;
         DeleteTextures();
+        AbandonTasks();
         if (State == UiAtlasState.Loading)
         {
             State = UiAtlasState.Failed;

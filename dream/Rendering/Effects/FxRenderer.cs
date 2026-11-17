@@ -65,6 +65,9 @@ public sealed class FxRenderer : IDisposable
             GL.BindVertexArray(_vertexArray);
             _instances.BindAttributes();
             GL.BindVertexArray(0);
+            // GL_ARRAY_BUFFER is not part of VAO state, so BindAttributes' binding has to be cleared
+            // separately: otherwise the next buffer write that forgets to bind lands in our instances.
+            GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
             GLUtils.CheckGLError("Effects renderer creation");
         }
         catch

@@ -19,9 +19,16 @@ public readonly record struct FloatingCombatTextTuning(
 
     public FloatingCombatTextTuning Clamp()
     {
+        FloatingCombatTextTuning fallback = Default;
         return new FloatingCombatTextTuning(
-            Math.Clamp(SizeMultiplier, MinSizeMultiplier, MaxSizeMultiplier),
-            Math.Clamp(MotionSpeedMultiplier, MinMotionSpeedMultiplier, MaxMotionSpeedMultiplier),
-            Math.Clamp(CriticalDepthMultiplier, MinCriticalDepthMultiplier, MaxCriticalDepthMultiplier));
+            Sanitize(SizeMultiplier, MinSizeMultiplier, MaxSizeMultiplier, fallback.SizeMultiplier),
+            Sanitize(MotionSpeedMultiplier, MinMotionSpeedMultiplier, MaxMotionSpeedMultiplier, fallback.MotionSpeedMultiplier),
+            Sanitize(CriticalDepthMultiplier, MinCriticalDepthMultiplier, MaxCriticalDepthMultiplier, fallback.CriticalDepthMultiplier));
     }
+
+    // Math.Clamp passes NaN straight through, so a non-finite setting would poison the combat-text
+    // layout instead of being rejected. NaN and +/-Infinity both fall back to the default, matching
+    // the sanitising the other config readers do (DesktopClientConfig.SanitizeVolume).
+    private static float Sanitize(float value, float min, float max, float fallback) =>
+        float.IsFinite(value) ? Math.Clamp(value, min, max) : fallback;
 }
