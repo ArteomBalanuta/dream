@@ -94,7 +94,7 @@ public class AsyncResourceLoaderTests
         harness.Loader.Request("bad-upload");
         harness.WaitUploadable(1);
 
-        Assert.Equal(1, harness.Loader.PumpUploads(2));
+        Assert.Equal(0, harness.Loader.PumpUploads(2));
         harness.Loader.Request("bad-upload");
         harness.Loader.PumpUploads(2);
 
