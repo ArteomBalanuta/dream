@@ -102,6 +102,14 @@ internal sealed partial class PlayerInventoryService
             {
                 return InventoryEquipOutcome.ItemGone;
             }
+
+            // An item that also sits in an equipment slot (only a hand-edited row) is refused, as the
+            // destroy, sell, drop and consume paths refuse it: the commit takes the bag anchor off only,
+            // so trading it would leave the giver wearing a copy the receiver now holds.
+            if (FindEquipmentSlotOf(slots, id) >= 0)
+            {
+                return InventoryEquipOutcome.ItemEquipped;
+            }
         }
 
         return InventoryEquipOutcome.Equipped;
