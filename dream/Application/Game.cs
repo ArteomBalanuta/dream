@@ -249,7 +249,8 @@ public class Game : GameWindow
                 _desktopClientConfig.Port,
                 _desktopClientConfig.HostPort,
                 _desktopClientConfig.PlayerName),
-            PersistMultiplayer);
+            PersistMultiplayer,
+            new WindowClipboard(this));
         CursorState = _mainMenu.DesiredCursorState;
         // After any ended play scene's teardown (which set None), so the title screen keeps its music.
         GameAudio.Current.SetMusic(MusicTrack.Menu);
@@ -770,17 +771,62 @@ public class Game : GameWindow
             return;
         }
 
-        MenuKey? key = e.Key switch
-        {
-            Keys.Backspace => MenuKey.Backspace,
-            Keys.Tab when !e.IsRepeat => MenuKey.Tab,
-            Keys.Enter or Keys.KeyPadEnter when !e.IsRepeat => MenuKey.Enter,
-            Keys.Escape when !e.IsRepeat => MenuKey.Escape,
-            _ => null
-        };
-        if (key is { } menuKey && _mainMenu.HandleKey(menuKey) == MenuAction.Exit)
+        MenuKey? key = MapMenuKey(e.Key, e.Control, e.IsRepeat);
+        MenuKeyModifiers modifiers = (e.Shift ? MenuKeyModifiers.Shift : MenuKeyModifiers.None)
+            | (e.Control ? MenuKeyModifiers.Control : MenuKeyModifiers.None);
+        if (key is { } menuKey && _mainMenu.HandleKey(menuKey, modifiers) == MenuAction.Exit)
         {
             Close();
+        }
+    }
+
+    // Editing keys repeat while held; the one-shot keys and the Ctrl shortcuts do not (a held Ctrl+V
+    // would paste over and over). The shortcuts follow the key's position name, as most games do.
+    internal static MenuKey? MapMenuKey(Keys key, bool control, bool isRepeat) => key switch
+    {
+        Keys.Backspace => MenuKey.Backspace,
+        Keys.Delete => MenuKey.Delete,
+        Keys.Left => MenuKey.Left,
+        Keys.Right => MenuKey.Right,
+        Keys.Home => MenuKey.Home,
+        Keys.End => MenuKey.End,
+        _ when isRepeat => null,
+        Keys.Tab => MenuKey.Tab,
+        Keys.Enter or Keys.KeyPadEnter => MenuKey.Enter,
+        Keys.Escape => MenuKey.Escape,
+        Keys.A when control => MenuKey.SelectAll,
+        Keys.C when control => MenuKey.Copy,
+        Keys.X when control => MenuKey.Cut,
+        Keys.V when control => MenuKey.Paste,
+        _ => null
+    };
+
+    // The system clipboard through GLFW. A clipboard that holds no text (or that GLFW cannot read) is empty.
+    private sealed class WindowClipboard(Game window) : IMenuClipboard
+    {
+        public string? GetText()
+        {
+            try
+            {
+                return window.ClipboardString;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[menu] clipboard read failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        public void SetText(string text)
+        {
+            try
+            {
+                window.ClipboardString = text;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[menu] clipboard write failed: {ex.Message}");
+            }
         }
     }
 
