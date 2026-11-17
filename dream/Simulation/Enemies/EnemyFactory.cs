@@ -93,7 +93,11 @@ internal static class EnemyFactory
             baseStats: stats);
         combatant.Health.SetAuthoritativeState(stored.CurrentHealth, maxHealth);
 
-        EnemyActor actor = Build(combatant, template, position, Math.Max(0f, stored.MovementSpeed), row.DisplayName, row.EnemyKind, level, home ?? position);
+        // The chase speed is hostile too, and it is the actor's real movement input: take it from the
+        // clamped sheet above (ClampEnemyBase maps NaN to the minimum and bounds the ceiling) rather
+        // than the raw column, so the actor cannot move at a speed its own replicated sheet denies -
+        // a NaN row otherwise froze the enemy for good and a huge one closed the whole gap in a tick.
+        EnemyActor actor = Build(combatant, template, position, stats[StatId.MovementSpeed], row.DisplayName, row.EnemyKind, level, home ?? position);
         actor.SetFacing(row.Facing);
         return actor;
     }
