@@ -13,6 +13,10 @@ public static class RemoteEnemyStateApplier
     [ThreadStatic]
     private static HashSet<int>? t_activeEnemyActorIds;
 
+    // Reused per snapshot on the same thread, like the set above.
+    [ThreadStatic]
+    private static HashSet<int>? t_withheldActorIds;
+
     public static void ApplyActorSnapshots(EnemyRegistry registry, IReadOnlyList<ActorSnapshot> actors)
     {
         AddOrUpdateEnemies(registry, actors);
@@ -45,6 +49,43 @@ public static class RemoteEnemyStateApplier
 
             registry.Add(CreateEnemy(actor, behaviorState));
         }
+    }
+
+    // Second half against the whole snapshot: enemies it no longer lists as live are dropped,
+    // except the ones it withheld as stale (ClientSnapshotActorCompleteness), which are still
+    // there and only missing their update. An enemy that really died or left is dropped even when
+    // the same snapshot withholds others, so a coalesced death and respawn still snaps.
+    public static void RemoveAbsentEnemies(EnemyRegistry registry, in ServerSnapshotEnvelope snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+
+        HashSet<int> withheld = t_withheldActorIds ??= [];
+        ClientSnapshotActorCompleteness.CollectWithheldActorIds(snapshot, withheld);
+        if (withheld.Count == 0)
+        {
+            RemoveAbsentEnemies(registry, snapshot.Actors);
+            return;
+        }
+
+        HashSet<int> activeEnemyActorIds = t_activeEnemyActorIds ??= [];
+        activeEnemyActorIds.Clear();
+        IReadOnlyList<ActorSnapshot> actors = snapshot.Actors;
+        for (int i = 0; i < actors.Count; i++)
+        {
+            if (IsLiveEnemy(actors[i]))
+            {
+                activeEnemyActorIds.Add(actors[i].ActorId);
+            }
+        }
+
+        // A withheld record carries no kind, so every withheld id is kept; only enemy ids can
+        // match anything in this registry.
+        foreach (int actorId in withheld)
+        {
+            activeEnemyActorIds.Add(actorId);
+        }
+
+        registry.RemoveAllExcept(activeEnemyActorIds);
     }
 
     // Second half: enemies the snapshot no longer lists as live are dropped.
