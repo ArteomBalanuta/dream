@@ -128,19 +128,22 @@ public class FireFlickerTests
             FireFlickerSample s = FireFlicker.Sample(FireFlickerKind.HeldTorch, Position, i / 60.0, 4);
             Assert.Equal(1f + (0.35f * (s.Intensity - 1f)), s.RadiusScale, 5);
             Assert.InRange(s.RadiusScale, 0.9124f, 1.0876f);
-            Assert.InRange(MathF.Abs(s.Offset.X), 0f, 0.02f + 1e-6f);
-            Assert.InRange(MathF.Abs(s.Offset.Y), 0f, 0.015f + 1e-6f);
-            Assert.InRange(MathF.Abs(s.Offset.Z), 0f, 0.02f + 1e-6f);
+            Assert.InRange(MathF.Abs(s.Offset.X), 0f, FireFlicker.OffsetLateral + 1e-6f);
+            Assert.InRange(MathF.Abs(s.Offset.Y), 0f, FireFlicker.OffsetVertical + 1e-6f);
+            Assert.InRange(MathF.Abs(s.Offset.Z), 0f, FireFlicker.OffsetLateral + 1e-6f);
         }
 
         FireFlickerSample lantern = FireFlicker.Sample(FireFlickerKind.HeldLantern, Position, 3.3, 4);
         Assert.Equal(new FireFlickerSample(1f, 1f, Vector3.Zero), lantern);
     }
 
+    // The seed-0 FALLBACK, which is what a light reaching a consumer without a seed still gets: the
+    // phase is the position quantised to PhaseGrid, so moving within the cell cannot change it.
     [Fact]
     public void ThePositionPhase_IsQuantised_SoAFlameWobbleCannotChangeIt()
     {
         FireFlickerSample a = FireFlicker.Sample(FireFlickerKind.Brazier, Position, 5.5, 0);
+        // Position sits at the centre of its cell on every axis, so the wobble stays inside it.
         FireFlickerSample b = FireFlicker.Sample(FireFlickerKind.Brazier, Position + a.Offset, 5.5, 0);
         Assert.Equal(a.Intensity, b.Intensity);
         // And different braziers are out of step.
@@ -149,10 +152,10 @@ public class FireFlickerTests
             FireFlicker.Sample(FireFlickerKind.Brazier, Position + new Vector3(16f, 0f, 0f), 5.5, 0).Intensity);
     }
 
-    // The halo re-derives its phase from light.Position, which already carries the offset, while the
-    // light itself was sampled at the un-offset position. Cell boundaries sit at 0.5k - 0.25; a position
-    // within the offset of one (a damaged lamp's centroid can sit exactly on it) used to give the halo a
-    // different phase from the light, flipping as the offset oscillated. Sweep each axis through boundaries.
+    // The seed, not the position, is what keeps the halo in step with the light. The halo only has the
+    // light, whose position already carries the offset; the carried seed makes the question of which
+    // phase cell that position lands in irrelevant. Cell boundaries sit at 0.5k - 0.25, and the offset
+    // now crosses them freely, so this is the mechanism and not a happy accident of a small offset.
     [Theory]
     [InlineData(FireFlickerKind.Lamp)]
     [InlineData(FireFlickerKind.Brazier)]
@@ -160,6 +163,7 @@ public class FireFlickerTests
     {
         float radius = kind == FireFlickerKind.Lamp ? LampLightIndex.LampRadius : PlacedLightIndex.BrazierRadius;
         int checkedSamples = 0;
+        int crossedACellBoundary = 0;
         for (int axis = 0; axis < 3; axis++)
         {
             // From 1.80 to 3.30 in 0.001 steps: crosses the boundaries at 2.25 and 2.75 (and 3.25), and
@@ -170,19 +174,34 @@ public class FireFlickerTests
                 float value = 1.8f + (step * 0.001f);
                 if (axis == 0) position.X = value; else if (axis == 1) position.Y = value; else position.Z = value;
 
+                int seed = FireFlicker.SeedFor(position);
+                Assert.NotEqual(0, seed);
                 for (int k = 0; k < 24; k++)
                 {
                     double t = (k * 0.173) + (step * 0.0007);
-                    FireFlickerSample s = FireFlicker.Sample(kind, position, t, 0);
-                    PointLight light = new(position + s.Offset, radius * s.RadiusScale, Vector3.One);
+                    FireFlickerSample s = FireFlicker.Sample(kind, position, t, seed);
+                    PointLight light = new(position + s.Offset, radius * s.RadiusScale, Vector3.One, seed);
                     Assert.Equal(s.Intensity, FireFlicker.IntensityOf(in light, t));
+                    if (Quantise(position + s.Offset) != Quantise(position))
+                    {
+                        crossedACellBoundary++;
+                    }
+
                     checkedSamples++;
                 }
             }
         }
 
         Assert.True(checkedSamples > 100000);
+        // The offset really does leave the base position's phase cell now, so the agreement above is
+        // the seed's doing and not a wobble too small to matter.
+        Assert.True(crossedACellBoundary > 1000, $"only {crossedACellBoundary} samples left their cell");
     }
+
+    private static (int X, int Y, int Z) Quantise(Vector3 v) => (
+        (int)MathF.Floor((v.X / FireFlicker.PhaseGrid) + 0.5f),
+        (int)MathF.Floor((v.Y / FireFlicker.PhaseGrid) + 0.5f),
+        (int)MathF.Floor((v.Z / FireFlicker.PhaseGrid) + 0.5f));
 
     [Fact]
     public void AHaloOnACellBoundary_DoesNotJitterFrameToFrame()
@@ -190,13 +209,30 @@ public class FireFlickerTests
         // Exactly on a boundary on every axis (2.25 = 0.5*5 - 0.25), 4 s at 60 fps: the light's own
         // flicker and the halo's read-back must be the same series, i.e. no frame flips to another phase.
         Vector3 position = new(2.25f, 2.25f, 2.25f);
+        int seed = FireFlicker.SeedFor(position);
         for (int frame = 0; frame < 240; frame++)
         {
             double t = frame / 60.0;
-            FireFlickerSample s = FireFlicker.Sample(FireFlickerKind.Lamp, position, t, 0);
-            PointLight light = new(position + s.Offset, LampLightIndex.LampRadius * s.RadiusScale, Vector3.One);
+            FireFlickerSample s = FireFlicker.Sample(FireFlickerKind.Lamp, position, t, seed);
+            PointLight light = new(position + s.Offset, LampLightIndex.LampRadius * s.RadiusScale, Vector3.One, seed);
             Assert.Equal(s.Intensity, FireFlicker.IntensityOf(in light, t));
         }
+    }
+
+    // The producers all carry the seed; a light that reaches a consumer without one is the exception.
+    [Fact]
+    public void EveryProducer_CarriesTheSeedItSampledWith()
+    {
+        Vector3 centre = new(6.5f, 2.5f, -3.5f);
+        PointLight lamp = LampLightIndex.CreateLight(centre, 2.75);
+        Assert.Equal(FireFlicker.SeedFor(centre), lamp.FlickerSeed);
+        Assert.Equal(FireFlicker.Sample(FireFlickerKind.Lamp, centre, 2.75, lamp.FlickerSeed).Intensity, FireFlicker.IntensityOf(in lamp, 2.75));
+
+        // No clock, no flicker, and nothing to stay in step with.
+        Assert.Equal(0, LampLightIndex.CreateLight(centre).FlickerSeed);
+
+        Assert.True(HeldLightCatalog.TryCreate(Dream.Simulation.Inventory.HeldLightKind.Torch, centre, 2.75, 21, out PointLight torch));
+        Assert.Equal(21, torch.FlickerSeed);
     }
 
     // FxSimulation classifies a light by its radius, so a flickering radius must stay in its class.

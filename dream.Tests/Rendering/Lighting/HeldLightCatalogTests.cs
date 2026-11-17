@@ -71,6 +71,9 @@ public sealed class HeldLightCatalogTests
         Assert.Equal(HeldLightCatalog.TorchRadius * sample.RadiusScale, light.Radius, 5);
         AssertClose(HeldLightCatalog.TorchColor * sample.Intensity, light.Color);
         Assert.Equal(HeldLightCatalog.Flicker(HeldLightKind.Torch, 2.5, 11), sample.Intensity);
+        // The actor id rides along, so a consumer that only has the light recovers this very sample.
+        Assert.Equal(11, light.FlickerSeed);
+        Assert.Equal(sample.Intensity, FireFlicker.IntensityOf(in light, 2.5));
 
         Assert.True(HeldLightCatalog.TryCreate(HeldLightKind.Lantern, position, 2.5, 11, out PointLight lantern));
         Assert.Equal(position, lantern.Position);

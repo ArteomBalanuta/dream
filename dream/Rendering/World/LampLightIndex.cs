@@ -92,8 +92,9 @@ public sealed class LampLightIndex
             return new PointLight(center, LampRadius, LampColor);
         }
 
-        FireFlickerSample fire = FireFlicker.Sample(FireFlickerKind.Lamp, center, clock, 0);
-        return new PointLight(center + fire.Offset, LampRadius * fire.RadiusScale, LampColor * fire.Intensity);
+        int seed = FireFlicker.SeedFor(center);
+        FireFlickerSample fire = FireFlicker.Sample(FireFlickerKind.Lamp, center, clock, seed);
+        return new PointLight(center + fire.Offset, LampRadius * fire.RadiusScale, LampColor * fire.Intensity, seed);
     }
 
     // The light position of a lamp cell: its cube center while intact, the centroid of its solid

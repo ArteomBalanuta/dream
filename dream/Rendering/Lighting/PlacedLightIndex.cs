@@ -87,8 +87,9 @@ public sealed class PlacedLightIndex
 
     // sunIntensity: the frame's sun intensity (0 = night); scales every brazier and drops them once the
     // factor is negligible, so a daylight frame carries no halo or embers for them either.
-    // clockSeconds: the presentation clock; when given each brazier flickers (FireFlicker, phase from its
-    // position) in intensity, radius and flame position. Null leaves the base light, as tests expect.
+    // clockSeconds: the presentation clock; when given each brazier flickers (FireFlicker, phase from the
+    // stable seed of its un-offset position, which the light then carries) in intensity, radius and flame
+    // position. Null leaves the base light, as tests expect.
     public void Collect(in GeometryRenderExport export, Vector3 cameraPosition, LightCollector lights, float sunIntensity = 0f, double? clockSeconds = null)
     {
         ArgumentNullException.ThrowIfNull(lights);
@@ -115,9 +116,10 @@ public sealed class PlacedLightIndex
             {
                 if (clockSeconds is { } clock)
                 {
-                    FireFlickerSample fire = FireFlicker.Sample(FireFlickerKind.Brazier, placed.Position, clock, 0);
+                    int seed = FireFlicker.SeedFor(placed.Position);
+                    FireFlickerSample fire = FireFlicker.Sample(FireFlickerKind.Brazier, placed.Position, clock, seed);
                     lights.Add(new PointLight(
-                        placed.Position + fire.Offset, placed.Radius * fire.RadiusScale, placed.Color * (strength * fire.Intensity)));
+                        placed.Position + fire.Offset, placed.Radius * fire.RadiusScale, placed.Color * (strength * fire.Intensity), seed));
                 }
                 else
                 {

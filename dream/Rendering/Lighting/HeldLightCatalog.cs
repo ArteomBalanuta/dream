@@ -106,7 +106,9 @@ public static class HeldLightCatalog
         // FireFlicker.IntensityOf recovers the torch's flicker by reading Color.X / TorchColor.X back,
         // clamped to [1 - A, 1 + A]. A scaled colour would not fail, it would silently pin the halo's
         // flicker at the floor. Scale a placed fire's colour (the brazier does) but never a held one.
-        light = new PointLight(position + sample.Offset, radius * sample.RadiusScale, color * sample.Intensity);
+        // The actor id rides along as the light's flicker seed, so a consumer that only has the light
+        // reads the very phase this sample was taken at instead of re-deriving one.
+        light = new PointLight(position + sample.Offset, radius * sample.RadiusScale, color * sample.Intensity, seed);
         return true;
     }
 
