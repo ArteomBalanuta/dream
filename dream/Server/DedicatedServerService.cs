@@ -20,6 +20,10 @@ public sealed class DedicatedServerService : IAsyncDisposable
     // after closing every connection's transport.
     public static readonly TimeSpan ConnectionLoopShutdownTimeout = TimeSpan.FromSeconds(5);
 
+    // Pause after an accept that failed transiently, so a flood of aborted handshakes cannot spin
+    // the accept loop.
+    public static readonly TimeSpan FailedAcceptBackoff = TimeSpan.FromMilliseconds(50);
+
     private readonly DedicatedServerHost _host;
     private readonly IServerTransport _transport;
     private readonly IProtocolCodec _codec;
@@ -538,11 +542,44 @@ public sealed class DedicatedServerService : IAsyncDisposable
         }
     }
 
+    // A peer that resets the TCP handshake before the accept completes fails one accept, not the
+    // server: like a connection loop, the accept loop logs a per-connection failure and carries on.
+    // An error that says the listener itself is gone is fatal and still ends RunAsync.
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            await AcceptNextClientAsync(cancellationToken);
+            try
+            {
+                await AcceptNextClientAsync(cancellationToken);
+            }
+            catch (SocketException ex) when (!cancellationToken.IsCancellationRequested && !IsListenerGone(ex))
+            {
+                await AfterFailedAcceptAsync(ex, cancellationToken);
+            }
+            catch (IOException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                await AfterFailedAcceptAsync(ex, cancellationToken);
+            }
+        }
+    }
+
+    // The listener socket itself is no longer usable; retrying would spin on the same error.
+    private static bool IsListenerGone(SocketException ex) =>
+        ex.SocketErrorCode is SocketError.NotSocket or SocketError.OperationAborted or SocketError.Shutdown
+            or SocketError.InvalidArgument;
+
+    // Logged once per failure, then a short pause so a peer that can fail accepts back to back
+    // cannot spin the loop.
+    private static async Task AfterFailedAcceptAsync(Exception ex, CancellationToken cancellationToken)
+    {
+        NetworkDiagnosticsLog.Write("server.accept.failed", $"error={ex.GetType().Name}: {ex.Message}");
+        try
+        {
+            await Task.Delay(FailedAcceptBackoff, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
