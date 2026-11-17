@@ -24,6 +24,7 @@ public sealed class SinglePlayerLauncher
 {
     public const string WakingMessage = "Waking the world...";
     public const string StartingMessage = "Starting the local server...";
+    public const string ServerBusyMessage = "The local server is still starting; try again in a moment.";
 
     // Frames that must be presented in the Waking phase before the blocking start.
     private const int FramesBeforeStart = 2;
@@ -75,7 +76,12 @@ public sealed class SinglePlayerLauncher
             _localServer.ResetFailure();
         }
 
-        _localServer.TryConfigureListen(LocalServerListenOptions.Loopback);
+        if (!_localServer.TryConfigureListen(LocalServerListenOptions.Loopback))
+        {
+            Fail(ServerBusyMessage);
+            return;
+        }
+
         _hostPlayerName = null;
         _wakingFrames = 0;
         StatusMessage = WakingMessage;
@@ -103,9 +109,9 @@ public sealed class SinglePlayerLauncher
         }
 
         LocalServerListenOptions hosted = LocalServerListenOptions.Hosted(port);
-        if (!_localServer.TryConfigureListen(hosted) && _localServer.ListenOptions != hosted)
+        if (!_localServer.TryConfigureListen(hosted))
         {
-            Fail("The local server is already running; return to the title screen and try again.");
+            Fail(ServerBusyMessage);
             return;
         }
 
@@ -144,6 +150,10 @@ public sealed class SinglePlayerLauncher
         {
             Phase = SinglePlayerPhase.Idle;
             StatusMessage = string.Empty;
+            if (_localServer.ListenOptions.AllowRemotePlayers)
+            {
+                _localServer.TryConfigureListen(LocalServerListenOptions.Loopback);
+            }
         }
     }
 
@@ -241,6 +251,13 @@ public sealed class SinglePlayerLauncher
 
     private void Fail(string message)
     {
+        if (_hostPlayerName != null)
+        {
+            // A failed Host must not leave the world listening on every interface.
+            _hostPlayerName = null;
+            _localServer.TryConfigureListen(LocalServerListenOptions.Loopback);
+        }
+
         StatusMessage = string.IsNullOrWhiteSpace(message) ? "Could not start a single player game." : message;
         Phase = SinglePlayerPhase.Failed;
     }

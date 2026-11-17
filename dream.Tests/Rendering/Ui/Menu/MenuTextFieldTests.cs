@@ -154,7 +154,7 @@ public sealed class MenuTextFieldTests
     [InlineData(MultiplayerField.Address, MenuAction.Join)]
     [InlineData(MultiplayerField.JoinPort, MenuAction.Join)]
     [InlineData(MultiplayerField.HostPort, MenuAction.Host)]
-    [InlineData(MultiplayerField.PlayerName, MenuAction.None)]
+    [InlineData(MultiplayerField.PlayerName, MenuAction.Join)]
     [InlineData(MultiplayerField.None, MenuAction.None)]
     public void Form_EnterMapsToJoinOrHost(MultiplayerField focus, MenuAction expected)
     {

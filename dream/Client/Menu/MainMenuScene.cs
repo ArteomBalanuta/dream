@@ -163,8 +163,8 @@ public sealed class MainMenuScene
 
         _notice = null;
         _noticeIsError = false;
-        TryPort(portText, out int joinPort);
-        int hostPort = TryPort(_form.HostPort.Text, out int parsedHost) ? parsedHost : _saved.HostPort;
+        LocalServerListenOptions.TryParsePort(portText, out int joinPort);
+        int hostPort = LocalServerListenOptions.TryParsePort(_form.HostPort.Text, out int parsedHost) ? parsedHost : _saved.HostPort;
         Persist(new MultiplayerDefaults(address, joinPort, hostPort, name));
         _launcher.RequestJoin(options);
     }
@@ -188,13 +188,10 @@ public sealed class MainMenuScene
 
         _notice = null;
         _noticeIsError = false;
-        int joinPort = TryPort(_form.JoinPort.Text, out int parsedJoin) ? parsedJoin : _saved.JoinPort;
+        int joinPort = LocalServerListenOptions.TryParsePort(_form.JoinPort.Text, out int parsedJoin) ? parsedJoin : _saved.JoinPort;
         Persist(new MultiplayerDefaults(_form.Address.Text.Trim(), joinPort, port, name));
         _launcher.RequestHost(port, name);
     }
-
-    private static bool TryPort(string? text, out int port) =>
-        int.TryParse(text?.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out port) && port is >= 1 and <= 65535;
 
     private void Persist(MultiplayerDefaults defaults)
     {

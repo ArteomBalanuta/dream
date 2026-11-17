@@ -74,9 +74,12 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
         bool hosted = effectiveListen.AllowRemotePlayers;
         // DREAM_SNAPSHOT_INTERVAL_TICKS applies to the integrated server as to the dedicated one;
         // options passed in are used as given. Hosting follows the dedicated server's connection rules.
+        int maxPlayers = hosted
+            ? ServerRuntimeConfig.Parse(static n => n == ServerRuntimeConfig.MaxPlayersEnvironmentVariable ? Environment.GetEnvironmentVariable(n) : null, log)?.MaxPlayers ?? ServerRuntimeConfig.DefaultMaxPlayers
+            : ServerRuntimeConfig.DefaultMaxPlayers;
         connectionOptions ??= hosted
             ? ServerConnectionOptions.Default.WithEnvironmentOverrides(log).WithPlayerCapHeadroom(
-                ServerRuntimeConfig.DefaultMaxPlayers,
+                maxPlayers,
                 Environment.GetEnvironmentVariable(ServerConnectionOptions.MaxConnectionsEnvironmentVariable),
                 log)
             : DefaultConnectionOptions.WithEnvironmentOverrides(log);
@@ -87,7 +90,7 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
             if (hosted)
             {
                 // Dev commands keep the environment-derived value ServerBootstrap set, as on the dedicated server.
-                host.MaxPlayers = ServerRuntimeConfig.DefaultMaxPlayers;
+                host.MaxPlayers = maxPlayers;
             }
             else
             {
@@ -132,9 +135,11 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
             string message = ex is WorldHeldException held
                 ? $"World {held.WorldId} is already in use by another Dream window or server on this computer. " +
                   "Close it to host here, or enter a server address to join."
-                : ex is System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.AddressAlreadyInUse or System.Net.Sockets.SocketError.AccessDenied }
+                : ex is System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.AddressAlreadyInUse }
                     ? $"Port {effectiveListen.Port} is already in use on this computer. Choose another port."
-                    : ex.Message;
+                    : ex is System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.AccessDenied }
+                        ? $"Port {effectiveListen.Port} is reserved or not permitted on this computer. Choose another port."
+                        : ex.Message;
             Console.Error.WriteLine($"[startup] local server not started: {message}");
             return ValueTask.FromResult(new IntegratedLocalServerHandle(
                 host: null,

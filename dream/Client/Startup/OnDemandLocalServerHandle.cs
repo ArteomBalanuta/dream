@@ -23,6 +23,8 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
     private volatile bool _disposed;
     private volatile LocalServerListenOptions _listen = LocalServerListenOptions.Loopback;
     private Task? _pendingStart;
+    // The stop of servers detached by TryConfigureListen.
+    private Task _ownStop = Task.CompletedTask;
 
     // The start receives the listen options configured last (Loopback until TryConfigureListen).
     public OnDemandLocalServerHandle(Func<LocalServerListenOptions, ILocalServerHandle> start, Func<Task>? startAfter = null)
@@ -38,18 +40,57 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
 
     public LocalServerListenOptions ListenOptions => _listen;
 
-    // Refused while a server runs, a start is pending, or after dispose; allowed before the first
-    // start and after a failed one.
+    // Same options: true, any running server is kept. Refused after dispose or while a start is
+    // pending. Otherwise a server that exists (running or failed) is detached and its stop begins
+    // without blocking the caller; the next EnsureStarted queues behind that stop, so the old
+    // server's port and world are released before a new one starts.
     public bool TryConfigureListen(LocalServerListenOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if (_disposed || _started is { ErrorMessage: null } || _pendingStart is { IsCompleted: false })
+        if (_disposed)
         {
             return false;
         }
 
+        if (options == _listen)
+        {
+            return true;
+        }
+
+        if (_pendingStart is { IsCompleted: false })
+        {
+            return false;
+        }
+
+        ILocalServerHandle? previous = _started;
+        if (previous != null)
+        {
+            _started = null;
+            if (_listen.AllowRemotePlayers)
+            {
+                Console.Error.WriteLine($"[host] stopped hosting on port {previous.BoundPort}");
+            }
+
+            _ownStop = ChainStop(_ownStop, previous);
+        }
+
+        _startFailure = null;
+        _pendingStart = null;
         _listen = options;
         return true;
+    }
+
+    private static async Task ChainStop(Task earlier, ILocalServerHandle server)
+    {
+        await earlier.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        try
+        {
+            await server.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[startup] local server stop failed: {ex.Message}");
+        }
     }
 
     public bool IsStarted => _started != null || _pendingStart != null;
@@ -75,7 +116,9 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
             return;
         }
 
-        Task previousStop = _startAfter?.Invoke() ?? Task.CompletedTask;
+        Task previousStop = _ownStop.IsCompleted
+            ? _startAfter?.Invoke() ?? Task.CompletedTask
+            : Task.WhenAll(_startAfter?.Invoke() ?? Task.CompletedTask, _ownStop);
         if (previousStop.IsCompleted)
         {
             _started = _start(_listen);
@@ -149,6 +192,7 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
             await _pendingStart.ConfigureAwait(false);
         }
 
+        await _ownStop.ConfigureAwait(false);
         if (_started != null)
         {
             await _started.DisposeAsync();

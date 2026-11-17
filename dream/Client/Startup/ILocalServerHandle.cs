@@ -36,7 +36,7 @@ public interface ILocalServerHandle : IAsyncDisposable
     // Where the next (or current) start listens.
     LocalServerListenOptions ListenOptions => LocalServerListenOptions.Loopback;
 
-    // Sets where the next start listens. False (nothing changed) while a server runs or a start is
-    // pending; allowed before the first start and after a failed one.
-    bool TryConfigureListen(LocalServerListenOptions options) => false;
+    // Sets where the next start listens; a running server on other options is stopped first. False
+    // (nothing changed) while a start is pending or after dispose. Fixed handles accept only their own options.
+    bool TryConfigureListen(LocalServerListenOptions options) => options == ListenOptions;
 }

@@ -69,7 +69,7 @@ public sealed class MultiplayerFormState
             case MenuKey.Enter:
                 return Focused switch
                 {
-                    MultiplayerField.Address or MultiplayerField.JoinPort => MenuAction.Join,
+                    MultiplayerField.PlayerName or MultiplayerField.Address or MultiplayerField.JoinPort => MenuAction.Join,
                     MultiplayerField.HostPort => MenuAction.Host,
                     _ => MenuAction.None
                 };

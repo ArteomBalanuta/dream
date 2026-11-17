@@ -65,6 +65,13 @@ public class SinglePlayerLauncherTests
                 return false;
             }
 
+            if (options != ListenOptions)
+            {
+                // Like the on-demand handle: a server on other options is detached.
+                _started = false;
+                ErrorMessage = null;
+            }
+
             ListenOptions = options;
             return true;
         }
@@ -86,9 +93,16 @@ public class SinglePlayerLauncherTests
     {
         public List<RemoteClientOptions> Connects { get; } = [];
 
+        public bool FailConnect { get; set; }
+
         public ValueTask<RemoteClientSession> ConnectAsync(RemoteClientOptions options, CancellationToken cancellationToken = default)
         {
             Connects.Add(options);
+            if (FailConnect)
+            {
+                throw new InvalidOperationException("connection refused");
+            }
+
             return ValueTask.FromResult(new RemoteClientSession(
                 new FakeTransport(),
                 new TransportJsonCodec(),
@@ -256,7 +270,7 @@ public class SinglePlayerLauncherTests
     }
 
     [Fact]
-    public void RequestHost_WhenConfigureIsRefusedAndOptionsDiffer_Fails()
+    public void RequestHost_WhenConfigureIsRefused_Fails()
     {
         var (launcher, server, _, _) = Create();
         server.AllowConfigure = false;
@@ -264,7 +278,44 @@ public class SinglePlayerLauncherTests
         launcher.RequestHost(7777, "host-a");
 
         Assert.Equal(SinglePlayerPhase.Failed, launcher.Phase);
-        Assert.Contains("already running", launcher.StatusMessage);
+        Assert.Equal(SinglePlayerLauncher.ServerBusyMessage, launcher.StatusMessage);
+    }
+
+    [Fact]
+    public void RequestStart_WhenConfigureIsRefused_Fails()
+    {
+        var (launcher, server, _, _) = Create();
+        server.AllowConfigure = false;
+
+        launcher.RequestStart();
+
+        Assert.Equal(SinglePlayerPhase.Failed, launcher.Phase);
+        Assert.Equal(SinglePlayerLauncher.ServerBusyMessage, launcher.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Host_ConnectFails_ShutsTheHostedListenerDown_AndSinglePlayerStartsFresh()
+    {
+        var (launcher, server, connector, coordinator) = Create();
+        connector.FailConnect = true;
+        launcher.RequestHost(7777, "host-a");
+        PresentFrames(launcher, 2);
+        launcher.Update();
+        await coordinator.WaitForPendingConnectionAsync();
+        launcher.Update();
+
+        Assert.Equal(SinglePlayerPhase.Failed, launcher.Phase);
+        Assert.Equal(LocalServerListenOptions.Loopback, server.ConfigureCalls[^1]);
+        Assert.Equal(LocalServerListenOptions.Loopback, server.ListenOptions);
+
+        connector.FailConnect = false;
+        server.ConfigureCalls.Clear();
+        launcher.RequestStart();
+        Assert.Equal(LocalServerListenOptions.Loopback, Assert.Single(server.ConfigureCalls));
+        PresentFrames(launcher, 2);
+        launcher.Update();
+        Assert.Equal(2, server.StartCalls);
+        Assert.Equal(LocalServerListenOptions.Loopback, server.ListenAtStart);
     }
 
     [Fact]

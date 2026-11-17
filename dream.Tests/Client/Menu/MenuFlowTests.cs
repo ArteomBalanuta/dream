@@ -87,12 +87,12 @@ public class MenuFlowTests
         // Like the on-demand handle: listen options can change only while no server is running.
         public bool TryConfigureListen(LocalServerListenOptions options)
         {
-            if (_started)
+            if (options != ListenOptions)
             {
-                return false;
+                _started = false;
+                ListenOptions = options;
             }
 
-            ListenOptions = options;
             return true;
         }
 
