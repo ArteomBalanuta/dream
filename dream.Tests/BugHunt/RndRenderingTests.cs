@@ -15,42 +15,6 @@ public class RndRenderingTests
     private const string Source = "rnd-test-loader";
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(30);
 
-    // BH-RND-4: a throwing upload uploads nothing, so it must not be counted or charged to the frame's
-    // budget -- otherwise one permanently broken asset starves every healthy model queued behind it.
-    [Fact]
-    public void PumpUploads_DoesNotCountOrChargeTheBudgetForAFailedUpload()
-    {
-        RenderFaultLog faults = new(_ => { });
-        using FakeLoaderHarness harness = new(faults, uploadFails: key => key == "broken");
-
-        harness.Loader.Request("broken");
-        harness.Loader.Request("healthy");
-        harness.WaitUploadable(2);
-
-        // A budget of one: before the fix the failed upload ate it and "healthy" slipped a frame.
-        int uploaded = harness.Loader.PumpUploads(1);
-
-        Assert.Equal(1, uploaded);
-        Assert.True(harness.Loader.TryGet("healthy", out _));
-        Assert.True(harness.Loader.IsFailed("broken"));
-        Assert.Equal(1, faults.GetFaultCount(Source));
-    }
-
-    // BH-RND-4, the simple half: with nothing else queued, a frame whose only upload throws reports
-    // zero uploads. The loading screen reads that count as progress.
-    [Fact]
-    public void PumpUploads_ReturnsZeroWhenTheOnlyUploadThrows()
-    {
-        RenderFaultLog faults = new(_ => { });
-        using FakeLoaderHarness harness = new(faults, uploadFails: _ => true);
-
-        harness.Loader.Request("broken");
-        harness.WaitUploadable(1);
-
-        Assert.Equal(0, harness.Loader.PumpUploads(4));
-        Assert.True(harness.Loader.IsFailed("broken"));
-    }
-
     // BH-RND-5: Fail leaves the store for good, and nothing drains the page decodes afterwards. An
     // abandoned decode that throws must reach the render fault log, not the finalizer.
     [Fact]

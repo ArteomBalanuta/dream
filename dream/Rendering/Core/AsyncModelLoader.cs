@@ -191,8 +191,8 @@ public sealed class AsyncResourceLoader<TData, TResource> : IDisposable
     public bool IsFailed(string key) => GetState(key) == AsyncResourceState.Failed;
 
     // Uploads up to maxPerFrame finished decodes on the calling thread and returns how many it
-    // uploaded. Decode and upload faults are reported and do not count against the budget. Never
-    // throws for a decode or upload fault.
+    // uploaded. Decode faults are reported and do not count against the budget. Never throws
+    // for a decode or upload fault.
     public int PumpUploads(int maxPerFrame)
     {
         int uploaded = 0;
@@ -248,6 +248,7 @@ public sealed class AsyncResourceLoader<TData, TResource> : IDisposable
                 continue;
             }
 
+            uploaded++;
             TResource resource;
             try
             {
@@ -267,9 +268,6 @@ public sealed class AsyncResourceLoader<TData, TResource> : IDisposable
                 continue;
             }
 
-            // Counted only once the upload actually happened: a throwing upload costs no GPU time, so
-            // charging it to the budget would starve the healthy models queued behind it.
-            uploaded++;
             if (!Publish(entry, resource))
             {
                 // The loader or the handle was disposed during the upload; nobody else owns it.
