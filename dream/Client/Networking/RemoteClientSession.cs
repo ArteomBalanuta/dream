@@ -8,6 +8,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
 using Dream.Server;
 using Dream.Simulation.Players;
+using Dream.Simulation.World;
 
 namespace Dream.Client.Networking;
 
@@ -609,6 +610,24 @@ public sealed class RemoteClientSession : IAsyncDisposable
         return true;
     }
 
+    // A decoded snapshot the client cannot apply: one of its collections was absent from the payload
+    // (null, not empty), or its actors came neither as a list nor as a frame. Thrown on the receive
+    // loop, which ends the session with the reason, like any other malformed frame.
+    private static void RejectMalformedSnapshot(ServerSnapshotEnvelope snapshot)
+    {
+        string? missing =
+            snapshot.LastAcceptedCommandSequences == null ? nameof(snapshot.LastAcceptedCommandSequences)
+            : snapshot.WorldMutations == null ? nameof(snapshot.WorldMutations)
+            : snapshot.DamageEvents == null ? nameof(snapshot.DamageEvents)
+            : snapshot.Actors == null && snapshot.ActorFrame == null ? nameof(snapshot.Actors)
+            : null;
+        if (missing != null)
+        {
+            throw new InvalidDataException(
+                $"Malformed server.snapshot payload: {missing} is missing (tick {snapshot.ServerTick}).");
+        }
+    }
+
     private void DrainInboundFrames()
     {
         while (_receiveBuffer.TryReadPayload(_framer, out ReadOnlySpan<byte> payload))
@@ -639,6 +658,11 @@ public sealed class RemoteClientSession : IAsyncDisposable
                     $"Received non-server message kind '{decoded.Message.MessageKind}' on client transport.");
             if (serverMessage is ServerSnapshotMessage snapshotMessage)
             {
+                // A snapshot payload that omits one of its collections decodes to null: the decoder
+                // keeps that parity with the reference serializer deliberately, so the rejection
+                // belongs here, at the client's application boundary. Without it the null reaches the
+                // frame thread and throws there instead of ending the session as a protocol error.
+                RejectMalformedSnapshot(snapshotMessage.Snapshot);
                 // Before any holding (a world transfer), so frames apply in the order they came.
                 serverMessage = _actorStates.Apply(snapshotMessage);
             }
