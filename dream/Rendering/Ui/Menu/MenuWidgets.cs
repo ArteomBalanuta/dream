@@ -294,6 +294,78 @@ public sealed class MenuWidgets
         return clicked;
     }
 
+    // A single-line text box: a plate, left-aligned text clipped to the box (the tail stays visible), a
+    // caret when focused. Returns true on the frame it is clicked (the caller moves focus).
+    public bool TextField(int id, UiRect r, MenuTextField field, bool focused, bool enabled = true)
+    {
+        bool clicked = Input.Button(id, r, enabled) && enabled;
+
+        if (Skin.SliderTrackSprite is { } sprite)
+        {
+            UiColor tint = focused && enabled ? new UiColor(255, 236, 200, 255) : UiColor.White;
+            if (sprite.HasSlice)
+            {
+                Canvas.NineSlice(in sprite, r, tint);
+            }
+            else
+            {
+                Canvas.Sprite(in sprite, r, tint);
+            }
+        }
+        else
+        {
+            Canvas.Solid(r, new UiColor(10, 10, 12, 255));
+        }
+
+        if (focused && enabled)
+        {
+            float b = MathF.Max(1f, MathF.Round(_layout.Scale * 0.5f));
+            UiColor frame = new(0xF0, 0xC4, 0x6C, 150);
+            Canvas.Solid(new UiRect(r.X, r.Y, r.W, b), frame);
+            Canvas.Solid(new UiRect(r.X, r.Bottom - b, r.W, b), frame);
+            Canvas.Solid(new UiRect(r.X, r.Y, b, r.H), frame);
+            Canvas.Solid(new UiRect(r.Right - b, r.Y, b, r.H), frame);
+        }
+
+        float pad = 4f * _layout.Scale;
+        float avail = MathF.Max(0f, r.W - 2f * pad);
+        float hUnits = _layout.Scale > 0f ? r.H / _layout.Scale : ButtonHeightUnits;
+        string text = field.Text;
+        string shown = focused && enabled ? text + "_" : text;
+        UiSizedText style = FitTextInBox("Mg", avail, OptionRowUnits, hUnits, allowTitle: false);
+        // Only the tail that fits is drawn, so the end being typed stays visible.
+        int start = 0;
+        while (start < text.Length && UiText.Measure(Canvas, shown.AsSpan(start), in style) > avail)
+        {
+            start++;
+        }
+
+        if (start > 0 && char.IsLowSurrogate(shown[start]))
+        {
+            start++;
+        }
+
+        UiColor color = enabled ? Bone : Disabled;
+        if (start >= text.Length)
+        {
+            // Nothing of the text fits (or it is empty): only the caret, if any.
+            start = text.Length;
+        }
+
+        if (start < text.Length)
+        {
+            TextLeftCentred(text.AsSpan(start), r, r.X + pad, in style, color);
+        }
+
+        if (focused && enabled)
+        {
+            float tw = UiText.Measure(Canvas, text.AsSpan(start), in style);
+            TextLeftCentred("_", r, r.X + pad + tw, in style, Gold);
+        }
+
+        return clicked;
+    }
+
     // A horizontal slider. track is where the groove is drawn, hit the (taller) pointer area. unit is 0..1.
     // While the left button is held after a press inside hit, the slider follows the pointer.
     public MenuSliderResult Slider(int id, UiRect track, UiRect hit, float unit, bool enabled = true)

@@ -44,7 +44,36 @@ public class SinglePlayerLauncherTests
 
             _started = true;
             StartCalls++;
+            ListenAtStart = ListenOptions;
             _pollsUntilReady = ReadsBeforeReady;
+        }
+
+        public LocalServerListenOptions ListenOptions { get; private set; } = LocalServerListenOptions.Loopback;
+
+        public List<LocalServerListenOptions> ConfigureCalls { get; } = [];
+
+        public bool AllowConfigure { get; set; } = true;
+
+        // The listen options at the moment EnsureStarted first ran.
+        public LocalServerListenOptions? ListenAtStart { get; private set; }
+
+        public bool TryConfigureListen(LocalServerListenOptions options)
+        {
+            ConfigureCalls.Add(options);
+            if (!AllowConfigure)
+            {
+                return false;
+            }
+
+            if (options != ListenOptions)
+            {
+                // Like the on-demand handle: a server on other options is detached.
+                _started = false;
+                ErrorMessage = null;
+            }
+
+            ListenOptions = options;
+            return true;
         }
 
         public void ResetFailure()
@@ -64,9 +93,16 @@ public class SinglePlayerLauncherTests
     {
         public List<RemoteClientOptions> Connects { get; } = [];
 
+        public bool FailConnect { get; set; }
+
         public ValueTask<RemoteClientSession> ConnectAsync(RemoteClientOptions options, CancellationToken cancellationToken = default)
         {
             Connects.Add(options);
+            if (FailConnect)
+            {
+                throw new InvalidOperationException("connection refused");
+            }
+
             return ValueTask.FromResult(new RemoteClientSession(
                 new FakeTransport(),
                 new TransportJsonCodec(),
@@ -203,6 +239,117 @@ public class SinglePlayerLauncherTests
         PresentFrames(launcher, 3);
         launcher.Update();
         Assert.Equal(0, server.StartCalls);
+    }
+
+    [Fact]
+    public async Task RequestHost_ConfiguresHostedBeforeStart_AndConnectsWithTheGivenName()
+    {
+        var (launcher, server, connector, coordinator) = Create();
+        launcher.RequestHost(7777, "host-a");
+        Assert.Equal(LocalServerListenOptions.Hosted(7777), Assert.Single(server.ConfigureCalls));
+        Assert.Equal(0, server.StartCalls);
+        PresentFrames(launcher, 2);
+
+        launcher.Update();
+        Assert.Equal(LocalServerListenOptions.Hosted(7777), server.ListenAtStart);
+        Assert.Equal(SinglePlayerPhase.Connecting, launcher.Phase);
+        await coordinator.WaitForPendingConnectionAsync();
+        launcher.Update();
+
+        Assert.True(launcher.TryTakeConnectedSession(out RemoteClientSession? session));
+        Assert.Equal("host-a", Assert.Single(connector.Connects).DisplayName);
+        await session!.DisposeAsync();
+    }
+
+    [Fact]
+    public void RequestStart_ConfiguresLoopback()
+    {
+        var (launcher, server, _, _) = Create();
+        launcher.RequestStart();
+        Assert.Equal(LocalServerListenOptions.Loopback, Assert.Single(server.ConfigureCalls));
+    }
+
+    [Fact]
+    public void RequestHost_WhenConfigureIsRefused_Fails()
+    {
+        var (launcher, server, _, _) = Create();
+        server.AllowConfigure = false;
+
+        launcher.RequestHost(7777, "host-a");
+
+        Assert.Equal(SinglePlayerPhase.Failed, launcher.Phase);
+        Assert.Equal(SinglePlayerLauncher.ServerBusyMessage, launcher.StatusMessage);
+    }
+
+    [Fact]
+    public void RequestStart_WhenConfigureIsRefused_Fails()
+    {
+        var (launcher, server, _, _) = Create();
+        server.AllowConfigure = false;
+
+        launcher.RequestStart();
+
+        Assert.Equal(SinglePlayerPhase.Failed, launcher.Phase);
+        Assert.Equal(SinglePlayerLauncher.ServerBusyMessage, launcher.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Host_ConnectFails_ShutsTheHostedListenerDown_AndSinglePlayerStartsFresh()
+    {
+        var (launcher, server, connector, coordinator) = Create();
+        connector.FailConnect = true;
+        launcher.RequestHost(7777, "host-a");
+        PresentFrames(launcher, 2);
+        launcher.Update();
+        await coordinator.WaitForPendingConnectionAsync();
+        launcher.Update();
+
+        Assert.Equal(SinglePlayerPhase.Failed, launcher.Phase);
+        Assert.Equal(LocalServerListenOptions.Loopback, server.ConfigureCalls[^1]);
+        Assert.Equal(LocalServerListenOptions.Loopback, server.ListenOptions);
+
+        connector.FailConnect = false;
+        server.ConfigureCalls.Clear();
+        launcher.RequestStart();
+        Assert.Equal(LocalServerListenOptions.Loopback, Assert.Single(server.ConfigureCalls));
+        PresentFrames(launcher, 2);
+        launcher.Update();
+        Assert.Equal(2, server.StartCalls);
+        Assert.Equal(LocalServerListenOptions.Loopback, server.ListenAtStart);
+    }
+
+    [Fact]
+    public async Task RequestJoin_NeverStartsTheLocalServer_AndIgnoresAContentError()
+    {
+        var (launcher, server, connector, coordinator) = Create(contentError: "items.json is missing");
+
+        launcher.RequestJoin(new ClientConnectionOptions("game.example.net", "5057", "joiner"));
+
+        Assert.Equal(SinglePlayerPhase.Connecting, launcher.Phase);
+        await coordinator.WaitForPendingConnectionAsync();
+        launcher.Update();
+        Assert.Equal(0, server.StartCalls);
+        RemoteClientOptions connect = Assert.Single(connector.Connects);
+        Assert.Equal("game.example.net", connect.Host);
+        Assert.True(launcher.TryTakeConnectedSession(out RemoteClientSession? session));
+        await session!.DisposeAsync();
+    }
+
+    [Fact]
+    public void RequestJoin_WithAnInvalidPort_Fails_AndDismissReturnsToIdle()
+    {
+        var (launcher, server, connector, _) = Create();
+
+        launcher.RequestJoin(new ClientConnectionOptions("game.example.net", "notaport", "joiner"));
+
+        Assert.Equal(SinglePlayerPhase.Failed, launcher.Phase);
+        Assert.NotEmpty(launcher.StatusMessage);
+        Assert.Empty(connector.Connects);
+        Assert.Equal(0, server.StartCalls);
+
+        launcher.Dismiss();
+        Assert.Equal(SinglePlayerPhase.Idle, launcher.Phase);
+        Assert.Equal(string.Empty, launcher.StatusMessage);
     }
 
     [Fact]

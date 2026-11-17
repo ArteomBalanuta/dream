@@ -5,7 +5,7 @@ public enum MenuAction : byte
 {
     None,
     SinglePlayer,
-    JoinServer,
+    Multiplayer,
     Options,
     Credits,
     Exit,
@@ -14,7 +14,9 @@ public enum MenuAction : byte
     ExitToMainMenu,
     ExitGame,
     KeyBindings,
-    Back
+    Back,
+    Join,
+    Host
 }
 
 // Which screen of a menu is showing. The main menu and the pause menu share Options and KeyBindings.
@@ -23,7 +25,17 @@ public enum MenuScreen : byte
     Root,
     Options,
     KeyBindings,
-    Credits
+    Credits,
+    Multiplayer
+}
+
+// Keys the front end reacts to, free of OpenTK so the panels and the scene test without a window.
+public enum MenuKey : byte
+{
+    Backspace,
+    Tab,
+    Enter,
+    Escape
 }
 
 public enum MenuOptionKind : byte

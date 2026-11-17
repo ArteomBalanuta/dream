@@ -24,6 +24,7 @@ public sealed class SinglePlayerLauncher
 {
     public const string WakingMessage = "Waking the world...";
     public const string StartingMessage = "Starting the local server...";
+    public const string ServerBusyMessage = "The local server is still starting; try again in a moment.";
 
     // Frames that must be presented in the Waking phase before the blocking start.
     private const int FramesBeforeStart = 2;
@@ -33,6 +34,7 @@ public sealed class SinglePlayerLauncher
     private readonly string? _contentError;
     private readonly Func<string> _playerName;
     private int _wakingFrames;
+    private string? _hostPlayerName;
 
     public SinglePlayerLauncher(
         NetworkSessionCoordinator coordinator,
@@ -74,9 +76,85 @@ public sealed class SinglePlayerLauncher
             _localServer.ResetFailure();
         }
 
+        if (!_localServer.TryConfigureListen(LocalServerListenOptions.Loopback))
+        {
+            Fail(ServerBusyMessage);
+            return;
+        }
+
+        _hostPlayerName = null;
         _wakingFrames = 0;
         StatusMessage = WakingMessage;
         Phase = SinglePlayerPhase.Waking;
+    }
+
+    // Host: starts the integrated server on every interface at port, then joins it over loopback as
+    // playerName, through the same Waking -> Starting -> Connecting path as RequestStart.
+    public void RequestHost(int port, string playerName)
+    {
+        if (IsBusy || Phase == SinglePlayerPhase.Connected)
+        {
+            return;
+        }
+
+        if (_contentError != null)
+        {
+            Fail(_contentError);
+            return;
+        }
+
+        if (_localServer.ErrorMessage != null)
+        {
+            _localServer.ResetFailure();
+        }
+
+        LocalServerListenOptions hosted = LocalServerListenOptions.Hosted(port);
+        if (!_localServer.TryConfigureListen(hosted))
+        {
+            Fail(ServerBusyMessage);
+            return;
+        }
+
+        _hostPlayerName = playerName;
+        _wakingFrames = 0;
+        StatusMessage = WakingMessage;
+        Phase = SinglePlayerPhase.Waking;
+    }
+
+    // Join: no local server and no content-error gate; straight to Connecting.
+    public void RequestJoin(ClientConnectionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (IsBusy || Phase == SinglePlayerPhase.Connected)
+        {
+            return;
+        }
+
+        if (!options.TryCreateRemoteOptions(out _, out string? error))
+        {
+            Fail(error ?? "Connection settings are invalid.");
+            return;
+        }
+
+        _hostPlayerName = null;
+        Phase = SinglePlayerPhase.Connecting;
+        _coordinator.BeginConnect(options);
+        StatusMessage = _coordinator.StatusMessage;
+        PollConnecting();
+    }
+
+    // Clears a Failed phase back to Idle, so a stale failure is not shown on another screen.
+    public void Dismiss()
+    {
+        if (Phase == SinglePlayerPhase.Failed)
+        {
+            Phase = SinglePlayerPhase.Idle;
+            StatusMessage = string.Empty;
+            if (_localServer.ListenOptions.AllowRemotePlayers)
+            {
+                _localServer.TryConfigureListen(LocalServerListenOptions.Loopback);
+            }
+        }
     }
 
     // Called by the scene after it presented a frame.
@@ -98,7 +176,9 @@ public sealed class SinglePlayerLauncher
                 {
                     // Blocks while a new integrated server starts (unless it waits for the previous one).
                     _coordinator.EnsureLocalServerStarted();
-                    StatusMessage = StartingMessage;
+                    StatusMessage = _hostPlayerName != null && _localServer.ListenOptions.AllowRemotePlayers
+                        ? $"Hosting on port {_localServer.ListenOptions.Port}..."
+                        : StartingMessage;
                     Phase = SinglePlayerPhase.Starting;
                     PollStarting();
                 }
@@ -144,7 +224,8 @@ public sealed class SinglePlayerLauncher
             return;
         }
 
-        string name = string.IsNullOrWhiteSpace(_playerName()) ? "dream-client" : _playerName();
+        string chosen = _hostPlayerName ?? _playerName();
+        string name = string.IsNullOrWhiteSpace(chosen) ? "dream-client" : chosen;
         _coordinator.BeginConnect(_coordinator.UseLocalServerDefaults(name));
         StatusMessage = _coordinator.StatusMessage;
         Phase = SinglePlayerPhase.Connecting;
@@ -170,6 +251,13 @@ public sealed class SinglePlayerLauncher
 
     private void Fail(string message)
     {
+        if (_hostPlayerName != null)
+        {
+            // A failed Host must not leave the world listening on every interface.
+            _hostPlayerName = null;
+            _localServer.TryConfigureListen(LocalServerListenOptions.Loopback);
+        }
+
         StatusMessage = string.IsNullOrWhiteSpace(message) ? "Could not start a single player game." : message;
         Phase = SinglePlayerPhase.Failed;
     }

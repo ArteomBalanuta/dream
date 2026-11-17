@@ -108,6 +108,144 @@ public class OnDemandLocalServerTests
         Assert.True(handle.IsReady);
     }
 
+    [Fact]
+    public void StartFunc_ReceivesTheConfiguredListenOptions()
+    {
+        List<LocalServerListenOptions> seen = [];
+        OnDemandLocalServerHandle handle = new(listen =>
+        {
+            seen.Add(listen);
+            return new ReadyHandle();
+        });
+        Assert.Equal(LocalServerListenOptions.Loopback, handle.ListenOptions);
+
+        Assert.True(handle.TryConfigureListen(LocalServerListenOptions.Hosted(5999)));
+        handle.EnsureStarted();
+
+        Assert.Equal(LocalServerListenOptions.Hosted(5999), Assert.Single(seen));
+        Assert.Equal(LocalServerListenOptions.Hosted(5999), handle.ListenOptions);
+    }
+
+    [Fact]
+    public void StartFunc_WithoutConfiguration_GetsLoopback()
+    {
+        LocalServerListenOptions? seen = null;
+        OnDemandLocalServerHandle handle = new(listen =>
+        {
+            seen = listen;
+            return new ReadyHandle();
+        });
+
+        handle.EnsureStarted();
+
+        Assert.Equal(LocalServerListenOptions.Loopback, seen);
+    }
+
+    [Fact]
+    public void TryConfigureListen_AllowedAfterAFailedStart_AndKeepsARunningServerOnSameOptions()
+    {
+        bool fail = true;
+        int starts = 0;
+        OnDemandLocalServerHandle handle = new(_ =>
+        {
+            starts++;
+            return fail ? new FailedHandle() : new ReadyHandle();
+        });
+
+        handle.EnsureStarted();
+        Assert.NotNull(handle.ErrorMessage);
+        Assert.True(handle.TryConfigureListen(LocalServerListenOptions.Hosted(5998)));
+        Assert.Null(handle.ErrorMessage);
+
+        fail = false;
+        Assert.True(handle.TryConfigureListen(LocalServerListenOptions.Hosted(5997)));
+        handle.EnsureStarted();
+        Assert.True(handle.IsReady);
+
+        Assert.True(handle.TryConfigureListen(LocalServerListenOptions.Hosted(5997)));
+        handle.EnsureStarted();
+        Assert.Equal(2, starts);
+        Assert.True(handle.IsReady);
+    }
+
+    [Fact]
+    public async Task TryConfigureListen_WithOtherOptions_StopsTheRunningServer_AndTheNextStartWaitsForThatStop()
+    {
+        TaskCompletionSource stop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        List<(LocalServerListenOptions Listen, StoppableHandle Handle)> started = [];
+        OnDemandLocalServerHandle handle = new(listen =>
+        {
+            StoppableHandle h = new(stop.Task);
+            started.Add((listen, h));
+            return h;
+        });
+        Assert.True(handle.TryConfigureListen(LocalServerListenOptions.Hosted(5995)));
+        handle.EnsureStarted();
+        Assert.True(handle.IsReady);
+
+        Assert.True(handle.TryConfigureListen(LocalServerListenOptions.Loopback));
+        Assert.False(handle.IsReady);
+        Assert.False(handle.IsStarted);
+        handle.EnsureStarted();
+
+        // The detached server's stop runs off the caller's thread, so it begins shortly after.
+        Assert.True(SpinWait.SpinUntil(() => started[0].Handle.DisposeCalled, TimeSpan.FromSeconds(5)));
+        Assert.True(handle.IsWaitingForPreviousServer);
+        Assert.Single(started);
+
+        stop.SetResult();
+        await handle.WaitForStartAsync();
+
+        Assert.Equal(2, started.Count);
+        Assert.Equal(LocalServerListenOptions.Loopback, started[1].Listen);
+        Assert.True(handle.IsReady);
+    }
+
+    [Fact]
+    public void TryConfigureListen_IsRefusedWhileAStartIsPending()
+    {
+        TaskCompletionSource previousStop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        OnDemandLocalServerHandle handle = new(_ => new ReadyHandle(), () => previousStop.Task);
+
+        handle.EnsureStarted();
+
+        Assert.False(handle.TryConfigureListen(LocalServerListenOptions.Hosted(5996)));
+        Assert.Equal(LocalServerListenOptions.Loopback, handle.ListenOptions);
+        previousStop.SetResult();
+    }
+
+    private sealed class StoppableHandle(Task stop) : ILocalServerHandle
+    {
+        public bool DisposeCalled { get; private set; }
+
+        public bool IsReady => true;
+
+        public int BoundPort => 6300;
+
+        public string? ErrorMessage => null;
+
+        public DedicatedServerPerformanceSnapshot LatestPerformance => DedicatedServerPerformanceSnapshot.Empty;
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeCalled = true;
+            return new ValueTask(stop);
+        }
+    }
+
+    private sealed class FailedHandle : ILocalServerHandle
+    {
+        public bool IsReady => false;
+
+        public int BoundPort => 0;
+
+        public string? ErrorMessage => "boom";
+
+        public DedicatedServerPerformanceSnapshot LatestPerformance => DedicatedServerPerformanceSnapshot.Empty;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private sealed class CountingStart
     {
         public int Count { get; private set; }

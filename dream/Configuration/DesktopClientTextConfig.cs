@@ -64,6 +64,7 @@ public static class DesktopClientTextConfig
             $"host={config.Host}",
             $"port={config.Port}",
             $"player_name={config.PlayerName}",
+            $"host_port={config.HostPort}",
             $"field_of_view={Format(config.FieldOfViewDegrees)}",
             $"mouse_sensitivity={Format(config.MouseSensitivity)}",
             $"camera_view={SerializeCameraViewMode(config.CameraViewMode)}",
@@ -95,6 +96,16 @@ public static class DesktopClientTextConfig
             case "player_name":
                 config.PlayerName = value;
                 return;
+        }
+
+        if (key == "host_port")
+        {
+            if (int.TryParse(value, CultureInfo.InvariantCulture, out int hostPort))
+            {
+                config.HostPort = hostPort;
+            }
+
+            return;
         }
 
         if (key == "port")

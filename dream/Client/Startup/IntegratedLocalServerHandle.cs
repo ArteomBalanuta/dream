@@ -33,8 +33,12 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
         Task? runTask,
         bool isReady,
         int boundPort,
-        string? errorMessage)
+        string? errorMessage,
+        LocalServerListenOptions listenOptions,
+        ServerConnectionOptions connectionOptions)
     {
+        ListenOptions = listenOptions;
+        ConnectionOptions = connectionOptions;
         _host = host;
         _service = service;
         _shutdown = shutdown;
@@ -50,24 +54,50 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
 
     public string? ErrorMessage { get; }
 
+    public LocalServerListenOptions ListenOptions { get; }
+
+    public ServerConnectionOptions ConnectionOptions { get; }
+
     public DedicatedServerPerformanceSnapshot LatestPerformance =>
         _service?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
 
     public static ValueTask<IntegratedLocalServerHandle> StartAsync(
         int preferredPort = 0,
         Func<DedicatedServerHost>? hostFactory = null,
-        ServerConnectionOptions? connectionOptions = null)
+        ServerConnectionOptions? connectionOptions = null,
+        LocalServerListenOptions? listen = null)
     {
         hostFactory ??= ServerBootstrap.CreateAuthoritativeHost;
+        Action<string> log = static line => Console.Error.WriteLine(line);
+        // listen overrides preferredPort and the bind address.
+        LocalServerListenOptions effectiveListen = listen ?? new LocalServerListenOptions(IPAddress.Loopback, preferredPort, false);
+        bool hosted = effectiveListen.AllowRemotePlayers;
         // DREAM_SNAPSHOT_INTERVAL_TICKS applies to the integrated server as to the dedicated one;
-        // options passed in are used as given.
-        connectionOptions ??= DefaultConnectionOptions.WithEnvironmentOverrides(static line => Console.Error.WriteLine(line));
+        // options passed in are used as given. Hosting follows the dedicated server's connection rules.
+        int maxPlayers = hosted
+            ? ServerRuntimeConfig.Parse(static n => n == ServerRuntimeConfig.MaxPlayersEnvironmentVariable ? Environment.GetEnvironmentVariable(n) : null, log)?.MaxPlayers ?? ServerRuntimeConfig.DefaultMaxPlayers
+            : ServerRuntimeConfig.DefaultMaxPlayers;
+        connectionOptions ??= hosted
+            ? ServerConnectionOptions.Default.WithEnvironmentOverrides(log).WithPlayerCapHeadroom(
+                maxPlayers,
+                Environment.GetEnvironmentVariable(ServerConnectionOptions.MaxConnectionsEnvironmentVariable),
+                log)
+            : DefaultConnectionOptions.WithEnvironmentOverrides(log);
         DedicatedServerHost? host = null;
         try
         {
             host = hostFactory();
-            host.DevCommandsAllowed = true;
-            TcpServerTransport transport = new(IPAddress.Loopback, preferredPort);
+            if (hosted)
+            {
+                // Dev commands keep the environment-derived value ServerBootstrap set, as on the dedicated server.
+                host.MaxPlayers = maxPlayers;
+            }
+            else
+            {
+                host.DevCommandsAllowed = true;
+            }
+
+            TcpServerTransport transport = new(effectiveListen.BindAddress, effectiveListen.Port);
             DedicatedServerService service = new(
                 host,
                 transport,
@@ -77,6 +107,10 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
                 FrameLimitOptions.FromEnvironment(static line => Console.Error.WriteLine(line)).CreateServerFramer(),
                 connectionOptions);
             service.Start();
+            if (hosted)
+            {
+                Console.Error.WriteLine($"[host] hosting on {effectiveListen.BindAddress}:{service.Port}");
+            }
 
             CancellationTokenSource shutdown = new();
             Task runTask = Task.Run(() => service.RunAsync(shutdown.Token));
@@ -87,7 +121,9 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
                 runTask,
                 isReady: true,
                 boundPort: service.Port,
-                errorMessage: null));
+                errorMessage: null,
+                listenOptions: effectiveListen,
+                connectionOptions: connectionOptions));
         }
         catch (Exception ex)
         {
@@ -99,7 +135,11 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
             string message = ex is WorldHeldException held
                 ? $"World {held.WorldId} is already in use by another Dream window or server on this computer. " +
                   "Close it to host here, or enter a server address to join."
-                : ex.Message;
+                : ex is System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.AddressAlreadyInUse }
+                    ? $"Port {effectiveListen.Port} is already in use on this computer. Choose another port."
+                    : ex is System.Net.Sockets.SocketException { SocketErrorCode: System.Net.Sockets.SocketError.AccessDenied }
+                        ? $"Port {effectiveListen.Port} is reserved or not permitted on this computer. Choose another port."
+                        : ex.Message;
             Console.Error.WriteLine($"[startup] local server not started: {message}");
             return ValueTask.FromResult(new IntegratedLocalServerHandle(
                 host: null,
@@ -108,7 +148,9 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
                 runTask: null,
                 isReady: false,
                 boundPort: 0,
-                errorMessage: message));
+                errorMessage: message,
+                listenOptions: effectiveListen,
+                connectionOptions: connectionOptions));
         }
     }
 

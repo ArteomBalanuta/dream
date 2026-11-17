@@ -16,17 +16,84 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
     public const string WaitingForPreviousServerStatus =
         "Previous local server is still saving; the local server starts when it finishes...";
 
-    private readonly Func<ILocalServerHandle> _start;
+    private readonly Func<LocalServerListenOptions, ILocalServerHandle> _start;
     private readonly Func<Task>? _startAfter;
     private volatile ILocalServerHandle? _started;
     private volatile string? _startFailure;
     private volatile bool _disposed;
+    private volatile LocalServerListenOptions _listen = LocalServerListenOptions.Loopback;
     private Task? _pendingStart;
+    // The stop of servers detached by TryConfigureListen.
+    private Task _ownStop = Task.CompletedTask;
 
-    public OnDemandLocalServerHandle(Func<ILocalServerHandle> start, Func<Task>? startAfter = null)
+    // The start receives the listen options configured last (Loopback until TryConfigureListen).
+    public OnDemandLocalServerHandle(Func<LocalServerListenOptions, ILocalServerHandle> start, Func<Task>? startAfter = null)
     {
         _start = start ?? throw new ArgumentNullException(nameof(start));
         _startAfter = startAfter;
+    }
+
+    public OnDemandLocalServerHandle(Func<ILocalServerHandle> start, Func<Task>? startAfter = null)
+        : this(start is null ? null! : _ => start(), startAfter)
+    {
+    }
+
+    public LocalServerListenOptions ListenOptions => _listen;
+
+    // Same options: true, any running server is kept. Refused after dispose or while a start is
+    // pending. Otherwise a server that exists (running or failed) is detached and its stop begins
+    // without blocking the caller; the next EnsureStarted queues behind that stop, so the old
+    // server's port and world are released before a new one starts.
+    public bool TryConfigureListen(LocalServerListenOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (_disposed)
+        {
+            return false;
+        }
+
+        if (options == _listen)
+        {
+            return true;
+        }
+
+        if (_pendingStart is { IsCompleted: false })
+        {
+            return false;
+        }
+
+        ILocalServerHandle? previous = _started;
+        if (previous != null)
+        {
+            _started = null;
+            if (_listen.AllowRemotePlayers)
+            {
+                Console.Error.WriteLine($"[host] stopped hosting on port {previous.BoundPort}");
+            }
+
+            _ownStop = ChainStop(_ownStop, previous);
+        }
+
+        _startFailure = null;
+        _pendingStart = null;
+        _listen = options;
+        return true;
+    }
+
+    private static async Task ChainStop(Task earlier, ILocalServerHandle server)
+    {
+        // Off the caller's (update) thread: a stop whose run loop already ended disposes the host,
+        // persistence drain included, inline in DisposeAsync.
+        await Task.Yield();
+        await earlier.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        try
+        {
+            await server.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[startup] local server stop failed: {ex.Message}");
+        }
     }
 
     public bool IsStarted => _started != null || _pendingStart != null;
@@ -52,10 +119,12 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
             return;
         }
 
-        Task previousStop = _startAfter?.Invoke() ?? Task.CompletedTask;
+        Task previousStop = _ownStop.IsCompleted
+            ? _startAfter?.Invoke() ?? Task.CompletedTask
+            : Task.WhenAll(_startAfter?.Invoke() ?? Task.CompletedTask, _ownStop);
         if (previousStop.IsCompleted)
         {
-            _started = _start();
+            _started = _start(_listen);
             return;
         }
 
@@ -108,7 +177,7 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
 
         try
         {
-            _started = _start();
+            _started = _start(_listen);
         }
         catch (Exception ex)
         {
@@ -126,6 +195,7 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
             await _pendingStart.ConfigureAwait(false);
         }
 
+        await _ownStop.ConfigureAwait(false);
         if (_started != null)
         {
             await _started.DisposeAsync();

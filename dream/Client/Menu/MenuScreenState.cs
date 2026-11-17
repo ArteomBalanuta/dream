@@ -17,6 +17,8 @@ public sealed class MenuScreenState
         {
             (MenuScreen.Root, MenuAction.Options) => MenuScreen.Options,
             (MenuScreen.Root, MenuAction.Credits) => MenuScreen.Credits,
+            (MenuScreen.Root, MenuAction.Multiplayer) => MenuScreen.Multiplayer,
+            (MenuScreen.Multiplayer, MenuAction.Back) => MenuScreen.Root,
             (MenuScreen.Options, MenuAction.KeyBindings) => MenuScreen.KeyBindings,
             (MenuScreen.KeyBindings, MenuAction.Back) => MenuScreen.Options,
             (MenuScreen.Options, MenuAction.Back) => MenuScreen.Root,
