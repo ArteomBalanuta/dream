@@ -19,7 +19,11 @@ public sealed class MenuTextFieldTests
 
         public string? GetText() => Text;
 
-        public void SetText(string text) => Text = text;
+        public bool SetText(string text)
+        {
+            Text = text;
+            return true;
+        }
     }
 
     private static MenuTextField Field(string text, int max = 64, bool digits = false) => new(max, digits, text);
@@ -140,18 +144,95 @@ public sealed class MenuTextFieldTests
     public void Insert_FiltersAndTruncates()
     {
         MenuTextField name = Field("", 6);
-        Assert.Equal(6, name.Insert("ab\r\ncd\tefgh"));
+        Assert.Equal(6, name.Insert("ab\tcdefgh"));
         Assert.Equal("abcdef", name.Text);
         Assert.Equal(0, name.Insert("zz"));
         Assert.Equal(0, name.Insert(null));
 
         MenuTextField port = Field("", 5, digits: true);
-        Assert.Equal(5, port.Insert("1a2 3\n4-5678"));
+        Assert.Equal(5, port.Insert("1a2 34-5678"));
         Assert.Equal("12345", port.Text);
 
         name.SelectAll();
         Assert.Equal(2, name.Insert("xy"));
         Assert.Equal("xy", name.Text);
+    }
+
+    [Fact]
+    public void Insert_TakesOnlyTheFirstNonEmptyLine()
+    {
+        MenuTextField f = Field("");
+        Assert.Equal(2, f.Insert("ab\r\ncd"));
+        Assert.Equal("ab", f.Text);
+        f.SetText("");
+        Assert.Equal(2, f.Insert("\r\n\ncd\nef"));
+        Assert.Equal("cd", f.Text);
+    }
+
+    [Fact]
+    public void Filter_StopsAtTheFirstRuneThatDoesNotFit()
+    {
+        Assert.Equal("abc", new MenuTextField(4, initial: "abc\U0001F600d").Text);
+        MenuTextField f = Field("", 4);
+        Assert.Equal(3, f.Insert("abc\U0001F600d"));
+    }
+
+    [Fact]
+    public void ScrolledSelectAllThenTypeKeepsScrollStartAtMostCaret()
+    {
+        MenuTextField f = Field(new string('a', 40));
+        f.ScrollStart = 30;
+        f.SelectAll();
+        f.TypeCharacter('x');
+        Assert.Equal("x", f.Text);
+        Assert.True(f.ScrollStart <= f.Caret);
+    }
+
+    [Fact]
+    public void Form_CutKeepsTheTextWhenTheClipboardCannotBeWritten()
+    {
+        MultiplayerFormState form = new("name", "abcdef", 1, 2);
+        form.Address.SelectAll();
+        form.HandleKey(MenuKey.Cut, MenuKeyModifiers.Control, new FailingClipboard());
+        Assert.Equal("abcdef", form.Address.Text);
+        form.HandleKey(MenuKey.Cut, MenuKeyModifiers.Control, null);
+        Assert.Equal("abcdef", form.Address.Text);
+    }
+
+    private sealed class FailingClipboard : IMenuClipboard
+    {
+        public string? GetText() => null;
+
+        public bool SetText(string text) => false;
+    }
+
+    [Fact]
+    public void Form_PastingHostAndPortSplitsThem_ButIpv6IsPastedAsIs()
+    {
+        FakeClipboard clip = new() { Text = " example.com:7777 \r\nnext" };
+        MultiplayerFormState form = new("name", "old", 1, 2);
+        form.Address.SelectAll();
+        form.HandleKey(MenuKey.Paste, MenuKeyModifiers.Control, clip);
+        Assert.Equal("example.com", form.Address.Text);
+        Assert.Equal("7777", form.JoinPort.Text);
+
+        clip.Text = "::1";
+        form.Address.SelectAll();
+        form.HandleKey(MenuKey.Paste, MenuKeyModifiers.Control, clip);
+        Assert.Equal("::1", form.Address.Text);
+        Assert.Equal("7777", form.JoinPort.Text);
+
+        clip.Text = "host:123456";
+        form.Address.SelectAll();
+        form.HandleKey(MenuKey.Paste, MenuKeyModifiers.Control, clip);
+        Assert.Equal("host:123456", form.Address.Text);
+    }
+
+    [Fact]
+    public void MapMenuKey_AltGrIsNotAShortcut()
+    {
+        Assert.Equal(MenuKey.SelectAll, Dream.Application.Game.MapMenuKey(OpenTK.Windowing.GraphicsLibraryFramework.Keys.A, true, false, false));
+        Assert.Null(Dream.Application.Game.MapMenuKey(OpenTK.Windowing.GraphicsLibraryFramework.Keys.A, true, true, false));
     }
 
     [Fact]

@@ -65,8 +65,7 @@ public sealed class MainMenuScene
         }
     }
 
-    // A key press with its modifiers; the Multiplayer screen passes them and the clipboard to the form.
-    // A key press. Returns what Render would return (None or Exit); never throws on Root.
+    // A key press (the Multiplayer screen also gets the modifiers and the clipboard). Returns what Render would return (None or Exit); never throws on Root.
     public MenuAction HandleKey(MenuKey key) => HandleKey(key, MenuKeyModifiers.None);
 
     public MenuAction HandleKey(MenuKey key, MenuKeyModifiers modifiers)

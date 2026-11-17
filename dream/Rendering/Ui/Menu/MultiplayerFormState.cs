@@ -54,6 +54,29 @@ public sealed class MultiplayerFormState
     // Host (HostPort); Escape returns Back; everything else None.
     public MenuAction HandleKey(MenuKey key) => HandleKey(key, MenuKeyModifiers.None, null);
 
+    // A "host:port" pasted into Address (exactly one ':' and 1-5 digits after it) splits into Address and
+    // JoinPort; anything else, IPv6 included, is pasted as typed.
+    private void PasteInto(MenuTextField? field, string? text)
+    {
+        if (field == Address && text != null)
+        {
+            string line = text.Split(['\r', '\n']).FirstOrDefault(l => l.Trim().Length > 0)?.Trim() ?? string.Empty;
+            int colon = line.IndexOf(':');
+            if (colon > 0 && colon == line.LastIndexOf(':'))
+            {
+                string digits = line[(colon + 1)..];
+                if (digits.Length is >= 1 and <= 5 && digits.All(char.IsAsciiDigit))
+                {
+                    Address.Insert(line[..colon]);
+                    JoinPort.SetText(digits);
+                    return;
+                }
+            }
+        }
+
+        field?.Insert(text);
+    }
+
     public MenuAction HandleKey(MenuKey key, MenuKeyModifiers modifiers, IMenuClipboard? clipboard)
     {
         bool shift = (modifiers & MenuKeyModifiers.Shift) != 0;
@@ -92,13 +115,15 @@ public sealed class MultiplayerFormState
             case MenuKey.Cut:
                 if (field is { HasSelection: true })
                 {
-                    clipboard?.SetText(field.SelectedText);
-                    field.CutSelection();
+                    if (clipboard != null && clipboard.SetText(field.SelectedText))
+                    {
+                        field.CutSelection();
+                    }
                 }
 
                 return MenuAction.None;
             case MenuKey.Paste:
-                field?.Insert(clipboard?.GetText());
+                PasteInto(field, clipboard?.GetText());
                 return MenuAction.None;
             case MenuKey.Tab:
                 Focused = shift

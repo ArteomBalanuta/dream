@@ -426,7 +426,7 @@ public sealed class MenuWidgets
     {
         int caret = Math.Clamp(field.Caret, 0, text.Length);
         int start = Math.Clamp(field.ScrollStart, 0, text.Length);
-        if (start > 0 && char.IsLowSurrogate(text[start]))
+        if (start > 0 && start < text.Length && char.IsLowSurrogate(text[start]))
         {
             start--;
         }

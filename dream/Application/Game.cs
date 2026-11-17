@@ -771,9 +771,9 @@ public class Game : GameWindow
             return;
         }
 
-        MenuKey? key = MapMenuKey(e.Key, e.Control, e.IsRepeat);
+        MenuKey? key = MapMenuKey(e.Key, e.Control, e.Alt, e.IsRepeat);
         MenuKeyModifiers modifiers = (e.Shift ? MenuKeyModifiers.Shift : MenuKeyModifiers.None)
-            | (e.Control ? MenuKeyModifiers.Control : MenuKeyModifiers.None);
+            | (e.Control && !e.Alt ? MenuKeyModifiers.Control : MenuKeyModifiers.None);
         if (key is { } menuKey && _mainMenu.HandleKey(menuKey, modifiers) == MenuAction.Exit)
         {
             Close();
@@ -781,8 +781,8 @@ public class Game : GameWindow
     }
 
     // Editing keys repeat while held; the one-shot keys and the Ctrl shortcuts do not (a held Ctrl+V
-    // would paste over and over). The shortcuts follow the key's position name, as most games do.
-    internal static MenuKey? MapMenuKey(Keys key, bool control, bool isRepeat) => key switch
+    // would paste over and over). AltGr arrives as Ctrl+Alt on Windows, so Alt cancels the shortcuts. The shortcuts follow the key's position name, as most games do.
+    internal static MenuKey? MapMenuKey(Keys key, bool control, bool alt, bool isRepeat) => key switch
     {
         Keys.Backspace => MenuKey.Backspace,
         Keys.Delete => MenuKey.Delete,
@@ -794,10 +794,10 @@ public class Game : GameWindow
         Keys.Tab => MenuKey.Tab,
         Keys.Enter or Keys.KeyPadEnter => MenuKey.Enter,
         Keys.Escape => MenuKey.Escape,
-        Keys.A when control => MenuKey.SelectAll,
-        Keys.C when control => MenuKey.Copy,
-        Keys.X when control => MenuKey.Cut,
-        Keys.V when control => MenuKey.Paste,
+        Keys.A when control && !alt => MenuKey.SelectAll,
+        Keys.C when control && !alt => MenuKey.Copy,
+        Keys.X when control && !alt => MenuKey.Cut,
+        Keys.V when control && !alt => MenuKey.Paste,
         _ => null
     };
 
@@ -817,15 +817,17 @@ public class Game : GameWindow
             }
         }
 
-        public void SetText(string text)
+        public bool SetText(string text)
         {
             try
             {
                 window.ClipboardString = text;
+                return true;
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[menu] clipboard write failed: {ex.Message}");
+                return false;
             }
         }
     }

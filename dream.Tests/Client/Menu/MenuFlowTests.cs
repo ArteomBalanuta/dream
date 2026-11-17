@@ -150,7 +150,11 @@ public class MenuFlowTests
 
         public string? GetText() => Text;
 
-        public void SetText(string text) => Text = text;
+        public bool SetText(string text)
+        {
+            Text = text;
+            return true;
+        }
     }
 
     [Fact]

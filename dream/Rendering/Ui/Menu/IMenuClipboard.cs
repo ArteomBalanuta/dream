@@ -6,5 +6,6 @@ public interface IMenuClipboard
     // Null or empty when the clipboard holds no text.
     string? GetText();
 
-    void SetText(string text);
+    // True when the text was written.
+    bool SetText(string text);
 }

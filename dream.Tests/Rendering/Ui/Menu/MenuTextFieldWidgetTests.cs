@@ -48,6 +48,31 @@ public sealed class MenuTextFieldWidgetTests
         canvas.Calls.Any(c => c.Kind == CanvasCallKind.Solid && c.Color == SelectionColor);
 
     [Fact]
+    public void ScrolledSelectAllThenType_DoesNotThrow()
+    {
+        MenuTextField field = new(253, initial: new string('m', 80));
+        Draw(field);
+        Assert.True(field.ScrollStart > 0);
+        field.SelectAll();
+        field.TypeCharacter('x');
+        Draw(field);
+        Assert.Equal("x", field.Text);
+    }
+
+    [Fact]
+    public void BoxNarrowerThanAGlyph_DoesNotThrow()
+    {
+        MenuTextField field = new(64, initial: "ab\U0001F600cd");
+        UiRect narrow = new(100f, 100f, 2f, 30f);
+        Draw(field, rect: narrow);
+        field.MoveHome(false);
+        Frame(field, new Vector2(101f, 110f), true, out _, rect: narrow);
+        field.SelectAll();
+        field.TypeCharacter('x');
+        Draw(field, rect: narrow);
+    }
+
+    [Fact]
     public void FocusedField_DrawsACaretBarNotAnUnderscore()
     {
         MenuTextField field = new(15, initial: "127.0.0.1");

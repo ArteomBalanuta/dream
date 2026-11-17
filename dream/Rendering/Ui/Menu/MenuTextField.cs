@@ -66,13 +66,14 @@ public sealed class MenuTextField
     public int ScrollStart
     {
         get => _scrollStart;
-        set => _scrollStart = Snap(value);
+        set => _scrollStart = Math.Min(Snap(value), _caret);
     }
 
     // Clamps and snaps index; extend keeps the anchor (a selection), otherwise the anchor follows.
     public void MoveCaret(int index, bool extend)
     {
         _caret = Snap(index);
+        _scrollStart = Math.Min(_scrollStart, _caret);
         if (!extend)
         {
             _anchor = _caret;
@@ -132,8 +133,8 @@ public sealed class MenuTextField
         return true;
     }
 
-    // Replaces the selection (or inserts at the caret) with text, filtered like typing: control characters
-    // (newlines, tabs) are dropped, non-digits too when DigitsOnly, and what does not fit MaxLength is cut.
+    // Replaces the selection (or inserts at the caret) with text, filtered like typing: only the first line is taken, control characters
+    // (tabs) are dropped, non-digits too when DigitsOnly, and what does not fit MaxLength is cut.
     // Returns the number of UTF-16 units inserted.
     public int Insert(string? text)
     {
@@ -142,6 +143,7 @@ public sealed class MenuTextField
             return 0;
         }
 
+        text = FirstLine(text);
         int room = MaxLength - (Text.Length - (SelectionEnd - SelectionStart));
         string filtered = Filter(text, Math.Max(0, room));
         if (filtered.Length == 0)
@@ -151,6 +153,20 @@ public sealed class MenuTextField
 
         Replace(SelectionStart, SelectionEnd, filtered);
         return filtered.Length;
+    }
+
+    // The text up to the first line break; when it starts with line breaks, the first non-empty line.
+    private static string FirstLine(string text)
+    {
+        foreach (string line in text.Split(['\r', '\n']))
+        {
+            if (line.Length > 0)
+            {
+                return line;
+            }
+        }
+
+        return string.Empty;
     }
 
     // The selected text, removed; null when nothing is selected.
@@ -192,7 +208,7 @@ public sealed class MenuTextField
         Text = string.Concat(Text.AsSpan(0, start), with, Text.AsSpan(end));
         _caret = start + with.Length;
         _anchor = _caret;
-        _scrollStart = Snap(_scrollStart);
+        _scrollStart = Math.Min(Snap(_scrollStart), _caret);
     }
 
     private string Filter(string text, int room)
@@ -200,9 +216,14 @@ public sealed class MenuTextField
         StringBuilder sb = new();
         foreach (Rune rune in text.EnumerateRunes())
         {
-            if (!Accepts(rune) || sb.Length + rune.Utf16SequenceLength > room)
+            if (!Accepts(rune))
             {
                 continue;
+            }
+
+            if (sb.Length + rune.Utf16SequenceLength > room)
+            {
+                break;
             }
 
             sb.Append(rune.ToString());
