@@ -100,6 +100,8 @@ public partial class PlayScene
             _clientPresentationTimeSeconds,
             _boundaryMistSettings.Enabled);
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
+        _readiness.ObserveFrame(ModelAssets.PendingCount, worldRenderStats.StaticChunkRebuiltMeshes, args.Time);
+        LogWorldReadinessTimeout();
         // Scenery after the terrain and before the actors: the braziers' bowls, the village, the graves. The index
         // follows the placed lights collected above, so each light has its bowl.
         _render.Props.Update(presentation.VisibleWorld, _render.PlacedLights);
@@ -238,7 +240,7 @@ public partial class PlayScene
         HudFrameResult hudResult =
             _render.Hud.DrawFrame(
                 args,
-                windowFocused,
+                windowFocused && !LoadingBlocksInput,
                 _settings,
                 mouseState,
                 presentation,

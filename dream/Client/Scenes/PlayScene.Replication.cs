@@ -182,6 +182,7 @@ public partial class PlayScene
             _npcs.ApplyActors(joinAcceptedMessage.EffectiveInitialActors);
             ObserveLocalDeath(joinAcceptedMessage.EffectiveInitialActors, joinAcceptedMessage.CurrentServerTick);
             LogPresenterDiagnostics("join");
+            _readiness.ObserveJoinApplied();
         }
         else if (message is ServerSnapshotMessage snapshotMessage)
         {
@@ -213,6 +214,7 @@ public partial class PlayScene
                 snapshotMessage.Snapshot,
                 _remoteClient.SessionId,
                 _predictionReconciler);
+            _readiness.ObserveSnapshotApplied();
             // Add or update first so an enemy that spawned and was hit in this snapshot exists, then
             // damage, then remove: the killing blow's target is still in the registry while its number
             // resolves. All three still run before the presenter.
