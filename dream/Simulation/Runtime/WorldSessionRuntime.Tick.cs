@@ -39,6 +39,9 @@ public sealed partial class WorldSessionRuntime
 
         _lastAppliedCommandFrame = context.CommandFrame;
         _primaryTicksSinceCommand = 0;
+        ReleaseSpawnProtectionHold(
+            context.CommandFrame,
+            _sessions.TryGet(context.CommandFrame.SessionId, out ConnectedPlayer? heldLocal) ? heldLocal : null);
         return UpdateAcceptedCommand(
             context.DeltaTime,
             context.CommandFrame,
@@ -109,6 +112,9 @@ public sealed partial class WorldSessionRuntime
         {
             _lastAppliedCommandFrame = commandFrame.Value;
             _primaryTicksSinceCommand = 0;
+            ReleaseSpawnProtectionHold(
+                commandFrame.Value,
+                _sessions.TryGet(commandFrame.Value.SessionId, out ConnectedPlayer? heldPrimary) ? heldPrimary : null);
         }
 
         // A starved primary seat repeats its last command like a secondary seat does, then decays to idle.
@@ -143,6 +149,8 @@ public sealed partial class WorldSessionRuntime
         {
             return;
         }
+
+        ReleaseSpawnProtectionHold(commandFrame, player);
 
         if (commandFrame.RequestedMode.Mode.HasValue)
         {

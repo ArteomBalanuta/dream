@@ -112,6 +112,9 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
     private static CharacterAccessDecision Rejected(string name, string reason) =>
         new(CharacterAccessOutcome.Rejected, default, name, null, reason);
 
+    public void HoldSpawnProtectionUntilInput(string sessionId) =>
+        Runtime.HoldSpawnProtectionUntilInput(new PlayerSessionId(sessionId));
+
     public JoinAcceptedMessage JoinSession(string requestedSessionId, string displayName) =>
         JoinSession(requestedSessionId, displayName, CharacterAccessDecision.Unchecked(string.Empty));
 

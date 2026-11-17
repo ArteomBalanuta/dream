@@ -283,7 +283,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
     {
         StartJoinSupervisor();
         await SendMessageAsync(
-            new ClientJoinRequestMessage(Options.SessionId, Options.DisplayName, Options.AccountToken),
+            new ClientJoinRequestMessage(Options.SessionId, Options.DisplayName, Options.AccountToken, Options.HoldSpawnProtection ? true : null),
             cancellationToken);
     }
 
@@ -363,7 +363,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
                     $"endpoint={Options.EndpointLabel} session={Options.SessionId} attempt={retries + 2} delayMs={delay.TotalMilliseconds:0} reason={reason}");
                 await Task.Delay(delay, _timeProvider, cancellationToken);
                 Interlocked.Increment(ref _joinRetryCount);
-                _pendingMessages.Enqueue(new ClientJoinRequestMessage(Options.SessionId, Options.DisplayName, Options.AccountToken));
+                _pendingMessages.Enqueue(new ClientJoinRequestMessage(Options.SessionId, Options.DisplayName, Options.AccountToken, Options.HoldSpawnProtection ? true : null));
                 SignalSendLoop();
             }
         }

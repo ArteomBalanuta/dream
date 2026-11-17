@@ -8,7 +8,6 @@ namespace Dream.Client.Startup;
 public sealed class NetworkSessionCoordinator
 {
     // Copied onto the options of every connect (RemoteClientOptions.HoldSpawnProtection).
-    // CONTRACT-STUB: W3 copies it.
     public bool HoldSpawnProtection { get; init; }
 
     private readonly ILocalServerHandle _localServer;
@@ -224,7 +223,7 @@ public sealed class NetworkSessionCoordinator
                 StatusMessage = $"Reconnecting ({attempt}/{attempts})...";
                 try
                 {
-                    RemoteClientSession session = await _connector.ConnectAsync(resolved!);
+                    RemoteClientSession session = await _connector.ConnectAsync(resolved! with { HoldSpawnProtection = HoldSpawnProtection });
                     if (session.IsConnected || session.DisconnectReason is not string reason)
                     {
                         _connectedSession = session;
@@ -489,7 +488,7 @@ public sealed class NetworkSessionCoordinator
     {
         try
         {
-            RemoteClientSession session = await _connector.ConnectAsync(options);
+            RemoteClientSession session = await _connector.ConnectAsync(options with { HoldSpawnProtection = HoldSpawnProtection });
             if (!session.IsConnected && session.DisconnectReason is string reason)
             {
                 // Ended before the play scene could take it, e.g. a join rejected during the
