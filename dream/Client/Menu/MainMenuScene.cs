@@ -1,6 +1,5 @@
 using Dream.Client.Networking;
 using Dream.Client.Startup;
-using Dream.Server;
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Menu;
 using OpenTK.Graphics.OpenGL4;
@@ -38,7 +37,7 @@ public sealed class MainMenuScene
         _optionRows = optionRows ?? throw new ArgumentNullException(nameof(optionRows));
         _persistMultiplayer = persistMultiplayer;
         _clipboard = clipboard;
-        _saved = multiplayer ?? new MultiplayerDefaults("127.0.0.1", ServerBootstrap.DefaultPort, ServerBootstrap.DefaultPort, "dream-client");
+        _saved = multiplayer ?? new MultiplayerDefaults("127.0.0.1", RemoteClientOptions.DefaultPort, RemoteClientOptions.DefaultPort, "dream-client");
         _form = new MultiplayerFormState(_saved.PlayerName, _saved.Address, _saved.JoinPort, _saved.HostPort);
         if (!string.IsNullOrWhiteSpace(sessionEndReason))
         {
