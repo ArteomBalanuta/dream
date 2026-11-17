@@ -51,6 +51,11 @@ public sealed class ConnectedPlayer
     // the player attacks.
     internal ulong ProtectedThroughTick;
 
+    // The server tick a join asked to hold spawn protection until its first input, or 0 for none (the
+    // default). While set and within PlayerRespawnRules.JoinHoldMaxTicks the player stays protected; the
+    // first accepted move, jump, primary use or action releases it and starts the normal window.
+    internal ulong ProtectionHeldSinceTick;
+
     // M4: the running skill and consumable cooldowns of this session. On the session, not the combatant,
     // because the primary seat's combatant is reused by successive sessions.
     internal readonly Dream.Simulation.Players.AbilityCooldowns Cooldowns = new();

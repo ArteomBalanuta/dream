@@ -224,6 +224,9 @@ public sealed partial class WorldSessionRuntime
             return CreateRejectedActionResult(message, "Action rejected because the player is dead.");
         }
 
+        // Any action the seat gets processed is input: it ends a join's hold (before an attack clears all).
+        ReleaseSpawnProtectionHold(context.Player);
+
         // Attacking ends spawn protection, so it cannot be used to fight safely.
         if (message.Payload is CombatUseIntent && context.InteractionMode == PlayerInteractionMode.Combat)
         {

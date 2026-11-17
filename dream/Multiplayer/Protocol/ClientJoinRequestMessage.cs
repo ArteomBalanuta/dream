@@ -10,7 +10,8 @@ namespace Dream.Multiplayer.Protocol;
 public sealed record ClientJoinRequestMessage(
     string RequestedSessionId,
     string DisplayName,
-    string? AccountToken = null) : IClientToServerMessage
+    string? AccountToken = null,
+    bool? HoldSpawnProtection = null) : IClientToServerMessage
 {
     public string MessageKind => "client.join-request";
 

@@ -32,6 +32,18 @@ public sealed class ClientJoinRequestCodecTests
     }
 
     [Fact]
+    public void JoinRequest_WithTheHold_RoundTrips_AndWithoutItTheFieldIsOmitted()
+    {
+        string json = Encode(new ClientJoinRequestMessage("session-a", "Bob", HoldSpawnProtection: true));
+
+        Assert.Contains("\"holdSpawnProtection\":true", json, StringComparison.Ordinal);
+        Assert.True(Decode(json).HoldSpawnProtection);
+        string plain = Encode(new ClientJoinRequestMessage("session-a", "Bob"));
+        Assert.DoesNotContain("holdSpawnProtection", plain, StringComparison.Ordinal);
+        Assert.Null(Decode(plain).HoldSpawnProtection);
+    }
+
+    [Fact]
     public void JoinRequest_WithAToken_RoundTrips()
     {
         string token = TestAccountTokens.For("Bob");

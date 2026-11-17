@@ -9,5 +9,8 @@ public static class PlayerRespawnRules
     public const int DelayTicks = 5 * SimulationClock.AuthoritativeTicksPerSecond;
 
     // After a respawn, enemies neither target nor damage the player for this many ticks (3 s). Attacking ends it.
+    // The longest a join's opt-in hold keeps protection without any input (5 minutes).
+    public const int JoinHoldMaxTicks = 300 * SimulationClock.AuthoritativeTicksPerSecond;
+
     public const int SpawnProtectionTicks = 3 * SimulationClock.AuthoritativeTicksPerSecond;
 }

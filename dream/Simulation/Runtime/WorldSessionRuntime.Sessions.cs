@@ -180,6 +180,7 @@ public sealed partial class WorldSessionRuntime
         // a seat that left has nowhere to go.
         player.RespawnAtTick = 0;
         player.ProtectedThroughTick = 0;
+        player.ProtectionHeldSinceTick = 0;
         _pendingLoot.Remove(sessionId);
         // A session id can be reused by a later join: it must not inherit this one's kill credit.
         IReadOnlyList<EnemyActor> creditedEnemies = _enemies.ActiveActors;
