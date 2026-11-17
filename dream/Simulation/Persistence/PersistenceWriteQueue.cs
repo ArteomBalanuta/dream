@@ -337,8 +337,32 @@ public sealed class PersistenceWriteQueue : IDisposable
     {
         List<QueuedWrite> group = new(Math.Min(MaxWritesPerGroup, 64));
         List<QueuedWrite> requeue = [];
-        using IPersistenceWriteBatch batch = WriteBatchFactory();
-        batch.Activate();
+        // Opening the batch is part of the worker's run: a throw here used to escape before the
+        // try below, leaving _running set with no worker, so every later Enqueue queued silently
+        // into a queue nothing drains and Flush waited on a faulted task. Fail what is queued and
+        // clear _running instead, so the next Enqueue starts a fresh worker.
+        IPersistenceWriteBatch? opened = null;
+        try
+        {
+            opened = WriteBatchFactory();
+            opened.Activate();
+        }
+        catch (Exception ex)
+        {
+            lock (_sync)
+            {
+                DropPendingLocked("batch-unavailable");
+                _running = false;
+            }
+
+            NetworkDiagnosticsLog.Write(
+                "server.persistence.error",
+                $"write batch unavailable: {ex.GetType().Name}: {ex.Message}");
+            opened?.Dispose();
+            return;
+        }
+
+        using IPersistenceWriteBatch batch = opened;
         try
         {
             while (true)
@@ -493,7 +517,7 @@ public sealed class PersistenceWriteQueue : IDisposable
     }
 
     // Called under _sync once the drain deadline passed.
-    private void DropPendingLocked()
+    private void DropPendingLocked(string reason = "dispose-deadline")
     {
         int dropped = 0;
         while (_pending.Count > 0)
@@ -510,7 +534,7 @@ public sealed class PersistenceWriteQueue : IDisposable
             Interlocked.Add(ref _failedWrites, dropped);
         }
 
-        NetworkDiagnosticsLog.Write("server.persistence.dropped", $"writes={dropped} reason=dispose-deadline");
+        NetworkDiagnosticsLog.Write("server.persistence.dropped", $"writes={dropped} reason={reason}");
     }
 
     // Outside any transaction: the group before it has committed (or failed), and the repositories
