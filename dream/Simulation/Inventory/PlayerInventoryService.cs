@@ -1519,6 +1519,7 @@ internal sealed partial class PlayerInventoryService
         SlotChanges changes = new();
         int rehomed = 0;
         int heldBack = 0;
+        int stranded = 0;
         if (unplaced.Count > 0)
         {
             List<(int Anchor, long ItemId, ItemFootprint Footprint)> lifted = new(unplaced.Count);
@@ -1548,7 +1549,28 @@ internal sealed partial class PlayerInventoryService
                 int held = FirstFreeRow(slots, InventoryConstants.HeldBackFirstIndex, InventoryConstants.HeldBackCount);
                 if (held < 0)
                 {
-                    held = FirstFreeRow(slots, InventoryConstants.ParkedFirstIndex, slots.Count + 1);
+                    // The parked scan stops below InventoryConstants.UnknownRowsFirstIndex: a row at or
+                    // above it is inert (PromoteParked skips it, IsKnownRow is false for it, BuildSnapshot
+                    // never sends it), so parking an item there would lose it silently. The parked range
+                    // holds 19,700 rows, so it only runs out for an inventory that already carries that
+                    // many overflow rows, and then there is no live row left to put this one in: it is
+                    // kept at the lowest free inert index (never a negative one, which the schema's
+                    // CHECK (slot_index >= 0) rejects) and reported as stranded rather than counted as an
+                    // ordinary held-back row.
+                    held = FirstFreeRow(
+                        slots,
+                        InventoryConstants.ParkedFirstIndex,
+                        InventoryConstants.UnknownRowsFirstIndex - InventoryConstants.ParkedFirstIndex);
+                    if (held < 0)
+                    {
+                        held = FirstFreeRow(slots, InventoryConstants.UnknownRowsFirstIndex, slots.Count + 1);
+                        SetSlot(slots, changes, held, itemInstanceId);
+                        stranded++;
+                        NetworkDiagnosticsLog.Write(
+                            "server.inventory.layout-row-stranded",
+                            $"player={playerName} item={itemInstanceId} slot={held}");
+                        continue;
+                    }
                 }
 
                 SetSlot(slots, changes, held, itemInstanceId);
@@ -1557,11 +1579,11 @@ internal sealed partial class PlayerInventoryService
         }
 
         DrainHeldBack(slots, changes);
-        if (rehomed > 0 || heldBack > 0)
+        if (rehomed > 0 || heldBack > 0 || stranded > 0)
         {
             NetworkDiagnosticsLog.Write(
                 "server.inventory.layout-repaired",
-                $"player={playerName} rehomed={rehomed} heldBack={heldBack}");
+                $"player={playerName} rehomed={rehomed} heldBack={heldBack} stranded={stranded}");
         }
 
         QueueChanges(playerName, changes);
