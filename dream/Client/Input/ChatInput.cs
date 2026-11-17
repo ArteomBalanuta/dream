@@ -28,8 +28,23 @@ public sealed class ChatInput
 
     public bool IsTyping => State.Typing;
 
-    // Characters from the window's text event; ignored unless the line is open.
-    public void QueueTextInput(uint unicode) => _characters.Enqueue(unicode);
+    // Characters from the window's text event; ignored unless the line is open. A character typed
+    // while it is closed can never be read back (Update drains and discards on those frames, and
+    // Open drains before it accepts anything), so it is dropped here instead of queued: the only
+    // drain sits behind the scene's input gate, and the loading screen holds that gate for as long
+    // as the player leaves the prompt up, which let the queue grow without bound.
+    public void QueueTextInput(uint unicode)
+    {
+        if (!State.Typing)
+        {
+            return;
+        }
+
+        _characters.Enqueue(unicode);
+    }
+
+    // Characters waiting to be typed into the line; 0 whenever the line is closed.
+    internal int PendingCharacterCount => _characters.Count;
 
     public void Open()
     {
