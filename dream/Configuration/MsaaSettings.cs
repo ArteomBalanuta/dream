@@ -21,7 +21,9 @@ public static class MsaaSettings
         int best = AllowedSamples[0];
         foreach (int candidate in AllowedSamples)
         {
-            if (Math.Abs(candidate - value) < Math.Abs(best - value))
+            // The distances are widened to long on purpose: candidate - int.MinValue overflows an int and
+            // Math.Abs(int.MinValue) throws, which would take the whole startup down before the window exists.
+            if (Math.Abs((long)candidate - value) < Math.Abs((long)best - value))
             {
                 best = candidate;
             }
