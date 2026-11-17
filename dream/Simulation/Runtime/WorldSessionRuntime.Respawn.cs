@@ -73,21 +73,27 @@ public sealed partial class WorldSessionRuntime
         player.ProtectedThroughTick = tick + PlayerRespawnRules.SpawnProtectionTicks;
     }
 
-    // The normal window, or a join's opt-in hold that no input has released yet (capped).
+    // The normal window, or a join's opt-in hold that no input has released yet. The hold is capped: if
+    // JoinHoldMaxTicks pass without input, protection simply ends (the player is AFK) and a later first
+    // input grants nothing, so a stale prompt cannot be used to sit untargetable in combat.
     private static bool IsSpawnProtected(ConnectedPlayer player, ulong tick) =>
         (player.ProtectedThroughTick != 0 && player.ProtectedThroughTick >= tick)
         || (player.ProtectionHeldSinceTick != 0
             && tick <= player.ProtectionHeldSinceTick + PlayerRespawnRules.JoinHoldMaxTicks);
 
+    // Only honoured for the join that freshly attached the seat: a repeated join or a takeover of an
+    // attached seat must not re-arm it.
     public void HoldSpawnProtectionUntilInput(PlayerSessionId sessionId)
     {
-        if (_sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null && player.IsSpawned)
+        if (_sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null && player.IsSpawned
+            && player.FreshlyAttached)
         {
             player.ProtectionHeldSinceTick = Math.Max(1UL, CurrentServerTick);
         }
     }
 
-    // The first input ends the hold; the normal window starts then.
+    // The first input within the cap ends the hold and starts the normal window; past the cap the hold has
+    // already ended and nothing is granted.
     private void ReleaseSpawnProtectionHold(ConnectedPlayer player)
     {
         if (player.ProtectionHeldSinceTick == 0)
