@@ -136,7 +136,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
                 Assert.True(script.Fractures > 0);
             }
 
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(db.DatabasePath);
             await using WireLoopbackServer server = await WireLoopbackServer.StartAsync(db.CreateHost());
             Assert.NotEmpty(server.Runtime.Map.RubbleCells);
             await using WireLoopbackClient client = await server.ConnectAndJoinAsync($"stored-rejoiner-{restart}");

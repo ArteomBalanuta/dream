@@ -124,7 +124,7 @@ public sealed class ItemRollsMigrationTests
 
         Assert.Throws<InvalidOperationException>(() => database.Schema.EnsureSchema(migrator));
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         using SqliteConnection c = database.Open();
         Assert.Equal(7, migrator.GetCurrentVersion(c));
         Assert.Equal(0L, Scalar(c, "SELECT COUNT(*) FROM pragma_table_info('item_instances') WHERE name = 'rolled_modifiers';"));

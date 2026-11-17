@@ -70,7 +70,7 @@ public sealed class WorldIntegrityCheckMeasurementTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(databasePath);
             Directory.Delete(work, recursive: true);
         }
     }

@@ -62,7 +62,7 @@ public sealed class StoredWorldSoakTests(ITestOutputHelper output)
                 }
             }
 
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(db.DatabasePath);
             await using WireLoopbackServer wire = await WireLoopbackServer.StartAsync(db.CreateHost());
             await AssertClientsMatchAsync(wire, $"restart {session + 1}");
         }
@@ -116,7 +116,7 @@ public sealed class StoredWorldSoakTests(ITestOutputHelper output)
                 }
             }
 
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(db.DatabasePath);
             await using WireLoopbackServer wire = await WireLoopbackServer.StartAsync(db.CreateHost());
             await AssertClientsMatchAsync(wire, $"restart {session + 1}");
         }
@@ -190,7 +190,7 @@ public sealed class StoredWorldSoakTests(ITestOutputHelper output)
                 output.WriteLine($"session {session + 1}: {ticksPerSession} ticks, {server.Fractures - startFractures} fractures, {server.Placements} placements so far, rubble cells {server.Runtime.Map.RubbleCells.Count}");
             }
 
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(db.DatabasePath);
         }
 
         // One last restart: the final state is consistent too.
@@ -203,7 +203,7 @@ public sealed class StoredWorldSoakTests(ITestOutputHelper output)
             }
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         Assert.True(fractures > 0, "the script never fractured anything");
         Assert.True(placements > 0, "the script never placed a cube; rejections: " + string.Join("; ", rejections.Select(pair => $"{pair.Value} x {pair.Key}")));
         TickStats stats = TickStats.From(tickMs);

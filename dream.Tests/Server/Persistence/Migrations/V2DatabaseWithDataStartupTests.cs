@@ -88,14 +88,14 @@ public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
         }
 
         // A second start migrates nothing and takes no second backup.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using (ServerPersistenceBundle reopened = ServerBootstrap.CreatePersistenceBundle(
             database.DatabasePath, MigrationTestDatabase.InitScriptPath))
         {
             Assert.Equal(5150UL, reopened.SimulationSeed);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Single(database.Backups());
     }
 
@@ -106,9 +106,9 @@ public sealed class V2DatabaseWithDataStartupTests(ITestOutputHelper output)
         SqliteSchemaMigrator v2Only = new([.. shipped.Take(2)]);
         SchemaMigrationResult result = database.Schema.EnsureSchema(v2Only);
         Assert.Equal(new SchemaMigrationResult(0, 2, null), result);
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         database.ExecuteScript(File.ReadAllText(Path.Combine(
             Dream.Tests.Integration.RepoRoot.Find(), "dream.Tests", "Server", "Persistence", "Migrations", "Fixtures", "v2-with-data.sql")));
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
     }
 }

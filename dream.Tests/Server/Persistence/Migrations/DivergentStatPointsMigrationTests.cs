@@ -45,7 +45,7 @@ public sealed class DivergentStatPointsMigrationTests
         using MigrationTestDatabase database = DivergentV11();
         Assert.Equal(15L, database.Scalar("SELECT stat_points FROM player_profiles WHERE player_name = 'hero';"));
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM pragma_table_info('enemy_instances') WHERE name = 'camp_key';"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         List<string> log = [];
 
         SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
@@ -66,7 +66,7 @@ public sealed class DivergentStatPointsMigrationTests
 
         using MigrationTestDatabase fresh = new();
         fresh.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath, fresh.DatabasePath);
         using (SqliteConnection expected = fresh.Open())
         using (SqliteConnection actual = database.Open())
         {
@@ -85,7 +85,7 @@ public sealed class DivergentStatPointsMigrationTests
     {
         using MigrationTestDatabase database = new();
         database.Schema.EnsureSchema(UpTo(11));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 

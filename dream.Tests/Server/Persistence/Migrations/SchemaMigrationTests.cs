@@ -152,7 +152,7 @@ public sealed class SchemaMigrationTests
             INSERT INTO player_inventory_slots (player_name, slot_index, item_instance_id) VALUES ('alice', 0, 1);
             INSERT INTO world_metadata (key, value) VALUES ('simulation_seed', '7');
             """);
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         IReadOnlyList<string> rowsBefore;
         using (SqliteConnection connection = database.Open())
         {
@@ -211,14 +211,14 @@ public sealed class SchemaMigrationTests
         database.ExecuteScript("INSERT INTO schema_version (version, name, applied_utc) VALUES (99, 'from_the_future', '2030-01-01T00:00:00.0000000Z');");
         // Rollback journal, so a WAL switch would show in the file header. Leaving WAL needs the only
         // connection to the file, so the bootstrapper's pooled ones are closed first.
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         database.ExecuteScript("PRAGMA journal_mode=DELETE;");
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         byte[] before = File.ReadAllBytes(database.DatabasePath);
 
         SchemaTooNewException error = Assert.Throws<SchemaTooNewException>(() => database.Schema.EnsureSchema());
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(99, error.StoredVersion);
         Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, error.LatestVersion);
         Assert.Equal(before, File.ReadAllBytes(database.DatabasePath));
@@ -239,7 +239,7 @@ public sealed class SchemaMigrationTests
 
         Assert.Throws<InvalidOperationException>(() => database.Schema.EnsureSchema(migrator));
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         using SqliteConnection connection = database.Open();
         Assert.Equal(1, migrator.GetCurrentVersion(connection));
         Assert.Equal([(1L, "baseline")], VersionRows(connection));
@@ -386,7 +386,7 @@ public sealed class SchemaMigrationTests
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => database.Schema.EnsureSchema(migrator));
 
         Assert.Contains("migration 0002 ended the transaction", error.Message, StringComparison.Ordinal);
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         using SqliteConnection connection = database.Open();
         Assert.Equal([(1L, "baseline")], VersionRows(connection));
         Assert.Single(database.Backups());

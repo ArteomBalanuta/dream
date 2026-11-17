@@ -462,7 +462,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         try
         {
             WorldSeeder.Seed(databasePath, schemaPath, LoadScenario.World10k);
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(databasePath);
             SqliteSchemaBootstrapper schema = new(databasePath, schemaPath);
             schema.EnsureSchema();
             long bytes = new FileInfo(databasePath).Length;
@@ -492,7 +492,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
             Assert.True(standard[3] < IntegrityCheckBudgetMilliseconds, $"integrity check median {standard[3]:0.0} ms");
 
             // The first run in a fresh process-like state is the cold cost: reopen after pools are cleared.
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(schema);
             using SqliteConnection cold = new SqliteSchemaBootstrapper(databasePath, schemaPath).CreateOpenConnection();
             WorldIntegrityReport coldReport = WorldIntegrityCheck.Run(cold, WorldDescriptor.Default);
             output.WriteLine($"Cold connection: {coldReport.Elapsed.TotalMilliseconds:0.0} ms");
@@ -507,7 +507,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(databasePath);
             try
             {
                 Directory.Delete(work, recursive: true);
@@ -533,7 +533,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
 
     private static RestartObservation Observe(MigrationTestDatabase db, bool accountsWired)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         ObjectIdTestSupport.PersistedIds ids = ObjectIdTestSupport.ReadIds(db.DatabasePath);
         Dictionary<string, long[]> items = [];
         List<string> profiles = [];
@@ -664,7 +664,7 @@ public sealed class RestartMidSessionMeasurementTests(ITestOutputHelper output)
                 ServerBootstrap.IntegrityOptionsFor(ContentCatalog.Shipped) with { QuickCheck = false });
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return new RestartObservation(ids, integrity, report, items, profiles, itemKinds, enemyKinds, owners, accountCount, accountsOverLimit, accountsWired, rolls, equipment, loot, hp);
     }
 

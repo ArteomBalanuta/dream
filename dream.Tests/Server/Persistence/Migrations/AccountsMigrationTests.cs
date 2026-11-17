@@ -189,7 +189,7 @@ public sealed class AccountsMigrationTests
 
         Assert.Throws<InvalidOperationException>(() => database.Schema.EnsureSchema(migrator));
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         using SqliteConnection c = database.Open();
         Assert.Equal(6, migrator.GetCurrentVersion(c));
         Assert.Equal(0L, Scalar(c, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('accounts', 'ux_player_profiles_display_name');"));

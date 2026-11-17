@@ -102,7 +102,7 @@ public sealed class ObjectIdsMigrationTests
             INSERT INTO placed_cube_instances (world_id, cube_id, owner_player_name, cell_x, cell_y, cell_z, material_id, current_health, max_health)
                 VALUES (1, 3000, 'ghost', 1, 1, 1, 'Stone', 4, 5);
             """);
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
 
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => database.Schema.EnsureSchema());
 

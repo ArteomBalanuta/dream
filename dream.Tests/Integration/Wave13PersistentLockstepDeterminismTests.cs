@@ -32,7 +32,7 @@ public sealed class Wave13PersistentLockstepDeterminismTests(ITestOutputHelper o
             seed = bundle.SimulationSeed!.Value;
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         foreach (string suffix in new[] { "", "-wal", "-shm" })
         {
             if (File.Exists(left.DatabasePath + suffix))
@@ -73,7 +73,7 @@ public sealed class Wave13PersistentLockstepDeterminismTests(ITestOutputHelper o
         AssertScriptExercisedEverything(record);
         Assert.True(record.HitTicks[^1] > CheckpointTicks, $"no hit after the first periodic checkpoint (last roll tick {record.HitTicks[^1]})");
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         string leftWorld = DumpWorld(left.DatabasePath);
         string rightWorld = DumpWorld(right.DatabasePath);
         output.WriteLine(leftWorld);

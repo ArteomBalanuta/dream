@@ -72,7 +72,7 @@ public sealed class WaveCTesterBuildingsOutliveBuilderWireTests(ITestOutputHelpe
             Assert.True(server.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds built = ReadIds(database.DatabasePath);
         output.WriteLine($"phase 1: cubes {built.Cubes.Count} pieces {built.Pieces.Count} origins {built.Origins.Count} next {built.NextObjectId}");
         Assert.Single(built.Cubes);
@@ -138,7 +138,7 @@ public sealed class WaveCTesterBuildingsOutliveBuilderWireTests(ITestOutputHelpe
             await TickAsync(server, 2);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         int dbHealth = (int)Scalar(database.DatabasePath, $"SELECT current_health FROM placed_cube_instances WHERE object_id = {cubeObjectId};");
         Assert.InRange(dbHealth, 1, maxHealth - 1);
         Assert.Equal(1L, Scalar(database.DatabasePath, "SELECT COUNT(*) FROM placed_cube_instances WHERE owner_player_name IS NULL;"));
@@ -158,7 +158,7 @@ public sealed class WaveCTesterBuildingsOutliveBuilderWireTests(ITestOutputHelpe
             await TickAsync(server, 2);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds broken = ReadIds(database.DatabasePath);
         output.WriteLine($"phase 3: cubes {broken.Cubes.Count} pieces {broken.Pieces.Count} (was {rubbleBefore}) origins {string.Join(",", broken.Origins)} next {broken.NextObjectId}");
         Assert.Empty(broken.Cubes);

@@ -27,7 +27,7 @@ public sealed class WaveCLockstepDeterminismTests(ITestOutputHelper output)
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         foreach (string suffix in new[] { "", "-wal", "-shm" })
         {
             if (File.Exists(left.DatabasePath + suffix))
@@ -40,7 +40,7 @@ public sealed class WaveCLockstepDeterminismTests(ITestOutputHelper output)
         Assert.True(firstDivergence < 0, $"The servers diverged at tick {firstDivergence} before the restart.");
         AssertScriptExercisedEverything(firstRun);
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         PersistedIds beforeRestart = ReadIds(left.DatabasePath);
         Assert.Equal(DumpWorld(left.DatabasePath), DumpWorld(right.DatabasePath));
         output.WriteLine($"before the restart: next_object_id {beforeRestart.NextObjectId}, cubes {beforeRestart.Cubes.Count}, pieces {beforeRestart.Pieces.Count}, enemies {beforeRestart.Enemies.Count}, items {beforeRestart.Items.Count}");
@@ -48,7 +48,7 @@ public sealed class WaveCLockstepDeterminismTests(ITestOutputHelper output)
         firstDivergence = RunPhase(left, right, SecondRunTicks, out _);
         Assert.True(firstDivergence < 0, $"The servers diverged at tick {firstDivergence} after the restart.");
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         string leftWorld = DumpWorld(left.DatabasePath);
         string rightWorld = DumpWorld(right.DatabasePath);
         output.WriteLine(leftWorld);

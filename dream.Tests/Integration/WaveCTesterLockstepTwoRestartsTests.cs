@@ -24,7 +24,7 @@ public sealed class WaveCTesterLockstepTwoRestartsTests(ITestOutputHelper output
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         foreach (string suffix in new[] { "", "-wal", "-shm" })
         {
             if (File.Exists(left.DatabasePath + suffix))
@@ -38,7 +38,7 @@ public sealed class WaveCTesterLockstepTwoRestartsTests(ITestOutputHelper output
         {
             int divergence = RunPhase(left, right, PhaseTicks[phase], out int compared);
             Assert.True(divergence < 0, $"phase {phase + 1}: the servers diverged at tick {divergence}");
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(left.DatabasePath, right.DatabasePath);
             string leftDump = DumpWorld(left.DatabasePath);
             string rightDump = DumpWorld(right.DatabasePath);
             Assert.Equal(leftDump, rightDump);

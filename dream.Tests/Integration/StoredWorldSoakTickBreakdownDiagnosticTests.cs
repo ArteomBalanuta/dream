@@ -60,7 +60,7 @@ public sealed class StoredWorldSoakTickBreakdownDiagnosticTests(ITestOutputHelpe
                         }
                     }
 
-                    SqliteConnection.ClearAllPools();
+                    SqlitePools.Release(db.DatabasePath);
                 }
             }
 
@@ -115,7 +115,7 @@ public sealed class StoredWorldSoakTickBreakdownDiagnosticTests(ITestOutputHelpe
                         }
                     }
 
-                    SqliteConnection.ClearAllPools();
+                    SqlitePools.Release(db.DatabasePath);
                 }
             }
 
@@ -144,7 +144,6 @@ public sealed class StoredWorldSoakTickBreakdownDiagnosticTests(ITestOutputHelpe
                 }
             }
 
-            SqliteConnection.ClearAllPools();
             double threshold = Percentile(ms, 0.99);
             List<int> slow = [.. Enumerable.Range(0, ms.Count).Where(i => ms[i] >= threshold)];
             string gaps = string.Join(", ", slow.Zip(slow.Skip(1), (a, b) => b - a).GroupBy(g => g).OrderByDescending(g => g.Count()).Take(8).Select(g => $"{g.Key}x{g.Count()}"));
@@ -193,7 +192,6 @@ public sealed class StoredWorldSoakTickBreakdownDiagnosticTests(ITestOutputHelpe
                 }
             }
 
-            SqliteConnection.ClearAllPools();
             string table = string.Join(" | ", new (string Label, int Min, int Max)[] { ("0-2", 0, 2), ("3-10", 3, 10), ("11-30", 11, 30), ("31+", 31, int.MaxValue) }.Select(band =>
             {
                 List<double> inBand = [.. samples.Where(sample => sample.Awake >= band.Min && sample.Awake <= band.Max).Select(sample => sample.Ms)];
@@ -225,7 +223,7 @@ public sealed class StoredWorldSoakTickBreakdownDiagnosticTests(ITestOutputHelpe
                 Assert.True(server.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(60)) ?? true);
             }
 
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(db.DatabasePath);
         }
 
         return (slot, rest);

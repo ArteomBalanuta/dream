@@ -69,7 +69,7 @@ public sealed class ClassicHudIteration2RuntimeAdversarialTests
     {
         using MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('Alice', 'Alice');");
         string worn;
         string totals;
@@ -106,7 +106,7 @@ public sealed class ClassicHudIteration2RuntimeAdversarialTests
             run.Runtime.DetachRemoteSession(new PlayerSessionId("s1"));
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         using WaveIRuntimeKit.RealRun restarted = new(db);
         restarted.Runtime.AttachRemoteSession(new PlayerSessionId("s2"), Player, new Dream.Simulation.Characters.CharacterKey(Player));
         restarted.Runtime.RestorePersistedPlayerState(new PlayerSessionId("s2"), Player, Player, account: null);

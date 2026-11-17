@@ -108,7 +108,9 @@ public static class LoadRunner
         }
         finally
         {
-            SqliteCleanup();
+            // Only this run's pool, so the temp database can be deleted without touching a
+            // neighbouring test's open databases.
+            SqlitePools.Release(databasePath);
             TryDeleteDirectory(workDirectory);
         }
     }
@@ -492,12 +494,6 @@ public static class LoadRunner
         {
             return -1;
         }
-    }
-
-    // Microsoft.Data.Sqlite pools connections; clear the pool so the temp database can be deleted.
-    private static void SqliteCleanup()
-    {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
     }
 
     private static void TryDeleteDirectory(string path)

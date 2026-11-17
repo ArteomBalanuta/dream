@@ -19,7 +19,7 @@ public sealed class ItemVisualIdsMigrationTests
             "(1, 9001, 'gear.leather-cap', 'Leather Cap', 'worn.head', 'Bag')," +
             "(1, 9002, 'gear.long-sword', 'Long Sword', 'held.weapon.sword', 'Bag')," +
             "(1, 9003, 'gear.no-such-thing', 'Mystery', 'worn.legacy-flat-id', 'Bag');");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         return database;
     }
 
@@ -59,7 +59,7 @@ public sealed class ItemVisualIdsMigrationTests
         string after = AllVisuals(database);
 
         database.ExecuteScript(File.ReadAllText(Path.Combine(MigrationTestDatabase.MigrationsDirectory, "0016_item_visual_ids.sql")));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         Assert.Equal(after, AllVisuals(database));
     }

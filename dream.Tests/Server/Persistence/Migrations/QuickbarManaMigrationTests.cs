@@ -34,7 +34,7 @@ public sealed class QuickbarManaMigrationTests
     public void EveryStoredEnergy_IsRaised_AndTheRestOfTheRowIsKept()
     {
         using MigrationTestDatabase database = V12WithPlayers();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 

@@ -26,7 +26,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     {
         MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return db;
     }
 
@@ -36,7 +36,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     {
         MigrationTestDatabase db = Migrated();
         db.ExecuteScript("DROP INDEX ux_player_inventory_slots_item;");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return db;
     }
 
@@ -88,7 +88,7 @@ public sealed class WorldIntegrityCheckTests(ITestOutputHelper output)
     {
         using MigrationTestDatabase db = Migrated();
         db.ExecuteScript("PRAGMA wal_checkpoint(TRUNCATE);");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         byte[] bytes = File.ReadAllBytes(db.DatabasePath);
         // Overwrite the middle of the second page onward with noise, leaving the header readable.
         for (int i = 4096 + 100; i < Math.Min(bytes.Length, 4096 * 4); i++)

@@ -418,7 +418,7 @@ public sealed class GroundItemsLoopbackTests
             Flush(server);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         // ---- restart: the one item left is back on the ground, free, once, and its id stays reserved ----
         Assert.Equal(1, Count(db, "SELECT COUNT(*) FROM item_instances WHERE state = 'Ground';"));
@@ -452,7 +452,7 @@ public sealed class GroundItemsLoopbackTests
             await server.DisconnectAsync(a);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         await using (WireLoopbackServer server = await StartAsync(db))
         {
             Assert.Equal(0, server.Runtime.GroundItemCount);

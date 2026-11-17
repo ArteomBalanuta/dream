@@ -18,7 +18,7 @@ public sealed class SqliteAccountRepositoryTests
     {
         MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return db;
     }
 
@@ -172,16 +172,16 @@ public sealed class SqliteAccountRepositoryTests
         using MigrationTestDatabase source = new();
         source.Schema.EnsureSchema(new SqliteSchemaMigrator(
             [.. SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory).Take(6)]));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(source.DatabasePath);
         using MigrationTestDatabase target = new();
         target.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(source.DatabasePath, target.DatabasePath);
 
         int exit = DatabaseCli.Restore(
             target.DatabasePath, MigrationTestDatabase.InitScriptPath, source.DatabasePath, new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
         target.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(source.DatabasePath, target.DatabasePath);
 
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, target.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(0L, target.Scalar("SELECT COUNT(*) FROM accounts;"));
@@ -196,16 +196,16 @@ public sealed class SqliteAccountRepositoryTests
             TestAccountTokens.KeyFor("alice"), new CharacterKey("k"), claim: true, new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc));
         string backup = Path.Combine(source.RootDirectory, "backup.sqlite");
         Assert.Equal(0, DatabaseCli.Backup(source.DatabasePath, backup, new StringWriter(), new StringWriter()));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(source.DatabasePath);
 
         using MigrationTestDatabase target = Migrated();
         Profile(target, "other", "Other");
         target.ExecuteScript("INSERT INTO accounts (token_hash, created_utc, last_seen_utc) VALUES (zeroblob(32), 'x', 'x');");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(source.DatabasePath, target.DatabasePath);
         int exit = DatabaseCli.Restore(
             target.DatabasePath, MigrationTestDatabase.InitScriptPath, backup, new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(source.DatabasePath, target.DatabasePath);
 
         Assert.Equal(1L, target.Scalar("SELECT COUNT(*) FROM accounts;"));
         Assert.Equal(

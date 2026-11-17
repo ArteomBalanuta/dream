@@ -152,7 +152,7 @@ public sealed class IncrementalCheckpointMeasurementTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqlitePools.Release(Path.Combine(work, "world.sqlite"));
             try
             {
                 Directory.Delete(work, recursive: true);

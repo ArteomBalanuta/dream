@@ -168,7 +168,7 @@ public sealed class EnemyFormulasMigrationTests
 
         Assert.Throws<InvalidOperationException>(() => database.Schema.EnsureSchema(migrator));
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         using SqliteConnection c = database.Open();
         Assert.Equal(8, migrator.GetCurrentVersion(c));
         Assert.Equal(0L, Scalar(c, "SELECT COUNT(*) FROM combat_formulas WHERE formula_key IN ('enemy.attack_damage','enemy.max_health','enemy.attack_interval_seconds','player.damage_taken_factor');"));

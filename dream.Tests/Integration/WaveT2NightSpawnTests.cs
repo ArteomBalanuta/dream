@@ -175,7 +175,7 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
         using TempDatabase database = new();
         int[] wolves = CreateNightWorldWithTwoWolves(database);
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using (ServerPersistenceBundle bundle = database.OpenBundle())
         using (DedicatedServerHost host = OpenHost(bundle, out WorldSessionRuntime runtime))
         {
@@ -191,7 +191,7 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
             Assert.Equal(2, database.Count("enemy_instances"));
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(2, database.Count("enemy_instances"));
     }
 
@@ -204,13 +204,13 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
         using TempDatabase database = new();
         int[] wolves = CreateNightWorldWithTwoWolves(database);
         long dawn = WorldTicksAt(WorldClockSettings.Default, dayIndex: 2, hour: 4) + 3;
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using (ServerPersistenceBundle bundle = database.OpenBundle())
         {
             new SqlitePersistenceCheckpointWriter(bundle.Schema).Write(PersistenceCheckpoint.Empty with { WorldTimeTicks = dawn });
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using (ServerPersistenceBundle bundle = database.OpenBundle())
         using (DedicatedServerHost host = OpenHost(bundle, out WorldSessionRuntime runtime))
         {
@@ -228,7 +228,7 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
             Assert.Equal(1, database.Count("enemy_instances"));
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using (ServerPersistenceBundle bundle = database.OpenBundle())
         using (DedicatedServerHost host = OpenHost(bundle, out WorldSessionRuntime runtime))
         {
@@ -500,7 +500,7 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
             new SqlitePersistenceCheckpointWriter(bundle.Schema).Write(PersistenceCheckpoint.Empty with { WorldTimeTicks = night });
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         int[] wolves;
         using (ServerPersistenceBundle bundle = database.OpenBundle())
         using (DedicatedServerHost host = OpenHost(bundle, out WorldSessionRuntime runtime))
@@ -519,7 +519,7 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
             Assert.True(runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(2, database.Count("enemy_instances"));
         output.WriteLine($"night world: wolves {string.Join(", ", wolves)}");
         return wolves;

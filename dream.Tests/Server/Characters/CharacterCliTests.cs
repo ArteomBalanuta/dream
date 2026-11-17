@@ -15,7 +15,7 @@ public sealed class CharacterCliTests
     {
         MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return db;
     }
 

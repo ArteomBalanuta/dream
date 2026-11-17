@@ -72,7 +72,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
             await TickAsync(server, 2);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE material_id = 'Lamp';"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE cell_x = 20 AND cell_z = 20 AND material_id = 'Stone';"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
@@ -88,7 +88,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
             Assert.Equal(GeometryMaterialId.Lamp, again.Runtime.Map.TryGetCubeAtCell((int)lampCell.X, (int)lampCell.Y, (int)lampCell.Z)?.MaterialId);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Single(database.Backups());
     }
 
@@ -99,17 +99,17 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         database.BuildWithPreMigrationBootstrapper();
         FillLegacyRows(database);
         database.Schema.EnsureSchema();
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Single(database.Backups());
         database.ExecuteScript("INSERT INTO schema_version (version, name, applied_utc) VALUES (99, 'from_the_future', '2030-01-01T00:00:00.0000000Z');");
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         string[] filesBefore = Directory.GetFiles(database.RootDirectory).Where(f => !f.EndsWith(".lock", StringComparison.Ordinal)).Order().ToArray();
         byte[] bytesBefore = File.ReadAllBytes(database.DatabasePath);
 
         List<string> log = [];
         SchemaTooNewException error = Assert.Throws<SchemaTooNewException>(() =>
             ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, MigrationTestDatabase.InitScriptPath, log: log.Add));
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
 
         output.WriteLine(error.Message);
         Assert.Equal(99, error.StoredVersion);

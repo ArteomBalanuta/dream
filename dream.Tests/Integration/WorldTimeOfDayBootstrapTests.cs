@@ -69,7 +69,7 @@ public sealed class WorldTimeOfDayBootstrapTests
                     precision: 9);
             }
 
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(database.DatabasePath);
             Environment.SetEnvironmentVariable(ServerBootstrap.TimeOfDayEnvironmentVariable, null);
             await using WaveT1ClockEndToEndTests.ClockServer restarted = await WaveT1ClockEndToEndTests.ClockServer.StartAsync(database.OpenBundle());
             Assert.Equal(worldTicksAtShutdown, restarted.Runtime.WorldClock.WorldTicks);

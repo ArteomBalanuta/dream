@@ -888,7 +888,7 @@ public sealed class PlayerInventoryServiceTests
             Assert.True(writes.Flush(TimeSpan.FromSeconds(30)));
         }
 
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(4L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
         Assert.Equal(1L, database.Count("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
         // The torch (first fit: the free block of the worn hammer, anchor 0) leaves the backpack: its
@@ -918,7 +918,7 @@ public sealed class PlayerInventoryServiceTests
             Assert.DoesNotContain(inventory.BuildSnapshot("Vic").Slots, slot => slot.Item?.ItemKind == "tool.torch");
         }
 
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(0L, database.Count("SELECT COUNT(*) FROM item_instances WHERE item_kind = 'tool.torch';"));
         Assert.Equal(4L, database.Count("SELECT kit_version FROM player_starter_grants WHERE player_name = 'Vic';"));
     }

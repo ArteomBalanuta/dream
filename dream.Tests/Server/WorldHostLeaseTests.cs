@@ -85,7 +85,7 @@ public sealed class WorldHostLeaseTests
     {
         using MigrationTestDatabase db = new();
         using ServerPersistenceBundle one = Open(db);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         new SqliteWorldCatalog(db.Schema).Create(new WorldCreateOptions("second", 20));
         using ServerPersistenceBundle two = Open(db, "second");
         Assert.NotEqual(one.WorldId, two.WorldId);
@@ -214,7 +214,7 @@ public sealed class WorldHostLeaseTests
             output,
             error,
             worldId => WorldHostLease.TryAcquire(db.DatabasePath, worldId));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return (exit, output.ToString(), error.ToString());
     }
 
@@ -227,7 +227,7 @@ public sealed class WorldHostLeaseTests
     {
         using MigrationTestDatabase db = new();
         using ServerPersistenceBundle server = Open(db);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         long worldsBefore = (long)db.Scalar("SELECT COUNT(*) FROM worlds;")!;
 
         (int exit, string output, string error) = Cli(db, verb, a, b);
@@ -289,7 +289,7 @@ public sealed class WorldHostLeaseTests
         WorldHeldException ex = Assert.Throws<WorldHeldException>(() => Open(db));
 
         Assert.Equal(WorldId.Default, ex.WorldId);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         Assert.Equal(before, File.ReadAllBytes(db.DatabasePath));
         Assert.Empty(db.Backups());
     }
@@ -305,7 +305,7 @@ public sealed class WorldHostLeaseTests
         Assert.Throws<WorldHeldException>(
             () => DatabaseMaintenanceLock.EnsureSchemaGuarded(db.Schema, db.DatabasePath, log: null));
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         Assert.Equal(before, File.ReadAllBytes(db.DatabasePath));
         // The maintenance lock was released on the way out.
         using DatabaseMaintenanceLock free = DatabaseMaintenanceLock.Acquire(db.DatabasePath, TimeSpan.Zero);
@@ -316,7 +316,7 @@ public sealed class WorldHostLeaseTests
     {
         using MigrationTestDatabase db = new();
         using ServerPersistenceBundle one = Open(db);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         new SqliteWorldCatalog(db.Schema).Create(new WorldCreateOptions("second", 20));
         using ServerPersistenceBundle two = Open(db, "second");
         Assert.NotEqual(one.WorldId, two.WorldId);
@@ -330,7 +330,7 @@ public sealed class WorldHostLeaseTests
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         List<WorldId> asked = [];
         bool heldDuringRead = false;
         RecordingCatalog catalog = new(new SqliteWorldCatalog(db.Schema), asked)
@@ -357,7 +357,7 @@ public sealed class WorldHostLeaseTests
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         RecordingCatalog catalog = new(new SqliteWorldCatalog(db.Schema), [])
         {
             OnTryGet = (_, _) => null
@@ -390,7 +390,7 @@ public sealed class WorldHostLeaseTests
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         using DatabaseMaintenanceLock restoring = DatabaseMaintenanceLock.Acquire(db.DatabasePath, TimeSpan.Zero);
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
 
@@ -410,7 +410,7 @@ public sealed class WorldHostLeaseTests
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         using DatabaseMaintenanceLock restoring = DatabaseMaintenanceLock.Acquire(db.DatabasePath, TimeSpan.Zero);
         List<string> log = [];
 
@@ -519,7 +519,7 @@ public sealed class WorldHostLeaseTests
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         MakeReadOnlyLockFile(db, WorldId.Default);
         try
         {
@@ -550,7 +550,7 @@ public sealed class WorldHostLeaseTests
 
         int exit = WorldCli.Run(
             ["list"], () => new SqliteWorldCatalog(db.Schema), new StringWriter(), error);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         Assert.Equal(WorldCli.ExitNotFoundOrConflict, exit);
         Assert.Contains("--db restore", error.ToString(), StringComparison.Ordinal);
@@ -578,7 +578,7 @@ public sealed class WorldHostLeaseTests
             worldId => new ReleaseProbe(
                 WorldHostLease.TryAcquire(db.DatabasePath, worldId)!,
                 () => heldAtRelease.Add(WorldHostLease.IsHeld(db.DatabasePath, worldId))));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         Assert.Equal(0, exit);
         Assert.StartsWith("2\tcopy-of-default\t", output.ToString(), StringComparison.Ordinal);

@@ -302,7 +302,7 @@ public sealed class CheckpointPersistenceTests
 
         public void Dispose()
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqlitePools.Release(Schema);
             try
             {
                 Directory.Delete(_rootDirectory, recursive: true);

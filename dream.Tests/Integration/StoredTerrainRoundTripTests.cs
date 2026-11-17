@@ -34,7 +34,7 @@ public sealed class StoredTerrainRoundTripTests(ITestOutputHelper output)
         database.Schema.EnsureSchema();
         SqliteTerrainChunkRepository repository = new(new SqliteWorldStore(database.Schema), WorldId.Default);
         repository.ReplaceTerrainChunks(exported);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         IReadOnlyList<PersistedTerrainChunk> loaded = repository.LoadTerrainChunks();
 
         // ORDER BY chunk_z, chunk_x, with byte-identical blobs.

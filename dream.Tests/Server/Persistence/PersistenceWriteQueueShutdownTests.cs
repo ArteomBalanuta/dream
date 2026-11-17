@@ -96,7 +96,7 @@ public sealed class PersistenceWriteQueueShutdownTests(ITestOutputHelper output)
 
         Thread.Sleep(TimeSpan.FromMilliseconds(300));
         Assert.Equal(0, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'dropped-%';"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     // Within the deadline Dispose still drains everything (wave 7's guarantee).
@@ -118,6 +118,6 @@ public sealed class PersistenceWriteQueueShutdownTests(ITestOutputHelper output)
 
         Assert.Equal(0, writes.FailedWrites);
         Assert.Equal(300, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'drained-%';"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 }

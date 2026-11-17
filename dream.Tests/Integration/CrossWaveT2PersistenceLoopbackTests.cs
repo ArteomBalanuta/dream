@@ -48,7 +48,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
             await TickAsync(server, 2);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Exec(database, """
             DELETE FROM player_inventory_slots WHERE item_instance_id IN (SELECT item_instance_id FROM item_instances WHERE item_kind = 'tool.torch');
             DELETE FROM item_instances WHERE item_kind = 'tool.torch';
@@ -85,7 +85,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
             await TickAsync(server, 2);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         AssertDatabase(database, enemies: 2);
 
         // Phase 2 (restart, still night): the lamp, both wolves (same ids, no third) and the equipped
@@ -115,7 +115,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
             Assert.True(server.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         AssertDatabase(database, enemies: 2);
 
         // Phase 3 (restart at dawn): the first tick removes the night wolf (the higher id) and its row.
@@ -139,7 +139,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
             Assert.True(server.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         AssertDatabase(database, enemies: 1);
         Assert.Equal(keptWolfObjectId, Scalar(database, "SELECT object_id FROM enemy_instances;"));
     }
@@ -238,7 +238,7 @@ public sealed class CrossWaveT2PersistenceLoopbackTests(ITestOutputHelper output
             new SqlitePersistenceCheckpointWriter(bundle.Schema).Write(PersistenceCheckpoint.Empty with { WorldTimeTicks = ticks });
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     internal static object? Scalar(TempDatabase database, string sql)

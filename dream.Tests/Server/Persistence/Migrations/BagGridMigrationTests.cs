@@ -57,7 +57,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
 
     private static void AssertSound(MigrationTestDatabase database)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
         using SqliteConnection connection = database.Open();
         using SqliteCommand command = connection.CreateCommand();
@@ -223,12 +223,12 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
             v9 = SqliteSchemaSnapshot.Capture(connection);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         // Stops at 0010: the schema is compared with the v9 one (0011 adds a column).
         SchemaMigrationResult result = database.Schema.EnsureSchema(UpTo(10));
 
         Assert.Equal(new SchemaMigrationResult(9, 10, result.BackupPath), result);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using SqliteConnection after = database.Open();
         Assert.Equal(v9, SqliteSchemaSnapshot.Capture(after));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM item_instances;"));
@@ -247,7 +247,7 @@ public sealed class BagGridMigrationTests(ITestOutputHelper output)
         Exception error = Assert.ThrowsAny<Exception>(() => database.Schema.EnsureSchema());
 
         output.WriteLine(error.Message);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(9L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(before, BagGridMigrationAsserts.ReadSlots(database));
         Assert.Single(database.Backups());

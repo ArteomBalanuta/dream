@@ -19,7 +19,7 @@ public sealed class ItemCliTests
     {
         MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         db.ExecuteScript("UPDATE worlds SET seed = '12345', world_time_ticks = 900 WHERE world_id = 1;");
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('bob~2', 'Bob');");
         if (withGrant)
