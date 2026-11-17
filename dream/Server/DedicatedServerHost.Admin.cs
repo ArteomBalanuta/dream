@@ -494,6 +494,27 @@ public sealed partial class DedicatedServerHost
                     _sanctionMemory.TryRemove(entry.Key, out _);
                 }
             }
+
+            // The age sweep frees nothing when every entry is younger than the window, so the oldest
+            // entries go next (as NewAccountLimiter.MakeRoom does): MaxSanctionMemory is a hard bound.
+            while (_sanctionMemory.Count >= MaxSanctionMemory)
+            {
+                string? oldest = null;
+                DateTime oldestStamp = DateTime.MaxValue;
+                foreach (KeyValuePair<string, SanctionMemory> entry in _sanctionMemory)
+                {
+                    if (entry.Value.StampUtc < oldestStamp)
+                    {
+                        oldestStamp = entry.Value.StampUtc;
+                        oldest = entry.Key;
+                    }
+                }
+
+                if (oldest == null || !_sanctionMemory.TryRemove(oldest, out _))
+                {
+                    break;
+                }
+            }
         }
 
         _sanctionMemory.AddOrUpdate(
