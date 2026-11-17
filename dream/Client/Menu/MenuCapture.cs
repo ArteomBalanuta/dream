@@ -89,6 +89,16 @@ public sealed class MenuCapture
                 // The pause menu drawn over the title screen's last frame.
                 renderer.Draw(width, height, uiScale, new UiPointer(new Vector2(-1000f, -1000f), false, false, true), w => PauseMenuPanel.Build(w, true));
                 capture(Path.Combine(_directory, "menu-pause.png"));
+                break;
+            case 132:
+                renderer.Draw(width, height, uiScale, new UiPointer(new Vector2(-1000f, -1000f), false, false, true),
+                    w => LoadingScreenPanel.Build(w, new LoadingScreenState("Starting the local server...", 0.12f, false, LoadingScreenPanel.Tips[0])));
+                capture(Path.Combine(_directory, "menu-loading.png"));
+                break;
+            case 134:
+                renderer.Draw(width, height, uiScale, new UiPointer(new Vector2(-1000f, -1000f), false, false, true),
+                    w => LoadingScreenPanel.Build(w, new LoadingScreenState("The world awaits.", 1f, true, LoadingScreenPanel.Tips[0], 0.5f)));
+                capture(Path.Combine(_directory, "menu-loading-ready.png"));
                 Done = true;
                 break;
         }

@@ -300,12 +300,6 @@ public sealed class MenuWidgets
     // caret visible. A press inside the box places the caret at the nearest character boundary and dragging
     // with the button held extends the selection. Returns true on the frame it is pressed or clicked, so the
     // caller focuses the field at once.
-    // The slider's groove and fill without a knob (same sprites and colours); unit is 0..1.
-    // CONTRACT-STUB: W1 replaces this body.
-    public void ProgressBar(UiRect track, float unit)
-    {
-    }
-
     public bool TextField(int id, UiRect r, MenuTextField field, bool focused, bool enabled = true)
     {
         bool clicked = Input.Button(id, r, enabled) && enabled;
@@ -525,8 +519,31 @@ public sealed class MenuWidgets
         return new MenuSliderResult(changed, unit, committed);
     }
 
+    // The slider's groove and fill without a knob (same sprites and colours); unit is 0..1.
+    public void ProgressBar(UiRect track, float unit) => DrawGroove(track, unit, true);
+
     private void DrawSlider(UiRect track, float unit, bool enabled, bool hot)
     {
+        DrawGroove(track, unit, enabled);
+        float knobCentre = track.X + track.W * unit;
+        if (Skin.SliderKnobSprite is { } knob)
+        {
+            float pxPerTexel = _layout.Scale / UiLayout.ArtTexelsPerUnit;
+            float kw = knob.W * pxPerTexel;
+            float kh = knob.H * pxPerTexel;
+            UiColor tint = enabled ? (hot ? new UiColor(255, 232, 190, 255) : UiColor.White) : new UiColor(120, 120, 120, 255);
+            Canvas.Sprite(in knob, new UiRect(MathF.Round(knobCentre - kw * 0.5f), MathF.Round(track.Y + (track.H - kh) * 0.5f), kw, kh), tint);
+        }
+        else
+        {
+            float k = track.H * 1.6f;
+            Canvas.Solid(new UiRect(knobCentre - k * 0.25f, track.Y + (track.H - k) * 0.5f, k * 0.5f, k), hot ? Gold : Bone);
+        }
+    }
+
+    private void DrawGroove(UiRect track, float unit, bool enabled)
+    {
+        unit = float.IsNaN(unit) ? 0f : Math.Clamp(unit, 0f, 1f);
         if (Skin.SliderTrackSprite is { } sprite)
         {
             if (sprite.HasSlice)
@@ -549,21 +566,6 @@ public sealed class MenuWidgets
         {
             UiColor fill = enabled ? new UiColor(168, 104, 38, 220) : new UiColor(80, 76, 70, 200);
             Canvas.Solid(new UiRect(groove.X, groove.Y, groove.W * unit, groove.H), fill);
-        }
-
-        float knobCentre = track.X + track.W * unit;
-        if (Skin.SliderKnobSprite is { } knob)
-        {
-            float pxPerTexel = _layout.Scale / UiLayout.ArtTexelsPerUnit;
-            float kw = knob.W * pxPerTexel;
-            float kh = knob.H * pxPerTexel;
-            UiColor tint = enabled ? (hot ? new UiColor(255, 232, 190, 255) : UiColor.White) : new UiColor(120, 120, 120, 255);
-            Canvas.Sprite(in knob, new UiRect(MathF.Round(knobCentre - kw * 0.5f), MathF.Round(track.Y + (track.H - kh) * 0.5f), kw, kh), tint);
-        }
-        else
-        {
-            float k = track.H * 1.6f;
-            Canvas.Solid(new UiRect(knobCentre - k * 0.25f, track.Y + (track.H - k) * 0.5f, k * 0.5f, k), hot ? Gold : Bone);
         }
     }
 }
