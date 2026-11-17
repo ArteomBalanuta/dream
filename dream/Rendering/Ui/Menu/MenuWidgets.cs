@@ -42,6 +42,7 @@ public sealed class MenuWidgets
     private UiLayout _layout;
     private int _activeSlider = NoId;
     private int _releasedSlider = NoId;
+    private int _textPressId = NoId;
     private bool _prevLeft;
     private bool _leftDown;
     private bool _pressedEdge;
@@ -294,11 +295,11 @@ public sealed class MenuWidgets
         return clicked;
     }
 
-    // A single-line text box: a plate, left-aligned text clipped to the box (the tail stays visible), a
-    // caret when focused. Returns true on the frame it is clicked (the caller moves focus).
-    // CONTRACT (WS-B): draws the selection highlight and a caret bar at field.Caret, scrolls (field.ScrollStart)
-    // so the caret stays visible, and on a press inside the box places the caret at the clicked character;
-    // dragging with the button held extends the selection. Returns true on the frame it is pressed or clicked.
+    // A single-line text box: a plate, left-aligned text clipped to the box (only the characters that fit are
+    // drawn, from field.ScrollStart), a selection highlight and a caret bar when focused. Scrolling keeps the
+    // caret visible. A press inside the box places the caret at the nearest character boundary and dragging
+    // with the button held extends the selection. Returns true on the frame it is pressed or clicked, so the
+    // caller focuses the field at once.
     public bool TextField(int id, UiRect r, MenuTextField field, bool focused, bool enabled = true)
     {
         bool clicked = Input.Button(id, r, enabled) && enabled;
@@ -334,39 +335,163 @@ public sealed class MenuWidgets
         float avail = MathF.Max(0f, r.W - 2f * pad);
         float hUnits = _layout.Scale > 0f ? r.H / _layout.Scale : ButtonHeightUnits;
         string text = field.Text;
-        string shown = focused && enabled ? text + "_" : text;
         UiSizedText style = FitTextInBox("Mg", avail, OptionRowUnits, hUnits, allowTitle: false);
-        // Only the tail that fits is drawn, so the end being typed stays visible.
-        int start = 0;
-        while (start < text.Length && UiText.Measure(Canvas, shown.AsSpan(start), in style) > avail)
+        float caretW = MathF.Min(2f, MathF.Max(1f, MathF.Round(_layout.Scale * 0.75f)));
+
+        // Mouse: the press edge inside the box captures; the capture follows the pointer until release.
+        UiPointer pointer = Input.Pointer;
+        bool pressed = false;
+        if (!_leftDown || !enabled)
         {
-            start++;
+            _textPressId = NoId;
         }
 
-        if (start > 0 && char.IsLowSurrogate(shown[start]))
+        if (enabled)
         {
-            start++;
+            if (_pressedEdge && r.Contains(pointer.Position))
+            {
+                pressed = true;
+                _textPressId = id;
+                ScrollToCaret(field, text, in style, avail, caretW);
+                field.MoveCaret(HitIndexAt(r, field, text, in style, pad, avail, pointer.Position.X), extend: false);
+            }
+            else if (_textPressId == id && _leftDown && float.IsFinite(pointer.Position.X))
+            {
+                ScrollToCaret(field, text, in style, avail, caretW);
+                field.MoveCaret(HitIndexAt(r, field, text, in style, pad, avail, pointer.Position.X), extend: true);
+            }
         }
 
+        text = field.Text;
+        int start = ScrollToCaret(field, text, in style, avail, caretW);
+        int end = VisibleEnd(Canvas, text, start, in style, avail);
         UiColor color = enabled ? Bone : Disabled;
-        if (start >= text.Length)
+        float lineTop = r.Y + (r.H - style.Px) * 0.5f;
+
+        if (focused && enabled && field.HasSelection)
         {
-            // Nothing of the text fits (or it is empty): only the caret, if any.
-            start = text.Length;
+            int a = Math.Max(field.SelectionStart, start);
+            int z = Math.Min(field.SelectionEnd, end);
+            if (z > a)
+            {
+                float x0 = UiText.Measure(Canvas, text.AsSpan(start, a - start), in style);
+                float x1 = UiText.Measure(Canvas, text.AsSpan(start, z - start), in style);
+                Canvas.Solid(new UiRect(r.X + pad + x0, lineTop, x1 - x0, style.Px), new UiColor(0xF0, 0xC4, 0x6C, 90));
+            }
         }
 
-        if (start < text.Length)
+        if (end > start)
         {
-            TextLeftCentred(text.AsSpan(start), r, r.X + pad, in style, color);
+            TextLeftCentred(text.AsSpan(start, end - start), r, r.X + pad, in style, color);
         }
 
         if (focused && enabled)
         {
-            float tw = UiText.Measure(Canvas, text.AsSpan(start), in style);
-            TextLeftCentred("_", r, r.X + pad + tw, in style, Gold);
+            int caret = Math.Clamp(field.Caret, start, text.Length);
+            float cx = r.X + pad + UiText.Measure(Canvas, text.AsSpan(start, caret - start), in style);
+            float ch = r.H * 0.7f;
+            Canvas.Solid(new UiRect(cx, r.Y + (r.H - ch) * 0.5f, caretW, ch), Gold);
         }
 
-        return clicked;
+        return clicked || pressed;
+    }
+
+    private static int RuneBefore(string text, int index) =>
+        index >= 2 && char.IsLowSurrogate(text[index - 1]) && char.IsHighSurrogate(text[index - 2]) ? index - 2 : index - 1;
+
+    private static int RuneAfter(string text, int index) =>
+        index + 1 < text.Length && char.IsHighSurrogate(text[index]) && char.IsLowSurrogate(text[index + 1]) ? index + 2 : index + 1;
+
+    // One past the last character, counted from start, whose text still fits avail.
+    private static int VisibleEnd(IUiCanvas canvas, string text, int start, in UiSizedText style, float avail)
+    {
+        int end = start;
+        while (end < text.Length)
+        {
+            int next = RuneAfter(text, end);
+            if (UiText.Measure(canvas, text.AsSpan(start, next - start), in style) > avail)
+            {
+                break;
+            }
+
+            end = next;
+        }
+
+        return end;
+    }
+
+    // Keeps field.ScrollStart so the caret (and its bar) is inside avail, and no free space is left at the
+    // right while text is scrolled off the left. Returns the scroll start.
+    private int ScrollToCaret(MenuTextField field, string text, in UiSizedText style, float avail, float caretW)
+    {
+        int caret = Math.Clamp(field.Caret, 0, text.Length);
+        int start = Math.Clamp(field.ScrollStart, 0, text.Length);
+        if (start > 0 && char.IsLowSurrogate(text[start]))
+        {
+            start--;
+        }
+
+        if (caret < start)
+        {
+            start = caret;
+        }
+
+        while (start < caret && UiText.Measure(Canvas, text.AsSpan(start, caret - start), in style) + caretW > avail)
+        {
+            start = RuneAfter(text, start);
+        }
+
+        while (start > 0)
+        {
+            int prev = RuneBefore(text, start);
+            if (UiText.Measure(Canvas, text.AsSpan(prev), in style) + caretW > avail)
+            {
+                break;
+            }
+
+            start = prev;
+        }
+
+        field.ScrollStart = start;
+        return start;
+    }
+
+    private int HitIndexAt(UiRect r, MenuTextField field, string text, in UiSizedText style, float pad, float avail, float x)
+    {
+        if (x < r.X)
+        {
+            return 0;
+        }
+
+        if (x > r.Right)
+        {
+            return text.Length;
+        }
+
+        int start = Math.Clamp(field.ScrollStart, 0, text.Length);
+        return HitIndex(Canvas, text, start, in style, avail, x - (r.X + pad));
+    }
+
+    // The character boundary nearest to localX (pixels from the left edge of the text area) among the
+    // visible boundaries counted from start.
+    internal static int HitIndex(IUiCanvas canvas, string text, int start, in UiSizedText style, float avail, float localX)
+    {
+        int end = VisibleEnd(canvas, text, start, in style, avail);
+        int best = start;
+        float bestDist = MathF.Abs(localX);
+        int i = start;
+        while (i < end)
+        {
+            i = RuneAfter(text, i);
+            float d = MathF.Abs(UiText.Measure(canvas, text.AsSpan(start, i - start), in style) - localX);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                best = i;
+            }
+        }
+
+        return best;
     }
 
     // A horizontal slider. track is where the groove is drawn, hit the (taller) pointer area. unit is 0..1.
