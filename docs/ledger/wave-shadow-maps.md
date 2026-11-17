@@ -669,9 +669,9 @@ had to implement it, with evidence, and fixed:
 - **Actor shadows lag one frame**: the pass runs before actors animate and replays the previous pose.
 - **The moon is never shadowed** (the sun term only), which is what keeps the grim-look CPU mirror
   truthful at hours 0, 20, 19 and 5.
-- **Fire shadows move very little.** Measured edge motion is 0.045 world units (~1.4 texels) at 8 units.
-  The flicker reads mostly as intensity (+-25 %) and reach (+-9 %). `FireFlicker.OffsetLateral` (2 cm)
-  is the knob if they should visibly dance.
+- **Fire shadows move very little.** ~~Measured edge motion is 0.045 world units (~1.4 texels) at 8
+  units.~~ **CLOSED by the fire-motion wave** (see the section at the end of this file): edge travel is
+  now 11.59 texels. `OffsetLateral` turned out not to be the knob - see there for why.
 - Polar cones unshadowed by design; 4 fires of ~11-13; no AO; no shadow beyond the 40-unit sun volume.
 - **The GLSL face signs are pinned C#-against-C# plus a hard-coded expectation.** A GLSL-only edit to
   those two ternaries would not be caught. A parsing assertion would close the loop.
