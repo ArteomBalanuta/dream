@@ -379,9 +379,12 @@ public sealed class FxSimulation
             float distance = MathF.Sqrt(viewSquared);
             float cull = Smooth((HaloMaxViewDistance - distance) / HaloFadeDistance);
             float fade = strength * cull;
-            // The one flicker, the same value the light itself carries. A placed fire re-derives it
-            // from its position (seed 0); a held torch's seed is its actor id, which a PointLight does
-            // not carry, so it is read back from the light's own colour instead.
+            // The one flicker, the same value the light itself carries. The light BRINGS its phase:
+            // PointLight.FlickerSeed is FireFlicker.SeedFor(the fire's base position) for a placed fire
+            // and the actor id for a held one, so this reads the very phase the producer sampled at,
+            // whatever the flame's wander has since done to light.Position. Only a light whose producer
+            // left the seed at 0 falls back to the older derivations - the colour read-back for a held
+            // torch, the hash of the light's own position for a placed fire.
             float flicker = FireIntensity(in light, lightClass, _clock);
             float halfSize;
             Vector3 tint;

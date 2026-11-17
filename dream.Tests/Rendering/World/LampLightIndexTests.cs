@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Presentation;
 using Dream.Client.Scenes;
+using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
 using Dream.Rendering.World;
 using Dream.Simulation.World;
@@ -169,9 +170,58 @@ public class LampLightIndexTests
 
         Assert.Equal(LightCollector.Capacity, lights.Count);
         Assert.True(lights.Dropped > 0);
-        Assert.True((HeldLightAnchor.FirstPerson(camera, front, Vector3.UnitX, Vector3.UnitY) - lights.Lights[0].Position).Length < 0.04f);
+
+        // HeldLightCatalog emits the torch at anchor + FireFlicker's wander offset, so the only
+        // bound the slot-0 light obeys is the corner of the wander box: the lateral constant on X
+        // and Z, the vertical one on Y. Derive it; never restate it as a number.
+        Vector3 drift = lights.Lights[0].Position - HeldLightAnchor.FirstPerson(camera, front, Vector3.UnitX, Vector3.UnitY);
+        Assert.True(MathF.Abs(drift.X) <= FireFlicker.OffsetLateral + WanderEpsilon, $"lateral X drift {drift.X}");
+        Assert.True(MathF.Abs(drift.Z) <= FireFlicker.OffsetLateral + WanderEpsilon, $"lateral Z drift {drift.Z}");
+        Assert.True(MathF.Abs(drift.Y) <= FireFlicker.OffsetVertical + WanderEpsilon, $"vertical drift {drift.Y}");
+        Assert.True(drift.Length <= WanderReach + WanderEpsilon, $"drift {drift.Length} exceeds the wander reach {WanderReach}");
         Assert.InRange(lights.Lights[0].Radius, 7.29f, 8.71f);
     }
+
+    // What the drift bound above is worth, asserted against the thing it bounds: the SAMPLED offset. Eight
+    // seconds of clock at 240 Hz, on the seeds the two producers in that test actually carry - a lamp's
+    // seed is FireFlicker.SeedFor(its centre), a held torch's is the actor id - never leaves the reach,
+    // and gets most of the way out to it, so a reach that were merely enormous fails here too. Comparing
+    // the reach against the expression that defines it would assert nothing at all.
+    [Fact]
+    public void TheWanderReach_BoundsTheSampledOffset_AndIsNearlyReached()
+    {
+        const int Rate = 240;
+        (FireFlickerKind Kind, int Seed)[] fires =
+        [
+            (FireFlickerKind.Lamp, FireFlicker.SeedFor(new Vector3(20.5f, 1.5f, 25.5f))),
+            (FireFlickerKind.Lamp, FireFlicker.SeedFor(new Vector3(3.5f, 1.5f, 3.5f))),
+            (FireFlickerKind.Lamp, FireFlicker.SeedFor(new Vector3(0.5f, 1.5f, 39.5f))),
+            (FireFlickerKind.HeldTorch, 1)
+        ];
+
+        float worst = 0f;
+        foreach ((FireFlickerKind kind, int seed) in fires)
+        {
+            for (int i = 0; i < 8 * Rate; i++)
+            {
+                Vector3 offset = FireFlicker.Sample(kind, Vector3.Zero, (double)i / Rate, seed).Offset;
+                Assert.True(
+                    offset.Length <= WanderReach + WanderEpsilon,
+                    $"{kind} seed {seed} at t={(double)i / Rate}: offset {offset} is {offset.Length} long, past the wander reach {WanderReach}");
+                worst = MathF.Max(worst, offset.Length);
+            }
+        }
+
+        Assert.True(
+            worst >= 0.7f * WanderReach,
+            $"the flame never got past {worst / WanderReach:0.00} of the wander reach {WanderReach}, so the bound measures nothing");
+    }
+
+    private const float WanderEpsilon = 1e-5f;
+
+    private static readonly float WanderReach = MathF.Sqrt(
+        (2f * FireFlicker.OffsetLateral * FireFlicker.OffsetLateral)
+        + (FireFlicker.OffsetVertical * FireFlicker.OffsetVertical));
 
     [Fact]
     public void PartlyMinedLamp_StillLights_FromItsSolidSubcells_AndAFullyMinedOneDoesNot()

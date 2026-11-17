@@ -3,6 +3,7 @@ using Xunit;
 using Dream.Client.Presentation;
 using Dream.Client.Scenes;
 using Dream.Rendering.Actors;
+using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
 using Dream.Simulation.Inventory;
 using Dream.Tests.Utilities;
@@ -35,7 +36,7 @@ public sealed class PlaySceneHeldLightsTests
 
         Assert.Equal(3, lights.Count);
         PointLight localLight = lights.Lights[0];
-        Assert.True((HeldLightAnchor.FirstPerson(CameraPosition, CameraFront, CameraRight, CameraUp) - localLight.Position).Length < 0.04f, "the torch flame wobbles by at most ~0.03");
+        AssertWithinTheFlameWander(HeldLightAnchor.FirstPerson(CameraPosition, CameraFront, CameraRight, CameraUp), localLight.Position);
         Assert.InRange(localLight.Radius, 7.29f, 8.71f);
 
         PointLight lantern = lights.Lights[1];
@@ -44,8 +45,54 @@ public sealed class PlaySceneHeldLightsTests
         Assert.Equal(HeldLightCatalog.LanternColor, lantern.Color);
 
         PointLight torch = lights.Lights[2];
-        Assert.True((HeldLightAnchor.Body(remotes[2].Pose.Position, remotes[2].Pose.Facing) - torch.Position).Length < 0.04f, "the torch flame wobbles by at most ~0.03");
+        AssertWithinTheFlameWander(HeldLightAnchor.Body(remotes[2].Pose.Position, remotes[2].Pose.Facing), torch.Position);
         Assert.InRange(torch.Radius, 7.29f, 8.71f);
+    }
+
+    // A held torch sits at its anchor plus FireFlicker's wander offset, so the only bound it obeys is
+    // the wander box: the lateral constant on X and Z, the vertical one on Y. Derived from those
+    // constants, never restated as a number; TheFlameWanderReach_IsTheDiagonalOfTheWanderBox pins
+    // the relation between the box and the radius used here.
+    private const float WanderEpsilon = 1e-5f;
+
+    private static readonly float FlameWanderReach = MathF.Sqrt(
+        (2f * FireFlicker.OffsetLateral * FireFlicker.OffsetLateral)
+        + (FireFlicker.OffsetVertical * FireFlicker.OffsetVertical));
+
+    private static void AssertWithinTheFlameWander(Vector3 anchor, Vector3 lightPosition)
+    {
+        Vector3 drift = lightPosition - anchor;
+        Assert.True(MathF.Abs(drift.X) <= FireFlicker.OffsetLateral + WanderEpsilon, $"lateral X drift {drift.X}");
+        Assert.True(MathF.Abs(drift.Z) <= FireFlicker.OffsetLateral + WanderEpsilon, $"lateral Z drift {drift.Z}");
+        Assert.True(MathF.Abs(drift.Y) <= FireFlicker.OffsetVertical + WanderEpsilon, $"vertical drift {drift.Y}");
+        Assert.True(drift.Length <= FlameWanderReach + WanderEpsilon, $"drift {drift.Length} exceeds the wander reach {FlameWanderReach}");
+    }
+
+    // What the drift bound above is worth, asserted against the thing it bounds: the SAMPLED offset. Eight seconds of
+    // clock at 240 Hz on the seeds this file's held lights actually carry (HeldLightCatalog passes the actor id straight
+    // through as the flicker seed) must never leave the reach - and must get most of the way out to it, so a reach that
+    // were merely enormous fails here as surely as one that were too small. Comparing the reach against the expression
+    // that defines it would assert nothing at all.
+    [Fact]
+    public void TheFlameWanderReach_BoundsTheSampledOffset_AndIsNearlyReached()
+    {
+        const int Rate = 240;
+        float worst = 0f;
+        foreach (int actorId in new[] { 1, 2, 4, 5 })
+        {
+            for (int i = 0; i < 8 * Rate; i++)
+            {
+                Vector3 offset = FireFlicker.Sample(FireFlickerKind.HeldTorch, Vector3.Zero, (double)i / Rate, actorId).Offset;
+                Assert.True(
+                    offset.Length <= FlameWanderReach + WanderEpsilon,
+                    $"actor {actorId} at t={(double)i / Rate}: offset {offset} is {offset.Length} long, past the wander reach {FlameWanderReach}");
+                worst = MathF.Max(worst, offset.Length);
+            }
+        }
+
+        Assert.True(
+            worst >= 0.7f * FlameWanderReach,
+            $"the flame never got past {worst / FlameWanderReach:0.00} of the wander reach {FlameWanderReach}, so the bound measures nothing");
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
 using Dream.Rendering.Sky;
 using OpenTK.Mathematics;
@@ -40,7 +41,25 @@ public static class FireShadowAtlas
 
     // The light's face planes. Past Radius the windowed falloff of pointLights.glsl is exactly 0, so clipping at
     // 1.15 x Radius is invisible, and the pass and the lookup both derive far from the same flickered radius.
-    public const float NearPlane = 0.10f;
+    //
+    // THE NEAR PLANE IS DERIVED FROM THE FLAME'S WANDER, because FillSlots renders every face from the FLICKERED
+    // position. A surface d from the flame's BASE position is therefore tested against d minus the wander's component
+    // along that face's axis, and the face axes are +-X and +-Z, so that component swings over
+    // +-FireFlicker.OffsetLateral. Any surface in [NearPlane - OffsetLateral, NearPlane + OffsetLateral] enters and
+    // leaves the frustum as the flame wanders and flips between occluding and lit at the wander's own frequency.
+    //
+    // That band is 2 x OffsetLateral wide wherever the near plane sits, so the plane cannot remove it; it only decides
+    // where the band sits. Held down against zero, the only surfaces left inside it are surfaces the flame passes
+    // through, whose shadow is degenerate however the pass is set up. Hence a near plane that is a small fraction of
+    // the swing - WanderBandFraction, the share of the band the near plane is allowed to add - rather than, as it was
+    // when the wander was two centimetres, several times it.
+    //
+    // The cost is perspective depth precision, which the far/near ratio governs, and it is affordable here: one step of
+    // the 24 bit depth buffer is z^2 (far - near) / (2^24 - 1) / (far near) world units, about 0.5 mm at the deepest far
+    // plane the atlas uses, against a ConstantBiasWorld of 6 mm and a slope bias that is a hundred times that at the
+    // distances a shadow is read at. Both halves are pinned by FireShadowAtlasLayoutTests.
+    public const float WanderBandFraction = 0.125f;
+    public const float NearPlane = FireFlicker.OffsetLateral * WanderBandFraction;
     public const float FarRadiusScale = 1.15f;
 
     public static float FarPlane(float radius) => radius * FarRadiusScale;

@@ -36,7 +36,11 @@ public static class ShadowSettings
     public const int AtlasResolution = 2048;
     public const int TileGutter = 4;
     public const int SunTaps = 9;
-    public const int FireTaps = 4;
+
+    // The fire lookup's PCF kernel: a FireTapsPerSide x FireTapsPerSide grid of taps spaced
+    // FireShadowList.TapOffsetTexels apart, each one a hardware 2x2 comparison.
+    public const int FireTapsPerSide = 3;
+    public static int FireTaps => FireTapsPerSide * FireTapsPerSide;
 
     // The receiver box that only translates with the focus (the isometric camera is fixed): a ground footprint of
     // about 16 x 23 units plus relief and the tallest props, with margin.
@@ -85,6 +89,13 @@ public static class ShadowSettings
     public static int CastingFireCount { get; } = ResolveCastingFireCount(Environment.GetEnvironmentVariable(FiresEnvironmentVariable));
 
     public static int TileSide => AtlasResolution / GridSide;
+
+    // The fire atlas's angular resolution. A face tile spends its texels on the 90 degree cone less the
+    // gutter at each edge (the scale the lookup already shrinks by), and that cone spans 2 * major world
+    // units at `major` from the light - so this is the one definition of the fire map's world texel.
+    public static float FireConeTexels => TileSide - (2f * TileGutter);
+
+    public static float FireTexelWorldAt(float major) => 2f * major / FireConeTexels;
 
     // Light-space footprint of a ReceiverSide x ReceiverSide x ReceiverHeight box at sun elevation theta is
     // S * (S cos(theta) + H sin(theta)), maximised over theta at sqrt(S^2 + H^2). Constant, so the world texel is constant.

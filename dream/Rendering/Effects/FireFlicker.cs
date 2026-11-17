@@ -13,7 +13,8 @@ public enum FireFlickerKind
 }
 
 // One flicker sample: the multiplier of the light's intensity (and of everything that must flicker
-// with it), the multiplier of its radius, and a small positional wobble of the flame.
+// with it), the multiplier of its radius, and the flame's wander: a decimetre-scale excursion of the
+// flame from its base position, bounded by OffsetLateral on X and Z and OffsetVertical on Y.
 public readonly record struct FireFlickerSample(float Intensity, float RadiusScale, Vector3 Offset);
 
 // The one flicker of every fire: the light, its halo, its flame and the shadows it casts all read
@@ -25,20 +26,24 @@ public readonly record struct FireFlickerSample(float Intensity, float RadiusSca
 // halo's byte ceiling (HeldLightCatalog.MaxUnclipped*Intensity) is derived from. Gusts only reduce;
 // that single rule keeps the ceiling valid.
 //
-// A light that is only seen as a PointLight (FxSimulation, FxShadowList) re-derives its phase from
-// its position, quantised to PhaseGrid so a wobble of the offset cannot change it. Held lights pass
-// their actor id as the seed instead.
+// The phase is CARRIED, not re-derived. A producer computes the fire's seed once from its base,
+// un-offset position (SeedFor) - or, for a held light, from the actor id - and puts it on the
+// PointLight. Every consumer that only sees the light reads that same seed, so the producer and the
+// consumer stay in step whatever the flame's wander has done to the light's position. A seed of 0
+// means "no seed" and falls back to hashing the position quantised to PhaseGrid; that fallback is
+// only stable while the light stays inside its own phase cell, which is why production carries a seed.
 //
 // PUBLIC CONTRACT for a pass that only has a PointLight and the clock (a shadow pass, the FX
 // halos):
-//   * Sample(kind, position, clockSeconds, seed) - public; seed 0 derives the phase from the
-//     position quantised to PhaseGrid (0.5), so a light moved by its own Offset (<= 0.02) keeps its phase.
+//   * SeedFor(basePosition) - the stable seed of a fire placed there, never 0.
+//   * Sample(kind, position, clockSeconds, seed) - public; with a non-zero seed the result does not
+//     depend on position at all. Otherwise position is the fire's base, un-offset position.
 //   * TryClassifyRadius(radius, out kind) - the radius bands (nearest class centre within a
 //     tolerance; torch 8 +-0.75, lamp/brazier 10 +-0.95, lantern 6 +-0.05) of the radius-tagged
 //     lights; lamp and brazier are the same band and the same flicker.
-//   * IntensityOf(in PointLight, clockSeconds) - the current intensity multiplier of a light:
-//     placed fires from Sample at the light's position; a held torch (whose seed a PointLight does
-//     not carry) read back from its colour, so it is exactly in phase with the light itself.
+//   * IntensityOf(in PointLight, clockSeconds) - the current intensity multiplier of a light: from
+//     its carried seed when it has one; otherwise a held torch is read back from its colour and a
+//     placed fire falls back to the hash of the light's own position.
 public static class FireFlicker
 {
     public const float TorchClassTolerance = 0.75f;
@@ -67,8 +72,41 @@ public static class FireFlicker
     public const double GustWindowSeconds = 1.3;
     public const float GustChance = 0.30f;
     public const float RadiusFollow = 0.35f;
-    public const float OffsetLateral = 0.02f;
-    public const float OffsetVertical = 0.015f;
+    public const float OffsetLateral = 0.12f;
+    public const float OffsetVertical = 0.09f;
+
+    // The flame's wander: weights that sum to exactly 1 (so an axis is bounded by its own Offset
+    // constant) over three frequencies in Hz that share no short common period, so the path the flame
+    // traces does not close on itself the way two sines of one frequency do.
+    public const float WanderWeight0 = 0.58f;
+    public const float WanderWeight1 = 0.30f;
+    public const float WanderWeight2 = 0.12f;
+    public const float WanderWeightSum = WanderWeight0 + WanderWeight1 + WanderWeight2;
+    public const double WanderFrequency0 = 0.83;
+    public const double WanderFrequency1 = 1.97;
+    public const double WanderFrequency2 = 3.37;
+
+    // How much of a fire's phase each higher octave carries. Not 1, and not proportional between the
+    // octaves, so two fires whose phases differ slightly drift apart octave by octave.
+    public const double WanderPhaseSpread1 = 2.3;
+    public const double WanderPhaseSpread2 = 3.7;
+
+    /// <summary>
+    /// The stable flicker seed of a fire placed at <paramref name="basePosition"/>: the position
+    /// quantised to <see cref="PhaseGrid"/> and hashed, never 0. A producer computes it ONCE from the
+    /// UN-OFFSET position and carries it on the light, so every consumer reads the same phase whatever
+    /// the flame's wander has done to the light's position.
+    /// </summary>
+    public static int SeedFor(Vector3 basePosition)
+    {
+        int seed = unchecked((int)PositionHash(basePosition));
+        // 0 is reserved for "no seed", so the one cell that would hash to it is folded onto a
+        // fixed substitute instead.
+        return seed != 0 ? seed : ZeroSeedSubstitute;
+    }
+
+    // Any fixed non-zero value: it only has to differ from 0.
+    private const int ZeroSeedSubstitute = 0x5F3759DF;
 
     // Which fire a light of this radius is, by the nearest class radius within that class's
     // tolerance. False for any other radius (flash lights, debug rings).
@@ -101,6 +139,13 @@ public static class FireFlicker
         if (!TryClassifyRadius(light.Radius, out FireFlickerKind kind))
         {
             return 1f;
+        }
+
+        if (light.FlickerSeed != 0)
+        {
+            // The seed decides the phase, so the light's already-offset position is irrelevant here
+            // and this is exactly the sample its producer took.
+            return Sample(kind, light.Position, clockSeconds, light.FlickerSeed).Intensity;
         }
 
         switch (kind)
@@ -147,32 +192,35 @@ public static class FireFlicker
         f = Math.Clamp(f, 1f - amplitude, 1f + amplitude);
 
         float radiusScale = 1f + RadiusFollow * (f - 1f);
-        float lateral = OffsetLateral * (float)Math.Sin(Tau * 2.9 * t + 3.1 * phase);
-        float lateral2 = OffsetLateral * (float)Math.Sin(Tau * 2.9 * t + 3.1 * phase + 1.9);
-        float vertical = OffsetVertical * (float)Math.Sin(Tau * 4.7 * t + 0.7 * phase);
-        Vector3 offset = new(lateral, vertical, lateral2);
-        if (seed == 0)
-        {
-            // The light is placed at position + Offset, and its halo (FxSimulation) re-derives the
-            // phase from THAT position. Keep the offset inside the phase cell of the un-offset
-            // position, so both quantise to the same cell and agree whatever the position is, even
-            // one a hair from a cell boundary (a damaged lamp's centroid can land exactly on one).
-            offset = KeepInPhaseCell(position, offset);
-        }
+        // The wander: the same three octaves on every axis, but with per-axis constant phase terms
+        // that are not proportional between the axes, so no two axes are a fixed phase shift of each
+        // other at a shared frequency and the path the flame traces does not close into an ellipse.
+        // Deliberately NOT multiplied by the gust: a pure sum of sines keeps the wander's own shape
+        // the thing that moves.
+        Vector3 offset = new(
+            OffsetLateral * Wander(t, phase, 0.00, 1.27, 2.95),
+            OffsetVertical * Wander(t, phase, 1.05, 3.33, 5.50),
+            OffsetLateral * Wander(t, phase, 2.09, 4.71, 0.64));
 
         return new FireFlickerSample(f, radiusScale, offset);
     }
 
     private static int Cell(float v) => (int)MathF.Floor((v / PhaseGrid) + 0.5f);
 
-    private static Vector3 KeepInPhaseCell(Vector3 position, Vector3 offset)
+    // One axis of the wander, in [-1, 1] because the weights sum to exactly 1, so the axis is bounded
+    // by its own Offset constant rather than by a sampled maximum. d0/d1/d2 are this axis's constant
+    // phase terms.
+    private static float Wander(double t, double phase, double d0, double d1, double d2)
     {
-        // Checked on the float sum the callers actually compute, so rounding cannot disagree.
-        if (Cell(position.X + offset.X) != Cell(position.X)) offset.X = 0f;
-        if (Cell(position.Y + offset.Y) != Cell(position.Y)) offset.Y = 0f;
-        if (Cell(position.Z + offset.Z) != Cell(position.Z)) offset.Z = 0f;
-        return offset;
+        const double Tau = Math.PI * 2.0;
+        return (float)(
+            (WanderWeight0 * Math.Sin((Tau * WanderFrequency0 * t) + phase + d0))
+            + (WanderWeight1 * Math.Sin((Tau * WanderFrequency1 * t) + (WanderPhaseSpread1 * phase) + d1))
+            + (WanderWeight2 * Math.Sin((Tau * WanderFrequency2 * t) + (WanderPhaseSpread2 * phase) + d2)));
     }
+
+    private static uint PositionHash(Vector3 position) =>
+        Hash(Cell(position.X), Cell(position.Z), (Cell(position.Y) * 7919) + 0x3C6EF372);
 
     // 0..1 raised-cosine pulse of a gust, 0 outside it.
     private static float Gust(double t, int seed)
@@ -203,10 +251,7 @@ public static class FireFlicker
         }
         else
         {
-            int qx = Cell(position.X);
-            int qy = Cell(position.Y);
-            int qz = Cell(position.Z);
-            h = Hash(qx, qz, qy * 7919 + 0x3C6EF372);
+            h = PositionHash(position);
         }
 
         return Unit(h) * Math.PI * 2.0;

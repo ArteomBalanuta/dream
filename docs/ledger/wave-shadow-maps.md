@@ -669,9 +669,112 @@ had to implement it, with evidence, and fixed:
 - **Actor shadows lag one frame**: the pass runs before actors animate and replays the previous pose.
 - **The moon is never shadowed** (the sun term only), which is what keeps the grim-look CPU mirror
   truthful at hours 0, 20, 19 and 5.
-- **Fire shadows move very little.** Measured edge motion is 0.045 world units (~1.4 texels) at 8 units.
-  The flicker reads mostly as intensity (+-25 %) and reach (+-9 %). `FireFlicker.OffsetLateral` (2 cm)
-  is the knob if they should visibly dance.
+- **Fire shadows move very little.** ~~Measured edge motion is 0.045 world units (~1.4 texels) at 8
+  units.~~ **CLOSED by the fire-motion wave** (see the section at the end of this file): edge travel is
+  now 11.59 texels. `OffsetLateral` turned out not to be the knob - see there for why.
 - Polar cones unshadowed by design; 4 fires of ~11-13; no AO; no shadow beyond the 40-unit sun volume.
 - **The GLSL face signs are pinned C#-against-C# plus a hard-coded expectation.** A GLSL-only edit to
   those two ternaries would not be caught. A parsing assertion would close the loop.
+
+---
+
+# The fire-motion wave
+
+Closes the open item above. Firelight shadow edges moved **0.045 world units (~1.4 texels)** at 8 units;
+they now move **0.368 units (11.59 texels)**. The flicker used to read as intensity and reach only.
+
+## `OffsetLateral` was not the knob
+
+The ledger said the 2 cm `FireFlicker.OffsetLateral` was "the knob if they should visibly dance". It was
+not, and anyone who simply raised it would have shipped a worse artifact than the one they fixed.
+
+A placed fire is emitted into the light list at `position + Offset`, and the halo path re-derived the
+flicker **phase from that already-offset position**, quantised to a `PhaseGrid = 0.5` cell.
+`KeepInPhaseCell` existed to zero any offset axis that would cross a cell boundary, so the producer and
+the consumer could not disagree. At 2 cm that clamp almost never fired. At 10-25 cm it fires constantly
+and near-randomly, and **the flame locks flat on an axis** at cell boundaries.
+
+So the wander was unblocked structurally first. Three candidates were weighed:
+
+- **(a) recover the intensity from the light's colour**, as the held torch already does. **Unsound for a
+  brazier**, on two independent counts: `PlacedLightIndex` emits `Color * (strength * intensity)` where
+  `strength` is the daylight fade, so a read-back recovers the product and cannot separate the two; and
+  `TryClassifyRadius` cannot tell a brazier from a lamp, since `BrazierRadius == LampRadius` by design,
+  so there is no single reference colour to divide by. This would have been a silent wrong-phase bug
+  under daylight.
+- **(c) carry the base position** — 12 bytes, and a second position to keep consistent with the first.
+- **(b) carry an explicit seed**, chosen. `PointLight.FlickerSeed`, 4 bytes, CPU-only: `LightSelection`
+  fills the std140 block field by field, so it never reaches the GPU and no UBO layout changed.
+  Producer and consumer then use *literally the same seed* instead of two derivations argued equal.
+  `PhaseGrid`, the quantiser and `KeepInPhaseCell` all existed only to make those two agree; the clamp
+  is deleted.
+
+## Two things had to move, not one
+
+A bigger offset is only worth having if the motion **resolves**. A face tile spends 504 of its 512
+texels on the 90-degree cone, so one texel at `major` units is `2 * major / 504` — 0.0317 at 8 units,
+which independently reproduces the 1.4 texels measured in-game before the wave.
+
+`OffsetLateral = 0.12` buys up to 12.6 texels peak-to-peak at the rig's parallax. But the edge then
+moves up to ~1 texel per 60 Hz frame against a PCF ramp only ~2 texels wide: a hard edge **stepping**
+between texels. So the kernel widened from 4 taps at ±0.5 to 3x3 at ±1.5, a ~4-texel ramp, and the
+per-frame motion became a fraction of the edge's own softness. Measured: ramp support **3.99 texels**,
+per-frame step **1.08 exact / 1.56 sampled** = 27% / 39% of the softness.
+
+The wander itself was also reshaped, not merely scaled. It was two sines at the **same** 2.9 Hz with a
+fixed phase gap — a closed ellipse that repeated exactly every 0.345 s. Scaling that up gives a bigger
+mechanical orbit, not flame wander. It is now three non-commensurate octaves whose weights sum to
+exactly 1, so each axis is bounded by its own constant and the bound is provable rather than sampled.
+
+## What the wave got wrong, and what caught it
+
+- **The design's own anti-ellipse threshold (0.35) was an unargued round number.** The architect never
+  computed the minimum for the frequency triple it froze; the true figure is 0.237. The gate was wrong,
+  not the implementation. Ratified at 0.18, which sits between the rejected ellipse (0.135) and the
+  shipped wander, with a mutation run confirming it fires.
+- **The design's per-frame speed prediction (0.97 texels) omitted the along-ray term.** True edge
+  sensitivity is ~1.945, not 1.667, so the analytic value is 1.13 and the measured 1.08 was correct all
+  along. Found by the implementer, re-derived independently by QA.
+- **Two tests that could not fail were nearly shipped**, both asserting
+  `new Vector3(L, V, L).Length` against a constant defined as that same expression. They were in the
+  stale-tolerance fix authored after both task gates closed, so no task-level gate covered them.
+  Replaced with sweeps that bound the *sampled* offset and require 70% of the bound to be reached;
+  the mutation that breaks them is a weight, not a scale, because the reach is derived from the scale.
+- **The enlarged wander broke a threshold sized for the old one.** `FireShadowAtlas.NearPlane` was 0.10
+  against a lateral swing that became 0.12, so caster surfaces near a flame flipped between occluding
+  and lit per frame. Impossible at 2 cm. No gate covered it; the suite was green.
+
+## The near plane, and an honest limit
+
+The flip band is `[Near - OffsetLateral, Near + OffsetLateral]` — **2 * OffsetLateral wide wherever the
+near plane sits**. No near plane removes it; the plane only chooses where it sits. So `NearPlane` is now
+derived as `FireFlicker.OffsetLateral * WanderBandFraction` (0.015), holding the band down against zero
+where the only surfaces inside it are ones the flame passes through anyway: `[0, 0.22]` becomes
+`[0, 0.132]`. Depth precision pays for it — one 24-bit quantum at the deepest far plane goes 0.079 mm to
+0.52 mm, against a 6 mm constant bias, so a 76x margin becomes 11x and is pinned by a test so the first
+gate cannot be satisfied by driving the near plane to zero.
+
+**This does not fully save a torch-bearer.** `HeldLightAnchor.Body` puts the flame about 0.424 from the
+body centreline, so a torso half-width of 0.30-0.32 leaves its surface 0.104-0.124 from the flame —
+inside a 0.12 lateral swing. The flame literally wanders into the torso, which no near plane can fix.
+If self-shadow popping shows on a close torch-bearer, the levers are the anchor distance, excluding a
+holder from its own torch's caster set, or a smaller `OffsetLateral`.
+
+## Deliberately left
+
+- **The sibling threshold.** `PhaseGrid = 0.5` (half-cell 0.25) still sizes the **seed-0 fallback**; at
+  0.12 a base position crosses a cell for ~24% of positions instead of ~4%, so the fallback phase can
+  jump. Not live — all three producers carry seeds — but it is the next thing to break if one stops.
+- **The atlas budget.** 2048 across 4 slots x 4 faces. Finer texels are the obvious next lever and the
+  one to reach for if the sampled 1.56-texel step reads as crawl rather than drift; the kernel was the
+  cheaper fix for the same symptom.
+- **The end-to-end sweep still costs ~23 s**, almost all of it four `RenderTile` ray casts per
+  iteration. Rendering only the +X face the rig reads would be a 4x saving but narrows what the test
+  exercises.
+
+## One claim corrected
+
+This wave does **not** change the `[1 - A, 1 + A]` intensity bound, `GustDepth`, `RadiusFollow` or the
+halo byte ceilings derived from them — but it is not true that it leaves intensity alone. Placed fires
+all sampled with seed 0 before, so **every brazier and lamp in the world gusted in unison**; with a
+per-fire seed they gust independently and each fire's brightness waveform differs from master's.

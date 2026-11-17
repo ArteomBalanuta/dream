@@ -41,8 +41,11 @@ public class FireShadowFlickerTests
 
     private readonly record struct Shot(FireShadowSlot Slot, Vector3 BasePosition, float BaseRadius, float Intensity);
 
-    // A flat 56 x 56 floor with one authored brazier in the bucket the camera looks at; the production collect-and-select path.
-    private static Shot Capture(double? clockSeconds)
+    // A flat 56 x 56 floor with one authored brazier in the bucket the camera looks at. Built once: the 3,136 cubes and
+    // the export are read-only inputs, and rebuilding them per capture cost most of a sweep's wall clock.
+    private static readonly GeometryRenderExport Floor = BuildFloor();
+
+    private static GeometryRenderExport BuildFloor()
     {
         List<Cube> cubes = [];
         for (int x = 0; x < 56; x++)
@@ -57,7 +60,13 @@ public class FireShadowFlickerTests
             }
         }
 
-        GeometryRenderExport export = new(DirtyCells: [], Cells: [], Blocks: [], CompatibilityCubes: cubes) { StaticContentVersion = 1 };
+        return new GeometryRenderExport(DirtyCells: [], Cells: [], Blocks: [], CompatibilityCubes: cubes) { StaticContentVersion = 1 };
+    }
+
+    // The production collect-and-select path over that floor, at one instant of the clock.
+    private static Shot Capture(double? clockSeconds)
+    {
+        GeometryRenderExport export = Floor;
         PlacedLightIndex index = new();
         LightCollector lights = new();
         index.Collect(in export, Camera, lights, sunIntensity: 0f, clockSeconds);
@@ -82,7 +91,11 @@ public class FireShadowFlickerTests
             }
         }
 
-        Assert.True(best < 0.1f, "The brazier must be in the frame's selected lights.");
+        // The nearest selected light can only be the brazier itself: the next one is a bucket away, and the flame's
+        // wander can move this one by at most the diagonal of its own offset box.
+        float wanderReach = MathF.Sqrt((2f * FireFlicker.OffsetLateral * FireFlicker.OffsetLateral)
+            + (FireFlicker.OffsetVertical * FireFlicker.OffsetVertical));
+        Assert.True(best <= wanderReach + 1e-4f, $"The brazier must be in the frame's selected lights (nearest was {best}).");
         Vector4 positionRadius = list.PositionRadius[selected];
         FireShadowSlot slot = new()
         {
@@ -141,7 +154,8 @@ public class FireShadowFlickerTests
         foreach (double clock in new[] { 0.0, 0.10, 0.31, 0.77, 1.9 })
         {
             Shot shot = Capture(clock);
-            FireFlickerSample sample = FireFlicker.Sample(FireFlickerKind.Brazier, shot.BasePosition, clock, 0);
+            FireFlickerSample sample = FireFlicker.Sample(
+                FireFlickerKind.Brazier, shot.BasePosition, clock, FireFlicker.SeedFor(shot.BasePosition));
             Assert.Equal(shot.BaseRadius * sample.RadiusScale * 1.15f, shot.Slot.Far, 3);
             Assert.Equal(shot.BasePosition + sample.Offset, shot.Slot.Position);
         }
@@ -177,11 +191,28 @@ public class FireShadowFlickerTests
         return 0.5f * (dark + lit);
     }
 
+    // One atlas for the whole test. A FireShadowMirror.Atlas is a float[2048 * 2048] - 16 MB on the large object heap -
+    // and a sweep took one per measurement, which churned gigabytes for nothing. RenderTile leaves every texel it does
+    // not write, so the four tiles slot 0 uses are re-filled with the clear value (1.0, the same value the constructor
+    // fills) before each render; nothing else in the atlas is ever touched, so the result is identical.
+    private FireShadowMirror.Atlas? _atlas;
+
+    private FireShadowMirror.Atlas ClearedAtlas()
+    {
+        FireShadowMirror.Atlas atlas = _atlas ??= new FireShadowMirror.Atlas(ShadowSettings.AtlasResolution);
+        for (int face = 0; face < 4; face++)
+        {
+            atlas.FillTile(0, face, 1f);
+        }
+
+        return atlas;
+    }
+
     // From the lookup: the z where the visibility crosses one half.
-    private static float MeasuredEdge(in FireShadowSlot slot, FireShadowMirror.Box box, float receiverX)
+    private float MeasuredEdge(in FireShadowSlot slot, FireShadowMirror.Box box, float receiverX)
     {
         FireShadowList list = BlockOf(in slot);
-        FireShadowMirror.Atlas atlas = new(ShadowSettings.AtlasResolution);
+        FireShadowMirror.Atlas atlas = ClearedAtlas();
         for (int face = 0; face < 4; face++)
         {
             atlas.RenderTile(in slot, 0, face, [box]);
@@ -244,6 +275,103 @@ public class FireShadowFlickerTests
         Assert.InRange(measuredB, exactB - 2.5f * texelAtReceiver, exactB + 2.5f * texelAtReceiver);
     }
 
+    // The whole point of the wander, measured end to end: sweep the presentation clock and watch where the shadow's
+    // 0.5-visibility boundary lands, through the production collect -> select -> slot -> atlas -> lookup chain.
+    //
+    // Two things are asserted about the same sweep, because they pull in opposite directions.
+    //   A5 the boundary must TRAVEL: at least four texels of the fire map at the receiver's distance. (Before this
+    //      wave the two instants above moved it 0.045 units, about 1.4 texels, and it read as a static shadow.)
+    //   A6 the boundary must not STEP: at 60 Hz no single frame may move it by more than MaxFrameStepTexels, or a
+    //      hard edge would visibly jump from texel to texel. The other half of that claim - that the penumbra is
+    //      wide enough for that much motion per frame to read as a drift - is the fire lookup's kernel, elsewhere.
+    // The upper bound on the travel is the flicker's own contract: the lateral swing is 2 x OffsetLateral, amplified
+    // by the parallax of an occluder at 3 and a receiver at 8, plus what the vertical and the along-ray components
+    // of the wander can add.
+    //
+    // A6 is asserted on the EXACT boundary, which is where the flame's own speed lives. The sampled boundary carries
+    // the atlas's quantisation on top of it - a 0.5-crossing found by bisecting a lookup over 24 bit depth texels
+    // wanders by a texel or so between neighbouring frames whatever the flame does - so the sampled figure is
+    // asserted separately, against the exact one plus that quantisation. Both are printed.
+    //
+    // Why this many texels per frame and not fewer. The flame's worst-case speed on one axis is
+    // OffsetLateral * 2 pi * sum(weight * frequency) = 1.11 units/s. On this rig the boundary responds to the
+    // flame's z at the parallax gain 8/3 - 1 and to its x at a further (R - O) / O^2 * (box z - fire z), so the
+    // sensitivity is about 1.95, not the 1.67 of the z term alone: 1.11 * 1.95 / 60 = 0.036 units = 1.14 texels.
+    // The measured worst frame is 1.08 texels. The gate is set above that and below what the design needs it to
+    // stay under - a third of the fire lookup's penumbra, which is four texels wide - so a flame that got a fifth
+    // faster, from a larger offset or a higher wander frequency, would fail here.
+    private const float MaxFrameStepTexels = 1.25f;
+
+    [Fact]
+    public void Over_A_Clock_Sweep_The_Shadow_Boundary_Travels_Several_Texels_And_Never_Jumps_A_Whole_One()
+    {
+        const double Step = 1.0 / 60.0;
+        (float[] sampled, float[] exact) = EdgeSweep((3 * 60) + 1, Step, frozen: false);
+        float texel = ShadowSettings.FireTexelWorldAt(8f);
+        float spread = sampled.Max() - sampled.Min();
+        float sampledStep = BiggestFrameStep(sampled);
+        float exactStep = BiggestFrameStep(exact);
+
+        float parallax = (8f / 3f) - 1f;
+        float bound = (2f * FireFlicker.OffsetLateral * parallax) + (2f * FireFlicker.OffsetVertical) + FireFlicker.OffsetLateral;
+        _output.WriteLine($"one fire-map texel at 8 units is {texel:0.0000}");
+        _output.WriteLine($"  travel over 3 s: sampled {spread:0.0000} units = {spread / texel:0.00} texels (bound {bound:0.0000});"
+            + $" exact {exact.Max() - exact.Min():0.0000}");
+        _output.WriteLine($"  worst 60 Hz frame step: exact {exactStep:0.0000} = {exactStep / texel:0.00} texels,"
+            + $" sampled {sampledStep:0.0000} = {sampledStep / texel:0.00} texels");
+
+        Assert.True(spread >= 4f * texel, $"the boundary travelled {spread / texel:0.00} texels");
+        Assert.True(spread <= bound, $"travelled {spread}, which is past the flicker's own bound {bound}");
+        Assert.True(exactStep <= MaxFrameStepTexels * texel, $"a frame moved the boundary {exactStep / texel:0.00} texels");
+        Assert.True(sampledStep <= exactStep + (1.0f * texel), $"the lookup added {(sampledStep - exactStep) / texel:0.00} texels of its own");
+    }
+
+    private static float BiggestFrameStep(float[] edges)
+    {
+        float worst = 0f;
+        for (int i = 1; i < edges.Length; i++)
+        {
+            worst = MathF.Max(worst, MathF.Abs(edges[i] - edges[i - 1]));
+        }
+
+        return worst;
+    }
+
+    // The synthetic negative for the sweep above: freeze the fire and the very same measurement returns a spread of
+    // exactly zero. So the travel it reports is the flame moving, not binary-search noise or atlas quantisation.
+    [Fact]
+    public void The_Same_Sweep_Over_A_Frozen_Fire_Measures_Exactly_No_Travel()
+    {
+        // Three captures, not sixty: with a frozen fire every capture is bit-for-bit the same work, so the sweep's
+        // length measured nothing beyond the first repeat. Two would prove the spread is zero; three keeps a middle
+        // sample, so an alternating measurement could not hide between the ends.
+        (float[] sampled, float[] exact) = EdgeSweep(3, 1.0 / 60.0, frozen: true);
+        _output.WriteLine($"frozen edge {sampled[0]:0.000000}, sampled spread {sampled.Max() - sampled.Min():0.000000},"
+            + $" exact spread {exact.Max() - exact.Min():0.000000}");
+        Assert.Equal(0f, sampled.Max() - sampled.Min());
+        Assert.Equal(0f, exact.Max() - exact.Min());
+    }
+
+    // The shadow boundary at each of `samples` clock instants, on the fixed rig: occluder 3 units east of the fire,
+    // receivers on the ground 8 units east. Both the atlas lookup's 0.5-visibility crossing and the exact geometric
+    // boundary, from the same slots. `frozen` hands the placed lights no clock at all.
+    private (float[] Sampled, float[] Exact) EdgeSweep(int samples, double step, bool frozen)
+    {
+        Shot reference = Capture(frozen ? null : 0.0);
+        FireShadowMirror.Box occluder = OccluderFor(reference.BasePosition);
+        float receiverX = reference.BasePosition.X + 8f;
+        float[] sampled = new float[samples];
+        float[] exact = new float[samples];
+        for (int i = 0; i < samples; i++)
+        {
+            Shot shot = Capture(frozen ? null : i * step);
+            sampled[i] = MeasuredEdge(shot.Slot, occluder, receiverX);
+            exact[i] = ExactEdge(shot.Slot.Position, occluder, receiverX);
+        }
+
+        return (sampled, exact);
+    }
+
     // What the gate catches. Freeze the fire (hand the placed lights no clock) and both instants are identical, so every
     // assertion above would fail. This test documents the sensitivity: it is the mutation, kept as a permanent check.
     [Fact]
@@ -271,7 +399,8 @@ public class FireShadowFlickerTests
 
         // And PlacedLightIndex honours it: with a clock the brazier is built from FireFlicker.Sample, without one it is the base light.
         string index = FireShadowSamplingMirrorTests.Read("dream", "Rendering", "Lighting", "PlacedLightIndex.cs");
-        Assert.Contains("FireFlicker.Sample(FireFlickerKind.Brazier, placed.Position, clock, 0)", index);
+        Assert.Contains("FireFlicker.Sample(FireFlickerKind.Brazier, placed.Position, clock, seed)", index);
+        Assert.Contains("int seed = FireFlicker.SeedFor(placed.Position);", index);
         Assert.Contains("placed.Position + fire.Offset, placed.Radius * fire.RadiusScale, placed.Color * (strength * fire.Intensity)", index);
     }
 

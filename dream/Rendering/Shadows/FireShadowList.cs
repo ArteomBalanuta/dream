@@ -36,11 +36,15 @@ public struct FireShadowList
     public const int FacePlusZ = 2;
     public const int FaceMinusZ = 3;
 
-    // The lookup's PCF kernel: four taps at +-TapOffsetTexels, each a hardware 2x2 comparison, so a tap reaches
-    // TapOffsetTexels + 1 texel from the sample. The slope bias of the lookup is that reach in texels (a tilted
-    // receiver's stored depth differs from the centre's by up to reach x texel x gradient), the same derivation
-    // ShadowSettings.SlopeBiasTexels documents for the sun map. Mirrored by the FireShadow* constants in fireShadows.glsl.
-    public const float TapOffsetTexels = 0.5f;
+    // The lookup's PCF kernel: a ShadowSettings.FireTapsPerSide square grid of taps at {-1, 0, +1} x TapOffsetTexels
+    // on each axis, each one a hardware 2x2 comparison, so a tap reaches TapOffsetTexels + 1 texel from the sample.
+    // That reach is the visibility ramp's half width, and the flame's wander must move the edge by a fraction of it
+    // per frame or the edge reads as a hard line stepping between texels rather than a soft boundary drifting. The
+    // slope bias of the lookup is that same reach in texels (a tilted receiver's stored depth differs from the
+    // centre's by up to reach x texel x gradient), the same derivation ShadowSettings.SlopeBiasTexels documents for
+    // the sun map. The reach stays within ShadowSettings.TileGutter, so no tap can read a neighbouring tile.
+    // Mirrored by the FireShadow* constants in fireShadows.glsl.
+    public const float TapOffsetTexels = 1.5f;
     public const float SlopeBiasTexels = TapOffsetTexels + 1f;
 
     public int Count; private int _pad0, _pad1, _pad2;   // ivec4 uFireShadowCount (x = active slots 0..4)
