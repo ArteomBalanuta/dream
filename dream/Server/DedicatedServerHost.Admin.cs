@@ -85,6 +85,15 @@ public sealed partial class DedicatedServerHost
         switch (command.Kind)
         {
             case AdminCommandKind.Announce:
+                // M8: a muted account is not heard, the admin role included. Announce is the one command
+                // that speaks to everyone, so the mute is checked here as it is on the chat path; the other
+                // verbs only reply to the sender, which a mute does not cover.
+                if (IsMuted(context))
+                {
+                    Reply(MutedText);
+                    return;
+                }
+
                 AnnounceToEveryone(sender, command.Text, tick, replies);
                 return;
             case AdminCommandKind.Kick:
