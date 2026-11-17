@@ -28,16 +28,16 @@ public static class WorldLabelsPanel
     public static void Build(IUiCanvas c, IUiInput? i, HudView v, in UiLayout l, IHudActions? a)
     {
         bool live = i is not null && a is not null && !InventoryUiState.Current.ModalOpen;
-        // Labels are built first, under the windows, and a window frame registers no widget of its own,
-        // so a click on a window's empty part would reach a label behind it. While the pointer is over
-        // an open window the labels take no hover or click.
-        if (live && v.InventoryOpen)
+        // Labels are built first, under the bar and the windows, and neither a window frame nor the
+        // bar's art registers a widget of its own everywhere it covers, so a click on an opaque but
+        // widget-less part of the HUD would reach a label behind it. While the pointer is over the HUD
+        // the labels take no hover or click. This is the same rule the click-to-move gate uses, so a
+        // point is either world or HUD for both: the status bar counts whether the inventory is open or
+        // not (with it closed the satchel and the quickbar tiles register nothing, so a ground item or
+        // an NPC projecting into the bottom strip was otherwise clickable through the bar's art).
+        if (live && ClassicHudHitTest.Over(in l, v.InventoryOpen, i!.Pointer.Position))
         {
-            Vector2 pointer = i!.Pointer.Position;
-            if (l.Inventory.Contains(pointer) || l.Character.Contains(pointer))
-            {
-                live = false;
-            }
+            live = false;
         }
 
         IReadOnlyList<HudWorldLabel> labels = v.Labels;
