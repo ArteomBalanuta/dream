@@ -1143,7 +1143,9 @@ public sealed class ServerConnection : IAsyncDisposable
         {
             ClientJoinRequestMessage join => $"session={join.RequestedSessionId} name={join.DisplayName}",
             PlayerCommandMessage command => $"session={command.CommandFrame.SessionId.Value} commandSeq={command.CommandFrame.Sequence}",
-            PlayerActionMessage action => $"session={action.SessionId.Value} actionSeq={action.ActionSequence} payload={action.Payload.GetType().Name}",
+            // Every field here is untrusted: a client may omit the payload (the action handler
+            // rejects a null one by name), and a diagnostic must never fault on what it logs.
+            PlayerActionMessage action => $"session={action.SessionId.Value} actionSeq={action.ActionSequence} payload={action.Payload?.GetType().Name ?? "none"}",
             ClientHelloMessage hello => $"client={hello.ClientName}",
             _ => string.Empty
         };
