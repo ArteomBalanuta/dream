@@ -7,6 +7,10 @@ public sealed class JoinRequestHandler : IServerMessageHandler
 {
     public string MessageKind => "client.join-request";
 
+    // The session id is the key every seat, claim and persisted player hangs off; the authority throws
+    // ArgumentException on a blank one. A client that sends one gets this, not a faulted tick.
+    public const string SessionIdInvalid = "Your client sent no session id. Update your client and try again.";
+
     // Order (G-D1): ownership is decided first, from memory, before the claim: the claim can take over
     // another connection's seat, so a check after it would let a stranger kick the owner.
     public void Handle(ServerRoutingContext context, IClientToServerMessage message)
@@ -19,6 +23,14 @@ public sealed class JoinRequestHandler : IServerMessageHandler
             return;
         }
 
+        // Before the claim: a blank session id would be claimed as an ordinary key and then throw out of
+        // JoinSession, which on a deferred-join host runs on the tick thread (DedicatedServerHost.ApplyPendingJoins).
+        if (string.IsNullOrWhiteSpace(joinRequest.RequestedSessionId))
+        {
+            context.OutboundMessages.Add(new JoinRejectedMessage(SessionIdInvalid));
+            return;
+        }
+
         CharacterAccessDecision access;
         try
         {
@@ -27,7 +39,7 @@ public sealed class JoinRequestHandler : IServerMessageHandler
                 joinRequest.DisplayName,
                 joinRequest.ResolvedAccount);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (IsJoinInputFailure(ex))
         {
             context.OutboundMessages.Add(new JoinRejectedMessage(ex.Message));
             return;
@@ -95,10 +107,17 @@ public sealed class JoinRequestHandler : IServerMessageHandler
 
             context.OutboundMessages.Add(accepted);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (IsJoinInputFailure(ex))
         {
             context.SessionClaims?.ReleaseConnection(context.ConnectionId);
             context.OutboundMessages.Add(new JoinRejectedMessage(ex.Message));
         }
     }
+
+    // The failures a client's own join fields can cause: a refused join (InvalidOperationException) and a
+    // field an authority API rejects (ArgumentException, including ArgumentNullException and
+    // ArgumentOutOfRangeException). Both are this connection's problem and are answered with a rejection.
+    // Anything else — a faulted world, an exhausted process — stays fatal and is not swallowed here.
+    private static bool IsJoinInputFailure(Exception ex) =>
+        ex is InvalidOperationException or ArgumentException;
 }
