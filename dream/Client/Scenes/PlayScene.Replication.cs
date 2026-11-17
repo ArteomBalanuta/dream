@@ -220,22 +220,19 @@ public partial class PlayScene
             // resolves. All three still run before the presenter.
             RemoteEnemyStateApplier.AddOrUpdateEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
             ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot, _scenePresenter);
-            // An actor the cache withheld as stale is missing from this list without having left, so
-            // the removals are skipped for that snapshot and run again on the next complete one.
-            bool actorsWithheld = ClientSnapshotActorCompleteness.WithholdsActors(snapshotMessage.Snapshot);
-            if (!actorsWithheld)
-            {
-                RemoteEnemyStateApplier.RemoveAbsentEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
-            }
-
+            // Takes the whole snapshot, not just its actor list: an actor the cache withheld as stale
+            // is missing from the list without having left, and is kept. An enemy that really died or
+            // left is still dropped, even on a snapshot that withholds other actors.
+            RemoteEnemyStateApplier.RemoveAbsentEnemies(_runtime.Enemies, snapshotMessage.Snapshot);
             _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot);
-            if (!actorsWithheld)
+            if (!ClientSnapshotActorCompleteness.WithholdsActors(snapshotMessage.Snapshot))
             {
-                // ApplyActors rebuilds the whole NPC list from the snapshot, so an incomplete one
-                // would clear every NPC it does not name.
+                // ApplyActors rebuilds the whole NPC list from the snapshot, with no per-actor way in,
+                // so an incomplete snapshot would clear every NPC it does not name. The NPCs keep the
+                // last complete snapshot's positions until the next one; they do not move.
                 _npcs.ApplyActors(snapshotMessage.Snapshot.Actors);
             }
 
