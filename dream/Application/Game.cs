@@ -557,11 +557,12 @@ public class Game : GameWindow
             _pauseScreen.Current == MenuScreen.Root,
             _playScene?.LoadingOverlayVisible ?? false,
             _playScene?.LoadingAwaitingKey ?? false));
-        if (command.Step == MenuFlowScript.Step.None)
+        if (command.Step == MenuFlowScript.Step.None && command.CapturePng == null)
         {
             return;
         }
 
+        // A capture-only command (Step.None with a PNG) is saved here too, then does nothing else.
         Console.WriteLine($"[flow] {command.Step}: {command.Log}");
         string? dir = Environment.GetEnvironmentVariable(MenuCapture.EnvironmentVariable);
         if (command.CapturePng != null && !string.IsNullOrWhiteSpace(dir))
