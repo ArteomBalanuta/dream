@@ -155,12 +155,33 @@ public sealed class AdminAccountSanctionLoopbackTests
         await main.SendAsync(new ClientChatMessage(ChatChannel.World, "hello from the main"));
         await UntilAsync(server, () => SystemLines(main).Contains(DedicatedServerHost.MutedText), "the muted notice");
 
+        // The live connection's standing above is the in-process overlay, which a mute that wrote
+        // nothing would still satisfy. The row is what survives a restart, so it is asserted too:
+        // exactly one account is muted, and it is the one BOTH characters hang off. Polled while
+        // the server ticks rather than waited for with a blocking Flush, which would park this
+        // thread for up to 30 s and starve the rest of the parallel phase.
+        await UntilAsync(
+            server,
+            () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 1L,
+            "the mute on exactly one account row");
+        Assert.Equal(
+            2L,
+            Convert.ToInt64(db.Scalar(
+                "SELECT COUNT(*) FROM player_profiles p JOIN accounts a ON a.account_id = p.account_id " +
+                $"WHERE a.muted_until_utc IS NOT NULL AND p.player_name IN ('{NameOf(Alt)}', '{NameOf(Main)}');")));
+
         await CommandAsync(admin, $"/unmute \"{NameOf(Alt)}\"");
         await UntilAsync(server, () => SystemLines(admin).Contains($"Unmuted {NameOf(Alt)}."), "the unmute result");
         await UntilAsync(
             server,
             () => server.Host.TryGetConnectionContext(server.ConnectionFor(main).ConnectionId, out ServerRoutingContext? context) && context!.Standing.MutedUntilUtc == null,
             "the unmute on the main's connection");
+
+        // And the unmute cleared the row, so a restart does not bring the mute back.
+        await UntilAsync(
+            server,
+            () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 0L,
+            "the unmute reaching the account row");
     }
 
     [Fact]

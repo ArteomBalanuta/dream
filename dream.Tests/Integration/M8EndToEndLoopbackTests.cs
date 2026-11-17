@@ -192,45 +192,108 @@ public sealed class M8EndToEndLoopbackTests
 
     // ---- mute ----
 
+    // What the name claims is that the mute lives on the ACCOUNT, i.e. in accounts.muted_until_utc.
+    // A rejoin against the same host does not prove that: /mute also records an in-process
+    // SanctionMemory entry, and DedicatedServerHost.OverlaySanctions overrides whatever the join
+    // prefetch read with that entry for the whole SanctionMemoryWindow (two minutes). A rejoin a
+    // second later is always inside that window, so TrySetMute could write nothing, write to the
+    // wrong account, or be deleted outright and this test still passed.
+    //
+    // So the row is now asserted directly, and the rejoin that has to be silenced BY the row
+    // happens on a restarted host. A fresh DedicatedServerHost starts with an empty
+    // _sanctionMemory, so there is nothing left to override the prefetch with: the only thing that
+    // can still silence the player is accounts.muted_until_utc. That is deterministic - it needs no
+    // clock to advance past the window and reaches into no private state.
     [Fact]
     public async Task Admin_Mute_SilencesThePlayer_AcrossARejoin_UntilUnmuted()
     {
         using MigrationTestDatabase db = new();
-        await using WireLoopbackServer server = await StartAsync(db);
-        await GrantAdminAsync(server, db, Admin);
-        await using WireLoopbackClient admin = await server.ConnectAndJoinAsync(Admin);
-        WireLoopbackClient bee = await server.ConnectAndJoinAsync(Bee);
+        await using (WireLoopbackServer server = await StartAsync(db))
+        {
+            await GrantAdminAsync(server, db, Admin);
+            await using WireLoopbackClient admin = await server.ConnectAndJoinAsync(Admin);
+            WireLoopbackClient bee = await server.ConnectAndJoinAsync(Bee);
 
-        await CommandAsync(admin, $"/mute \"{NameOf(Bee)}\"");
-        await UntilAsync(server, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the mute result");
+            await CommandAsync(admin, $"/mute \"{NameOf(Bee)}\"");
+            await UntilAsync(server, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the mute result");
 
-        // Muted at once, on the live connection.
-        await SayAsync(bee, ChatChannel.World, "hello anyone");
-        await UntilAsync(server, () => SystemLines(bee).Contains(DedicatedServerHost.MutedText), "the muted notice");
-        await TicksAsync(server, 8);
-        Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello anyone");
+            // Muted at once, on the live connection.
+            await SayAsync(bee, ChatChannel.World, "hello anyone");
+            await UntilAsync(server, () => SystemLines(bee).Contains(DedicatedServerHost.MutedText), "the muted notice");
+            await TicksAsync(server, 8);
+            Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello anyone");
 
-        // The mute is on the account: a new connection starts muted. The persistence queue writes that
-        // account row asynchronously, so the rejoin below can out-run it and read an unmuted account -
-        // which passes on an idle machine and fails under load. Wait for the write, as the sibling
-        // admin tests do, before disconnecting.
-        Flush(server);
-        await server.DisconnectAsync(bee);
-        bee = await server.ConnectAndJoinAsync(Bee);
-        await SayAsync(bee, ChatChannel.World, "hello again");
-        await UntilAsync(server, () => SystemLines(bee).Contains(DedicatedServerHost.MutedText), "the muted notice after a rejoin");
-        await TicksAsync(server, 8);
-        Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello again");
+            // The mute reached the account row, and it is Bee's account that carries it - not the
+            // admin's, and not some second row. The persistence queue writes that row
+            // asynchronously, so wait for the write, as the sibling admin tests do.
+            Flush(server);
+            Assert.Equal(1L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")));
+            Assert.Equal(
+                1L,
+                Convert.ToInt64(db.Scalar(
+                    "SELECT COUNT(*) FROM accounts a JOIN player_profiles p ON p.account_id = a.account_id " +
+                    $"WHERE p.player_name = '{NameOf(Bee)}' AND a.muted_until_utc IS NOT NULL;")));
 
-        // Commands of the admin are never muted, and an unmute frees the player at once.
-        await CommandAsync(admin, $"/unmute \"{NameOf(Bee)}\"");
-        await UntilAsync(server, () => SystemLines(admin).Contains($"Unmuted {NameOf(Bee)}."), "the unmute result");
-        await SayAsync(bee, ChatChannel.World, "i can talk");
-        await UntilAsync(
-            server,
-            () => Chats(admin).Any(chat => chat.Channel == ChatChannel.World && chat.Text == "i can talk" && chat.From == NameOf(Bee)),
-            "the player's line reaching the admin");
-        await bee.DisposeAsync();
+            // A rejoin against the SAME host is still worth keeping - it is the live path a player
+            // takes - but on its own it only exercises the in-process overlay.
+            await server.DisconnectAsync(bee);
+            bee = await server.ConnectAndJoinAsync(Bee);
+            await SayAsync(bee, ChatChannel.World, "hello again");
+            await UntilAsync(server, () => SystemLines(bee).Contains(DedicatedServerHost.MutedText), "the muted notice after a rejoin");
+            await TicksAsync(server, 8);
+            Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello again");
+
+            // Commands of the admin are never muted, and an unmute frees the player at once - and
+            // clears the row.
+            await CommandAsync(admin, $"/unmute \"{NameOf(Bee)}\"");
+            await UntilAsync(server, () => SystemLines(admin).Contains($"Unmuted {NameOf(Bee)}."), "the unmute result");
+            await SayAsync(bee, ChatChannel.World, "i can talk");
+            await UntilAsync(
+                server,
+                () => Chats(admin).Any(chat => chat.Channel == ChatChannel.World && chat.Text == "i can talk" && chat.From == NameOf(Bee)),
+                "the player's line reaching the admin");
+            await UntilAsync(
+                server,
+                () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 0L,
+                "the unmute reaching the account row");
+
+            // Muted again, so the restart below has a mute to carry. Flushed, so the row is on disk
+            // before this host releases the world.
+            await CommandAsync(admin, $"/mute \"{NameOf(Bee)}\"");
+            await UntilAsync(server, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the second mute result");
+            await UntilAsync(
+                server,
+                () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 1L,
+                "the second mute reaching the account row before the restart");
+            await bee.DisposeAsync();
+        }
+
+        // The restart: a new host, so _sanctionMemory is empty and there is nothing left to override
+        // the join prefetch with. The only thing that can still silence Bee here is the row. This
+        // block deliberately asks nothing of the periodic standing refresh - it judges the join,
+        // which reads the row, and then the row itself.
+        await using (WireLoopbackServer restarted = await StartAsync(db))
+        {
+            await using WireLoopbackClient admin = await restarted.ConnectAndJoinAsync(Admin);
+            await using WireLoopbackClient bee = await restarted.ConnectAndJoinAsync(Bee);
+
+            await SayAsync(bee, ChatChannel.World, "hello after the restart");
+            await UntilAsync(
+                restarted,
+                () => SystemLines(bee).Contains(DedicatedServerHost.MutedText),
+                "the muted notice after a restart, which only accounts.muted_until_utc can produce");
+            await TicksAsync(restarted, 8);
+            Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello after the restart");
+
+            // And the unmute reaches the row on this host too, so the mute does not come back on the
+            // next restart.
+            await CommandAsync(admin, $"/unmute \"{NameOf(Bee)}\"");
+            await UntilAsync(restarted, () => SystemLines(admin).Contains($"Unmuted {NameOf(Bee)}."), "the unmute result after the restart");
+            await UntilAsync(
+                restarted,
+                () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 0L,
+                "the unmute reaching the account row after the restart");
+        }
     }
 
     // ---- kick ----
