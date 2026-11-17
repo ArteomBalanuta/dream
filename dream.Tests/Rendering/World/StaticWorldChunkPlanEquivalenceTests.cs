@@ -15,31 +15,58 @@ namespace Dream.Tests.Rendering.World;
 // HashCode is seeded per process, so signatures are compared within one run, not as constants.
 public class StaticWorldChunkPlanEquivalenceTests(ITestOutputHelper output)
 {
+    // This body is a benchmark: its only output used to be an output.WriteLine, so it asserted
+    // nothing and could not fail however badly either planner behaved. The timing is still reported
+    // (it is the reason the test exists), but the ratio is deliberately NOT asserted: it is a wall
+    // clock measured in the parallel phase, which would make this a flake rather than a gate.
+    //
+    // What IS asserted is the property the 40 repeated plans actually establish and nothing else in
+    // this class covers: both planners are called repeatedly, on the same cells, from a cold and
+    // then a warm state, and every one of those 80 calls must produce the SAME non-empty plan. The
+    // current planner keeps per-chunk hashes, so a stateful or order-dependent bug there (a cached
+    // signature leaking between calls, a dictionary enumerated in a different order on a later
+    // call) shows up as a plan that differs from call to call - which the single-shot equivalence
+    // test next door cannot see.
     [Fact]
     public void StartupWorld_ReportsLegacyAndCurrentPlanTimes()
     {
         IReadOnlyList<StaticVoxelRenderCell> cells = CaptureStartupCells();
-        double legacy = BestOf(() => LegacyPlanner.PlanBuildInputs(cells, Empty, NoDirty).Count);
-        double current = BestOf(() => StaticWorldChunkRenderer.PlanBuildInputs(cells).Count);
+        (double legacy, int legacyCount) = BestOf(() => LegacyPlanner.PlanBuildInputs(cells, Empty, NoDirty));
+        (double current, int currentCount) = BestOf(() => StaticWorldChunkRenderer.PlanBuildInputs(cells));
 
         output.WriteLine($"cells {cells.Count}: legacy plan {legacy:F3} ms, current plan {current:F3} ms (warm, best of 20)");
+        Assert.Equal(legacyCount, currentCount);
     }
 
-    private static double BestOf(Func<int> plan)
+    // Runs plan 40 times, returns the best warm time and the plan's key list (asserted identical on
+    // every run, so a repeat-dependent plan fails here instead of being averaged away).
+    private static (double BestMilliseconds, int Count) BestOf(Func<IReadOnlyList<StaticWorldChunkBuildInput>> plan)
     {
         double best = double.MaxValue;
+        StaticWorldChunkMeshKey[]? firstKeys = null;
         for (int i = 0; i < 40; i++)
         {
             long start = Stopwatch.GetTimestamp();
-            Assert.True(plan() > 0);
+            IReadOnlyList<StaticWorldChunkBuildInput> inputs = plan();
             double elapsed = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            StaticWorldChunkMeshKey[] keys = [.. inputs.Select(input => input.Key)];
+            Assert.NotEmpty(keys);
+            if (firstKeys is null)
+            {
+                firstKeys = keys;
+            }
+            else
+            {
+                Assert.Equal(firstKeys, keys);
+            }
+
             if (i >= 20)
             {
                 best = Math.Min(best, elapsed);
             }
         }
 
-        return best;
+        return (best, firstKeys!.Length);
     }
 
     [Fact]

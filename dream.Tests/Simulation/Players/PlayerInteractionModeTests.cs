@@ -7,10 +7,18 @@ namespace Dream.Tests.Simulation.Players;
 
 public class PlayerInteractionModeTests
 {
+    // The mode crosses the wire as a bare int: ActorSnapshotJsonConverter writes
+    // (int)interactionMode and ActorFrameJson writes (int?)record.InteractionMode, and both read it
+    // back by casting an int straight to the enum. The numeric values therefore ARE the protocol -
+    // reordering or inserting a member silently repoints every connected client's mode - while the
+    // old Assert.Equal(Building, Building) compared one compile-time constant to itself and could
+    // not fail for any edit that still compiled.
     [Fact]
     public void Building_Mode_Is_Available()
     {
-        Assert.Equal(PlayerInteractionMode.Building, PlayerInteractionMode.Building);
+        Assert.Equal(0, (int)PlayerInteractionMode.Building);
+        Assert.Equal(1, (int)PlayerInteractionMode.Combat);
+        Assert.Equal<int[]>([0, 1], [.. Enum.GetValues<PlayerInteractionMode>().Select(mode => (int)mode)]);
     }
 
     [Theory]

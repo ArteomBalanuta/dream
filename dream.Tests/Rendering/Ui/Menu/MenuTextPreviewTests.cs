@@ -61,6 +61,73 @@ public sealed class MenuTextPreviewTests
         return false;
     }
 
+    // The centred 480-unit design box the menus lay themselves out in, full viewport width.
+    private static UiRect DesignBox(int width, int height)
+    {
+        UiLayout layout = UiLayout.Create(width, height, 0f);
+        float boxHeight = MathF.Min(height, MenuWidgets.DesignHeightUnits * layout.Scale);
+        float originY = MathF.Max(0f, (height - MenuWidgets.DesignHeightUnits * layout.Scale) * 0.5f);
+        return new UiRect(0f, originY, width, boxHeight);
+    }
+
+    // The scanlines inside box that hold a text-coloured pixel, grouped into runs of consecutive
+    // lines. One run is one band of drawn text (a title, a row, a button label).
+    private static List<(int Top, int Bottom)> TextBands(UiSoftwareCompositor c, UiRect box, int threshold)
+    {
+        int x0 = Math.Max(0, (int)box.X);
+        int y0 = Math.Max(0, (int)box.Y);
+        int x1 = Math.Min(c.Width, (int)box.Right);
+        int y1 = Math.Min(c.Height, (int)box.Bottom);
+        List<(int Top, int Bottom)> bands = [];
+        bool inBand = false;
+        int bandTop = 0;
+        for (int y = y0; y < y1; y++)
+        {
+            bool bright = false;
+            for (int x = x0; x < x1 && !bright; x++)
+            {
+                SixLabors.ImageSharp.PixelFormats.Rgba32 p = c.GetRgba(x, y);
+                bright = p.R >= threshold && p.G >= threshold;
+            }
+
+            if (bright && !inBand)
+            {
+                inBand = true;
+                bandTop = y;
+            }
+            else if (!bright && inBand)
+            {
+                inBand = false;
+                bands.Add((bandTop, y - 1));
+            }
+        }
+
+        if (inBand)
+        {
+            bands.Add((bandTop, y1 - 1));
+        }
+
+        return bands;
+    }
+
+    // What every one of these four screens establishes, and all a preview renderer honestly can:
+    // the panel really reached the framebuffer at this size. Each of them draws a title or heading,
+    // several text rows and a button label, so the drawn text has to appear as several separate
+    // horizontal bands spread down the design box. That fails for the whole family of ways a
+    // preview can be silently useless - zero glyphs, pure black, everything clipped off-screen,
+    // every row collapsed onto one line, the panel drawn outside the centred box - while asking
+    // nothing about the art, which is judged from the PNG by eye.
+    private static void AssertPanelDrewText(UiSoftwareCompositor c, string name, int width, int height)
+    {
+        UiRect box = DesignBox(width, height);
+        List<(int Top, int Bottom)> bands = TextBands(c, box, 150);
+        Assert.True(bands.Count >= 3, $"{name} at {width}x{height}: {bands.Count} bands of text drew inside the design box");
+        float span = bands[^1].Bottom - bands[0].Top;
+        Assert.True(
+            span >= box.H * 0.2f,
+            $"{name} at {width}x{height}: the drawn text spans {span:0} px of a {box.H:0} px design box");
+    }
+
     [Theory]
     [MemberData(nameof(Sizes))]
     public void MainMenu(int width, int height)
@@ -85,27 +152,39 @@ public sealed class MenuTextPreviewTests
     [MemberData(nameof(Sizes))]
     public void Credits(int width, int height)
     {
-        Render("menu-credits", width, height, MainMenuPanel.BuildCredits);
+        AssertPanelDrewText(Render("menu-credits", width, height, MainMenuPanel.BuildCredits), "menu-credits", width, height);
     }
 
     [Theory]
     [MemberData(nameof(Sizes))]
     public void Options(int width, int height)
     {
-        Render("menu-options", width, height, w => OptionsPanel.Build(w, MenuTypographyTests.OptionRows(), backdrop: true));
+        AssertPanelDrewText(
+            Render("menu-options", width, height, w => OptionsPanel.Build(w, MenuTypographyTests.OptionRows(), backdrop: true)),
+            "menu-options",
+            width,
+            height);
     }
 
     [Theory]
     [MemberData(nameof(Sizes))]
     public void Pause(int width, int height)
     {
-        Render("menu-pause", width, height, w => PauseMenuPanel.Build(w, showDeveloper: true));
+        AssertPanelDrewText(
+            Render("menu-pause", width, height, w => PauseMenuPanel.Build(w, showDeveloper: true)),
+            "menu-pause",
+            width,
+            height);
     }
 
     [Theory]
     [MemberData(nameof(Sizes))]
     public void Keys(int width, int height)
     {
-        Render("menu-keys", width, height, w => KeyBindingsPanel.Build(w, backdrop: true));
+        AssertPanelDrewText(
+            Render("menu-keys", width, height, w => KeyBindingsPanel.Build(w, backdrop: true)),
+            "menu-keys",
+            width,
+            height);
     }
 }
