@@ -240,7 +240,16 @@ public class Game : GameWindow
             _contentError,
             ClientIdentityStore.ForCurrentUser());
         SinglePlayerLauncher launcher = new(coordinator, _localServer, _contentError, () => _desktopClientConfig.PlayerName);
-        _mainMenu = new MainMenuScene(launcher, _optionRows, sessionEndReason);
+        _mainMenu = new MainMenuScene(
+            launcher,
+            _optionRows,
+            sessionEndReason,
+            new MultiplayerDefaults(
+                _desktopClientConfig.Host,
+                _desktopClientConfig.Port,
+                _desktopClientConfig.HostPort,
+                _desktopClientConfig.PlayerName),
+            PersistMultiplayer);
         CursorState = _mainMenu.DesiredCursorState;
         // After any ended play scene's teardown (which set None), so the title screen keeps its music.
         GameAudio.Current.SetMusic(MusicTrack.Menu);
@@ -250,12 +259,15 @@ public class Game : GameWindow
     // server is stopped (and tracked) only after its replacement handle exists.
     private ILocalServerHandle CreateLocalServerHandle()
     {
+        // listen: Single Player keeps loopback on a free port; Host on the Multiplayer screen binds every
+        // interface on the chosen port.
         return new OnDemandLocalServerHandle(
-            () => IntegratedLocalServerHandle.StartAsync(
+            listen => IntegratedLocalServerHandle.StartAsync(
                 hostFactory: () => ServerBootstrap.CreateAuthoritativeHost(
                     new ServerStartOptions(
                         NewWorldSize: _settings.FloorSize,
-                        MaintenanceWait: DatabaseMaintenanceLock.IntegratedStartWait))).AsTask().GetAwaiter().GetResult(),
+                        MaintenanceWait: DatabaseMaintenanceLock.IntegratedStartWait)),
+                listen: listen).AsTask().GetAwaiter().GetResult(),
             startAfter: () => _localServerShutdown.Pending);
     }
 
@@ -745,6 +757,31 @@ public class Game : GameWindow
         base.OnTextInput(e);
         _startupScene?.QueueTextInput((uint)e.Unicode);
         _playScene?.QueueTextInput((uint)e.Unicode);
+        _mainMenu?.QueueTextInput((uint)e.Unicode);
+    }
+
+    // The title menu's keys: editing and Tab/Enter on the Multiplayer screen, Esc to go back a screen.
+    // The play scene reads its own keys from KeyboardState; _mainMenu and _playScene are never both set.
+    protected override void OnKeyDown(KeyboardKeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (_mainMenu == null)
+        {
+            return;
+        }
+
+        MenuKey? key = e.Key switch
+        {
+            Keys.Backspace => MenuKey.Backspace,
+            Keys.Tab when !e.IsRepeat => MenuKey.Tab,
+            Keys.Enter or Keys.KeyPadEnter when !e.IsRepeat => MenuKey.Enter,
+            Keys.Escape when !e.IsRepeat => MenuKey.Escape,
+            _ => null
+        };
+        if (key is { } menuKey && _mainMenu.HandleKey(menuKey) == MenuAction.Exit)
+        {
+            Close();
+        }
     }
 
     // The scenes own GL objects (Render, the shared model cache, the startup menu's ImGui context),
@@ -827,6 +864,16 @@ public class Game : GameWindow
     private void PersistConnectionOptions(ClientConnectionOptions options)
     {
         _desktopClientConfig.ApplyConnectionOptions(options);
+        PersistDesktopClientConfig();
+    }
+
+    // Join or Host on the Multiplayer screen: the typed address, ports and name are kept for next time.
+    private void PersistMultiplayer(MultiplayerDefaults values)
+    {
+        _desktopClientConfig.Host = values.Address;
+        _desktopClientConfig.Port = values.JoinPort;
+        _desktopClientConfig.HostPort = values.HostPort;
+        _desktopClientConfig.PlayerName = values.PlayerName;
         PersistDesktopClientConfig();
     }
 
