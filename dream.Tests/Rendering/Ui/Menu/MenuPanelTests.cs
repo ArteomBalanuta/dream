@@ -70,7 +70,7 @@ public sealed class MenuPanelTests
         Assert.Single(canvas.Named(MenuSkin.Backdrop));
         Assert.Single(canvas.Named(MenuSkin.Title));
         Assert.Equal(5, canvas.Named(MenuSkin.ButtonNormal).Count());
-        foreach (string label in new[] { "Single Player", "Join Server", "Options", "Credits", "Exit" })
+        foreach (string label in new[] { "Single Player", "Multiplayer", "Options", "Credits", "Exit" })
         {
             Assert.True(canvas.HasText(label), label);
         }
@@ -107,6 +107,89 @@ public sealed class MenuPanelTests
         InventoryFakeCanvas canvas = Step(w => MainMenuPanel.Build(w, false, "Session ended: gone", true), out _);
 
         Assert.True(canvas.HasText("Session ended: gone"));
+    }
+
+    private static MultiplayerFormState NewForm() => new("Wanderer", "example.org", 7777, 7778);
+
+    private static MenuAction Mp(MenuWidgets w, MultiplayerFormState form, bool busy = false) =>
+        MainMenuPanel.BuildMultiplayer(w, form, busy, null, false);
+
+    // Rects of the Multiplayer controls from the layout the panel uses: centred in the 480 u design area.
+    private UiRect MpRect(float xUnits, float yUnits, float wUnits, float hUnits)
+    {
+        const float height = 318f;
+        UiRect panel = _widgets.Centered((MenuWidgets.DesignHeightUnits - height) * 0.5f, MainMenuPanel.MultiplayerPanelWidthUnits, height);
+        return _widgets.Inside(panel, xUnits, yUnits, wUnits, hUnits);
+    }
+
+    private UiRect MpButton(float yUnits) =>
+        MpRect((MainMenuPanel.MultiplayerPanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f, yUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
+
+    // The field column starts at 14 + 100 + 6 units and ends 14 units short of the panel edge.
+    private UiRect MpField(float rowYUnits) => MpRect(120f, rowYUnits + 2f, 340f - 120f - 14f, 20f);
+
+    [Fact]
+    public void Multiplayer_DrawsTheFieldsAndThreeButtons()
+    {
+        MultiplayerFormState form = NewForm();
+        InventoryFakeCanvas canvas = Step(w => Mp(w, form), out MenuAction action);
+
+        Assert.Equal(MenuAction.None, action);
+        Assert.Equal(3, canvas.Named(MenuSkin.ButtonNormal).Count());
+        foreach (string text in new[] { "Multiplayer", "Player name", "Join a server", "Address", "Port", "Host a game", "Join", "Host", "Back", "Wanderer", "example.org", "7777", "7778" })
+        {
+            Assert.True(canvas.HasText(text), text);
+        }
+    }
+
+    [Theory]
+    [InlineData(152f, MenuAction.Join)]
+    [InlineData(234f, MenuAction.Host)]
+    [InlineData(284f, MenuAction.Back)]
+    public void Multiplayer_ClickingAButtonReturnsItsAction(float yUnits, MenuAction expected)
+    {
+        MultiplayerFormState form = NewForm();
+        Step(w => Mp(w, form), out _);
+
+        Assert.Equal(expected, Click(w => Mp(w, form), Centre(MpButton(yUnits))));
+    }
+
+    [Theory]
+    [InlineData(44f, MultiplayerField.PlayerName)]
+    [InlineData(102f, MultiplayerField.Address)]
+    [InlineData(126f, MultiplayerField.JoinPort)]
+    [InlineData(208f, MultiplayerField.HostPort)]
+    public void Multiplayer_ClickingAFieldFocusesIt(float rowYUnits, MultiplayerField expected)
+    {
+        MultiplayerFormState form = NewForm();
+        form.Focused = expected == MultiplayerField.Address ? MultiplayerField.HostPort : MultiplayerField.Address;
+        Step(w => Mp(w, form), out _);
+
+        Assert.Equal(MenuAction.None, Click(w => Mp(w, form), Centre(MpField(rowYUnits))));
+        Assert.Equal(expected, form.Focused);
+    }
+
+    [Fact]
+    public void Multiplayer_BusyDisablesFieldsAndButtons()
+    {
+        MultiplayerFormState form = NewForm();
+        Step(w => Mp(w, form, busy: true), out _);
+
+        Assert.Equal(MenuAction.None, Click(w => Mp(w, form, busy: true), Centre(MpButton(152f))));
+        Assert.Equal(MenuAction.None, Click(w => Mp(w, form, busy: true), Centre(MpButton(284f))));
+        Click(w => Mp(w, form, busy: true), Centre(MpField(44f)));
+        Assert.Equal(MultiplayerField.Address, form.Focused);
+        InventoryFakeCanvas canvas = Step(w => Mp(w, form, busy: true), out _);
+        Assert.Equal(3, canvas.Named(MenuSkin.ButtonDisabled).Count());
+    }
+
+    [Fact]
+    public void Multiplayer_ShowsTheStatusLine()
+    {
+        MultiplayerFormState form = NewForm();
+        InventoryFakeCanvas canvas = Step(w => MainMenuPanel.BuildMultiplayer(w, form, false, "Could not connect", true), out _);
+
+        Assert.True(canvas.HasText("Could not connect"));
     }
 
     [Fact]

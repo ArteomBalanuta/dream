@@ -264,6 +264,57 @@ public sealed class MenuTypographyTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(Sizes))]
+    public void Multiplayer_LabelsButtonsAndStatusFitTheirBoxes(int width, int height)
+    {
+        const string status = "Could not reach example.org:7777: the connection timed out";
+        MultiplayerFormState form = new("Wanderer", "example.org", 7777, 7778);
+        List<Line> lines = Draw(width, height, w => MainMenuPanel.BuildMultiplayer(w, form, false, status, true), out UiLayout layout);
+
+        const float panelH = 318f;
+        UiRect panel = _widgets.Centered((MenuWidgets.DesignHeightUnits - panelH) * 0.5f, MainMenuPanel.MultiplayerPanelWidthUnits, panelH);
+        UiRect Button(float y) => _widgets.Inside(panel, (MainMenuPanel.MultiplayerPanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f, y, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
+
+        AssertInBox(Find(lines, "Join"), Button(152f), 0.92f, "Join");
+        AssertInBox(Find(lines, "Host"), Button(234f), 0.92f, "Host");
+        AssertInBox(Find(lines, "Back"), Button(284f), 0.92f, "Back");
+
+        foreach (string label in new[] { "Player name", "Address", "Port" })
+        {
+            Line line = Find(lines, label);
+            Assert.True(line.Px <= 24f * layout.Scale + 0.5f, $"{label}: too tall");
+            Assert.True(line.Width <= 100f * layout.Scale + 0.5f, $"{label}: wider than its column");
+        }
+
+        foreach (string text in new[] { "Multiplayer", "Join a server", "Host a game", status })
+        {
+            Line line = Find(lines, text);
+            Assert.True(line.Right <= panel.Right + 0.5f && line.Pos.X >= panel.X - 0.5f, $"{text}: outside the panel");
+        }
+
+        foreach (string value in new[] { "Wanderer", "example.org", "7777", "7778" })
+        {
+            Line line = Find(lines, value);
+            Assert.True(line.Right <= panel.Right + 0.5f, $"{value}: runs past the panel");
+            Assert.True(line.Px <= 20f * layout.Scale + 0.5f, $"{value}: taller than its field");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Sizes))]
+    public void Multiplayer_ALongAddressShowsOnlyItsTailInsideTheField(int width, int height)
+    {
+        MultiplayerFormState form = new("Wanderer", new string('a', 120) + "END", 7777, 7778);
+        List<Line> lines = Draw(width, height, w => MainMenuPanel.BuildMultiplayer(w, form, false, null, false), out _);
+
+        const float panelH = 318f;
+        UiRect panel = _widgets.Centered((MenuWidgets.DesignHeightUnits - panelH) * 0.5f, MainMenuPanel.MultiplayerPanelWidthUnits, panelH);
+        Line tail = lines.FindLast(l => l.Text.EndsWith("END", StringComparison.Ordinal));
+        Assert.NotNull(tail.Text);
+        Assert.True(tail.Right <= panel.Right + 0.5f, "the long address runs past the panel");
+    }
+
     // The engraved face is what the menu is for: the titles and the button words must be Cinzel at
     // every size the game reaches, not the pixel face standing in for it.
     [Theory]
