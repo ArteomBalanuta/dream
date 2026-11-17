@@ -185,7 +185,10 @@ internal sealed class AuthoritativeCombatResolver
             intent.RayOrigin,
             intent.RayDirection,
             CombatUseResolver.DefaultHitRange);
-        if (enemy != null)
+        // A wall between the ray origin and the enemy's combat anchor blocks the hit, as for bolts, the
+        // melee arc and PvP - and as the enemy's own bite line does in the other direction. When it is
+        // blocked, fall through to the PvP and cube branches rather than resolving the enemy.
+        if (enemy != null && !IsBlockedByWall(_map(), intent.RayOrigin, enemy.Combatant.GetCombatAnchorWorldPosition()))
         {
             return ResolveEnemyHit(message, combatant, tick, enemy);
         }

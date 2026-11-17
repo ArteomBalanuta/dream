@@ -53,6 +53,16 @@ public static class EnemyMovementCollision
             return Vector3.Zero;
         }
 
+        // An enemy that already overlaps geometry - a cube was built on the cell it stands in, which the
+        // build path does not refuse - has no free candidate anywhere along the sweep, so the sweep used to
+        // return zero and the enemy was wedged there for good while still holding its camp slot. Let it
+        // take the step it asked for instead: it resolves out along the shortest path it was given, and
+        // stays trapped only for as long as it is still inside.
+        if (!CanOccupy(map, from, radius, height))
+        {
+            return desiredDelta;
+        }
+
         int steps = Math.Max(1, (int)MathF.Ceiling(desiredDelta.Length / SweepStepLength));
         Vector3 lastAllowed = from;
 
