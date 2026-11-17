@@ -139,6 +139,37 @@ public sealed class HostedLocalServerTests
     }
 
     [Fact]
+    public async Task HostedServer_AcceptsASecondClientJoiningByAddress()
+    {
+        using MigrationTestDatabase db = new();
+        int port = FreePort();
+        var (handle, hostLauncher) = Create(db);
+        await using (handle)
+        {
+            hostLauncher.RequestHost(port, "host-a");
+            hostLauncher.NotifyFramePresented();
+            hostLauncher.NotifyFramePresented();
+            await using RemoteClientSession hostSession = await TakeSessionAsync(hostLauncher);
+
+            // The guest has its own coordinator and identity, and no local server of its own.
+            string guestDir = Path.Combine(db.RootDirectory, "guest");
+            Directory.CreateDirectory(guestDir);
+            NetworkSessionCoordinator guestCoordinator = new(
+                new OnDemandLocalServerHandle(_ => throw new InvalidOperationException("The guest must not start a server.")),
+                new RemoteSessionConnector(),
+                identity: new ClientIdentityStore(Path.Combine(guestDir, "tokens.json")));
+            SinglePlayerLauncher guest = new(guestCoordinator, new OnDemandLocalServerHandle(_ => throw new InvalidOperationException()), null, () => "single");
+
+            guest.RequestJoin(new ClientConnectionOptions("127.0.0.1", port.ToString(System.Globalization.CultureInfo.InvariantCulture), "guest"));
+            await using RemoteClientSession guestSession = await TakeSessionAsync(guest);
+
+            Assert.Equal("guest", guestSession.Options.DisplayName);
+            Assert.Equal("host-a", hostSession.Options.DisplayName);
+            Assert.NotSame(hostSession, guestSession);
+        }
+    }
+
+    [Fact]
     public async Task DefaultStart_StillBindsLoopbackWithLivenessChecksOff()
     {
         using MigrationTestDatabase db = new();
