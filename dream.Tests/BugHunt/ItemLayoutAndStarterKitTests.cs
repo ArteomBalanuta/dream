@@ -9,6 +9,7 @@ namespace Dream.Tests.BugHunt;
 
 // BUGHUNTER-ITEM wave 2: the two confirmed findings of the items-as-durable-value sweep.
 // BH-ITEM-1 the layout repair parking an overflow row at an index the service treats as inert.
+// BH-ITEM-2 the starter-kit version installed from the persisted row unclamped.
 public sealed class ItemLayoutAndStarterKitTests
 {
     private const string Player = "Alice";
@@ -104,6 +105,66 @@ public sealed class ItemLayoutAndStarterKitTests
         Assert.Equal(40, rows.Values.Distinct().Count());
         Assert.DoesNotContain(rows.Keys, row => row >= InventoryConstants.UnknownRowsFirstIndex);
         Assert.DoesNotContain(lines, line => line.Category == "server.inventory.layout-row-stranded");
+    }
+
+    // BH-ITEM-2. A kit_version row above the running content's starterKitVersion (the column's only
+    // bound is CHECK (kit_version >= 0), and the grant upsert only ever raises it, so content that was
+    // rolled back leaves one behind) is held at the running version instead of being installed raw, and
+    // the out-of-range row is reported rather than silently deciding what the player has received.
+    [Fact]
+    public void AStarterGrantRowAboveTheRunningKit_IsReported_AndHeldAtTheRunningVersion()
+    {
+        EquipmentTestWorld world = new();
+        world.PutGrant(Player, ToolCatalog.CurrentStarterKitVersion + 500);
+
+        List<(string Category, string Message)> lines = [];
+        PlayerInventoryService inventory = CreateService(world, out PersistenceWriteQueue writes);
+        using (writes)
+        using (NetworkDiagnosticsLog.CaptureOnCurrentThread((category, message) => lines.Add((category, message))))
+        {
+            Assert.True(inventory.Ensure(Player));
+        }
+
+        (string Category, string Message) reported = Assert.Single(
+            lines,
+            line => line.Category == "server.inventory.starter-grant-out-of-range");
+        Assert.Contains($"stored={ToolCatalog.CurrentStarterKitVersion + 500}", reported.Message, StringComparison.Ordinal);
+        Assert.Contains($"current={ToolCatalog.CurrentStarterKitVersion}", reported.Message, StringComparison.Ordinal);
+    }
+
+    // BH-ITEM-2 control: a player whose row is the running kit version is up to date - the clamp cannot
+    // hand them a second kit, and nothing is reported.
+    [Fact]
+    public void APlayerAtTheRunningKitVersion_GetsNoSecondKit_AndNothingIsReported()
+    {
+        EquipmentTestWorld world = new();
+        world.PutGrant(Player, ToolCatalog.CurrentStarterKitVersion);
+
+        List<(string Category, string Message)> lines = [];
+        PlayerInventoryService inventory = CreateService(world, out PersistenceWriteQueue writes);
+        using (writes)
+        using (NetworkDiagnosticsLog.CaptureOnCurrentThread((category, message) => lines.Add((category, message))))
+        {
+            Assert.True(inventory.Ensure(Player));
+        }
+
+        Assert.Empty(world.SlotsOf(Player));
+        Assert.DoesNotContain(lines, line => line.Category == "server.inventory.starter-grant-out-of-range");
+    }
+
+    // BH-ITEM-2 control: a brand-new player (no row at all) still receives the whole kit, so the clamp
+    // has not disturbed the seeding path.
+    [Fact]
+    public void ANewPlayerWithNoGrantRow_StillReceivesTheWholeKit()
+    {
+        EquipmentTestWorld world = new();
+        PlayerInventoryService inventory = CreateService(world, out PersistenceWriteQueue writes);
+        using (writes)
+        {
+            Assert.True(inventory.Ensure(Player));
+        }
+
+        Assert.Equal(ToolCatalog.StarterKit.Count, world.SlotsOf(Player).Count);
     }
 
     private static PlayerInventoryService CreateService(EquipmentTestWorld world, out PersistenceWriteQueue writes)

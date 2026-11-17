@@ -178,7 +178,21 @@ internal sealed partial class PlayerInventoryService
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
         if (inventory.StarterKitVersion is int starterKitVersion)
         {
-            _starterKitByPlayer[playerName] = starterKitVersion;
+            // Clamped like its sibling Gold below. The row's only bound is CHECK (kit_version >= 0), so a
+            // hand edit, or content that ran at a higher starterKitVersion and was then rolled back (the
+            // grant upsert only ever raises the stored version), can hold a version above the kit that is
+            // running. GrantStarterKit reads that as "has received everything this content knows" and
+            // grants no kind again, so the record is not a record of anything this content did: it is
+            // held at the running kit's version, which is the most it can attest, and the out-of-range
+            // row is reported rather than silently withholding the kit.
+            if (starterKitVersion > ToolCatalog.CurrentStarterKitVersion)
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.inventory.starter-grant-out-of-range",
+                    $"player={playerName} stored={starterKitVersion} current={ToolCatalog.CurrentStarterKitVersion}");
+            }
+
+            _starterKitByPlayer[playerName] = Math.Clamp(starterKitVersion, 0, ToolCatalog.CurrentStarterKitVersion);
         }
 
         if (inventory.Gold > 0)
