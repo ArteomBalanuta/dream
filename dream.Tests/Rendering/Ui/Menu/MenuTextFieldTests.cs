@@ -13,6 +13,256 @@ public sealed class MenuTextFieldTests
         }
     }
 
+    private sealed class FakeClipboard : IMenuClipboard
+    {
+        public string? Text { get; set; }
+
+        public string? GetText() => Text;
+
+        public void SetText(string text) => Text = text;
+    }
+
+    private static MenuTextField Field(string text, int max = 64, bool digits = false) => new(max, digits, text);
+
+    [Fact]
+    public void Insert_InTheMiddleAndTypingReplacesSelection()
+    {
+        MenuTextField f = Field("abcd");
+        f.MoveCaret(2, false);
+        f.TypeCharacter('X');
+        Assert.Equal("abXcd", f.Text);
+        Assert.Equal(3, f.Caret);
+
+        f.MoveCaret(1, false);
+        f.MoveCaret(4, true);
+        f.TypeCharacter('Y');
+        Assert.Equal("aYd", f.Text);
+        Assert.False(f.HasSelection);
+    }
+
+    [Fact]
+    public void MaxLength_CountsTextAfterSelectionRemoval()
+    {
+        MenuTextField f = Field("abc", 3);
+        Assert.False(f.TypeCharacter('z'));
+        f.SelectAll();
+        Assert.True(f.TypeCharacter('z'));
+        Assert.Equal("z", f.Text);
+    }
+
+    [Fact]
+    public void BackspaceAndDelete_WithAndWithoutSelection()
+    {
+        MenuTextField f = Field("abcd");
+        f.MoveCaret(2, false);
+        Assert.True(f.Backspace());
+        Assert.Equal("acd", f.Text);
+        Assert.True(f.Delete());
+        Assert.Equal("ad", f.Text);
+        f.SelectAll();
+        Assert.True(f.Delete());
+        Assert.Equal(string.Empty, f.Text);
+        Assert.False(f.Delete());
+        Assert.False(f.Backspace());
+
+        f.SetText("abcd");
+        f.MoveCaret(1, false);
+        f.MoveCaret(3, true);
+        Assert.True(f.Backspace());
+        Assert.Equal("ad", f.Text);
+        Assert.Equal(1, f.Caret);
+    }
+
+    [Fact]
+    public void WordMovesAndDeletes()
+    {
+        MenuTextField f = Field("play er.name 12");
+        f.MoveLeft(false, true);
+        Assert.Equal(13, f.Caret);
+        f.MoveLeft(false, true);
+        Assert.Equal(8, f.Caret);
+        f.MoveLeft(false, true);
+        Assert.Equal(5, f.Caret);
+        f.MoveRight(false, true);
+        Assert.Equal(8, f.Caret);
+        f.MoveRight(false, true);
+        Assert.Equal(13, f.Caret);
+
+        f.Backspace(true);
+        Assert.Equal("play er.12", f.Text);
+        f.SetText("play er.name 12");
+        f.MoveHome(false);
+        f.Delete(true);
+        Assert.Equal("er.name 12", f.Text);
+        f.MoveEnd(false);
+        f.Backspace(true);
+        Assert.Equal("er.name ", f.Text);
+        f.Backspace(true);
+        Assert.Equal("er.", f.Text);
+    }
+
+    [Fact]
+    public void ShiftExtendsThenPlainMoveCollapsesTowardTheSide()
+    {
+        MenuTextField f = Field("abcdef");
+        f.MoveCaret(3, false);
+        f.MoveLeft(true, false);
+        f.MoveLeft(true, false);
+        Assert.Equal(1, f.Caret);
+        Assert.Equal(3, f.SelectionAnchor);
+        Assert.Equal("bc", f.SelectedText);
+        f.MoveRight(false, false);
+        Assert.Equal(3, f.Caret);
+        Assert.False(f.HasSelection);
+
+        f.MoveCaret(1, true);
+        f.MoveLeft(false, false);
+        Assert.Equal(1, f.Caret);
+        Assert.False(f.HasSelection);
+    }
+
+    [Fact]
+    public void HomeEndAndSelectAll()
+    {
+        MenuTextField f = Field("abcd");
+        f.MoveCaret(2, false);
+        f.MoveHome(true);
+        Assert.Equal("ab", f.SelectedText);
+        f.MoveCaret(2, false);
+        f.MoveEnd(true);
+        Assert.Equal("cd", f.SelectedText);
+        f.MoveHome(false);
+        f.SelectAll();
+        Assert.Equal("abcd", f.SelectedText);
+    }
+
+    [Fact]
+    public void Insert_FiltersAndTruncates()
+    {
+        MenuTextField name = Field("", 6);
+        Assert.Equal(6, name.Insert("ab\r\ncd\tefgh"));
+        Assert.Equal("abcdef", name.Text);
+        Assert.Equal(0, name.Insert("zz"));
+        Assert.Equal(0, name.Insert(null));
+
+        MenuTextField port = Field("", 5, digits: true);
+        Assert.Equal(5, port.Insert("1a2 3\n4-5678"));
+        Assert.Equal("12345", port.Text);
+
+        name.SelectAll();
+        Assert.Equal(2, name.Insert("xy"));
+        Assert.Equal("xy", name.Text);
+    }
+
+    [Fact]
+    public void CutSelection_ReturnsAndRemoves()
+    {
+        MenuTextField f = Field("abcd");
+        Assert.Null(f.CutSelection());
+        f.MoveCaret(1, false);
+        f.MoveCaret(3, true);
+        Assert.Equal("bc", f.CutSelection());
+        Assert.Equal("ad", f.Text);
+        Assert.Equal(1, f.Caret);
+    }
+
+    [Fact]
+    public void SurrogatePairs_NeverSplit()
+    {
+        MenuTextField f = Field("a\U0001F600b");
+        f.MoveCaret(2, false);
+        Assert.Equal(1, f.Caret);
+        f.MoveRight(false, false);
+        Assert.Equal(3, f.Caret);
+        f.MoveLeft(false, false);
+        Assert.Equal(1, f.Caret);
+        f.MoveCaret(99, false);
+        Assert.Equal(4, f.Caret);
+        f.MoveLeft(false, false);
+        f.MoveLeft(false, false);
+        Assert.Equal(1, f.Caret);
+        Assert.True(f.Delete());
+        Assert.Equal("ab", f.Text);
+        f.SetText("a\U0001F600b");
+        f.MoveCaret(3, false);
+        f.Backspace();
+        Assert.Equal("ab", f.Text);
+    }
+
+    [Fact]
+    public void ScrollStart_IsClampedWhenTextShrinks()
+    {
+        MenuTextField f = Field("abcdef");
+        f.ScrollStart = 4;
+        f.SelectAll();
+        f.Delete();
+        Assert.Equal(0, f.ScrollStart);
+        f.SetText("abc");
+        Assert.Equal(0, f.ScrollStart);
+    }
+
+    [Fact]
+    public void Form_TabSelectsAll_ShiftTabGoesBackwards()
+    {
+        MultiplayerFormState form = new("name", "addr", 1, 2);
+        form.HandleKey(MenuKey.Tab, MenuKeyModifiers.None, null);
+        Assert.Equal(MultiplayerField.JoinPort, form.Focused);
+        Assert.Equal("1", form.JoinPort.SelectedText);
+        form.HandleKey(MenuKey.Tab, MenuKeyModifiers.Shift, null);
+        Assert.Equal(MultiplayerField.Address, form.Focused);
+        Assert.Equal("addr", form.Address.SelectedText);
+        form.Focused = MultiplayerField.PlayerName;
+        form.HandleKey(MenuKey.Tab, MenuKeyModifiers.Shift, null);
+        Assert.Equal(MultiplayerField.HostPort, form.Focused);
+    }
+
+    [Fact]
+    public void Form_CopyCutPasteThroughClipboard()
+    {
+        FakeClipboard clip = new();
+        MultiplayerFormState form = new("name", "abcdef", 1, 2);
+        form.Address.MoveCaret(1, false);
+        form.Address.MoveCaret(3, true);
+
+        form.HandleKey(MenuKey.Copy, MenuKeyModifiers.Control, clip);
+        Assert.Equal("bc", clip.Text);
+        Assert.Equal("abcdef", form.Address.Text);
+
+        clip.Text = null;
+        form.HandleKey(MenuKey.Cut, MenuKeyModifiers.Control, clip);
+        Assert.Equal("bc", clip.Text);
+        Assert.Equal("adef", form.Address.Text);
+
+        form.HandleKey(MenuKey.Paste, MenuKeyModifiers.Control, clip);
+        Assert.Equal("abcdef", form.Address.Text);
+        Assert.Equal(3, form.Address.Caret);
+    }
+
+    [Fact]
+    public void Form_PasteWithNullClipboardIsNoOp_AndEmptyCopyLeavesClipboard()
+    {
+        MultiplayerFormState form = new("name", "abc", 1, 2);
+        form.HandleKey(MenuKey.Paste, MenuKeyModifiers.Control, null);
+        Assert.Equal("abc", form.Address.Text);
+
+        FakeClipboard clip = new() { Text = "keep" };
+        form.HandleKey(MenuKey.Copy, MenuKeyModifiers.Control, clip);
+        Assert.Equal("keep", clip.Text);
+    }
+
+    [Fact]
+    public void Form_ModifierKeysEditTheFocusedField()
+    {
+        MultiplayerFormState form = new("name", "one two", 1, 2);
+        form.HandleKey(MenuKey.Backspace, MenuKeyModifiers.Control, null);
+        Assert.Equal("one ", form.Address.Text);
+        form.HandleKey(MenuKey.Home, MenuKeyModifiers.None, null);
+        form.HandleKey(MenuKey.Right, MenuKeyModifiers.Shift, null);
+        Assert.Equal("o", form.Address.SelectedText);
+        form.HandleKey(MenuKey.Delete, MenuKeyModifiers.None, null);
+        Assert.Equal("ne ", form.Address.Text);
+    }
+
     [Fact]
     public void DigitsOnly_IgnoresLettersAndNonAsciiDigits()
     {
