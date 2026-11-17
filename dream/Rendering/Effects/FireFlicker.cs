@@ -70,6 +70,26 @@ public static class FireFlicker
     public const float OffsetLateral = 0.02f;
     public const float OffsetVertical = 0.015f;
 
+    // The flame's wander: weights that sum to exactly 1 (so an axis is bounded by its own Offset
+    // constant) over three frequencies in Hz that share no short common period, so the path the flame
+    // traces does not close on itself the way two sines of one frequency do.
+    public const float WanderWeight0 = 0.58f;
+    public const float WanderWeight1 = 0.30f;
+    public const float WanderWeight2 = 0.12f;
+    public const float WanderWeightSum = WanderWeight0 + WanderWeight1 + WanderWeight2;
+    public const double WanderFrequency0 = 0.83;
+    public const double WanderFrequency1 = 1.97;
+    public const double WanderFrequency2 = 3.37;
+
+    /// <summary>
+    /// The stable flicker seed of a fire placed at <paramref name="basePosition"/>: the position
+    /// quantised to <see cref="PhaseGrid"/> and hashed, never 0. A producer computes it ONCE from the
+    /// UN-OFFSET position and carries it on the light, so every consumer reads the same phase whatever
+    /// the flame's wander has done to the light's position.
+    /// </summary>
+    public static int SeedFor(Vector3 basePosition) =>
+        throw new NotImplementedException("CONTRACT STUB: FireFlicker.SeedFor");
+
     // Which fire a light of this radius is, by the nearest class radius within that class's
     // tolerance. False for any other radius (flash lights, debug rings).
     public static bool TryClassifyRadius(float radius, out FireFlickerKind kind)
