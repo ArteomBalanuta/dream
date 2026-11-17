@@ -6,6 +6,10 @@ namespace Dream.Client.Audio;
 // device thread. No method throws.
 public sealed class MixerGameAudio : IGameAudio
 {
+    // Outdoor wind level. Wind belongs to the world: it fades in with the world music and out
+    // with it, so the main menu hears only its own music.
+    public const float WorldWindLevel = 0.6f;
+
     private readonly AudioMixer _mixer;
     private readonly AudioClipBank _bank;
     private readonly IAudioOutput? _output;
@@ -31,8 +35,6 @@ public sealed class MixerGameAudio : IGameAudio
                 _mixer.AttachLoop(id, clip);
             }
         }
-
-        _mixer.SetLoopTarget(AudioLoopId.Wind, 0.6f, AudioMixer.AmbienceFadeSeconds);
     }
 
     public bool IsActive => !_disposed && _volumes.Enabled;
@@ -75,6 +77,14 @@ public sealed class MixerGameAudio : IGameAudio
         AudioDiagnostics.Log($"music {track}");
         _mixer.SetLoopTarget(AudioLoopId.MusicMenu, track == MusicTrack.Menu ? 1f : 0f, AudioMixer.MusicFadeSeconds);
         _mixer.SetLoopTarget(AudioLoopId.MusicWorld, track == MusicTrack.World ? 1f : 0f, AudioMixer.MusicFadeSeconds);
+        _mixer.SetLoopTarget(AudioLoopId.Wind, track == MusicTrack.World ? WorldWindLevel : 0f, AudioMixer.AmbienceFadeSeconds);
+        if (track != MusicTrack.World)
+        {
+            // Night is driven per frame by the world; outside it, fade it out and forget the level so
+            // the next world frame sends it again.
+            _mixer.SetLoopTarget(AudioLoopId.Night, 0f, AudioMixer.AmbienceFadeSeconds);
+            _nightTarget = -1f;
+        }
     }
 
     public void SetAmbience(float night01)
