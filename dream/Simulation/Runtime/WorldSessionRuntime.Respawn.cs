@@ -73,6 +73,54 @@ public sealed partial class WorldSessionRuntime
         player.ProtectedThroughTick = tick + PlayerRespawnRules.SpawnProtectionTicks;
     }
 
+    // The normal window, or a join's opt-in hold that no input has released yet. The hold is capped: if
+    // JoinHoldMaxTicks pass without input, protection simply ends (the player is AFK) and a later first
+    // input grants nothing, so a stale prompt cannot be used to sit untargetable in combat.
+    private static bool IsSpawnProtected(ConnectedPlayer player, ulong tick) =>
+        (player.ProtectedThroughTick != 0 && player.ProtectedThroughTick >= tick)
+        || (player.ProtectionHeldSinceTick != 0
+            && tick <= player.ProtectionHeldSinceTick + PlayerRespawnRules.JoinHoldMaxTicks);
+
+    // Only honoured for the join that freshly attached the seat: a repeated join or a takeover of an
+    // attached seat must not re-arm it.
+    public void HoldSpawnProtectionUntilInput(PlayerSessionId sessionId)
+    {
+        if (_sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null && player.IsSpawned
+            && player.FreshlyAttached)
+        {
+            player.ProtectionHeldSinceTick = Math.Max(1UL, CurrentServerTick);
+        }
+    }
+
+    // The first input within the cap ends the hold and starts the normal window; past the cap the hold has
+    // already ended and nothing is granted.
+    private void ReleaseSpawnProtectionHold(ConnectedPlayer player)
+    {
+        if (player.ProtectionHeldSinceTick == 0)
+        {
+            return;
+        }
+
+        ulong tick = CurrentServerTick;
+        bool stillHeld = tick <= player.ProtectionHeldSinceTick + PlayerRespawnRules.JoinHoldMaxTicks;
+        player.ProtectionHeldSinceTick = 0;
+        if (stillHeld)
+        {
+            player.ProtectedThroughTick = tick + PlayerRespawnRules.SpawnProtectionTicks;
+        }
+    }
+
+    private void ReleaseSpawnProtectionHold(PlayerCommandFrame frame, ConnectedPlayer? player)
+    {
+        if (player != null
+            && player.ProtectionHeldSinceTick != 0
+            && (frame.MoveIntent.ForwardAxis != 0f || frame.MoveIntent.StrafeAxis != 0f
+                || frame.MoveIntent.VerticalAxis != 0f || frame.MoveIntent.JumpPressed || frame.PrimaryUsePressed))
+        {
+            ReleaseSpawnProtectionHold(player);
+        }
+    }
+
     // The tick's players minus those under spawn protection: what enemies target and bite. Reused list,
     // no allocation. Separation still uses the full list, so a protected body stays solid.
     private void FillEnemyTargets(List<IAuthoritativePlayerTarget> all, List<IAuthoritativePlayerTarget> targets)
@@ -84,8 +132,7 @@ public sealed partial class WorldSessionRuntime
             IAuthoritativePlayerTarget target = all[i];
             if (_sessions.TryGet(target.SessionId, out ConnectedPlayer? player)
                 && player != null
-                && player.ProtectedThroughTick != 0
-                && player.ProtectedThroughTick >= tick)
+                && IsSpawnProtected(player, tick))
             {
                 continue;
             }

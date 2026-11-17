@@ -154,8 +154,7 @@ public sealed partial class WorldSessionRuntime
             if (target.SessionId == attacker
                 || (_sessions.TryGet(target.SessionId, out ConnectedPlayer? player)
                     && player != null
-                    && player.ProtectedThroughTick != 0
-                    && player.ProtectedThroughTick >= tick))
+                    && IsSpawnProtected(player, tick)))
             {
                 continue;
             }

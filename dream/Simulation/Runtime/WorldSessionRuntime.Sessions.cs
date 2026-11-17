@@ -39,8 +39,14 @@ public sealed partial class WorldSessionRuntime
         // 9 ticks and killed in about 8.6 s, then looped through respawns (a wolf spawned near the world
         // spawn). The window is per seat and counted in server ticks; a rejoin gets its own, not the old one.
         // A repeated join of a seat that is already attached does not start a new window.
+        // The join's opt-in hold is honoured only on a fresh attach that is not a quick re-seat of the same
+        // session (a takeover detaches, then attaches fresh): see ConnectedPlayer.LastFreshAttachTick.
+        attached.FreshlyAttached = !alreadyAttached
+            && (attached.LastFreshAttachTick == 0
+                || CurrentServerTick >= attached.LastFreshAttachTick + PlayerRespawnRules.JoinHoldReattachCooldownTicks);
         if (!alreadyAttached)
         {
+            attached.LastFreshAttachTick = Math.Max(1UL, CurrentServerTick);
             attached.ProtectedThroughTick = CurrentServerTick + PlayerRespawnRules.SpawnProtectionTicks;
             // M4: cooldowns live on the session and a join starts clean; the owner gets its vitals again.
             attached.Cooldowns.Clear();
@@ -180,6 +186,7 @@ public sealed partial class WorldSessionRuntime
         // a seat that left has nowhere to go.
         player.RespawnAtTick = 0;
         player.ProtectedThroughTick = 0;
+        player.ProtectionHeldSinceTick = 0;
         _pendingLoot.Remove(sessionId);
         // A session id can be reused by a later join: it must not inherit this one's kill credit.
         IReadOnlyList<EnemyActor> creditedEnemies = _enemies.ActiveActors;

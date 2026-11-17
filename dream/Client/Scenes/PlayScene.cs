@@ -108,12 +108,15 @@ public partial class PlayScene : IDisposable
 
     // The classic HUD draws its own sprite cursor, so the OS cursor hides (it can still leave the
     // window; a drop outside cancels). Settings and the ImGui surface keep the normal cursor.
+    // The loading screen shows the plain cursor (the HUD, and its sprite cursor, are not interactive under it).
     public CursorState DesiredCursorState =>
-        ClassicCursorPolicy.Decide(
-            _render.ClassicHudCursorActive,
-            _settings.SettingsVisible,
-            _windowFocused,
-            _settings.CurrentRuntimeState.DesiredCursorState);
+        LoadingOverlayVisible
+            ? CursorState.Normal
+            : ClassicCursorPolicy.Decide(
+                _render.ClassicHudCursorActive,
+                _settings.SettingsVisible,
+                _windowFocused,
+                _settings.CurrentRuntimeState.DesiredCursorState);
 
     // Created on first use: it needs this scene for its host, which a field initialiser cannot take.
     private ClickMoveController _clickMove =>

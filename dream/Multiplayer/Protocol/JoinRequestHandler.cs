@@ -80,6 +80,11 @@ public sealed class JoinRequestHandler : IServerMessageHandler
                 joinRequest.RequestedSessionId,
                 joinRequest.DisplayName,
                 access);
+            if (joinRequest.HoldSpawnProtection == true)
+            {
+                context.Authority.HoldSpawnProtectionUntilInput(accepted.SessionId);
+            }
+
             context.LastJoinRequest = joinRequest;
             context.JoinedIdentity = holder;
             context.Standing = access.Standing;

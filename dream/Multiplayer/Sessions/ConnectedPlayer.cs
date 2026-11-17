@@ -51,6 +51,22 @@ public sealed class ConnectedPlayer
     // the player attacks.
     internal ulong ProtectedThroughTick;
 
+    // The server tick a join asked to hold spawn protection until its first input, or 0 for none (the
+    // default). While set and within PlayerRespawnRules.JoinHoldMaxTicks the player stays protected; the
+    // first accepted move, jump, primary use or action releases it and starts the normal window.
+    internal ulong ProtectionHeldSinceTick;
+
+    // True only after the attach that freshly seated this session (not a repeated join or a takeover of an
+    // already attached seat); every attach rewrites it. The join's hold is honoured only while it is set, so
+    // a modded client cannot re-arm the hold mid-fight by repeating its join.
+    internal bool FreshlyAttached;
+
+    // The server tick of this session's last fresh attach (at least 1), or 0 for none. A takeover detaches
+    // the old connection and attaches the new one fresh, so "already attached" alone cannot tell it from a
+    // first join: a fresh attach within PlayerRespawnRules.JoinHoldReattachCooldownTicks of the previous one gets
+    // no hold.
+    internal ulong LastFreshAttachTick;
+
     // M4: the running skill and consumable cooldowns of this session. On the session, not the combatant,
     // because the primary seat's combatant is reused by successive sessions.
     internal readonly Dream.Simulation.Players.AbilityCooldowns Cooldowns = new();

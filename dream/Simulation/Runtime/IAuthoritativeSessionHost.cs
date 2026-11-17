@@ -22,6 +22,10 @@ public interface IAuthoritativeSessionHost
         in Dream.Simulation.Characters.CharacterAccessDecision access)
         => JoinSession(requestedSessionId, displayName);
 
+    // Keeps the joined seat's spawn protection until its first input (an opt-in of the join request).
+    // The default does nothing.
+    void HoldSpawnProtectionUntilInput(string sessionId) { }
+
     // Whether clients may use the development commands: noclip, freeze and the stat sliders. Off by
     // default; the handlers clear or reject them while it is off.
     bool DevCommandsAllowed => false;

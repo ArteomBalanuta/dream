@@ -22,6 +22,9 @@ public sealed class MainMenuScene
     private readonly Action<MultiplayerDefaults>? _persistMultiplayer;
     private MultiplayerDefaults _saved;
     private readonly IMenuClipboard? _clipboard;
+    // The loading screen's forward-only bar and clock for the current start.
+    private float _loadingProgress;
+    private readonly System.Diagnostics.Stopwatch _loadingClock = new();
 
     public MainMenuScene(
         SinglePlayerLauncher launcher,
@@ -45,6 +48,9 @@ public sealed class MainMenuScene
     }
 
     public CursorState DesiredCursorState => CursorState.Normal;
+
+    // The tip the loading screen shows for the current start; re-picked each time a start begins.
+    public string LoadingTip { get; private set; } = string.Empty;
 
     public MenuScreen Screen => _screen.Current;
 
@@ -107,6 +113,25 @@ public sealed class MainMenuScene
 
     // The effect of one action; split from Render so tests can drive it without GL.
     internal MenuAction Handle(MenuAction action)
+    {
+        if (action == MenuAction.None)
+        {
+            return MenuAction.None;
+        }
+
+        bool wasBusy = _launcher.IsBusy;
+        MenuAction result = HandleCore(action);
+        if (!wasBusy && _launcher.IsBusy)
+        {
+            _loadingProgress = 0f;
+            _loadingClock.Restart();
+            LoadingTip = LoadingScreenPanel.PickTip(Environment.TickCount);
+        }
+
+        return result;
+    }
+
+    private MenuAction HandleCore(MenuAction action)
     {
         if (action == MenuAction.None)
         {
@@ -210,8 +235,15 @@ public sealed class MainMenuScene
         return _launcher.IsBusy || _launcher.Failed ? _launcher.StatusMessage : _notice;
     }
 
-    private MenuAction BuildScreen(MenuWidgets w)
+    internal MenuAction BuildScreen(MenuWidgets w)
     {
+        if (_launcher.IsBusy || _launcher.Phase == SinglePlayerPhase.Connected)
+        {
+            _loadingProgress = MathF.Max(_loadingProgress, LoadingProgress.ForLauncher(_launcher.Phase));
+            LoadingScreenPanel.Build(w, new LoadingScreenState(_launcher.StatusMessage, _loadingProgress, false, LoadingTip, (float)_loadingClock.Elapsed.TotalSeconds));
+            return MenuAction.None;
+        }
+
         switch (_screen.Current)
         {
             case MenuScreen.Options:

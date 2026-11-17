@@ -142,12 +142,12 @@ public class SceneTeardownTests
         string update = ExtractMethodBody(source, "private void UpdateFrontEnd()");
 
         // The play scene is built by EnterPlayScene (the one place that assigns the field).
-        int playScene = IndexOf(update, "EnterPlayScene(remoteClient);");
+        int playScene = IndexOf(update, "EnterPlayScene(remoteClient, fromMenu: false);");
         int dispose = IndexOf(update, "_startupScene.Dispose();");
         int clear = IndexOf(update, "_startupScene = null;");
 
         Assert.True(playScene < dispose && dispose < clear);
-        Assert.Contains("_playScene = new PlayScene(", ExtractMethodBody(source, "private void EnterPlayScene(RemoteClientSession remoteClient)"));
+        Assert.Contains("_playScene = new PlayScene(", ExtractMethodBody(source, "private void EnterPlayScene(RemoteClientSession remoteClient, bool fromMenu)"));
         // The startup scene is the only scene ever replaced; nothing else assigns either field.
         Assert.Single(Regex.Matches(source, @"_playScene\s*=\s*new\b"));
         Assert.Single(Regex.Matches(source, @"_startupScene\s*=\s*new\b"));
