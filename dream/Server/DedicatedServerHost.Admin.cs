@@ -44,6 +44,7 @@ public sealed partial class DedicatedServerHost
     // A sanction as the host last set it: Set says whether it was set or cleared (a cleared one still
     // overrides a stale prefetch that read the old value).
     private readonly record struct SanctionMemory(
+        AccountKey Key,
         bool BanSet,
         DateTime? BanUntilUtc,
         string? BanReason,
@@ -370,6 +371,15 @@ public sealed partial class DedicatedServerHost
             }
         }
 
+        // The accounts this host sanctioned recently are read too, even when nobody of theirs is
+        // connected: the read drops their recent-sanction memory (ApplyAccountUpdate), which is what the
+        // join refusal consults, so a change another process wrote to the row is honoured on the next
+        // refresh instead of being overridden for the whole SanctionMemoryWindow.
+        foreach (KeyValuePair<string, SanctionMemory> entry in _sanctionMemory)
+        {
+            connected[entry.Key] = entry.Value.Key;
+        }
+
         if (connected.Count == 0)
         {
             Volatile.Write(ref _standingRefreshInFlight, 0);
@@ -408,6 +418,16 @@ public sealed partial class DedicatedServerHost
     private void ApplyAccountUpdate(in AccountUpdate update)
     {
         DateTime now = DateTime.UtcNow;
+        if (update.Read != null)
+        {
+            // The row was just read, and the read was queued behind every write this host made, so it is
+            // newer than the recent-sanction memory: the memory's job (covering a read that started before
+            // the write) is done. Dropping it here is what lets a change another process wrote -- an
+            // `--accounts unban` while the window is open -- decide, instead of being overridden for two
+            // minutes by what this host last set.
+            _sanctionMemory.TryRemove(update.Account.HashHex, out _);
+        }
+
         foreach (KeyValuePair<string, ServerRoutingContext> connection in _connections)
         {
             ServerRoutingContext context = connection.Value;
@@ -479,7 +499,7 @@ public sealed partial class DedicatedServerHost
         _sanctionMemory.AddOrUpdate(
             key.HashHex,
             _ => new SanctionMemory(
-                ban != null || clearBan, ban?.Until, ban?.Reason, mute != null || clearMute, mute, DateTime.UtcNow),
+                key, ban != null || clearBan, ban?.Until, ban?.Reason, mute != null || clearMute, mute, DateTime.UtcNow),
             (_, old) => old with
             {
                 BanSet = ban != null || clearBan || old.BanSet,
