@@ -1,11 +1,14 @@
 """Generate every game sound into dream/audio and check it.
 
-    PYTHONPATH=<numpy dir> python tools/audio/build_all.py [--check-only] [--plots DIR]
+    python -I tools/audio/build_all.py [--check-only] [--plots DIR]
+
+Generation runs every family module's build(out_root) -> list[Path] (FAMILIES below), then deletes
+any *.wav under the out folder that no build() returned, so a renamed sound never lingers.
 
 Checks (exit code 1 on failure): 16-bit PCM WAV, expected sample rate and channels, no clipping
 (peak <= 0.97 of full scale), sensible length, one-shots start and end near silence, loops have no
 seam jump (the wrap-around step is no bigger than the signal's own typical step), and the whole
-folder stays within the 8 MB budget. --plots writes a waveform PNG per file (needs Pillow).
+folder stays within the 12 MB budget. Every file in PACK (the gothic pack) must exist. --plots writes a waveform PNG per file (needs Pillow).
 """
 from __future__ import annotations
 
@@ -20,8 +23,40 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 AUDIO_ROOT = HERE.parent.parent / "dream" / "audio"
-BUDGET_BYTES = 8 * 1024 * 1024
+BUDGET_BYTES = 12 * 1024 * 1024
 LOOP_DIRS = {"ambience", "music"}
+
+# Generator modules, each exposing build(out_root: Path) -> list[Path] that writes its own files.
+FAMILIES = ("gen_sfx", "sfx_combat", "sfx_wolf", "gen_music", "gen_ambience")
+
+# The 30 sounds of the gothic pack, relative to the audio folder.
+PACK = (
+    "music/menu.wav", "music/world.wav", "ambience/wind.wav", "ambience/night.wav",
+    "sfx/hit_1.wav", "sfx/hit_2.wav", "sfx/hit_3.wav", "sfx/hit_critical.wav",
+    "sfx/swing_1.wav", "sfx/swing_2.wav", "sfx/swing_3.wav", "sfx/player_hurt.wav", "sfx/player_death.wav",
+    "sfx/wolf_howl_1.wav", "sfx/wolf_howl_2.wav", "sfx/wolf_howl_3.wav",
+    "sfx/wolf_growl_1.wav", "sfx/wolf_growl_2.wav", "sfx/wolf_hurt.wav", "sfx/wolf_death.wav",
+    "sfx/footstep_1.wav", "sfx/footstep_2.wav", "sfx/footstep_3.wav", "sfx/footstep_4.wav",
+    "sfx/land.wav", "sfx/jump.wav",
+    "sfx/equip.wav", "sfx/unequip.wav", "sfx/block_break.wav", "sfx/block_crack.wav",
+)
+assert len(PACK) == 30 and len(set(PACK)) == 30
+
+
+def generate(out_root: Path) -> list[Path]:
+    """Run every family build(), then delete any wav under out_root that no build() returned."""
+    import importlib
+
+    written: list[Path] = []
+    for name in FAMILIES:
+        written.extend(importlib.import_module(name).build(out_root))
+    keep = {p.resolve() for p in written}
+    assert len(keep) == len(written), "two families wrote the same file"
+    for stale in sorted(out_root.rglob("*.wav")):
+        if stale.resolve() not in keep:
+            print(f"removed stale {stale.relative_to(out_root).as_posix()}")
+            stale.unlink()
+    return written
 
 
 def read_wav(path: Path) -> tuple[np.ndarray, int, int]:
@@ -79,6 +114,9 @@ def check(root: Path) -> list[str]:
     print(f"total {total / 1024 / 1024:.2f} MB in {len(files)} files (budget {BUDGET_BYTES / 1024 / 1024:.0f} MB)")
     if total > BUDGET_BYTES:
         problems.append(f"audio folder is {total} bytes, over the {BUDGET_BYTES} byte budget")
+    for rel in PACK:
+        if not (root / rel).is_file():
+            problems.append(f"{rel}: missing from the gothic pack")
     return problems
 
 
@@ -109,11 +147,7 @@ def main() -> int:
     parser.add_argument("--plots", type=Path, default=None)
     args = parser.parse_args()
     if not args.check_only:
-        import gen_music
-        import gen_sfx
-
-        gen_sfx.build(args.out)
-        gen_music.build(args.out)
+        generate(args.out)
     problems = check(args.out)
     if args.plots:
         plots(args.out, args.plots)

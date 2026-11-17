@@ -8,7 +8,7 @@ namespace Dream.Tests.Client.Audio;
 // tools/audio/build_all.py.
 public class AudioAssetsTests
 {
-    private const long BudgetBytes = 8L * 1024 * 1024;
+    private const long BudgetBytes = 12L * 1024 * 1024;
 
     private static string RepoRoot()
     {
@@ -32,7 +32,7 @@ public class AudioAssetsTests
     [Fact]
     public void Generator_Scripts_Exist()
     {
-        foreach (string name in new[] { "gen_sfx.py", "gen_music.py", "build_all.py", "synth.py", "README.md" })
+        foreach (string name in new[] { "gen_sfx.py", "sfx_combat.py", "sfx_wolf.py", "gen_music.py", "gen_ambience.py", "build_all.py", "synth.py", "README.md" })
         {
             Assert.True(File.Exists(Path.Combine(RepoRoot(), "tools", "audio", name)), name);
         }
@@ -108,7 +108,7 @@ public class AudioAssetsTests
     }
 
     [Fact]
-    public void Folder_Stays_Within_The_Eight_Megabyte_Budget()
+    public void Folder_Stays_Within_The_Twelve_Megabyte_Budget()
     {
         long total = Directory.EnumerateFiles(AudioDir(), "*", SearchOption.AllDirectories).Sum(p => new FileInfo(p).Length);
 
