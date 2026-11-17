@@ -695,7 +695,7 @@ public class Game : GameWindow
         }
 
         GL.Viewport(0, 0, ClientSize.X, ClientSize.Y);
-        LoadingScreenState state = new(
+        _loadingState = new LoadingScreenState(
             _playScene.LoadingStage,
             LoadingProgress.ForScene(_playScene.LoadingProgress01),
             _playScene.LoadingAwaitingKey,
@@ -706,8 +706,13 @@ public class Game : GameWindow
             ClientSize.Y,
             _settings.UiScaleSetting,
             new UiPointer(new Vector2(-1000f, -1000f), false, false, IsFocused),
-            w => LoadingScreenPanel.Build(w, in state));
+            _loadingBuild);
     }
+
+    private LoadingScreenState _loadingState;
+    private Action<MenuWidgets>? _loadingBuildCache;
+
+    private Action<MenuWidgets> _loadingBuild => _loadingBuildCache ??= w => LoadingScreenPanel.Build(w, in _loadingState);
 
     // The Esc menu, drawn over the finished world frame. Resume closes it; Exit to Main Menu is
     // carried out on the next update, not inside this draw.

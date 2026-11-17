@@ -109,4 +109,30 @@ public class LoadingGateTests
         off.Skip();
         Assert.Equal(LoadingGatePhase.Open, off.Phase);
     }
+
+    [Fact]
+    public void FocusLoss_DisarmsSoAKeyHeldAcrossItNeverDismisses()
+    {
+        LoadingGate gate = new(LoadingGateMode.WaitForKey);
+        gate.Update(true, false); // AwaitingKey
+        gate.Update(true, false); // armed
+        gate.Update(true, true, focused: false); // Alt+Tab with a key down
+        gate.Update(true, false, focused: false);
+        gate.Update(true, true); // refocus click: ignored frame
+        gate.Update(true, true); // still held: not armed, so no dismissal
+        Assert.Equal(LoadingGatePhase.AwaitingKey, gate.Phase);
+        gate.Update(true, false); // released: arms
+        gate.Update(true, true);
+        Assert.Equal(LoadingGatePhase.Releasing, gate.Phase);
+    }
+
+    [Fact]
+    public void FocusLoss_WhileLoading_StillReachesAwaitingKey()
+    {
+        LoadingGate gate = new(LoadingGateMode.WaitForKey);
+        gate.Update(false, false, focused: false);
+        gate.Update(true, false);
+        gate.Update(true, false);
+        Assert.Equal(LoadingGatePhase.AwaitingKey, gate.Phase);
+    }
 }
