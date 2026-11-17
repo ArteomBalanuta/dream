@@ -31,8 +31,8 @@ const float FireShadowGrazingFloor = 0.15;
 const float FireShadowTanMax = 4.0;
 const float FireShadowNormalOffsetTexels = 1.5;
 const float FireShadowConstantBias = 0.006;
-const float FireShadowSlopeTexels = 1.5;
-const float FireShadowTapOffset = 0.5;   // 4 taps at +-0.5 texel; with the hardware 2x2 each reaches 1.5 texels
+const float FireShadowSlopeTexels = 2.5;
+const float FireShadowTapOffset = 1.5;   // a 3x3 grid at +-1.5 texel; with the hardware 2x2 each tap reaches one texel further
 
 // 1.0 = fully lit, 0.0 = fully shadowed, of the point light `light` (its index in the LightList block) at fragPos with
 // shading normal n. A literal 1.0 with no texture fetch when no fire casts (count 0: DREAM_SHADOWS=0, the view model, no fires).
@@ -104,8 +104,13 @@ float dreamFireVisibility(int light, vec3 fragPos, vec3 n)
     vec2 hi = tile.xy + tile.zw - FireShadowGutterTexels * texel;
     vec2 o = FireShadowTapOffset * texel;
     float sum = texture(uFireShadowAtlas, vec3(clamp(uv + vec2(-o.x, -o.y), lo, hi), refDepth))
+              + texture(uFireShadowAtlas, vec3(clamp(uv + vec2( 0.0, -o.y), lo, hi), refDepth))
               + texture(uFireShadowAtlas, vec3(clamp(uv + vec2( o.x, -o.y), lo, hi), refDepth))
+              + texture(uFireShadowAtlas, vec3(clamp(uv + vec2(-o.x,  0.0), lo, hi), refDepth))
+              + texture(uFireShadowAtlas, vec3(clamp(uv + vec2( 0.0,  0.0), lo, hi), refDepth))
+              + texture(uFireShadowAtlas, vec3(clamp(uv + vec2( o.x,  0.0), lo, hi), refDepth))
               + texture(uFireShadowAtlas, vec3(clamp(uv + vec2(-o.x,  o.y), lo, hi), refDepth))
+              + texture(uFireShadowAtlas, vec3(clamp(uv + vec2( 0.0,  o.y), lo, hi), refDepth))
               + texture(uFireShadowAtlas, vec3(clamp(uv + vec2( o.x,  o.y), lo, hi), refDepth));
-    return mix(1.0, 0.25 * sum, clamp(range.w, 0.0, 1.0));
+    return mix(1.0, (1.0 / 9.0) * sum, clamp(range.w, 0.0, 1.0));
 }

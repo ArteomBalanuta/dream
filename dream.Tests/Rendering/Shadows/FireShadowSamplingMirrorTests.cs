@@ -423,10 +423,25 @@ public class FireShadowSamplingMirrorTests
         Match function = Regex.Match(source, @"float dreamFireVisibility\(int light, vec3 fragPos, vec3 n\)\s*\{(.*)\n\}", RegexOptions.Singleline);
         Assert.True(function.Success);
         Assert.Equal(ShadowSettings.FireTaps, Regex.Matches(function.Groups[1].Value, @"texture\(uFireShadowAtlas").Count);
-        Assert.Contains("0.25 * sum", function.Groups[1].Value);
-        // Every tap is clamped into the tile's inner rect.
-        Assert.Equal(ShadowSettings.FireTaps, Regex.Matches(function.Groups[1].Value, @"clamp\(uv \+ vec2\(\s*[-+]?o\.x,\s*[-+]?o\.y\), lo, hi\)").Count);
-        Assert.Equal(1f / ShadowSettings.FireTaps, 0.25f);
+
+        // The average is the reciprocal of the tap count, written in the GLSL as a division it is read back from.
+        Match average = Regex.Match(function.Groups[1].Value, @"mix\(1\.0, \(1\.0 / ([0-9.]+)\) \* sum,");
+        Assert.True(average.Success, "The averaging factor must be a 1.0 / <taps> division.");
+        Assert.Equal(1f / ShadowSettings.FireTaps, 1f / float.Parse(average.Groups[1].Value, CultureInfo.InvariantCulture), 6);
+
+        // Every tap is clamped into the tile's inner rect, and the grid is the full FireTapsPerSide square: each of
+        // the three offsets on each axis appears FireTapsPerSide times.
+        Assert.Equal(ShadowSettings.FireTaps, Regex.Matches(function.Groups[1].Value, @"clamp\(uv \+ vec2\(\s*(?:-o\.x|0\.0|o\.x),\s*(?:-o\.y|0\.0|o\.y)\), lo, hi\)").Count);
+        foreach (string axis in new[] { "x", "y" })
+        {
+            foreach (string sign in new[] { "-o." + axis, "0.0", "o." + axis })
+            {
+                string pattern = axis == "x"
+                    ? @"vec2\(\s*" + Regex.Escape(sign) + @","
+                    : @",\s*" + Regex.Escape(sign) + @"\), lo, hi\)";
+                Assert.Equal(ShadowSettings.FireTapsPerSide, Regex.Matches(function.Groups[1].Value, pattern).Count);
+            }
+        }
     }
 
     [Fact]
@@ -738,7 +753,7 @@ internal static class FireShadowMirror
     private const float TanMax = 4f;
     private const float NormalOffsetTexels = 1.5f;
     private const float ConstantBias = 0.006f;
-    private const float TapOffset = 0.5f;
+    private static readonly float TapOffset = FireShadowList.TapOffsetTexels;
 
     private static Vector2 Clamp(Vector2 v, Vector2 lo, Vector2 hi) => new(Math.Clamp(v.X, lo.X, hi.X), Math.Clamp(v.Y, lo.Y, hi.Y));
 
@@ -842,9 +857,14 @@ internal static class FireShadowMirror
 
         float sum =
             atlas.Compare(Clamp(uv + new Vector2(-o.X, -o.Y), lo, hi), refDepth)
+            + atlas.Compare(Clamp(uv + new Vector2(0f, -o.Y), lo, hi), refDepth)
             + atlas.Compare(Clamp(uv + new Vector2(o.X, -o.Y), lo, hi), refDepth)
+            + atlas.Compare(Clamp(uv + new Vector2(-o.X, 0f), lo, hi), refDepth)
+            + atlas.Compare(Clamp(uv + new Vector2(0f, 0f), lo, hi), refDepth)
+            + atlas.Compare(Clamp(uv + new Vector2(o.X, 0f), lo, hi), refDepth)
             + atlas.Compare(Clamp(uv + new Vector2(-o.X, o.Y), lo, hi), refDepth)
+            + atlas.Compare(Clamp(uv + new Vector2(0f, o.Y), lo, hi), refDepth)
             + atlas.Compare(Clamp(uv + new Vector2(o.X, o.Y), lo, hi), refDepth);
-        return MathHelper.Lerp(1f, 0.25f * sum, Math.Clamp(range.W, 0f, 1f));
+        return MathHelper.Lerp(1f, sum / ShadowSettings.FireTaps, Math.Clamp(range.W, 0f, 1f));
     }
 }
