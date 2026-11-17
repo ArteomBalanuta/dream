@@ -58,6 +58,8 @@ public class Game : GameWindow
     private readonly MenuScreenState _pauseScreen = new();
     private bool _pauseWasVisible;
     private bool _exitToMainMenuPending;
+    // The tip the title menu's loading screen showed, kept for the same screen over the world.
+    private string? _loadingTip;
     // DREAM_MENU_CAPTURE: walks the title screen and writes a PNG of each screen (art review).
     private readonly MenuCapture? _menuCapture = MenuFlowScript.IsEnabled(Environment.GetEnvironmentVariable) ? null : MenuCapture.FromEnvironment();
     // DREAM_MENU_FLOW: the scripted Single Player / pause / exit walk (verification only).
@@ -234,11 +236,16 @@ public class Game : GameWindow
     // is shown under the buttons when a play session just ended.
     private void ShowMainMenu(string? sessionEndReason)
     {
+        // A start that will wait on the loading screen's prompt asks the server to keep the player's spawn
+        // protection until their first input.
         NetworkSessionCoordinator coordinator = new(
             _localServer,
             new RemoteSessionConnector(),
             _contentError,
-            ClientIdentityStore.ForCurrentUser());
+            ClientIdentityStore.ForCurrentUser())
+        {
+            HoldSpawnProtection = LoadingScreenPolicy.Resolve(true, Environment.GetEnvironmentVariable) == LoadingGateMode.WaitForKey
+        };
         SinglePlayerLauncher launcher = new(coordinator, _localServer, _contentError, () => _desktopClientConfig.PlayerName);
         _mainMenu = new MainMenuScene(
             launcher,
@@ -379,8 +386,9 @@ public class Game : GameWindow
             _mainMenu.Update();
             if (_mainMenu.TryTakeConnectedSession(out RemoteClientSession? menuSession) && menuSession != null)
             {
+                _loadingTip = _mainMenu.LoadingTip;
                 _mainMenu = null;
-                EnterPlayScene(menuSession);
+                EnterPlayScene(menuSession, fromMenu: true);
             }
 
             return;
@@ -394,7 +402,7 @@ public class Game : GameWindow
         _startupScene.Update();
         if (_startupScene.TryTakeConnectedSession(out RemoteClientSession? remoteClient) && remoteClient != null)
         {
-            EnterPlayScene(remoteClient);
+            EnterPlayScene(remoteClient, fromMenu: false);
             // The replaced startup scene releases its menu renderer and ImGui context here;
             // the play scene's Render has already created and made current its own context.
             _startupScene.Dispose();
@@ -408,7 +416,7 @@ public class Game : GameWindow
         }
     }
 
-    private void EnterPlayScene(RemoteClientSession remoteClient)
+    private void EnterPlayScene(RemoteClientSession remoteClient, bool fromMenu)
     {
         _settings.ResetOverlays();
         _pauseScreen.Reset();
@@ -420,6 +428,8 @@ public class Game : GameWindow
             PersistDesktopClientConfig,
             PlayScene.ResolveLoopbackRemotePlayersEnabled(),
             _localServer);
+        // From the title menu the loading screen carries on over the world until the player presses a key.
+        _playScene.BeginLoadingScreen(LoadingScreenPolicy.Resolve(fromMenu, Environment.GetEnvironmentVariable));
         // Esc inside a pause-menu sub-screen (Options, Key Bindings) goes back one screen instead of
         // closing the whole menu; on the pause root it closes the menu as before.
         _playScene.TryEscapeBack = () => _settings.PauseMenuVisible && _pauseScreen.Apply(MenuAction.Back);
@@ -508,6 +518,7 @@ public class Game : GameWindow
         if (_playScene != null)
         {
             _playScene.Render(args, IsFocused, MouseState, size => ClientSize = size);
+            RenderLoadingOverlay();
             RenderPauseMenu();
         }
         else if (_mainMenu != null)
@@ -543,7 +554,9 @@ public class Game : GameWindow
         MenuFlowScript.Command command = _menuFlow.Tick(new MenuFlowScript.SceneState(
             _playScene != null,
             _settings.PauseMenuVisible,
-            _pauseScreen.Current == MenuScreen.Root));
+            _pauseScreen.Current == MenuScreen.Root,
+            _playScene?.LoadingOverlayVisible ?? false,
+            _playScene?.LoadingAwaitingKey ?? false));
         if (command.Step == MenuFlowScript.Step.None)
         {
             return;
@@ -559,6 +572,9 @@ public class Game : GameWindow
 
         switch (command.Step)
         {
+            case MenuFlowScript.Step.PressAnyKey:
+                _playScene?.PressContinue();
+                break;
             case MenuFlowScript.Step.StartSinglePlayer:
                 _mainMenu?.Handle(MenuAction.SinglePlayer);
                 break;
@@ -659,6 +675,37 @@ public class Game : GameWindow
                 Close();
                 break;
         }
+    }
+
+    // The loading screen over the world's first frames: opaque, so the world is never seen half-loaded, and
+    // left up until the player presses a key. Without the menu UI the player goes straight in.
+    private void RenderLoadingOverlay()
+    {
+        if (_playScene == null || !_playScene.LoadingOverlayVisible)
+        {
+            return;
+        }
+
+        MenuUiRenderer? renderer = EnsureMenuRenderer();
+        if (renderer == null || renderer.State == UiAtlasState.Failed)
+        {
+            _playScene.SkipLoadingScreen();
+            return;
+        }
+
+        GL.Viewport(0, 0, ClientSize.X, ClientSize.Y);
+        LoadingScreenState state = new(
+            _playScene.LoadingStage,
+            LoadingProgress.ForScene(_playScene.LoadingProgress01),
+            _playScene.LoadingAwaitingKey,
+            _loadingTip,
+            (float)GLFW.GetTime());
+        renderer.Draw(
+            ClientSize.X,
+            ClientSize.Y,
+            _settings.UiScaleSetting,
+            new UiPointer(new Vector2(-1000f, -1000f), false, false, IsFocused),
+            w => LoadingScreenPanel.Build(w, in state));
     }
 
     // The Esc menu, drawn over the finished world frame. Resume closes it; Exit to Main Menu is
