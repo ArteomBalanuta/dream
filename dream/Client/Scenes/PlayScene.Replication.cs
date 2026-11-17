@@ -220,12 +220,25 @@ public partial class PlayScene
             // resolves. All three still run before the presenter.
             RemoteEnemyStateApplier.AddOrUpdateEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
             ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot, _scenePresenter);
-            RemoteEnemyStateApplier.RemoveAbsentEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
+            // An actor the cache withheld as stale is missing from this list without having left, so
+            // the removals are skipped for that snapshot and run again on the next complete one.
+            bool actorsWithheld = ClientSnapshotActorCompleteness.WithholdsActors(snapshotMessage.Snapshot);
+            if (!actorsWithheld)
+            {
+                RemoteEnemyStateApplier.RemoveAbsentEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
+            }
+
             _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot);
-            _npcs.ApplyActors(snapshotMessage.Snapshot.Actors);
+            if (!actorsWithheld)
+            {
+                // ApplyActors rebuilds the whole NPC list from the snapshot, so an incomplete one
+                // would clear every NPC it does not name.
+                _npcs.ApplyActors(snapshotMessage.Snapshot.Actors);
+            }
+
             ObserveLocalDeath(snapshotMessage.Snapshot.Actors, snapshotMessage.Snapshot.ServerTick);
             LogPresenterDiagnostics("snapshot");
         }

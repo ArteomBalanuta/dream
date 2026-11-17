@@ -164,49 +164,61 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 actor.Facing));
         }
 
-        // Collected first so neither dictionary is modified while it is enumerated; removal keeps
-        // the dictionary's enumeration order, as the old ToArray copies did.
-        _staleRemoteActorIds.Clear();
-        foreach (int actorId in _remotePlayers.Keys)
+        // An actor the cache withheld as stale is absent from this snapshot without having left, so
+        // nothing is pruned on one: the avatars, enemies and roster entries stay until a complete
+        // snapshot shows who is really gone. The session map above is still swapped in either way,
+        // so damage keeps being attributed from the snapshot that came before it.
+        bool actorsWithheld = ClientSnapshotActorCompleteness.WithholdsActors(snapshot);
+        if (!actorsWithheld)
         {
-            if (!_observedRemoteActorIds.Contains(actorId))
+            // Collected first so neither dictionary is modified while it is enumerated; removal keeps
+            // the dictionary's enumeration order, as the old ToArray copies did.
+            _staleRemoteActorIds.Clear();
+            foreach (int actorId in _remotePlayers.Keys)
             {
-                _staleRemoteActorIds.Add(actorId);
+                if (!_observedRemoteActorIds.Contains(actorId))
+                {
+                    _staleRemoteActorIds.Add(actorId);
+                }
             }
+
+            for (int i = 0; i < _staleRemoteActorIds.Count; i++)
+            {
+                int actorId = _staleRemoteActorIds[i];
+                _remotePlayers.Remove(actorId, out RemotePlayerEntry? entry);
+                if (NetworkDiagnosticsLog.IsEnabled)
+                {
+                    LogPrunedRemotePlayer(actorId, entry!.SessionId, snapshot);
+                }
+            }
+
+            PruneUnobservedEnemies();
         }
 
-        for (int i = 0; i < _staleRemoteActorIds.Count; i++)
-        {
-            int actorId = _staleRemoteActorIds[i];
-            _remotePlayers.Remove(actorId, out RemotePlayerEntry? entry);
-            if (NetworkDiagnosticsLog.IsEnabled)
-            {
-                LogPrunedRemotePlayer(actorId, entry!.SessionId, snapshot);
-            }
-        }
-
-        PruneUnobservedEnemies();
         (_lastSnapshotPlayerSessions, _currentSnapshotPlayerSessions) = (_currentSnapshotPlayerSessions, _lastSnapshotPlayerSessions);
         _currentSnapshotPlayerSessions.Clear();
 
-        _staleRosterSessions.Clear();
-        foreach (string sessionId in _playerRoster.Keys)
+        if (!actorsWithheld)
         {
-            if (string.Equals(sessionId, _localSessionId, StringComparison.Ordinal))
+            _staleRosterSessions.Clear();
+            foreach (string sessionId in _playerRoster.Keys)
             {
-                continue;
+                if (string.Equals(sessionId, _localSessionId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!_observedPlayerSessions.Contains(sessionId))
+                {
+                    _staleRosterSessions.Add(sessionId);
+                }
             }
 
-            if (!_observedPlayerSessions.Contains(sessionId))
+            for (int i = 0; i < _staleRosterSessions.Count; i++)
             {
-                _staleRosterSessions.Add(sessionId);
+                _playerRoster.Remove(_staleRosterSessions[i]);
+                _sortedRosterIsStale = true;
             }
-        }
-
-        for (int i = 0; i < _staleRosterSessions.Count; i++)
-        {
-            _playerRoster.Remove(_staleRosterSessions[i]);
-            _sortedRosterIsStale = true;
         }
 
         if (NetworkDiagnosticsLog.IsEnabled)
