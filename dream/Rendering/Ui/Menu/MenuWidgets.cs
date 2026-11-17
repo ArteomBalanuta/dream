@@ -296,6 +296,9 @@ public sealed class MenuWidgets
 
     // A single-line text box: a plate, left-aligned text clipped to the box (the tail stays visible), a
     // caret when focused. Returns true on the frame it is clicked (the caller moves focus).
+    // CONTRACT (WS-B): draws the selection highlight and a caret bar at field.Caret, scrolls (field.ScrollStart)
+    // so the caret stays visible, and on a press inside the box places the caret at the clicked character;
+    // dragging with the button held extends the selection. Returns true on the frame it is pressed or clicked.
     public bool TextField(int id, UiRect r, MenuTextField field, bool focused, bool enabled = true)
     {
         bool clicked = Input.Button(id, r, enabled) && enabled;

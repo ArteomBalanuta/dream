@@ -27,7 +27,8 @@ public sealed class MainMenuScene
         IReadOnlyList<MenuOptionRow> optionRows,
         string? sessionEndReason = null,
         MultiplayerDefaults? multiplayer = null,
-        Action<MultiplayerDefaults>? persistMultiplayer = null)
+        Action<MultiplayerDefaults>? persistMultiplayer = null,
+        IMenuClipboard? clipboard = null)
     {
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _optionRows = optionRows ?? throw new ArgumentNullException(nameof(optionRows));
@@ -61,6 +62,10 @@ public sealed class MainMenuScene
             _form.TypeCharacter(unicode);
         }
     }
+
+    // A key press with its modifiers; the Multiplayer screen passes them and the clipboard to the form.
+    // CONTRACT-STUB: WS-A routes modifiers and the clipboard.
+    public MenuAction HandleKey(MenuKey key, MenuKeyModifiers modifiers) => HandleKey(key);
 
     // A key press. Returns what Render would return (None or Exit); never throws on Root.
     public MenuAction HandleKey(MenuKey key)

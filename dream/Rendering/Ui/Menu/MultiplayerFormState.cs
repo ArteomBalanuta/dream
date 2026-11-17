@@ -47,9 +47,14 @@ public sealed class MultiplayerFormState
     // To the focused field.
     public void TypeCharacter(uint unicode) => FocusedField?.TypeCharacter(unicode);
 
-    // Backspace edits the focused field; Tab cycles PlayerName -> Address -> JoinPort -> HostPort -> PlayerName;
-    // Enter returns Join when focus is Address or JoinPort, Host when focus is HostPort, else None;
-    // Escape returns Back.
+    // The editing keys act on the focused field: Backspace/Delete/Left/Right/Home/End (Shift extends the
+    // selection, Control moves or deletes by word), SelectAll, and Copy/Cut/Paste through clipboard (ignored
+    // when it is null). Tab cycles PlayerName -> Address -> JoinPort -> HostPort -> PlayerName (Shift+Tab
+    // backwards) and selects the new field's text. Enter returns Join (PlayerName, Address, JoinPort) or
+    // Host (HostPort); Escape returns Back; everything else None.
+    // CONTRACT-STUB: WS-A extends this to the new keys and modifiers.
+    public MenuAction HandleKey(MenuKey key, MenuKeyModifiers modifiers, IMenuClipboard? clipboard) => HandleKey(key);
+
     public MenuAction HandleKey(MenuKey key)
     {
         switch (key)

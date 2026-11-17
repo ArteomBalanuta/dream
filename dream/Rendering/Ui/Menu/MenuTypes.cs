@@ -35,7 +35,26 @@ public enum MenuKey : byte
     Backspace,
     Tab,
     Enter,
-    Escape
+    Escape,
+    Delete,
+    Left,
+    Right,
+    Home,
+    End,
+    // Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+V: the window maps the shortcuts, so the scene stays layout-free.
+    SelectAll,
+    Copy,
+    Cut,
+    Paste
+}
+
+// Shift extends a selection (and reverses Tab); Control moves by word.
+[Flags]
+public enum MenuKeyModifiers : byte
+{
+    None = 0,
+    Shift = 1,
+    Control = 2
 }
 
 public enum MenuOptionKind : byte
