@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
+using Dream.Rendering.Effects;
 using Dream.Rendering.Lighting;
 using Dream.Rendering.Shadows;
+using Dream.Rendering.World;
 using OpenTK.Mathematics;
 using Xunit;
 
@@ -163,11 +165,56 @@ public class FireShadowAtlasLayoutTests
     {
         float near = FireShadowAtlas.NearPlane;
         float far = FireShadowAtlas.FarPlane(10f);
-        Assert.Equal(0.10f, near);
         Assert.Equal(11.5f, far, 5);
         Assert.Equal(0f, FireShadowAtlas.Depth(near, near, far), 5);
         Assert.Equal(1f, FireShadowAtlas.Depth(far, near, far), 5);
         Assert.True(FireShadowAtlas.Depth(3f, near, far) is > 0f and < 1f);
+    }
+
+    // ---- the near plane against the flame's wander ----
+
+    // WHETHER A CASTER IS CLIPPED BY THE NEAR PLANE MUST NOT DEPEND ON THE WANDER. The caster pass renders each face from
+    // the FLICKERED position, so a surface d from the flame's BASE position is tested against d minus the wander's
+    // component along that face's axis; every face axis is +-X or +-Z, so that component swings over
+    // +-FireFlicker.OffsetLateral. Surfaces in [NearPlane - OffsetLateral, NearPlane + OffsetLateral] therefore enter and
+    // leave the frustum as the flame wanders, flipping between occluding and lit every frame.
+    //
+    // That band is 2 x OffsetLateral wide wherever the near plane sits, so no near plane removes it; what the near plane
+    // decides is where it sits. Pushed down onto zero, the only surfaces left inside it are ones the flame itself passes
+    // through, whose shadow is degenerate whatever the pass does. So the near plane must be a small FRACTION of the
+    // swing - the fraction it is allowed to add to the band - and not, as it was while the wander was two centimetres,
+    // several times it.
+    [Fact]
+    public void The_Near_Plane_Is_A_Small_Fraction_Of_The_Flames_Wander_So_The_Wander_Cannot_Flip_A_Caster_Across_It()
+    {
+        float swing = FireFlicker.OffsetLateral;
+        Assert.True(
+            FireShadowAtlas.NearPlane <= swing * FireShadowAtlas.WanderBandFraction,
+            $"the near plane {FireShadowAtlas.NearPlane} carries the wander's flip band out to "
+            + $"{FireShadowAtlas.NearPlane + swing} units from the flame, against the {swing} the wander alone forces");
+        Assert.Equal(swing * FireShadowAtlas.WanderBandFraction, FireShadowAtlas.NearPlane);
+        Assert.True(FireShadowAtlas.WanderBandFraction < 1f);
+    }
+
+    // The other side of that choice, so nobody answers the test above by driving the near plane to zero: perspective
+    // depth precision is governed by the far/near ratio, and the atlas stores DEPTH_COMPONENT24. At the deepest far plane
+    // the atlas ever uses (the largest fire radius) and at the worst distance inside it (the far plane itself), one depth
+    // quantum in world units must stay far under ShadowSettings.ConstantBiasWorld, the smallest bias any receiver gets;
+    // otherwise the quantisation, not the bias, would decide self-shadowing.
+    [Fact]
+    public void The_Near_Plane_Is_Still_Far_Enough_Out_That_One_Depth_Quantum_Is_Nothing_Beside_The_Constant_Bias()
+    {
+        const float Depth24Steps = 16777215f;
+        float near = FireShadowAtlas.NearPlane;
+        float far = FireShadowAtlas.FarPlane(MathF.Max(LampLightIndex.LampRadius, HeldLightCatalog.TorchRadius));
+
+        // z_stored = 0.5 * ((f + n) / (f - n) - (2 f n / (f - n)) / z) + 0.5, so d(z_stored)/dz = (f n / (f - n)) / z^2
+        // and one step of the 24 bit buffer is worth z^2 (f - n) / (Steps f n) world units at z.
+        float quantum = far * far * (far - near) / (Depth24Steps * far * near);
+        Assert.True(
+            quantum * 8f <= ShadowSettings.ConstantBiasWorld,
+            $"one depth quantum at the far plane is {quantum} world units against a constant bias of "
+            + $"{ShadowSettings.ConstantBiasWorld}; the near plane {near} is too close in");
     }
 
     [Fact]

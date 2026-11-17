@@ -6,7 +6,7 @@ namespace Dream.Rendering.Lighting;
 
 // The point light each HeldLightKind casts (wave T2). Colors are linear RGB already multiplied by
 // intensity, as PointLight expects. The torch flickers (FireFlicker: four octaves plus gusts, in
-// intensity, radius and a small positional wobble), driven only by client time and a per-player
+// intensity, radius and the flame's wander), driven only by client time and a per-player
 // seed, so it is deterministic and costs no state; the lantern burns steady.
 public static class HeldLightCatalog
 {
@@ -92,7 +92,7 @@ public static class HeldLightCatalog
     }
 
     // The light of the kind at the anchor; false for None. The light's radius and position carry the
-    // flicker (radius scale and the flame's wobble), its colour the intensity.
+    // flicker (radius scale and the flame's wander), its colour the intensity.
     public static bool TryCreate(HeldLightKind kind, Vector3 position, double timeSeconds, int seed, out PointLight light)
     {
         if (!TryResolve(kind, out Vector3 color, out float radius))
@@ -102,12 +102,17 @@ public static class HeldLightCatalog
         }
 
         FireFlickerSample sample = Sample(kind, position, timeSeconds, seed);
-        // A held light's colour must NEVER be scaled after this point (no daylight factor, no fade):
-        // FireFlicker.IntensityOf recovers the torch's flicker by reading Color.X / TorchColor.X back,
-        // clamped to [1 - A, 1 + A]. A scaled colour would not fail, it would silently pin the halo's
-        // flicker at the floor. Scale a placed fire's colour (the brazier does) but never a held one.
         // The actor id rides along as the light's flicker seed, so a consumer that only has the light
-        // reads the very phase this sample was taken at instead of re-deriving one.
+        // reads the very phase this sample was taken at instead of re-deriving one. That is the path
+        // IntensityOf takes for every light this method builds, and it does not look at the colour.
+        //
+        // The old rule - a held light's colour must NEVER be scaled after this point (no daylight
+        // factor, no fade), because IntensityOf recovered the torch's flicker by reading
+        // Color.X / TorchColor.X back - therefore no longer carries the production path. It survives
+        // only as the contract of the seed-0 fallback, which is still the one IntensityOf reaches for a
+        // held torch whose producer left no seed; a scaled colour would not fail there either, it would
+        // silently pin that light's halo flicker at the floor. Keep it: scale a placed fire's colour
+        // (the brazier does) but never a held one.
         light = new PointLight(position + sample.Offset, radius * sample.RadiusScale, color * sample.Intensity, seed);
         return true;
     }

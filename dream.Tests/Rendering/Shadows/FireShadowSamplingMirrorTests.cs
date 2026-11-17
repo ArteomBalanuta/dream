@@ -555,7 +555,9 @@ public class FireShadowSamplingMirrorTests
 // The shader's lookup, line for line, over a CPU atlas. Shared by the sampling, flicker and identity tests.
 internal static class FireShadowMirror
 {
-    public const float Near = 0.10f;
+    // The near plane the caster pass uses. Taken from the production constant rather than restated, because it is
+    // itself derived from the flame's wander (FireShadowAtlas) and a restated copy would silently stop mirroring it.
+    public const float Near = FireShadowAtlas.NearPlane;
 
     // The design: far = Radius * 1.15, because the windowed falloff is exactly 0 at the radius, so clipping past it is invisible.
     public static float FarFor(float radius) => radius * 1.15f;

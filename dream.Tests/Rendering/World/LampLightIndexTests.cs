@@ -182,14 +182,39 @@ public class LampLightIndexTests
         Assert.InRange(lights.Lights[0].Radius, 7.29f, 8.71f);
     }
 
-    // The wander's reach is the diagonal of its own box, so this relation is what the drift bound
-    // above means. Pinned as a relation rather than a value.
+    // What the drift bound above is worth, asserted against the thing it bounds: the SAMPLED offset. Eight
+    // seconds of clock at 240 Hz, on the seeds the two producers in that test actually carry - a lamp's
+    // seed is FireFlicker.SeedFor(its centre), a held torch's is the actor id - never leaves the reach,
+    // and gets most of the way out to it, so a reach that were merely enormous fails here too. Comparing
+    // the reach against the expression that defines it would assert nothing at all.
     [Fact]
-    public void TheWanderReach_IsTheDiagonalOfTheWanderBox()
+    public void TheWanderReach_BoundsTheSampledOffset_AndIsNearlyReached()
     {
-        Vector3 corner = new(FireFlicker.OffsetLateral, FireFlicker.OffsetVertical, FireFlicker.OffsetLateral);
-        Assert.Equal(corner.Length, WanderReach, 6);
-        Assert.True(WanderReach > FireFlicker.OffsetLateral);
+        const int Rate = 240;
+        (FireFlickerKind Kind, int Seed)[] fires =
+        [
+            (FireFlickerKind.Lamp, FireFlicker.SeedFor(new Vector3(20.5f, 1.5f, 25.5f))),
+            (FireFlickerKind.Lamp, FireFlicker.SeedFor(new Vector3(3.5f, 1.5f, 3.5f))),
+            (FireFlickerKind.Lamp, FireFlicker.SeedFor(new Vector3(0.5f, 1.5f, 39.5f))),
+            (FireFlickerKind.HeldTorch, 1)
+        ];
+
+        float worst = 0f;
+        foreach ((FireFlickerKind kind, int seed) in fires)
+        {
+            for (int i = 0; i < 8 * Rate; i++)
+            {
+                Vector3 offset = FireFlicker.Sample(kind, Vector3.Zero, (double)i / Rate, seed).Offset;
+                Assert.True(
+                    offset.Length <= WanderReach + WanderEpsilon,
+                    $"{kind} seed {seed} at t={(double)i / Rate}: offset {offset} is {offset.Length} long, past the wander reach {WanderReach}");
+                worst = MathF.Max(worst, offset.Length);
+            }
+        }
+
+        Assert.True(
+            worst >= 0.7f * WanderReach,
+            $"the flame never got past {worst / WanderReach:0.00} of the wander reach {WanderReach}, so the bound measures nothing");
     }
 
     private const float WanderEpsilon = 1e-5f;

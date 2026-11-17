@@ -68,12 +68,31 @@ public sealed class PlaySceneHeldLightsTests
         Assert.True(drift.Length <= FlameWanderReach + WanderEpsilon, $"drift {drift.Length} exceeds the wander reach {FlameWanderReach}");
     }
 
+    // What the drift bound above is worth, asserted against the thing it bounds: the SAMPLED offset. Eight seconds of
+    // clock at 240 Hz on the seeds this file's held lights actually carry (HeldLightCatalog passes the actor id straight
+    // through as the flicker seed) must never leave the reach - and must get most of the way out to it, so a reach that
+    // were merely enormous fails here as surely as one that were too small. Comparing the reach against the expression
+    // that defines it would assert nothing at all.
     [Fact]
-    public void TheFlameWanderReach_IsTheDiagonalOfTheWanderBox()
+    public void TheFlameWanderReach_BoundsTheSampledOffset_AndIsNearlyReached()
     {
-        Vector3 corner = new(FireFlicker.OffsetLateral, FireFlicker.OffsetVertical, FireFlicker.OffsetLateral);
-        Assert.Equal(corner.Length, FlameWanderReach, 6);
-        Assert.True(FlameWanderReach > FireFlicker.OffsetLateral);
+        const int Rate = 240;
+        float worst = 0f;
+        foreach (int actorId in new[] { 1, 2, 4, 5 })
+        {
+            for (int i = 0; i < 8 * Rate; i++)
+            {
+                Vector3 offset = FireFlicker.Sample(FireFlickerKind.HeldTorch, Vector3.Zero, (double)i / Rate, actorId).Offset;
+                Assert.True(
+                    offset.Length <= FlameWanderReach + WanderEpsilon,
+                    $"actor {actorId} at t={(double)i / Rate}: offset {offset} is {offset.Length} long, past the wander reach {FlameWanderReach}");
+                worst = MathF.Max(worst, offset.Length);
+            }
+        }
+
+        Assert.True(
+            worst >= 0.7f * FlameWanderReach,
+            $"the flame never got past {worst / FlameWanderReach:0.00} of the wander reach {FlameWanderReach}, so the bound measures nothing");
     }
 
     [Fact]

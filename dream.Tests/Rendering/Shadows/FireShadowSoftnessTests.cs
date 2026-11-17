@@ -113,15 +113,18 @@ public class FireShadowSoftnessTests
     }
 
     // B4: the furthest a tap can reach from the sample - the grid's corner offset plus the half texel of its hardware
-    // 2x2, which is the same reach SlopeBiasTexels is derived from - stays inside the gutter, so the clamp to the
-    // tile's inner rect never has to save a tap from the neighbouring tile.
+    // 2x2, rounded up to a whole texel - stays inside the gutter, so the clamp to the tile's inner rect never has to
+    // save a tap from the neighbouring tile. Measured from TapOffsetTexels, NOT from SlopeBiasTexels: the bias happens
+    // to be the same expression today, but it is a DEPTH offset and decoupling the two would leave this test passing
+    // while it measured nothing about the kernel.
     // A_Kernel_At_A_Face_Edge_Never_Reads_The_Neighbouring_Tile checks the clamp itself.
     [Fact]
     public void The_Kernel_Reach_Stays_Inside_The_Tile_Gutter()
     {
+        float reach = FireShadowList.TapOffsetTexels + 1f;
         Assert.True(
-            FireShadowList.SlopeBiasTexels <= ShadowSettings.TileGutter,
-            $"A tap reaches {FireShadowList.SlopeBiasTexels} texels, past the {ShadowSettings.TileGutter} texel gutter.");
+            reach <= ShadowSettings.TileGutter,
+            $"A tap reaches {reach} texels, past the {ShadowSettings.TileGutter} texel gutter.");
     }
 
     // The world distance between the LowLevel and HighLevel crossings along the segment dark -> lit, or null when the

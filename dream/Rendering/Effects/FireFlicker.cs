@@ -13,7 +13,8 @@ public enum FireFlickerKind
 }
 
 // One flicker sample: the multiplier of the light's intensity (and of everything that must flicker
-// with it), the multiplier of its radius, and a small positional wobble of the flame.
+// with it), the multiplier of its radius, and the flame's wander: a decimetre-scale excursion of the
+// flame from its base position, bounded by OffsetLateral on X and Z and OffsetVertical on Y.
 public readonly record struct FireFlickerSample(float Intensity, float RadiusScale, Vector3 Offset);
 
 // The one flicker of every fire: the light, its halo, its flame and the shadows it casts all read

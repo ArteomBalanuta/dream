@@ -41,8 +41,11 @@ public class FireShadowFlickerTests
 
     private readonly record struct Shot(FireShadowSlot Slot, Vector3 BasePosition, float BaseRadius, float Intensity);
 
-    // A flat 56 x 56 floor with one authored brazier in the bucket the camera looks at; the production collect-and-select path.
-    private static Shot Capture(double? clockSeconds)
+    // A flat 56 x 56 floor with one authored brazier in the bucket the camera looks at. Built once: the 3,136 cubes and
+    // the export are read-only inputs, and rebuilding them per capture cost most of a sweep's wall clock.
+    private static readonly GeometryRenderExport Floor = BuildFloor();
+
+    private static GeometryRenderExport BuildFloor()
     {
         List<Cube> cubes = [];
         for (int x = 0; x < 56; x++)
@@ -57,7 +60,13 @@ public class FireShadowFlickerTests
             }
         }
 
-        GeometryRenderExport export = new(DirtyCells: [], Cells: [], Blocks: [], CompatibilityCubes: cubes) { StaticContentVersion = 1 };
+        return new GeometryRenderExport(DirtyCells: [], Cells: [], Blocks: [], CompatibilityCubes: cubes) { StaticContentVersion = 1 };
+    }
+
+    // The production collect-and-select path over that floor, at one instant of the clock.
+    private static Shot Capture(double? clockSeconds)
+    {
+        GeometryRenderExport export = Floor;
         PlacedLightIndex index = new();
         LightCollector lights = new();
         index.Collect(in export, Camera, lights, sunIntensity: 0f, clockSeconds);
@@ -182,11 +191,28 @@ public class FireShadowFlickerTests
         return 0.5f * (dark + lit);
     }
 
+    // One atlas for the whole test. A FireShadowMirror.Atlas is a float[2048 * 2048] - 16 MB on the large object heap -
+    // and a sweep took one per measurement, which churned gigabytes for nothing. RenderTile leaves every texel it does
+    // not write, so the four tiles slot 0 uses are re-filled with the clear value (1.0, the same value the constructor
+    // fills) before each render; nothing else in the atlas is ever touched, so the result is identical.
+    private FireShadowMirror.Atlas? _atlas;
+
+    private FireShadowMirror.Atlas ClearedAtlas()
+    {
+        FireShadowMirror.Atlas atlas = _atlas ??= new FireShadowMirror.Atlas(ShadowSettings.AtlasResolution);
+        for (int face = 0; face < 4; face++)
+        {
+            atlas.FillTile(0, face, 1f);
+        }
+
+        return atlas;
+    }
+
     // From the lookup: the z where the visibility crosses one half.
-    private static float MeasuredEdge(in FireShadowSlot slot, FireShadowMirror.Box box, float receiverX)
+    private float MeasuredEdge(in FireShadowSlot slot, FireShadowMirror.Box box, float receiverX)
     {
         FireShadowList list = BlockOf(in slot);
-        FireShadowMirror.Atlas atlas = new(ShadowSettings.AtlasResolution);
+        FireShadowMirror.Atlas atlas = ClearedAtlas();
         for (int face = 0; face < 4; face++)
         {
             atlas.RenderTile(in slot, 0, face, [box]);
@@ -316,7 +342,10 @@ public class FireShadowFlickerTests
     [Fact]
     public void The_Same_Sweep_Over_A_Frozen_Fire_Measures_Exactly_No_Travel()
     {
-        (float[] sampled, float[] exact) = EdgeSweep(60, 1.0 / 60.0, frozen: true);
+        // Three captures, not sixty: with a frozen fire every capture is bit-for-bit the same work, so the sweep's
+        // length measured nothing beyond the first repeat. Two would prove the spread is zero; three keeps a middle
+        // sample, so an alternating measurement could not hide between the ends.
+        (float[] sampled, float[] exact) = EdgeSweep(3, 1.0 / 60.0, frozen: true);
         _output.WriteLine($"frozen edge {sampled[0]:0.000000}, sampled spread {sampled.Max() - sampled.Min():0.000000},"
             + $" exact spread {exact.Max() - exact.Min():0.000000}");
         Assert.Equal(0f, sampled.Max() - sampled.Min());
@@ -326,7 +355,7 @@ public class FireShadowFlickerTests
     // The shadow boundary at each of `samples` clock instants, on the fixed rig: occluder 3 units east of the fire,
     // receivers on the ground 8 units east. Both the atlas lookup's 0.5-visibility crossing and the exact geometric
     // boundary, from the same slots. `frozen` hands the placed lights no clock at all.
-    private static (float[] Sampled, float[] Exact) EdgeSweep(int samples, double step, bool frozen)
+    private (float[] Sampled, float[] Exact) EdgeSweep(int samples, double step, bool frozen)
     {
         Shot reference = Capture(frozen ? null : 0.0);
         FireShadowMirror.Box occluder = OccluderFor(reference.BasePosition);
