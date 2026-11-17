@@ -72,11 +72,11 @@ CREATE UNIQUE INDEX ux_worlds_name ON worlds (name COLLATE NOCASE);
 
 - `world_id` is `AUTOINCREMENT`, so a deleted world's id is never reused.
 - Names are unique ignoring case. The catalog trims them and allows 1 to 64 characters.
-- Allowed sizes: width equals depth, 5 to 100; height 8; generator `default` version 1; map source `generated`. `WorldDescriptor.Validate` enforces this when a world is created or opened.
+- Allowed sizes: width equals depth, 5 to 100; height 8; generator `default` or `natural`, version 1; map source `generated`. `WorldDescriptor.Validate` enforces this when a world is created or opened.
 - `seed` is the same decimal text the old `simulation_seed` row held. `SqliteWorldMetadataRepository.GetOrCreateSimulationSeed` fills a NULL seed with `UPDATE worlds SET seed = $seed WHERE world_id = $worldId AND seed IS NULL` and re-reads it, so two racing loads keep the first. A seed that is not a decimal unsigned 64-bit number is a startup error (`InvalidDataException`).
 - `world_time_ticks` is the world clock (`WorldClock.WorldTicks`). `SqlitePersistenceCheckpointWriter` writes it with `UPDATE worlds SET world_time_ticks = $ticks WHERE world_id = $worldId` inside each checkpoint transaction whose `PersistenceCheckpoint.WorldTimeTicks` is set. A negative or non-integer value is a startup error.
 - The seed and the time are server-only. The wire carries only the public part of the row (`WorldDescriptor`, protocol v7), never the seed. Tick length per day is not stored: `DREAM_DAY_LENGTH_MINUTES` keeps control.
-- Migration 0003 inserts world 1, named `default`, 56x8x56, generated, generator `default` version 1, with `created_schema_version` 3. Its seed and time come from the old `world_metadata` rows, which the migration then deletes.
+- Migration 0003 inserts world 1, named `default`, 56x8x56, generated, generator `default` version 1, with `created_schema_version` 3. Its seed and time come from the old `world_metadata` rows, which the migration then deletes. A pristine world 1 (generated, no seed, world time 0, no row in any per-world table) is moved to the new-world generator, `natural` version 1, and the requested size the first time a server resolves it (`SqliteWorldCatalog.ResizeIfPristineDefault`); a world 1 with any data keeps its generator and size.
 
 ### Keys, storage and types
 

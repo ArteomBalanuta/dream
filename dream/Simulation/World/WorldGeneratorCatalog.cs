@@ -21,6 +21,12 @@ public static class WorldGeneratorCatalog
     public const string NaturalKey = "natural";
     public const int NaturalVersion = 1;
 
+    // The generator a world gets when its creator names none: `--worlds create` without --generator,
+    // a server started on a world name that does not exist yet, and a fresh database's untouched world 1.
+    // DefaultKey keeps its name because it is stored on existing rows; it is the classic generator now,
+    // not the one new worlds get.
+    public const string NewWorldKey = NaturalKey;
+
     private static readonly IMapGenerator[] s_all = [new DefaultMapGenerator(), new NaturalMapGenerator()];
 
     public static IReadOnlyList<IMapGenerator> All => s_all;

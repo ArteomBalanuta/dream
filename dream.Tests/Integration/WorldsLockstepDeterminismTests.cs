@@ -49,7 +49,10 @@ public sealed class WorldsLockstepDeterminismTests(ITestOutputHelper output)
         // The reference: a fresh v3 database whose world has the migrated world's seed and clock.
         using MigrationTestDatabase reference = new();
         SqliteWorldCatalog referenceCatalog = WorldBundles.OpenCatalog(reference);
-        WorldRecord created = referenceCatalog.Create(new WorldCreateOptions("reference", Seed: MigratedSeed));
+        // Migration 0003 seeds world 1 with the classic generator, so the reference names it explicitly
+        // (a world created without a key gets WorldGeneratorCatalog.NewWorldKey).
+        WorldRecord created = referenceCatalog.Create(new WorldCreateOptions(
+            "reference", Seed: MigratedSeed, GeneratorKey: WorldGeneratorCatalog.DefaultKey));
         new SqlitePersistenceCheckpointWriter(reference.Schema, created.Descriptor.Id)
             .Write(PersistenceCheckpoint.Empty with { WorldTimeTicks = DayClockTicks });
         SqliteConnection.ClearAllPools();

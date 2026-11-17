@@ -39,10 +39,10 @@ public sealed class WorldCliTests
         Assert.Equal(1, descriptor.GeneratorVersion);
         descriptor.Validate();
 
-        // Without the flag a world is still built by the default generator.
+        // Without the flag a new world gets WorldGeneratorCatalog.NewWorldKey, the natural generator.
         (exit, string plain, _) = Run(db, "create", "Home", "--size", "20");
         Assert.Equal(0, exit);
-        Assert.Equal("default:1", plain.TrimEnd().Split('	')[3]);
+        Assert.Equal("natural:1", plain.TrimEnd().Split('	')[3]);
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public sealed class WorldCliTests
         (int exit, string created, _) = Run(db, "create", "Alpha", "--size", "20");
         Assert.Equal(0, exit);
         string[] fields = created.TrimEnd().Split('\t');
-        Assert.Equal(["1", "Alpha", "20x8x20", "default:1", "0"], fields);
+        Assert.Equal(["1", "Alpha", "20x8x20", "natural:1", "0"], fields);
 
         ulong seed = db.Catalog.TryGetByName("Alpha")!.Seed!.Value;
 
@@ -75,7 +75,7 @@ public sealed class WorldCliTests
         Assert.Equal(0, exit);
         string[] lines = listed.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         Assert.Equal(2, lines.Length);
-        Assert.Equal("2\tBeta\t20x8x20\tdefault:1\t0", lines[1]);
+        Assert.Equal("2\tBeta\t20x8x20\tnatural:1\t0", lines[1]);
         Assert.DoesNotContain(seed.ToString(), created + listed, StringComparison.Ordinal);
 
         (exit, string deleted, _) = Run(db, "delete", "Beta", "--yes");

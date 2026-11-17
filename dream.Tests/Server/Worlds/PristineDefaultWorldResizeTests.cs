@@ -41,10 +41,30 @@ public sealed class PristineDefaultWorldResizeTests
     }
 
     [Fact]
-    public void ARequestForTheStoredSize_ChangesNothing()
+    public void ARequestForTheStoredSize_KeepsTheSize()
     {
         using MigrationTestDatabase db = new();
         Assert.Equal(56, ResolveDefault(db, 56).Descriptor.Width);
+    }
+
+    // The migration seeds world 1 with the classic key; a pristine world 1 moves to the new-world generator,
+    // at the stored size too, so a fresh database's first world is generated like every other new world.
+    [Theory]
+    [InlineData(56)]
+    [InlineData(WorldDefaults.ServerNewWorldSize)]
+    public void AFreshDatabase_MovesWorldOneToTheNewWorldGenerator(int size)
+    {
+        using MigrationTestDatabase db = new();
+        db.Schema.EnsureSchema();
+        Assert.Equal(WorldGeneratorCatalog.DefaultKey, (string)db.Scalar("SELECT generator_key FROM worlds WHERE world_id = 1")!);
+
+        WorldRecord record = ResolveDefault(db, size);
+
+        Assert.Equal(WorldGeneratorCatalog.NewWorldKey, record.Descriptor.GeneratorKey);
+        Assert.Equal(WorldGeneratorCatalog.NaturalVersion, record.Descriptor.GeneratorVersion);
+        Assert.Equal(WorldGeneratorCatalog.NewWorldKey, (string)db.Scalar("SELECT generator_key FROM worlds WHERE world_id = 1")!);
+        Assert.Equal(WorldGeneratorCatalog.NaturalVersion, Column(db, "generator_version"));
+        record.Descriptor.Validate();
     }
 
     [Theory]
@@ -54,15 +74,18 @@ public sealed class PristineDefaultWorldResizeTests
     [InlineData(Profile + "INSERT INTO placed_cube_instances (world_id, object_id, owner_player_name, cell_x, cell_y, cell_z, material_id, current_health, max_health) VALUES (1, 10, 'alice', 4, 1, 5, 'stone', 5, 5);")]
     [InlineData("UPDATE worlds SET seed = '12345' WHERE world_id = 1;")]
     [InlineData("UPDATE worlds SET world_time_ticks = 777 WHERE world_id = 1;")]
-    public void AWorldWithAnyData_KeepsItsSize(string sql)
+    public void AWorldWithAnyData_KeepsItsSizeAndGenerator(string sql)
     {
         using MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
         db.ExecuteScript(sql);
 
-        Assert.Equal(56, ResolveDefault(db, WorldDefaults.ServerNewWorldSize).Descriptor.Width);
+        WorldRecord record = ResolveDefault(db, WorldDefaults.ServerNewWorldSize);
+        Assert.Equal(56, record.Descriptor.Width);
+        Assert.Equal(WorldGeneratorCatalog.DefaultKey, record.Descriptor.GeneratorKey);
         Assert.Equal(56, Column(db, "width"));
         Assert.Equal(56, Column(db, "depth"));
+        Assert.Equal(WorldGeneratorCatalog.DefaultKey, (string)db.Scalar("SELECT generator_key FROM worlds WHERE world_id = 1")!);
     }
 
     [Fact]

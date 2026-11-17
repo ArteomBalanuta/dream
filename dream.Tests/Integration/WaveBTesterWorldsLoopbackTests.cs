@@ -48,7 +48,7 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
             Assert.Equal(20, server.Runtime.Map.Depth);
             await using WireLoopbackClient wire = await server.ConnectAndJoinAsync(Session);
             JoinAcceptedMessage join = wire.Frames.Select(frame => frame.Decoded.Message).OfType<JoinAcceptedMessage>().First();
-            Assert.Equal(new WorldDescriptorWire(2, "foo", 20, 8, 20, "generated", "default", 1), join.World);
+            Assert.Equal(new WorldDescriptorWire(2, "foo", 20, 8, 20, "generated", "natural", 1), join.World);
 
             using ClientWorldSession client = new(WorldDefaults.StartupFloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
             Assert.Equal(56, client.Map.Width);

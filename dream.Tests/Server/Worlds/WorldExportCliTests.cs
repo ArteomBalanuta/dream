@@ -34,7 +34,7 @@ public sealed class WorldExportCliTests(ITestOutputHelper output)
         Assert.Equal(0, exit);
         Assert.Contains("stop the server hosting this world first", error);
         string[] fields = created.TrimEnd().Split('\t');
-        Assert.Equal(["2", "baked", "56x8x56", "stored:default:1"], fields[..4]);
+        Assert.Equal(["2", "baked", "56x8x56", "stored:natural:1"], fields[..4]);
 
         // The new world: no overrides, the source's rubble, a stored map source, the same seed.
         Assert.Equal(0, f.Scalar("SELECT COUNT(*) FROM terrain_cell_overrides WHERE world_id = 2;"));
@@ -134,9 +134,9 @@ public sealed class WorldExportCliTests(ITestOutputHelper output)
         Assert.Equal(0, exit);
         string[] lines = listed.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         Assert.Equal(3, lines.Length);
-        Assert.Equal("default:1", lines[0].Split('\t')[3]);
-        Assert.Equal("stored:default:1", lines[1].Split('\t')[3]);
-        Assert.Equal("stored:default:1", lines[2].Split('\t')[3]);
+        Assert.Equal("natural:1", lines[0].Split('\t')[3]);
+        Assert.Equal("stored:natural:1", lines[1].Split('\t')[3]);
+        Assert.Equal("stored:natural:1", lines[2].Split('\t')[3]);
         Assert.Equal(5, lines[2].Split('\t').Length);
     }
 
@@ -150,7 +150,7 @@ public sealed class WorldExportCliTests(ITestOutputHelper output)
 
         (int exit, string created, _) = f.Cli("export", "1", "template", "--terrain-only");
         Assert.Equal(0, exit);
-        Assert.Equal(["2", "template", "56x8x56", "stored:default:1", "0"], created.TrimEnd().Split('\t'));
+        Assert.Equal(["2", "template", "56x8x56", "stored:natural:1", "0"], created.TrimEnd().Split('\t'));
 
         foreach (string table in new[]
         {

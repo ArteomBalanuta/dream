@@ -114,7 +114,7 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         WorldDescriptor descriptor = WorldDescriptor.ForFloorSize(
             options.Size,
             name: name,
-            generatorKey: options.GeneratorKey);
+            generatorKey: options.GeneratorKey ?? WorldGeneratorCatalog.NewWorldKey);
         descriptor.Validate();
         ulong seed = options.Seed ?? SqliteWorldMetadataRepository.GenerateSimulationSeed();
 
@@ -528,16 +528,25 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
     // Migration 0003 always seeds world 1 at 56 x 8 x 56, so a fresh database's first server start would
     // never get the size it asked for. A pristine world 1 (generated, no seed, no world time, no data in any
     // per-world table) is resized to that size; a world with anything in it is never touched.
+    // The same pristine world also moves to the new-world generator (WorldGeneratorCatalog.NewWorldKey):
+    // the migration seeds it with the classic key, and nothing was ever built from it, so a fresh
+    // database's first world is generated the way every other new world is.
     private WorldRecord ResizeIfPristineDefault(WorldRecord record, int newWorldSize)
     {
         WorldDescriptor d = record.Descriptor;
+        WorldDescriptor target = WorldDescriptor.ForFloorSize(
+            newWorldSize,
+            name: d.Name,
+            generatorKey: WorldGeneratorCatalog.NewWorldKey);
         if (d.Id != WorldId.Default || d.MapSource != WorldMapSource.Generated || record.Seed != null ||
-            record.WorldTimeTicks != 0 || (d.Width == newWorldSize && d.Depth == newWorldSize))
+            record.WorldTimeTicks != 0 ||
+            (d.Width == newWorldSize && d.Depth == newWorldSize &&
+             d.GeneratorKey == target.GeneratorKey && d.GeneratorVersion == target.GeneratorVersion))
         {
             return record;
         }
 
-        WorldDescriptor.ForFloorSize(newWorldSize, name: d.Name).Validate();
+        target.Validate();
         using SqliteSession session = _store.BeginOwnedTransaction();
         foreach (string table in WorldDataTables)
         {
@@ -550,10 +559,13 @@ public sealed class SqliteWorldCatalog : IWorldCatalog
         }
 
         using (SqliteCommand update = session.CreateCommand(
-            "UPDATE worlds SET width = $size, depth = $size, updated_utc = $now " +
+            "UPDATE worlds SET width = $size, depth = $size, generator_key = $key, generator_version = $version, " +
+            "updated_utc = $now " +
             "WHERE world_id = $id AND map_source = 'generated' AND seed IS NULL AND world_time_ticks = 0;"))
         {
             update.Parameters.AddWithValue("$size", newWorldSize);
+            update.Parameters.AddWithValue("$key", target.GeneratorKey);
+            update.Parameters.AddWithValue("$version", target.GeneratorVersion);
             update.Parameters.AddWithValue("$id", WorldId.Default.Value);
             update.Parameters.AddWithValue("$now", SqliteSchemaBootstrapper.FormatUtc(DateTime.UtcNow));
             update.ExecuteNonQuery();

@@ -35,7 +35,7 @@ public sealed class WorldSizeMismatchLoopbackTests(ITestOutputHelper output)
         Assert.NotNull(join.World);
         WorldDescriptorWire descriptor = join.World!;
         Assert.Equal(world.Descriptor, descriptor.ToDescriptor());
-        Assert.Equal(new WorldDescriptorWire(world.Descriptor.Id.Value, "wide", ServerWorldSize, 8, ServerWorldSize, "generated", "default", 1), descriptor);
+        Assert.Equal(new WorldDescriptorWire(world.Descriptor.Id.Value, "wide", ServerWorldSize, 8, ServerWorldSize, "generated", "natural", 1), descriptor);
 
         using ClientWorldSession client = new(ClientFloorSize, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         Assert.Equal(ClientFloorSize, client.Map.Width);

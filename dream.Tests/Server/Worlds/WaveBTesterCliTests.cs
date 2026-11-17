@@ -41,12 +41,12 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
 
         (int exit, string created) = Run(["create", "foo", "--size", "20"]);
         Assert.Equal(0, exit);
-        Assert.Equal(["2", "foo", "20x8x20", "default:1", "0"], created.TrimEnd().Split('\t'));
+        Assert.Equal(["2", "foo", "20x8x20", "natural:1", "0"], created.TrimEnd().Split('\t'));
 
         (exit, string listed) = Run(["list"]);
         Assert.Equal(0, exit);
         string[] lines = listed.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        Assert.Equal(["1\tdefault\t56x8x56\tdefault:1\t" + timeOne, "2\tfoo\t20x8x20\tdefault:1\t0"], lines);
+        Assert.Equal(["1\tdefault\t56x8x56\tdefault:1\t" + timeOne, "2\tfoo\t20x8x20\tnatural:1\t0"], lines);
 
         (exit, string copied) = Run(["copy", "1", "bar"]);
         Assert.Equal(0, exit);
