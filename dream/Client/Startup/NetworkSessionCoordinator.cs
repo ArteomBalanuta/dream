@@ -14,6 +14,10 @@ public sealed class NetworkSessionCoordinator
     private readonly IRemoteSessionConnector _connector;
     private Task? _pendingConnectionTask;
     private RemoteClientSession? _connectedSession;
+    // Bumped by CancelConnect. A connect task carries the generation it started with; once that no
+    // longer matches it writes no state and hands out no session, so a join the player cancelled
+    // cannot attach late when the server finally answers.
+    private int _connectGeneration;
 
     private readonly ICharacterListSource? _characterList;
     private readonly string? _contentError;
@@ -287,7 +291,49 @@ public sealed class NetworkSessionCoordinator
 
         State = ConnectionFlowState.Connecting;
         StatusMessage = $"Connecting to {resolved!.Host}:{resolved.Port}...";
-        _pendingConnectionTask = ConnectInternalAsync(resolved);
+        _pendingConnectionTask = ConnectInternalAsync(resolved, Volatile.Read(ref _connectGeneration));
+    }
+
+    // Abandons a connect in flight (the player left the Join screen). The flow is idle again at once,
+    // whatever the socket is still doing: the attempt's generation is stale from here, so when it
+    // settles it disposes its session instead of publishing it and leaves State and StatusMessage
+    // alone. False when nothing was in flight.
+    public bool CancelConnect()
+    {
+        StopReconnect();
+        if (!IsBusy)
+        {
+            return false;
+        }
+
+        Interlocked.Increment(ref _connectGeneration);
+        ClearPicker();
+        DisposeInBackground(Interlocked.Exchange(ref _connectedSession, null));
+        State = ConnectionFlowState.ReadyToConnect;
+        StatusMessage = "Connect when ready.";
+        return true;
+    }
+
+    private bool IsCurrentConnect(int generation) => Volatile.Read(ref _connectGeneration) == generation;
+
+    private static void DisposeInBackground(RemoteClientSession? session)
+    {
+        if (session == null)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await session.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[startup] cancelled session not closed cleanly: {ex.Message}");
+            }
+        });
     }
 
     // The characters the picker shows (M1-C), set while the picker is open (State is ReadyToConnect); null otherwise.
@@ -327,7 +373,7 @@ public sealed class NetworkSessionCoordinator
 
         State = ConnectionFlowState.Connecting;
         StatusMessage = "Looking up your characters...";
-        _pendingConnectionTask = ListThenConnectAsync(options, resolved!);
+        _pendingConnectionTask = ListThenConnectAsync(options, resolved!, Volatile.Read(ref _connectGeneration));
     }
 
     // Connects as the picked character (or a new name typed in the picker).
@@ -356,7 +402,7 @@ public sealed class NetworkSessionCoordinator
 
     private void ClearPicker() => PickerCharacters = null;
 
-    private async Task ListThenConnectAsync(ClientConnectionOptions options, RemoteClientOptions resolved)
+    private async Task ListThenConnectAsync(ClientConnectionOptions options, RemoteClientOptions resolved, int generation)
     {
         IReadOnlyList<CharacterListEntry> characters;
         try
@@ -368,10 +414,15 @@ public sealed class NetworkSessionCoordinator
             characters = [];
         }
 
+        if (!IsCurrentConnect(generation))
+        {
+            return;
+        }
+
         if (characters.Count == 0)
         {
             StatusMessage = $"Connecting to {resolved.Host}:{resolved.Port}...";
-            await ConnectInternalAsync(resolved, afterProbe: true);
+            await ConnectInternalAsync(resolved, generation, afterProbe: true);
             return;
         }
 
@@ -466,13 +517,13 @@ public sealed class NetworkSessionCoordinator
     // "Server is full." right after a probe is retried once after a short wait.
     internal static TimeSpan ProbeSlotRetryDelay { get; set; } = TimeSpan.FromMilliseconds(750);
 
-    private async Task ConnectInternalAsync(RemoteClientOptions options, bool afterProbe = false)
+    private async Task ConnectInternalAsync(RemoteClientOptions options, int generation, bool afterProbe = false)
     {
         bool retried = !afterProbe;
         while (true)
         {
-            string? serverFullReason = await TryConnectOnceAsync(options, retryOnServerFull: !retried);
-            if (serverFullReason == null)
+            string? serverFullReason = await TryConnectOnceAsync(options, generation, retryOnServerFull: !retried);
+            if (serverFullReason == null || !IsCurrentConnect(generation))
             {
                 return;
             }
@@ -484,11 +535,18 @@ public sealed class NetworkSessionCoordinator
     }
 
     // Returns the server-full reason when the caller should retry; null when the attempt is settled.
-    private async Task<string?> TryConnectOnceAsync(RemoteClientOptions options, bool retryOnServerFull)
+    private async Task<string?> TryConnectOnceAsync(RemoteClientOptions options, int generation, bool retryOnServerFull)
     {
         try
         {
             RemoteClientSession session = await _connector.ConnectAsync(options with { HoldSpawnProtection = HoldSpawnProtection });
+            if (!IsCurrentConnect(generation))
+            {
+                // Cancelled while this connect was in flight: close whatever arrived and say nothing.
+                DisposeInBackground(session);
+                return null;
+            }
+
             if (!session.IsConnected && session.DisconnectReason is string reason)
             {
                 // Ended before the play scene could take it, e.g. a join rejected during the
@@ -510,6 +568,12 @@ public sealed class NetworkSessionCoordinator
         }
         catch (Exception ex)
         {
+            if (!IsCurrentConnect(generation))
+            {
+                // Cancelled: a failure nobody is waiting for must not overwrite the idle screen.
+                return null;
+            }
+
             if (retryOnServerFull && IsServerFull(ex.Message))
             {
                 return ex.Message;

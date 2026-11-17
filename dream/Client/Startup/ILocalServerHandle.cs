@@ -33,6 +33,12 @@ public interface ILocalServerHandle : IAsyncDisposable
     {
     }
 
+    // Whether the running server accepts dev commands (noclip, freeze). Single Player turns them on;
+    // a hosted start keeps the dedicated server's environment-derived value, which is off unless
+    // DREAM_DEV_COMMANDS=1. The client reads it so it never predicts a toggle the server will strip.
+    // False until a server is ready.
+    bool DevCommandsAllowed => false;
+
     // Where the next (or current) start listens.
     LocalServerListenOptions ListenOptions => LocalServerListenOptions.Loopback;
 

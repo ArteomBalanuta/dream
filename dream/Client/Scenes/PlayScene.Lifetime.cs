@@ -20,6 +20,24 @@ namespace Dream.Client.Scenes;
 
 public partial class PlayScene
 {
+    // Noclip and freeze are predicted only where the server will actually apply them: this client's
+    // own integrated server when that server has dev commands on, or a DREAM_DEV_COMMANDS=1 process.
+    // Not localServer != null, which is also passed for remote connections, and not "my own endpoint"
+    // alone: a Host start leaves dev commands off (IntegratedLocalServerHandle), so the hosted server
+    // strips the flags (PlayerCommandHandler) and a client that predicted them is snapped back by the
+    // reconciler on every snapshot.
+    internal static bool ShouldAllowDevToggles(
+        ILocalServerHandle? localServer,
+        string host,
+        int port,
+        string? devCommandsEnvironmentValue)
+    {
+        bool onIntegrated = localServer is { IsReady: true, DevCommandsAllowed: true }
+            && LoopbackHost.IsLoopback(host)
+            && port == localServer.BoundPort;
+        return onIntegrated || devCommandsEnvironmentValue == "1";
+    }
+
     public PlayScene(
         GameSettings settings,
         RemoteClientSession remoteClient,
@@ -34,14 +52,11 @@ public partial class PlayScene
         _localServer = localServer;
         _enableLoopbackRemotePlayers = enableLoopbackRemotePlayers;
         _remoteClient = remoteClient ?? throw new ArgumentNullException(nameof(remoteClient));
-        // Noclip and freeze are predicted only where the server allows them: the integrated server
-        // (this client's own endpoint) or a DREAM_DEV_COMMANDS=1 process. Not localServer != null,
-        // which is also passed for remote connections.
-        bool onIntegrated = localServer is { IsReady: true }
-            && LoopbackHost.IsLoopback(remoteClient.Options.Host)
-            && remoteClient.Options.Port == localServer.BoundPort;
-        _commandInputFilter.AllowDevToggles = onIntegrated
-            || Environment.GetEnvironmentVariable(DevCommandsOptions.EnvironmentVariable) == "1";
+        _commandInputFilter.AllowDevToggles = ShouldAllowDevToggles(
+            localServer,
+            remoteClient.Options.Host,
+            remoteClient.Options.Port,
+            Environment.GetEnvironmentVariable(DevCommandsOptions.EnvironmentVariable));
         // A send stalled past the server's repeat window makes the prediction ticks idle, as the
         // server does (ClientCommandTickStream); so does an ack lag past the round trip (a network stall).
         _commandTicks.ObserveSendBacklog(() => _remoteClient.IsConnected ? _remoteClient.PendingCommandCount : 0);
