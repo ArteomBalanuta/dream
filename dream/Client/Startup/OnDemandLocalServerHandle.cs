@@ -82,6 +82,9 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
 
     private static async Task ChainStop(Task earlier, ILocalServerHandle server)
     {
+        // Off the caller's (update) thread: a stop whose run loop already ended disposes the host,
+        // persistence drain included, inline in DisposeAsync.
+        await Task.Yield();
         await earlier.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         try
         {

@@ -188,7 +188,8 @@ public class OnDemandLocalServerTests
         Assert.False(handle.IsStarted);
         handle.EnsureStarted();
 
-        Assert.True(started[0].Handle.DisposeCalled);
+        // The detached server's stop runs off the caller's thread, so it begins shortly after.
+        Assert.True(SpinWait.SpinUntil(() => started[0].Handle.DisposeCalled, TimeSpan.FromSeconds(5)));
         Assert.True(handle.IsWaitingForPreviousServer);
         Assert.Single(started);
 
