@@ -11,6 +11,11 @@ public sealed record LocalServerListenOptions(IPAddress BindAddress, int Port, b
     public static LocalServerListenOptions Hosted(int port) => new(IPAddress.Any, port, true);
 
     // 1..65535, invariant culture, trimmed.
-    // CONTRACT-STUB: WS-B replaces this body.
-    public static bool TryParsePort(string? text, out int port) => throw new NotImplementedException();
+    public static bool TryParsePort(string? text, out int port)
+    {
+        port = 0;
+        return text != null
+            && int.TryParse(text.Trim(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out port)
+            && port is >= 1 and <= 65535;
+    }
 }

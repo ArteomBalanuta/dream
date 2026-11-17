@@ -16,30 +16,41 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
     public const string WaitingForPreviousServerStatus =
         "Previous local server is still saving; the local server starts when it finishes...";
 
-    private readonly Func<ILocalServerHandle> _start;
+    private readonly Func<LocalServerListenOptions, ILocalServerHandle> _start;
     private readonly Func<Task>? _startAfter;
     private volatile ILocalServerHandle? _started;
     private volatile string? _startFailure;
     private volatile bool _disposed;
+    private volatile LocalServerListenOptions _listen = LocalServerListenOptions.Loopback;
     private Task? _pendingStart;
 
-    public OnDemandLocalServerHandle(Func<ILocalServerHandle> start, Func<Task>? startAfter = null)
+    // The start receives the listen options configured last (Loopback until TryConfigureListen).
+    public OnDemandLocalServerHandle(Func<LocalServerListenOptions, ILocalServerHandle> start, Func<Task>? startAfter = null)
     {
         _start = start ?? throw new ArgumentNullException(nameof(start));
         _startAfter = startAfter;
     }
 
-    // The start receives the listen options configured last (Loopback until TryConfigureListen).
-    // CONTRACT-STUB: WS-B makes this the primary constructor and passes the options to start.
-    public OnDemandLocalServerHandle(Func<LocalServerListenOptions, ILocalServerHandle> start, Func<Task>? startAfter = null)
-        : this(start is null ? null! : () => start(LocalServerListenOptions.Loopback), startAfter)
+    public OnDemandLocalServerHandle(Func<ILocalServerHandle> start, Func<Task>? startAfter = null)
+        : this(start is null ? null! : _ => start(), startAfter)
     {
     }
 
-    // CONTRACT-STUB: WS-B replaces these two.
-    public LocalServerListenOptions ListenOptions => LocalServerListenOptions.Loopback;
+    public LocalServerListenOptions ListenOptions => _listen;
 
-    public bool TryConfigureListen(LocalServerListenOptions options) => false;
+    // Refused while a server runs, a start is pending, or after dispose; allowed before the first
+    // start and after a failed one.
+    public bool TryConfigureListen(LocalServerListenOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (_disposed || _started is { ErrorMessage: null } || _pendingStart is { IsCompleted: false })
+        {
+            return false;
+        }
+
+        _listen = options;
+        return true;
+    }
 
     public bool IsStarted => _started != null || _pendingStart != null;
 
@@ -67,7 +78,7 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
         Task previousStop = _startAfter?.Invoke() ?? Task.CompletedTask;
         if (previousStop.IsCompleted)
         {
-            _started = _start();
+            _started = _start(_listen);
             return;
         }
 
@@ -120,7 +131,7 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
 
         try
         {
-            _started = _start();
+            _started = _start(_listen);
         }
         catch (Exception ex)
         {
