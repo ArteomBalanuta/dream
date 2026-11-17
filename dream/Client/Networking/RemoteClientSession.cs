@@ -166,7 +166,23 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // server closed the socket (an idle or stall close) or a send failed. Null while connected.
     // Also set when the join fails: "Join rejected: ..." or "Join timed out: ...", and by the
     // server-silence watchdog (ServerSilenceDisconnectReason).
-    public string? DisconnectReason { get; private set; }
+    //
+    // The send loop, the receive loop and the owner thread can all end the same session at once, so this is
+    // one field written under Interlocked rather than a plain `??=`: a read-then-write let a late
+    // "Connection lost: ..." overwrite a protocol mismatch, which turns a non-retryable end into a retryable
+    // one and sends the connection screen into an auto-reconnect loop against a server it cannot speak to.
+    public string? DisconnectReason => Volatile.Read(ref _disconnectReason);
+
+    private string? _disconnectReason;
+
+    // First writer wins, atomically.
+    private void TrySetDisconnectReason(string reason) =>
+        Interlocked.CompareExchange(ref _disconnectReason, reason, null);
+
+    // A protocol or world-transfer fault is the real cause and replaces whatever the dying socket recorded
+    // (what the unconditional assignments on those two paths have always meant).
+    private void SetDisconnectReasonOutright(string reason) =>
+        Volatile.Write(ref _disconnectReason, reason);
 
     // True once the server accepted this session's join.
     public bool IsJoined { get; private set; }
@@ -417,7 +433,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
             return;
         }
 
-        DisconnectReason ??= reason;
+        TrySetDisconnectReason(reason);
         IsConnected = false;
         NetworkDiagnosticsLog.Write(
             logEvent,
@@ -564,7 +580,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         catch (Exception ex)
         {
             IsConnected = false;
-            DisconnectReason ??= $"Connection lost: {ex.GetType().Name}: {ex.Message}";
+            TrySetDisconnectReason($"Connection lost: {ex.GetType().Name}: {ex.Message}");
             NetworkDiagnosticsLog.Write(
                 "client.send.error",
                 $"endpoint={Options.EndpointLabel} session={Options.SessionId} error={ex.GetType().Name}: {ex.Message}");
@@ -654,7 +670,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
                 // A rejection after the join settled (a takeover by another connection): the
                 // server closes next, so its reason is the player-facing one. Here, not in
                 // DeliverInbound, as the message can be held behind a world transfer.
-                DisconnectReason ??= rejected.Reason;
+                TrySetDisconnectReason(rejected.Reason);
             }
 
             bool wasReceivingWorld = _worldTransfers.Current != null;
@@ -993,7 +1009,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
             // server shutdown. None of these is announced by a message.
             if (!cancellationToken.IsCancellationRequested)
             {
-                DisconnectReason ??= "Connection lost: the server closed the connection.";
+                TrySetDisconnectReason("Connection lost: the server closed the connection.");
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1001,11 +1017,11 @@ public sealed class RemoteClientSession : IAsyncDisposable
         }
         catch (WorldTransferLimitException ex)
         {
-            DisconnectReason = $"World transfer failed: {ex.Message}";
+            SetDisconnectReasonOutright($"World transfer failed: {ex.Message}");
         }
         catch (ProtocolVersionMismatchException ex)
         {
-            DisconnectReason = ex.Message;
+            SetDisconnectReasonOutright(ex.Message);
             if (_serverHello.TrySetException(ex))
             {
                 // Mark the fault observed: nobody awaits it once ConnectAsync has returned.
@@ -1016,7 +1032,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         {
             // A malformed frame or a transport error; previously this faulted the loop task and
             // resurfaced from DisposeAsync.
-            DisconnectReason ??= $"Connection lost: {ex.GetType().Name}: {ex.Message}";
+            TrySetDisconnectReason($"Connection lost: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {

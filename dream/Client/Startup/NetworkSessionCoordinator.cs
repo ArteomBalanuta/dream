@@ -173,10 +173,11 @@ public sealed class NetworkSessionCoordinator
         ClearPicker();
         CancellationTokenSource cancellation = new();
         _reconnect = cancellation;
-        _pendingConnectionTask = ReconnectAsync(options, cancellation);
+        _pendingConnectionTask = ReconnectAsync(options, cancellation, Volatile.Read(ref _connectGeneration));
     }
 
-    // Ends the retries: no further attempt starts. An attempt already in flight finishes on its own.
+    // Ends the retries: no further attempt starts, and an attempt already in flight is cancelled. Should it
+    // still come back with a live session, that session is closed rather than handed to the game.
     public void StopReconnect()
     {
         CancellationTokenSource? cancellation = Interlocked.Exchange(ref _reconnect, null);
@@ -193,7 +194,19 @@ public sealed class NetworkSessionCoordinator
         }
     }
 
-    private async Task ReconnectAsync(ClientConnectionOptions options, CancellationTokenSource cancellation)
+    // Clears the screen a cancelled reconnect left on Connecting: StopReconnect cannot do it itself while an
+    // attempt is in flight (IsBusy is true), and nothing else can take the flow over while it stays
+    // Connecting. CancelConnect does reset it, and moves the generation on, so this leaves it alone then.
+    private void ResetCancelledReconnect(int generation)
+    {
+        if (IsCurrentConnect(generation) && State == ConnectionFlowState.Connecting)
+        {
+            State = ConnectionFlowState.ReadyToConnect;
+            StatusMessage = "Reconnect cancelled.";
+        }
+    }
+
+    private async Task ReconnectAsync(ClientConnectionOptions options, CancellationTokenSource cancellation, int generation)
     {
         string lastReason = "the server did not answer";
         try
@@ -227,7 +240,19 @@ public sealed class NetworkSessionCoordinator
                 StatusMessage = $"Reconnecting ({attempt}/{attempts})...";
                 try
                 {
-                    RemoteClientSession session = await _connector.ConnectAsync(resolved! with { HoldSpawnProtection = HoldSpawnProtection });
+                    RemoteClientSession session = await _connector.ConnectAsync(
+                        resolved! with { HoldSpawnProtection = HoldSpawnProtection },
+                        cancellation.Token);
+                    if (cancellation.IsCancellationRequested || !IsCurrentConnect(generation))
+                    {
+                        // Cancelled while this attempt was in flight (Esc, a new connect, Use Local Server).
+                        // Close the session that arrived instead of publishing it: the player abandoned this
+                        // reconnect and must not be dropped into the world a frame later.
+                        DisposeInBackground(session);
+                        ResetCancelledReconnect(generation);
+                        return;
+                    }
+
                     if (session.IsConnected || session.DisconnectReason is not string reason)
                     {
                         _connectedSession = session;
@@ -260,8 +285,7 @@ public sealed class NetworkSessionCoordinator
 
                 if (cancellation.IsCancellationRequested)
                 {
-                    State = ConnectionFlowState.Failed;
-                    StatusMessage = lastReason;
+                    ResetCancelledReconnect(generation);
                     return;
                 }
             }
