@@ -39,8 +39,18 @@ public static class NpcDialogueWindow
 
     // Clear of the inventory (0x100..0x502), the character window and the vendor window (0x600..0x643).
     internal const int IdOfferRow = InventoryWindow.IdBase + 0x7A0;
+
+    // Four ids, one per QuestOfferState (0x7B0..0x7B3): the action button's id carries the state the
+    // button was drawn from. The one button stands for three mutually exclusive, non-equivalent actions
+    // chosen from live server state, and a ServerQuestLog push can rewrite that state between the press
+    // and the release (a collect objective counts bag contents, so Ready can fall back to InProgress).
+    // With the state in the id, such a flip makes the router's press id no longer match and the click is
+    // dropped, instead of sending the action the release frame computed: a press on "Turn in" can never
+    // release as "Abandon".
     internal const int IdAction = InventoryWindow.IdBase + 0x7B0;
-    internal const int IdClose = InventoryWindow.IdBase + 0x7B1;
+    internal const int IdClose = InventoryWindow.IdBase + 0x7B4;
+
+    internal static int ActionId(QuestOfferState state) => IdAction + (int)state;
 
     private static readonly UiColor GoldColor = new(0xD8, 0xB4, 0x5A, 255);
     private static readonly UiColor ReadyColor = new(0x5F, 0xD6, 0xA0, 255);
@@ -95,12 +105,13 @@ public static class NpcDialogueWindow
         DrawRowPlate(c, s, action);
         if (selected != null && actionText != null)
         {
-            if (live && i.Hovered(IdAction, action))
+            int actionId = ActionId(selected.State);
+            if (live && i.Hovered(actionId, action))
             {
                 c.Solid(action, HoverFill);
             }
 
-            if (live && i.Button(IdAction, action) && intents != null)
+            if (live && i.Button(actionId, action) && intents != null)
             {
                 intents.Enqueue(IntentFor(quests.NpcActorId, selected));
             }
