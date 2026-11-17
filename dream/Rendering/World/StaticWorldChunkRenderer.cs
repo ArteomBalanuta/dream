@@ -102,7 +102,22 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         return new StaticWorldChunkBuildBatch(
             request.ExportSignature,
             request.DirtyChunks,
-            BuildOutputs(inputs));
+            BuildOutputs(inputs),
+            CollectPresentChunks(request.Cells));
+    }
+
+    // The chunks the live static content still has cells in. Runs on the build worker, beside the
+    // planning that groups the same cells by chunk.
+    public static IReadOnlySet<StaticWorldChunkKey> CollectPresentChunks(IReadOnlyList<StaticVoxelRenderCell> cells)
+    {
+        ArgumentNullException.ThrowIfNull(cells);
+        HashSet<StaticWorldChunkKey> present = new();
+        for (int i = 0; i < cells.Count; i++)
+        {
+            present.Add(StaticWorldChunkKey.FromWorldPosition(cells[i].Center));
+        }
+
+        return present;
     }
 
     public static IReadOnlyList<StaticWorldChunkBuildOutput> BuildOutputs(IReadOnlyList<StaticWorldChunkBuildInput> inputs)
@@ -614,9 +629,12 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
         if (_activeUploadBatch.IsComplete)
         {
+            // A mesh goes when its chunk was edited and the batch did not rebuild it, and also when
+            // its chunk no longer exists at all: a chunk that lost every cell is never dirtied by
+            // the new content and is never planned, so without this its GPU mesh stayed drawn (and
+            // kept casting shadows) forever.
             foreach (StaticWorldChunkMeshKey staleKey in _signatures.Keys
-                .Where(key => _activeUploadBatch.DirtyChunks.Contains(key.ChunkKey) &&
-                    !_activeUploadBatch.ReplacedKeys.Contains(key))
+                .Where(key => _activeUploadBatch.IsStaleKey(key))
                 .ToArray())
             {
                 RemoveMesh(staleKey);
@@ -785,12 +803,16 @@ internal sealed class StaticWorldChunkUploadBatch
     {
         ExportSignature = batch.ExportSignature;
         DirtyChunks = batch.DirtyChunks;
+        PresentChunks = batch.PresentChunks;
         _pendingOutputs = new Queue<StaticWorldChunkBuildOutput>(batch.Outputs);
     }
 
     public int ExportSignature { get; }
 
     public IReadOnlySet<StaticWorldChunkKey> DirtyChunks { get; }
+
+    // The chunks the batch's cell snapshot covered, or null when the batch did not carry one.
+    public IReadOnlySet<StaticWorldChunkKey>? PresentChunks { get; }
 
     public HashSet<StaticWorldChunkMeshKey> ReplacedKeys { get; } = [];
 
@@ -814,8 +836,23 @@ internal sealed class StaticWorldChunkUploadBatch
         return true;
     }
 
+    // True when this batch's completion retires the key: its chunk was edited, or its chunk is gone
+    // from the live content altogether, and the batch is not itself rebuilding it.
+    public bool IsStaleKey(StaticWorldChunkMeshKey key)
+    {
+        if (ReplacedKeys.Contains(key))
+        {
+            return false;
+        }
+
+        return DirtyChunks.Contains(key.ChunkKey) ||
+            (PresentChunks != null && !PresentChunks.Contains(key.ChunkKey));
+    }
+
     // Applies the signature changes the rest of this batch makes: its pending outputs, then the
-    // removal of every mesh of a dirty chunk that the batch does not rebuild.
+    // removal of every mesh the batch's completion retires. It must agree with the real removal in
+    // ApplyPendingUploads, orphaned chunk keys included, or the next build's snapshot disagrees
+    // with the renderer's actual state and skips a rebuild it should do.
     public void ApplyRemainingSignaturesTo(Dictionary<StaticWorldChunkMeshKey, int> signatures)
     {
         HashSet<StaticWorldChunkMeshKey> pendingKeys = [];
@@ -826,9 +863,7 @@ internal sealed class StaticWorldChunkUploadBatch
         }
 
         foreach (StaticWorldChunkMeshKey staleKey in signatures.Keys
-            .Where(key => DirtyChunks.Contains(key.ChunkKey) &&
-                !ReplacedKeys.Contains(key) &&
-                !pendingKeys.Contains(key))
+            .Where(key => !pendingKeys.Contains(key) && IsStaleKey(key))
             .ToArray())
         {
             signatures.Remove(staleKey);
