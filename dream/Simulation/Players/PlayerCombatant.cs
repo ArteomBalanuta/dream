@@ -261,6 +261,14 @@ public sealed class PlayerCombatant : IDamageable, ICombatAnchorProvider
         return true;
     }
 
+    // Gives back the swing a TryStartAttack took, for a rejection raised after it that spends nothing
+    // (build protection). TryStartAttack only succeeds from a zero cooldown, so this restores exactly
+    // the state it found. Never call it once the swing has resolved against something.
+    public void CancelStartedAttack()
+    {
+        _attackCooldownRemaining = 0f;
+    }
+
     public PlayerAttackResolution ResolveAttack(Func<int> damageRoll, Func<double> critRoll)
     {
         if (critRoll() <= DerivedStats.CriticalChance)

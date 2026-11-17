@@ -228,10 +228,15 @@ internal sealed class AuthoritativeCombatResolver
                     MaxHealth: 0));
         }
 
-        // Build protection: nothing is damaged, repaired or written for a cube that is someone else's.
+        // The identity repair has to run BEFORE the ownership test: a record whose registry link was lost
+        // carries no owner, and only the repair puts the persisted owner back, so testing the unrepaired
+        // record would hand someone else's wall to the attacker. Build protection then damages nothing
+        // for a cube that is someone else's, and gives the swing back (CancelStartedAttack) so that
+        // standing in front of a protected wall does not eat the player's attack cadence.
         record = _host.RepairCubeRecord(record);
         if (!_host.CanDamageCube(message.SessionId, record))
         {
+            combatant.CancelStartedAttack();
             return CreateRejectedResult(message, tick, "That belongs to someone else.");
         }
 
