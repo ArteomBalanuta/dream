@@ -43,10 +43,18 @@ public sealed class HudViewBuilder
         bool sameGold = (_inventory?.Gold ?? 0) == (inventory?.Gold ?? 0);
         if (sameInventory && !sameGold && _haveRows)
         {
-            _inventory = inventory;
+            // The new wallet has to reach the panels, but handing them the pushed object would hand
+            // them fresh Slots/Equipment lists, and InventoryUiState keys its "the bag moved" test on
+            // those list references: a gold-only push would then cancel a drag in flight and close the
+            // open item menu, which is exactly what the carve-out above exists to prevent. Copy the
+            // wallet onto the object the panels already hold instead, so those references stay put.
+            // Only Gold and Quickbar can differ on this path; SameInventory proved the rest equal.
+            _inventory = _inventory is PlayerInventorySnapshot kept && inventory is PlayerInventorySnapshot pushed
+                ? kept with { Gold = pushed.Gold, Quickbar = pushed.Quickbar }
+                : inventory;
         }
 
-        view.Inventory = sameInventory && _haveRows && sameGold ? _inventory : inventory;
+        view.Inventory = sameInventory && _haveRows ? _inventory : inventory;
         InventoryChanged = _haveRows && !sameInventory;
         bool statusChanged = !_haveRows || !_status.Equals(status);
         bool itemsChanged = !_haveRows || !sameInventory;
