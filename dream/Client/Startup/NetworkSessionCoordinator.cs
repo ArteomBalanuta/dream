@@ -7,6 +7,10 @@ namespace Dream.Client.Startup;
 
 public sealed class NetworkSessionCoordinator
 {
+    // Copied onto the options of every connect (RemoteClientOptions.HoldSpawnProtection).
+    // CONTRACT-STUB: W3 copies it.
+    public bool HoldSpawnProtection { get; init; }
+
     private readonly ILocalServerHandle _localServer;
     private readonly IRemoteSessionConnector _connector;
     private Task? _pendingConnectionTask;

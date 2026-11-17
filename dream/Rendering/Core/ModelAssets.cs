@@ -61,6 +61,9 @@ public static class ModelAssets
 
     public static bool IsFailed(string path) => Loader.IsFailed(path);
 
+    // Decodes not uploaded yet, shared and per-instance (what the loading screen waits for).
+    public static int PendingCount => Loader.PendingCount;
+
     // Starts the background decodes so the models are usually ready by the first draw.
     public static void Preload(params string[] paths)
     {

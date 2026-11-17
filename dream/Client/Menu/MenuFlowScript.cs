@@ -18,12 +18,18 @@ public sealed class MenuFlowScript
         EscBack,
         ExitToMainMenu,
         ExitGame,
-        Fail
+        Fail,
+        PressAnyKey
     }
 
     public readonly record struct Command(Step Step, string? CapturePng = null, string? Log = null);
 
-    public readonly record struct SceneState(bool InWorld, bool PauseVisible, bool PauseOnRoot);
+    public readonly record struct SceneState(
+        bool InWorld,
+        bool PauseVisible,
+        bool PauseOnRoot,
+        bool LoadingVisible = false,
+        bool LoadingAwaitingKey = false);
 
     private const int SettleFrames = 30;
     private const int WorldFrames = 150;

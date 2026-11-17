@@ -46,6 +46,10 @@ public sealed class MainMenuScene
 
     public CursorState DesiredCursorState => CursorState.Normal;
 
+    // The tip the loading screen shows for the current start; re-picked each time a start begins.
+    // CONTRACT-STUB: W1 picks it.
+    public string LoadingTip { get; private set; } = string.Empty;
+
     public MenuScreen Screen => _screen.Current;
 
     public SinglePlayerLauncher Launcher => _launcher;

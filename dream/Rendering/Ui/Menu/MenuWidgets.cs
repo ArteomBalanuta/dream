@@ -300,6 +300,12 @@ public sealed class MenuWidgets
     // caret visible. A press inside the box places the caret at the nearest character boundary and dragging
     // with the button held extends the selection. Returns true on the frame it is pressed or clicked, so the
     // caller focuses the field at once.
+    // The slider's groove and fill without a knob (same sprites and colours); unit is 0..1.
+    // CONTRACT-STUB: W1 replaces this body.
+    public void ProgressBar(UiRect track, float unit)
+    {
+    }
+
     public bool TextField(int id, UiRect r, MenuTextField field, bool focused, bool enabled = true)
     {
         bool clicked = Input.Button(id, r, enabled) && enabled;

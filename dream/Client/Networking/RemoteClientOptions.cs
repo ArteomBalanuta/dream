@@ -10,6 +10,10 @@ public sealed record RemoteClientOptions(
     string ClientName,
     string? AccountToken = null)
 {
+    // Ask the server to keep this player's spawn protection until their first input (the loading
+    // screen's prompt). CONTRACT-STUB: W3 sends it with the join request.
+    public bool HoldSpawnProtection { get; init; }
+
     // Prints everything but the token: the token is a secret and must never reach a log or message.
     private bool PrintMembers(System.Text.StringBuilder builder)
     {
