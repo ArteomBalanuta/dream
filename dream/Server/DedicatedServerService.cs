@@ -671,6 +671,10 @@ public sealed class DedicatedServerService : IAsyncDisposable
         if (!_connections.TryGetValue(connectionId, out ServerConnection? connection)
             || !TryRemoveConnection(connection))
         {
+            // Nobody is left to tell, so the reason is consumed here: a close reason belongs to one
+            // connection instance, and the id is the remote ip:port, which a later socket can reuse.
+            // Left behind, it would be handed to that connection as its own kick or ban text.
+            _ = _host.TakeCloseReason(connectionId);
             return;
         }
 
