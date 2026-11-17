@@ -82,6 +82,20 @@ public class MenuFlowTests
 
         public DedicatedServerPerformanceSnapshot LatestPerformance => DedicatedServerPerformanceSnapshot.Empty;
 
+        public LocalServerListenOptions ListenOptions { get; private set; } = LocalServerListenOptions.Loopback;
+
+        // Like the on-demand handle: listen options can change only while no server is running.
+        public bool TryConfigureListen(LocalServerListenOptions options)
+        {
+            if (_started)
+            {
+                return false;
+            }
+
+            ListenOptions = options;
+            return true;
+        }
+
         public void EnsureStarted() => _started = true;
 
         public void ResetFailure()
