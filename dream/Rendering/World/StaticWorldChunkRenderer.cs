@@ -660,13 +660,10 @@ public sealed class StaticWorldChunkRenderer : IDisposable
 
     private void ReplaceMesh(StaticWorldChunkBuildOutput output)
     {
-        // Only metadata is kept; the vertex and index lists go to the GPU and are then dropped.
-        // The material slot is resolved here, once per upload, so Draw never touches the catalog.
-        _meshes[output.Key] = new StaticWorldChunkDrawEntry(
-            output.Mesh.ToInfo(),
-            StaticTerrainMaterialCatalog.ResolveSlot(output.Key.MaterialId, output.Key.MaterialRole));
-        _signatures[output.Key] = output.Signature;
-
+        // The GPU goes first: _signatures[key] means "the GPU holds a mesh built from this
+        // signature", so recording it before the upload made a single failed upload permanent --
+        // Draw found no buffer and every later build skipped the chunk against the cached
+        // signature, leaving a hole in the terrain until something edited that chunk again.
         if (output.Mesh.ExposedFaceCount > 0)
         {
             _meshStore.Upload(output.Key, output.Mesh);
@@ -675,6 +672,13 @@ public sealed class StaticWorldChunkRenderer : IDisposable
         {
             _meshStore.Remove(output.Key);
         }
+
+        // Only metadata is kept; the vertex and index lists go to the GPU and are then dropped.
+        // The material slot is resolved here, once per upload, so Draw never touches the catalog.
+        _meshes[output.Key] = new StaticWorldChunkDrawEntry(
+            output.Mesh.ToInfo(),
+            StaticTerrainMaterialCatalog.ResolveSlot(output.Key.MaterialId, output.Key.MaterialRole));
+        _signatures[output.Key] = output.Signature;
     }
 
     private void StartBuild(StaticWorldChunkBuildRequest request)
