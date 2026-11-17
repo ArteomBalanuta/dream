@@ -62,11 +62,84 @@ public static class MainMenuPanel
         return result;
     }
 
+    public const float MultiplayerPanelWidthUnits = 340f;
+    private const float MpLabelWidthUnits = 100f;
+    private const float MpRowUnits = 24f;
+    private const float MpFieldXUnits = 14f + MpLabelWidthUnits + 6f;
+
     // The Multiplayer screen. Ids FirstId+40 .. FirstId+59. Writes form.Focused when a field is clicked.
     // Returns Join, Host, Back or None. busy disables fields and buttons. status shows under the panel,
     // coloured as an error when statusIsError.
-    // CONTRACT-STUB: WS-A replaces this body.
-    public static MenuAction BuildMultiplayer(MenuWidgets w, MultiplayerFormState form, bool busy, string? status, bool statusIsError) => MenuAction.None;
+    public static MenuAction BuildMultiplayer(MenuWidgets w, MultiplayerFormState form, bool busy, string? status, bool statusIsError)
+    {
+        w.DrawBackdrop();
+        w.Dim(120);
+
+        const float heightUnits = 318f;
+        float top = MathF.Max(6f, (MenuWidgets.DesignHeightUnits - heightUnits) * 0.5f);
+        UiRect panel = w.Centered(top, MultiplayerPanelWidthUnits, heightUnits);
+        w.DrawPanel(panel);
+
+        UiSizedText titleStyle = w.FitText("Multiplayer", panel.W, MenuWidgets.PanelTitleUnits);
+        w.TextCentred("Multiplayer", w.CentreX, panel.Y + 12f * w.Scale, in titleStyle, MenuWidgets.Gold);
+        w.DrawDivider(w.Inside(panel, 30f, 34f, MultiplayerPanelWidthUnits - 60f, 6f));
+
+        MenuAction result = MenuAction.None;
+        float buttonX = (MultiplayerPanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f;
+
+        FieldRow(w, panel, 44f, "Player name", FirstId + 40, form, MultiplayerField.PlayerName, form.PlayerName, busy);
+        w.DrawDivider(w.Inside(panel, 30f, 72f, MultiplayerPanelWidthUnits - 60f, 6f));
+
+        Header(w, panel, 82f, "Join a server");
+        FieldRow(w, panel, 102f, "Address", FirstId + 41, form, MultiplayerField.Address, form.Address, busy);
+        FieldRow(w, panel, 126f, "Port", FirstId + 42, form, MultiplayerField.JoinPort, form.JoinPort, busy);
+        if (w.Button(FirstId + 44, w.Inside(panel, buttonX, 152f, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits), JoinLabel, enabled: !busy))
+        {
+            result = MenuAction.Join;
+        }
+
+        w.DrawDivider(w.Inside(panel, 30f, 178f, MultiplayerPanelWidthUnits - 60f, 6f));
+
+        Header(w, panel, 188f, "Host a game");
+        FieldRow(w, panel, 208f, "Port", FirstId + 43, form, MultiplayerField.HostPort, form.HostPort, busy);
+        if (w.Button(FirstId + 45, w.Inside(panel, buttonX, 234f, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits), HostLabel, enabled: !busy))
+        {
+            result = MenuAction.Host;
+        }
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            UiSizedText style = w.FitText(status, panel.W - 24f * w.Scale, MenuWidgets.StatusUnits);
+            w.TextCentred(status, w.CentreX, panel.Y + 262f * w.Scale, in style, statusIsError ? MenuWidgets.Error : MenuWidgets.Muted);
+        }
+
+        if (w.Button(FirstId + 46, w.Inside(panel, buttonX, 284f, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits), BackLabel, enabled: !busy))
+        {
+            result = MenuAction.Back;
+        }
+
+        return result;
+    }
+
+    private static void Header(MenuWidgets w, UiRect panel, float yUnits, string text)
+    {
+        UiRect row = w.Inside(panel, 14f, yUnits, MultiplayerPanelWidthUnits - 28f, 20f);
+        UiSizedText style = w.FitTextInBox(text, row.W, MenuWidgets.ButtonLabelUnits, 20f);
+        w.TextLeftCentred(text, row, row.X, in style, MenuWidgets.Gold);
+    }
+
+    private static void FieldRow(MenuWidgets w, UiRect panel, float yUnits, string label, int id, MultiplayerFormState form, MultiplayerField which, MenuTextField field, bool busy)
+    {
+        UiRect row = w.Inside(panel, 14f, yUnits, MultiplayerPanelWidthUnits - 28f, MpRowUnits);
+        UiSizedText style = w.FitTextInBox(label, MpLabelWidthUnits * w.Scale, MenuWidgets.OptionRowUnits, MpRowUnits);
+        w.TextLeftCentred(label, row, row.X, in style, busy ? MenuWidgets.Disabled : MenuWidgets.Muted);
+
+        UiRect box = w.Inside(panel, MpFieldXUnits, yUnits + 2f, MultiplayerPanelWidthUnits - MpFieldXUnits - 14f, MpRowUnits - 4f);
+        if (w.TextField(id, box, field, form.Focused == which, enabled: !busy))
+        {
+            form.Focused = which;
+        }
+    }
 
     public static MenuAction BuildCredits(MenuWidgets w)
     {
