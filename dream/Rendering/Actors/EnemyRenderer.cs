@@ -114,9 +114,15 @@ public sealed class EnemyRenderer
     private Shader? _tintShader;
     private AnimatedModel? _tintModel;
 
+    // Set the moment a non-zero tint is handed to a model: AnimatedModel.BindProgram may have carried
+    // it into the MASK variant, and a later untinted enemy drives _appliedTint back to zero without
+    // touching the variant, so the base program's value alone cannot say whether the variant is clean.
+    private bool _maskTintDirty;
+
     private void ApplyTint(AnimatedModel model, Shader shader, Vector3 tint)
     {
         model.ActorTintOffset = tint;
+        _maskTintDirty |= !tint.Equals(Vector3.Zero);
         _tintShader = shader;
         _tintModel = model;
         if (tint.Equals(_appliedTint))
@@ -132,7 +138,7 @@ public sealed class EnemyRenderer
     // Back to zero in the base program, the model and the MASK variant. A no-op when nothing was tinted.
     private void ResetTint()
     {
-        if (_tintShader is null || _tintModel is null || _appliedTint.Equals(Vector3.Zero))
+        if (_tintShader is null || _tintModel is null || (_appliedTint.Equals(Vector3.Zero) && !_maskTintDirty))
         {
             return;
         }
@@ -148,6 +154,7 @@ public sealed class EnemyRenderer
         }
 
         _appliedTint = Vector3.Zero;
+        _maskTintDirty = false;
     }
 
     private const string TintUniformName = "uActorTintOffset";
