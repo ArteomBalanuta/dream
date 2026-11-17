@@ -33,11 +33,13 @@ public sealed class MenuFlowScript
 
     private const int SettleFrames = 30;
     private const int WorldFrames = 150;
+    private const int LoadingPanelFrames = 5;
     private const int TimeoutFrames = 3000;
 
     private int _phase;
     private int _wait;
     private int _timeout;
+    private int _hold;
 
     public static bool IsEnabled(Func<string, string?> environment)
     {
@@ -70,28 +72,29 @@ public sealed class MenuFlowScript
                 }
 
                 break;
-            case 1: // waiting for the world
-                if (s.InWorld && _wait > WorldFrames)
+            case 1: // the loading panel, a few frames after the start
+                if (_wait > LoadingPanelFrames)
                 {
-                    return Go(2, new Command(Step.OpenPauseWithEsc, "flow-02-world.png", "world reached; Esc"));
+                    return Go(2, new Command(Step.None, "flow-01a-loading.png", "loading screen shown"));
                 }
 
                 break;
-            case 2:
-                if (settled)
+            case 2: // loading until the prompt has shown for a while, then press a key
+                if (AwaitedPrompt(s, "flow-02a-loading-ready.png", out Command press))
                 {
-                    return s.PauseVisible && s.PauseOnRoot
-                        ? Go(3, new Command(Step.OpenOptionsInPause, "flow-03-pause.png", "pause menu open at root; Options"))
-                        : Fail("Esc did not open the pause menu at its root");
+                    return Go(3, press);
+                }
+
+                if (WorldShown(s))
+                {
+                    _phase = 3; // no loading screen at all: straight to the world
                 }
 
                 break;
-            case 3:
-                if (settled)
+            case 3: // the world, with the gate open
+                if (WorldShown(s))
                 {
-                    return s.PauseVisible && !s.PauseOnRoot
-                        ? Go(4, new Command(Step.EscBack, "flow-04-pause-options.png", "pause Options shown; Esc"))
-                        : Fail("Options did not open inside the pause menu");
+                    return Go(4, new Command(Step.OpenPauseWithEsc, "flow-02-world.png", "world reached; Esc"));
                 }
 
                 break;
@@ -99,26 +102,63 @@ public sealed class MenuFlowScript
                 if (settled)
                 {
                     return s.PauseVisible && s.PauseOnRoot
-                        ? Go(5, new Command(Step.ExitToMainMenu, "flow-05-pause-back.png", "Esc stepped back to the pause root; Exit to Main Menu"))
-                        : Fail("Esc did not step back to the pause root (or closed the menu)");
+                        ? Go(5, new Command(Step.OpenOptionsInPause, "flow-03-pause.png", "pause menu open at root; Options"))
+                        : Fail("Esc did not open the pause menu at its root");
                 }
 
                 break;
-            case 5: // waiting for the title screen
-                if (!s.InWorld && settled)
+            case 5:
+                if (settled)
                 {
-                    return Go(6, new Command(Step.StartSinglePlayer, "flow-06-title-again.png", "back at the title; Single Player (second start)"));
+                    return s.PauseVisible && !s.PauseOnRoot
+                        ? Go(6, new Command(Step.EscBack, "flow-04-pause-options.png", "pause Options shown; Esc"))
+                        : Fail("Options did not open inside the pause menu");
                 }
 
                 break;
             case 6:
-                if (s.InWorld && _wait > WorldFrames)
+                if (settled)
                 {
-                    return Go(7, new Command(Step.OpenPauseWithEsc, "flow-07-world-again.png", "second world reached; Esc"));
+                    return s.PauseVisible && s.PauseOnRoot
+                        ? Go(7, new Command(Step.ExitToMainMenu, "flow-05-pause-back.png", "Esc stepped back to the pause root; Exit to Main Menu"))
+                        : Fail("Esc did not step back to the pause root (or closed the menu)");
                 }
 
                 break;
-            case 7:
+            case 7: // waiting for the title screen
+                if (!s.InWorld && settled)
+                {
+                    return Go(8, new Command(Step.StartSinglePlayer, "flow-06-title-again.png", "back at the title; Single Player (second start)"));
+                }
+
+                break;
+            case 8:
+                if (_wait > LoadingPanelFrames)
+                {
+                    return Go(9, new Command(Step.None, "flow-06a-loading.png", "loading screen shown (second start)"));
+                }
+
+                break;
+            case 9:
+                if (AwaitedPrompt(s, "flow-06b-loading-ready.png", out Command pressAgain))
+                {
+                    return Go(10, pressAgain);
+                }
+
+                if (WorldShown(s))
+                {
+                    _phase = 10;
+                }
+
+                break;
+            case 10:
+                if (WorldShown(s))
+                {
+                    return Go(11, new Command(Step.OpenPauseWithEsc, "flow-07-world-again.png", "second world reached; Esc"));
+                }
+
+                break;
+            case 11:
                 if (settled)
                 {
                     Finished = true;
@@ -133,10 +173,27 @@ public sealed class MenuFlowScript
         return default;
     }
 
+    // The prompt has held for SettleFrames in a row.
+    private bool AwaitedPrompt(SceneState s, string png, out Command press)
+    {
+        _hold = s.LoadingAwaitingKey ? _hold + 1 : 0;
+        press = default;
+        if (_hold <= SettleFrames)
+        {
+            return false;
+        }
+
+        press = new Command(Step.PressAnyKey, png, "loading ready; any key");
+        return true;
+    }
+
+    private bool WorldShown(SceneState s) => s.InWorld && !s.LoadingVisible && _wait > WorldFrames;
+
     private Command Go(int phase, Command command)
     {
         _phase = phase;
         _wait = 0;
+        _hold = 0;
         return command;
     }
 

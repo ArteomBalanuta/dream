@@ -36,23 +36,43 @@ public partial class PlayScene
         RenderFrameClock.Advance(_clientPresentationTimeSeconds);
         _serverTickClock.Advance(args.Time);
         DrainRemoteTransportMessages();
+        // The loading screen's gate: input is held back until the world is ready and the player pressed and
+        // released a key. Everything else (network, prediction, neutral commands) keeps running underneath.
+        _loadingGate.Update(_readiness.Ready, _windowFocused && (keyboardState.IsAnyKeyDown || mouseState.IsAnyButtonDown));
+        bool loadingGated = _loadingGate.BlocksInput;
         _runtime.Player.NudgeWorldPosition(_predictionReconciler.TakeSmoothingStep(delta));
 
         // Viewmodel pose refresh is presentation-local and should remain scene/client owned.
         _viewModelController.RefreshPose();
-        HandleGlobalInputUnlessTyping(keyboardState);
+        if (loadingGated)
+        {
+            UpdateMultiplayerHud();
+        }
+        else
+        {
+            HandleGlobalInputUnlessTyping(keyboardState);
+        }
+
         // A dead local player sends no movement, look or use. Commands keep flowing (and keep their
         // sequence), because the reconciler only compares on a new ack and the respawn snap needs one.
         bool allowGameplayInput = DeadInputPolicy.AllowGameplayInput(
-            _settings.CurrentRuntimeState.AllowGameplayInput && !_chatInput.IsTyping,
+            _settings.CurrentRuntimeState.AllowGameplayInput && !_chatInput.IsTyping && !loadingGated,
             _runtime.Player.Combatant.Health.IsAlive);
-        HandleConsumableHotkeys(keyboardState, allowGameplayInput);
-        HandleWalkToggle(keyboardState, allowGameplayInput);
+        if (!loadingGated)
+        {
+            HandleConsumableHotkeys(keyboardState, allowGameplayInput);
+            HandleWalkToggle(keyboardState, allowGameplayInput);
+        }
+
         // The pointer is last Render's hover state, read once per Update. The left button is the
         // cursor aim's (facing and the held attack), the right button sets click-to-move goals.
-        WorldPointerState pointer = _render.SampleWorldPointer(mouseState, _settings, _windowFocused);
-        _cursorAim.OnFrame(pointer, allowGameplayInput, SuppressCursorAim);
-        _clickMove.OnFrame(pointer, allowGameplayInput);
+        if (!loadingGated)
+        {
+            WorldPointerState pointer = _render.SampleWorldPointer(mouseState, _settings, _windowFocused);
+            _cursorAim.OnFrame(pointer, allowGameplayInput, SuppressCursorAim);
+            _clickMove.OnFrame(pointer, allowGameplayInput);
+        }
+
         // The frame only captures input; each prediction tick below turns it into one command
         // whose sequence is that tick.
         PlayerCommandFrame rawCommandFrame = PlayerController.CaptureCommandFrame(
@@ -260,6 +280,11 @@ public partial class PlayScene
     // the menu it closes it. The capture script calls these same methods.
     internal void PressEscape()
     {
+        if (LoadingBlocksInput)
+        {
+            return;
+        }
+
         if (TryEscapeBack?.Invoke() == true)
         {
             return;
