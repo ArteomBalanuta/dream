@@ -35,6 +35,9 @@ public sealed class SinglePlayerLauncher
     private readonly Func<string> _playerName;
     private int _wakingFrames;
     private string? _hostPlayerName;
+    // True while the request in flight is a Join. Only a Join is cancellable: a Single Player or Host
+    // start has an integrated server mid-start behind it, which Escape must not leave half-torn-down.
+    private bool _joining;
 
     public SinglePlayerLauncher(
         NetworkSessionCoordinator coordinator,
@@ -83,6 +86,7 @@ public sealed class SinglePlayerLauncher
         }
 
         _hostPlayerName = null;
+        _joining = false;
         _wakingFrames = 0;
         StatusMessage = WakingMessage;
         Phase = SinglePlayerPhase.Waking;
@@ -116,6 +120,7 @@ public sealed class SinglePlayerLauncher
         }
 
         _hostPlayerName = playerName;
+        _joining = false;
         _wakingFrames = 0;
         StatusMessage = WakingMessage;
         Phase = SinglePlayerPhase.Waking;
@@ -137,10 +142,29 @@ public sealed class SinglePlayerLauncher
         }
 
         _hostPlayerName = null;
+        _joining = true;
         Phase = SinglePlayerPhase.Connecting;
         _coordinator.BeginConnect(options);
         StatusMessage = _coordinator.StatusMessage;
         PollConnecting();
+    }
+
+    // Escape on the loading panel of a Join: abandons the connect and goes back to the Multiplayer
+    // screen at once, instead of waiting out the OS connect timeout or the 45 s join timeout. The
+    // coordinator drops a session that still arrives, so a cancelled join can never attach. False
+    // (nothing happened) when the request in flight is not a Join.
+    public bool CancelConnect()
+    {
+        if (!_joining || Phase != SinglePlayerPhase.Connecting)
+        {
+            return false;
+        }
+
+        _joining = false;
+        _coordinator.CancelConnect();
+        StatusMessage = string.Empty;
+        Phase = SinglePlayerPhase.Idle;
+        return true;
     }
 
     // Clears a Failed phase back to Idle, so a stale failure is not shown on another screen.

@@ -81,6 +81,14 @@ public sealed class MainMenuScene
             case MenuScreen.Multiplayer:
                 if (_launcher.IsBusy)
                 {
+                    // The loading panel draws no buttons, so Escape is the only way out of a Join
+                    // waiting on a server that may never answer. Every other key stays swallowed,
+                    // and a Single Player or Host start (CancelConnect returns false) is unaffected.
+                    if (key == MenuKey.Escape)
+                    {
+                        _launcher.CancelConnect();
+                    }
+
                     return MenuAction.None;
                 }
 
