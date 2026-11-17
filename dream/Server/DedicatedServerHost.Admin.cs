@@ -561,7 +561,10 @@ public sealed partial class DedicatedServerHost
         int slots = _connectionClaims.Count;
         for (int i = 0; i < _pendingJoins.Count; i++)
         {
-            if (!string.Equals(_pendingJoins[i].ConnectionId, connectionId, StringComparison.Ordinal))
+            // A pending join whose connection already holds a claim (a repeat join from a seated
+            // player) is that same seat, already counted in _connectionClaims.
+            if (!string.Equals(_pendingJoins[i].ConnectionId, connectionId, StringComparison.Ordinal)
+                && !_connectionClaims.ContainsKey(_pendingJoins[i].ConnectionId))
             {
                 slots++;
             }
@@ -582,7 +585,9 @@ public sealed partial class DedicatedServerHost
     private bool HoldsSeat(string connectionId, ClientJoinRequestMessage join)
     {
         AccountKey? account = join.ResolvedAccount;
-        string name = join.DisplayName.Trim();
+        // A client-supplied field: a join with no displayName decodes as null, and a host without
+        // accounts validates nothing before the cap is checked.
+        string name = join.DisplayName?.Trim() ?? string.Empty;
         foreach (KeyValuePair<string, string> claim in _connectionClaims)
         {
             if (string.Equals(claim.Key, connectionId, StringComparison.Ordinal))
@@ -601,9 +606,12 @@ public sealed partial class DedicatedServerHost
                 continue;
             }
 
+            // A seat is the joiner's own only when the stable identity matches: the account when the
+            // joiner has one, and the character name only when it has none. Character names ride in
+            // every snapshot, so a name alone is attacker-chosen and must not open the cap.
             if (other.JoinedIdentity is { } identity
                 && ((account is { } joining && identity.Account.Equals(joining))
-                    || CharacterNames.Comparer.Equals(identity.Character.Value, name)))
+                    || (account is null && CharacterNames.Comparer.Equals(identity.Character.Value, name))))
             {
                 return true;
             }
