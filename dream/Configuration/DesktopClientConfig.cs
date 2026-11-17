@@ -85,6 +85,7 @@ public sealed class DesktopClientConfig
         Host = string.IsNullOrWhiteSpace(Host) ? "127.0.0.1" : Host.Trim();
         PlayerName = string.IsNullOrWhiteSpace(PlayerName) ? "dream-client" : PlayerName.Trim();
         Port = Port is < 1 or > 65535 ? ServerBootstrap.DefaultPort : Port;
+        HostPort = HostPort is < 1 or > 65535 ? ServerBootstrap.DefaultPort : HostPort;
         FieldOfViewDegrees = Math.Clamp(FieldOfViewDegrees, 50f, 100f);
         MouseSensitivity = Math.Clamp(MouseSensitivity, 0.5f, 8f);
         NoclipSpeed = Math.Clamp(NoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed);
