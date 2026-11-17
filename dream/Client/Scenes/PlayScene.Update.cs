@@ -38,7 +38,11 @@ public partial class PlayScene
         DrainRemoteTransportMessages();
         // The loading screen's gate: input is held back until the world is ready and the player pressed and
         // released a key. Everything else (network, prediction, neutral commands) keeps running underneath.
-        _loadingGate.Update(_readiness.Ready, _windowFocused && (keyboardState.IsAnyKeyDown || mouseState.IsAnyButtonDown));
+        // An open pause menu (Esc while Loading) sits above the gate: nothing behind it may dismiss the prompt.
+        _loadingGate.Update(
+            _readiness.Ready,
+            _settings.PauseMenuVisible || keyboardState.IsAnyKeyDown || mouseState.IsAnyButtonDown,
+            _windowFocused);
         bool loadingGated = _loadingGate.BlocksInput;
         _runtime.Player.NudgeWorldPosition(_predictionReconciler.TakeSmoothingStep(delta));
 
@@ -47,6 +51,15 @@ public partial class PlayScene
         if (loadingGated)
         {
             UpdateMultiplayerHud();
+            // Esc stays live so a stalled join can be left: it opens the pause menu while Loading, and
+            // steps back / closes a pause menu that is already open.
+            bool escapeDown = _windowFocused && keyboardState.IsKeyDown(Keys.Escape);
+            if (escapeDown && !_wasSettingsTogglePressed)
+            {
+                PressEscape();
+            }
+
+            _wasSettingsTogglePressed = escapeDown;
         }
         else
         {
@@ -280,7 +293,7 @@ public partial class PlayScene
     // the menu it closes it. The capture script calls these same methods.
     internal void PressEscape()
     {
-        if (LoadingBlocksInput)
+        if (LoadingBlocksInput && _loadingGate.Phase != LoadingGatePhase.Loading && !_settings.PauseMenuVisible)
         {
             return;
         }

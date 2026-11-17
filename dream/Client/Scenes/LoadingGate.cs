@@ -25,6 +25,7 @@ public sealed class LoadingGate
     }
 
     private bool _armed;
+    private bool _wasFocused = true;
 
     public LoadingGatePhase Phase { get; private set; }
 
@@ -36,8 +37,23 @@ public sealed class LoadingGate
     // Once per PlayScene.Update, after the network drain. Loading -> AwaitingKey when worldReady.
     // AwaitingKey arms after one frame with no input down, then any input down -> Releasing.
     // Releasing -> Open on the first frame with nothing down.
-    public void Update(bool worldReady, bool anyInputDown)
+    // focused false: the window lost focus; the gate disarms (a key down at focus loss, or the click that
+    // refocuses, must not count) and the first frame back in focus is ignored.
+    public void Update(bool worldReady, bool anyInputDown, bool focused = true)
     {
+        if (!focused)
+        {
+            _wasFocused = false;
+            _armed = false;
+            anyInputDown = true;
+        }
+        else if (!_wasFocused)
+        {
+            _wasFocused = true;
+            _armed = false;
+            return;
+        }
+
         switch (Phase)
         {
             case LoadingGatePhase.Loading:
