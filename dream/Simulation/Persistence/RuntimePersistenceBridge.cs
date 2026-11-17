@@ -1164,16 +1164,22 @@ internal sealed partial class RuntimePersistenceBridge
             _fracturePieceCellScratch;
         cellPieces.Clear();
         _host.Map.CaptureFracturePiecesInto(cell, cellPieces);
-        ObjectId[] pieceIds = new ObjectId[cellPieces.Count];
+        // PieceIds is indexed by map piece index, and the capture skips invalid pieces, so the
+        // array has to span the highest index it emits, not the count of pieces it emitted:
+        // sizing it by the count dropped the last piece's id and left the first slot empty
+        // whenever any piece of the cell was invalid.
+        int highestPieceIndex = -1;
+        for (int i = 0; i < cellPieces.Count; i++)
+        {
+            highestPieceIndex = Math.Max(highestPieceIndex, cellPieces[i].PieceIndex);
+        }
+
+        ObjectId[] pieceIds = new ObjectId[highestPieceIndex + 1];
         for (int i = 0; i < cellPieces.Count; i++)
         {
             (GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) = cellPieces[i];
             ObjectId pieceId = _objectIds.Take();
-            // PieceIds is indexed by map piece index; a fresh fracture's pieces are valid and 0..n-1.
-            if (PieceIndex < pieceIds.Length)
-            {
-                pieceIds[PieceIndex] = pieceId;
-            }
+            pieceIds[PieceIndex] = pieceId;
 
             PersistedCubeFracturePiece persistedPiece = new(
                 ObjectId: pieceId,
