@@ -69,6 +69,11 @@ internal static class EnemyFactory
         // rewrite the row; the first checkpoint with a diff writes the clamped value. Kill XP and the wire
         // value agree on one number.
         int level = Math.Clamp(stored.Level, 1, ContentCatalog.MaxEnemyLevel);
+        // The health pool is hostile too, and it is the one stat no StatId clamp covers: a row outside
+        // 1..the content ceiling (the same bound the enemy sheet is validated against) is clamped here,
+        // so a tampered row cannot restore an enemy nobody can kill. Current health follows the clamped
+        // maximum (SetAuthoritativeState clamps it into [0, max]).
+        int maxHealth = Math.Clamp(stored.MaxHealth, 1, ContentCatalog.MaxEnemyMaxHealth);
         EnemyCombatDerivedStats derived = formulas.EvaluateEnemyDerivedStats(
             (int)stats[StatId.Strength],
             stats[StatId.AttackSpeed],
@@ -81,12 +86,12 @@ internal static class EnemyFactory
             () => position,
             events,
             actorId: actorId,
-            maxHealth: stored.MaxHealth,
+            maxHealth: maxHealth,
             attackDamage: derived.AttackDamage,
             attackIntervalSeconds: derived.AttackIntervalSeconds,
             anchorHeightOffset: WolfDefinition.CombatAnchorHeight,
             baseStats: stats);
-        combatant.Health.SetAuthoritativeState(stored.CurrentHealth, stored.MaxHealth);
+        combatant.Health.SetAuthoritativeState(stored.CurrentHealth, maxHealth);
 
         EnemyActor actor = Build(combatant, template, position, Math.Max(0f, stored.MovementSpeed), row.DisplayName, row.EnemyKind, level, home ?? position);
         actor.SetFacing(row.Facing);
