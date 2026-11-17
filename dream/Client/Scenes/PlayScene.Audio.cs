@@ -118,7 +118,11 @@ public partial class PlayScene
             _audioHowlSeconds -= delta;
             if (_audioHowlSeconds <= 0f)
             {
-                audio.Play(SoundId.WolfHowl, 0.45f);
+                // Somewhere out in the dark: a random bearing at the edge of full level, so the
+                // howl is panned but keeps the distance baked into the clip.
+                float bearing = _audioRandom.NextSingle() * MathF.Tau;
+                Vector3 far = feet + (new Vector3(MathF.Cos(bearing), 0f, MathF.Sin(bearing)) * AudioMixer.HearingRadius);
+                audio.PlayAt(SoundId.WolfHowl, far, 0.5f);
                 _audioHowlSeconds = 25f + (_audioRandom.NextSingle() * 35f);
             }
         }
