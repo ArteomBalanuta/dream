@@ -133,15 +133,59 @@ public class MenuFlowTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private static (MainMenuScene Scene, SinglePlayerLauncher Launcher, FakeConnector Connector, List<MultiplayerDefaults> Saved) CreateScene(MultiplayerDefaults? defaults = null)
+    private static (MainMenuScene Scene, SinglePlayerLauncher Launcher, FakeConnector Connector, List<MultiplayerDefaults> Saved) CreateScene(MultiplayerDefaults? defaults = null, IMenuClipboard? clipboard = null)
     {
         FakeServer server = new();
         FakeConnector connector = new();
         NetworkSessionCoordinator coordinator = new(server, connector, null);
         SinglePlayerLauncher launcher = new(coordinator, server, null, () => "hero");
         List<MultiplayerDefaults> saved = [];
-        MainMenuScene scene = new(launcher, new List<MenuOptionRow>(), null, defaults, saved.Add);
+        MainMenuScene scene = new(launcher, new List<MenuOptionRow>(), null, defaults, saved.Add, clipboard);
         return (scene, launcher, connector, saved);
+    }
+
+    private sealed class FakeClipboard : IMenuClipboard
+    {
+        public string? Text { get; set; }
+
+        public string? GetText() => Text;
+
+        public bool SetText(string text)
+        {
+            Text = text;
+            return true;
+        }
+    }
+
+    [Fact]
+    public void Scene_SelectAllThenPasteReplacesTheAddress()
+    {
+        FakeClipboard clipboard = new() { Text = "10.0.0.5" };
+        var (scene, _, _, _) = CreateScene(new MultiplayerDefaults("example.org", 7000, 7001, "hero"), clipboard);
+        scene.Handle(MenuAction.Multiplayer);
+
+        scene.HandleKey(MenuKey.SelectAll, MenuKeyModifiers.Control);
+        scene.HandleKey(MenuKey.Paste, MenuKeyModifiers.Control);
+
+        Assert.Equal("10.0.0.5", scene.Form.Address.Text);
+        Assert.False(scene.Form.Address.HasSelection);
+    }
+
+    [Fact]
+    public void Scene_CopyPutsTheSelectionOnTheClipboard_AndEscapeStillGoesBack()
+    {
+        FakeClipboard clipboard = new();
+        var (scene, _, _, _) = CreateScene(new MultiplayerDefaults("example.org", 7000, 7001, "hero"), clipboard);
+        scene.Handle(MenuAction.Multiplayer);
+
+        scene.HandleKey(MenuKey.Home, MenuKeyModifiers.None);
+        scene.HandleKey(MenuKey.Right, MenuKeyModifiers.Shift);
+        scene.HandleKey(MenuKey.Right, MenuKeyModifiers.Shift);
+        scene.HandleKey(MenuKey.Copy, MenuKeyModifiers.Control);
+
+        Assert.Equal("ex", clipboard.Text);
+        scene.HandleKey(MenuKey.Escape, MenuKeyModifiers.None);
+        Assert.Equal(MenuScreen.Root, scene.Screen);
     }
 
     [Fact]

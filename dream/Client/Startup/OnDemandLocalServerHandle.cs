@@ -63,7 +63,14 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
         }
 
         ILocalServerHandle? previous = _started;
-        if (previous != null)
+        if (previous is { ErrorMessage: not null })
+        {
+            // A failed start released its host and holds nothing to stop (as in ResetFailure), so the
+            // next start need not queue behind it.
+            _started = null;
+            previous.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        else if (previous != null)
         {
             _started = null;
             if (_listen.AllowRemotePlayers)
