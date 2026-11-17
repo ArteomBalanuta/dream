@@ -67,8 +67,12 @@ public sealed class MultiplayerFormState
                 string digits = line[(colon + 1)..];
                 if (digits.Length is >= 1 and <= 5 && digits.All(char.IsAsciiDigit))
                 {
-                    Address.Insert(line[..colon]);
-                    JoinPort.SetText(digits);
+                    // The port follows only a host that actually went in (a full field takes nothing).
+                    if (Address.Insert(line[..colon]) > 0)
+                    {
+                        JoinPort.SetText(digits);
+                    }
+
                     return;
                 }
             }
