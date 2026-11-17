@@ -56,6 +56,9 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
 
     public LocalServerListenOptions ListenOptions { get; }
 
+    // What StartAsync left on the host: true for Single Player, the DREAM_DEV_COMMANDS value for a host.
+    public bool DevCommandsAllowed => _host?.DevCommandsAllowed ?? false;
+
     public ServerConnectionOptions ConnectionOptions { get; }
 
     public DedicatedServerPerformanceSnapshot LatestPerformance =>
