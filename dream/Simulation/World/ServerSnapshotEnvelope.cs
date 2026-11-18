@@ -13,7 +13,10 @@ public readonly record struct ServerSnapshotEnvelope(
     IReadOnlyList<DamageEventDelta> DamageEvents,
     // WorldStateChecksum after every mutation up to WorldChecksumSequence; sent periodically.
     ulong? WorldChecksum = null,
-    ulong WorldChecksumSequence = 0)
+    ulong WorldChecksumSequence = 0,
+    // Protocol v22: casts in this interval, for other clients to draw. Null means none; an empty
+    // list is never written (absent and empty are the same).
+    IReadOnlyList<CastEventDelta>? CastEvents = null)
 {
     // Equality: ActorDelta and ActorFrame below take part in the record's generated Equals and
     // GetHashCode (ActorDelta by value, which compares its base list by reference; ActorFrame by
@@ -60,8 +63,33 @@ public readonly record struct ServerSnapshotEnvelope(
         {
             LastAcceptedCommandSequences = sequences,
             WorldMutations = [.. older.WorldMutations, .. newer.WorldMutations],
-            DamageEvents = [.. older.DamageEvents, .. newer.DamageEvents]
+            DamageEvents = [.. older.DamageEvents, .. newer.DamageEvents],
+            CastEvents = ConcatCasts(older.CastEvents, newer.CastEvents)
         };
         return true;
+    }
+
+    // Null-tolerant concatenation; null when both sides are null or empty (empty is absent).
+    private static IReadOnlyList<CastEventDelta>? ConcatCasts(IReadOnlyList<CastEventDelta>? a, IReadOnlyList<CastEventDelta>? b)
+    {
+        int aCount = a?.Count ?? 0;
+        int bCount = b?.Count ?? 0;
+        if (aCount + bCount == 0)
+        {
+            return null;
+        }
+
+        CastEventDelta[] result = new CastEventDelta[aCount + bCount];
+        for (int i = 0; i < aCount; i++)
+        {
+            result[i] = a![i];
+        }
+
+        for (int i = 0; i < bCount; i++)
+        {
+            result[aCount + i] = b![i];
+        }
+
+        return result;
     }
 }

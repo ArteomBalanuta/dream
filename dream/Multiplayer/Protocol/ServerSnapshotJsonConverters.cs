@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Content;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
@@ -18,11 +19,13 @@ namespace Dream.Multiplayer.Protocol;
 // Wire shape (protocol v2, declaration order, nulls left out):
 //   {"snapshot":{"serverTick":n,"lastAcceptedCommandSequences":{"<session>":n,...}?,
 //    "actors":[actor,...]?,"interactionMode":n,"world":{...}?,"worldMutations":[mutation,...]?,
-//    "damageEvents":[damage,...]?,"worldChecksum":n?,"worldChecksumSequence":n}}
+//    "damageEvents":[damage,...]?,"worldChecksum":n?,"worldChecksumSequence":n,
+//    "castEvents":[cast,...]?}}   (protocol v22: written last, only when a cast happened)
 //   mutation: {"kind":n,"cellPosition":v,"targetCellPosition":v?,"centerPosition":v?,
 //              "materialId":n?,"fracturePieces":[{"center":v,"sideLength":f},...]?,"sequence":n,
 //              "actorId":n?}
 //   damage:   {"actorId":n,"kind":n,"amount":n,"actorDied":b,"currentHealth":n,"maxHealth":n}
+//   cast:     {"actorId":n,"kind":n,"origin":v,"direction":v,"range":f}
 // The world is only sent on join and resync; a nested JsonSerializer call writes it with the
 // options' WorldSnapshotJsonConverter (the protocol v3 compact world). Protocol v3 also adds
 // "worldTransferId":n? after "snapshot" on a resync carrier whose world follows in chunks.
@@ -99,6 +102,7 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
     private static readonly JsonEncodedText DamageEvents = JsonEncodedText.Encode("damageEvents");
     private static readonly JsonEncodedText WorldChecksum = JsonEncodedText.Encode("worldChecksum");
     private static readonly JsonEncodedText WorldChecksumSequence = JsonEncodedText.Encode("worldChecksumSequence");
+    private static readonly JsonEncodedText CastEvents = JsonEncodedText.Encode("castEvents");
 
     private static readonly ActorSnapshotListJsonConverter ActorListConverter = new();
 
@@ -125,6 +129,7 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
         IReadOnlyList<DamageEventDelta>? damageEvents = null;
         ulong? worldChecksum = null;
         ulong worldChecksumSequence = 0;
+        IReadOnlyList<CastEventDelta>? castEvents = null;
 
         while (HotPathJson.NextProperty(ref reader, nameof(ServerSnapshotEnvelope)))
         {
@@ -179,6 +184,11 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
             {
                 worldChecksumSequence = HotPathJson.ReadUInt64(ref reader);
             }
+            else if (reader.ValueTextEquals(CastEvents.EncodedUtf8Bytes))
+            {
+                HotPathJson.ReadValue(ref reader);
+                castEvents = reader.TokenType == JsonTokenType.Null ? null : ReadCastEvents(ref reader, options);
+            }
             else
             {
                 HotPathJson.SkipValue(ref reader);
@@ -201,7 +211,8 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
             mutations!,
             damageEvents!,
             worldChecksum,
-            worldChecksumSequence)
+            worldChecksumSequence,
+            castEvents)
         {
             ActorFrame = actorFrame
         };
@@ -277,6 +288,18 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
         }
 
         writer.WriteNumber(WorldChecksumSequence, value.WorldChecksumSequence);
+        if (value.CastEvents is IReadOnlyList<CastEventDelta> castEvents)
+        {
+            writer.WritePropertyName(CastEvents);
+            writer.WriteStartArray();
+            for (int i = 0; i < castEvents.Count; i++)
+            {
+                CastEventDeltaJsonConverter.WriteCast(writer, castEvents[i]);
+            }
+
+            writer.WriteEndArray();
+        }
+
         writer.WriteEndObject();
     }
 
@@ -368,6 +391,25 @@ internal sealed class ServerSnapshotEnvelopeJsonConverter : JsonConverter<Server
             while (NextElement(ref reader, nameof(DamageEventDelta)))
             {
                 events.Add(DamageEventDeltaJsonConverter.ReadDamage(ref reader));
+            }
+
+            return events.ToArray();
+        }
+        finally
+        {
+            events.Dispose();
+        }
+    }
+
+    private static CastEventDelta[] ReadCastEvents(ref Utf8JsonReader reader, JsonSerializerOptions options)
+    {
+        ExpectStartArray(ref reader, nameof(CastEventDelta));
+        PooledScratch<CastEventDelta> events = new(4);
+        try
+        {
+            while (NextElement(ref reader, nameof(CastEventDelta)))
+            {
+                events.Add(CastEventDeltaJsonConverter.ReadCast(ref reader, options));
             }
 
             return events.ToArray();
@@ -656,6 +698,76 @@ internal sealed class DamageEventDeltaJsonConverter : JsonConverter<DamageEventD
             writer.WriteNumber(Hit, (int)value.HitKind);
         }
 
+        writer.WriteEndObject();
+    }
+}
+
+internal sealed class CastEventDeltaJsonConverter : JsonConverter<CastEventDelta>
+{
+    private static readonly JsonEncodedText ActorId = JsonEncodedText.Encode("actorId");
+    private static readonly JsonEncodedText Kind = JsonEncodedText.Encode("kind");
+    private static readonly JsonEncodedText Origin = JsonEncodedText.Encode("origin");
+    private static readonly JsonEncodedText Direction = JsonEncodedText.Encode("direction");
+    private static readonly JsonEncodedText Range = JsonEncodedText.Encode("range");
+
+    public override CastEventDelta Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        return ReadCast(ref reader, options);
+    }
+
+    public override void Write(Utf8JsonWriter writer, CastEventDelta value, JsonSerializerOptions options)
+    {
+        WriteCast(writer, value);
+    }
+
+    internal static CastEventDelta ReadCast(ref Utf8JsonReader reader, JsonSerializerOptions options)
+    {
+        HotPathJson.ExpectStartObject(ref reader, nameof(CastEventDelta));
+        int actorId = 0;
+        SkillKind kind = default;
+        Vector3 origin = default;
+        Vector3 direction = default;
+        float range = 0f;
+        while (HotPathJson.NextProperty(ref reader, nameof(CastEventDelta)))
+        {
+            if (reader.ValueTextEquals(ActorId.EncodedUtf8Bytes))
+            {
+                actorId = HotPathJson.ReadInt32(ref reader);
+            }
+            else if (reader.ValueTextEquals(Kind.EncodedUtf8Bytes))
+            {
+                // An undefined value is kept as sent; the client treats an unmapped kind as no cast.
+                kind = (SkillKind)HotPathJson.ReadInt32(ref reader);
+            }
+            else if (reader.ValueTextEquals(Origin.EncodedUtf8Bytes))
+            {
+                origin = HotPathJson.ReadVector3(ref reader, options);
+            }
+            else if (reader.ValueTextEquals(Direction.EncodedUtf8Bytes))
+            {
+                direction = HotPathJson.ReadVector3(ref reader, options);
+            }
+            else if (reader.ValueTextEquals(Range.EncodedUtf8Bytes))
+            {
+                range = HotPathJson.ReadSingle(ref reader);
+            }
+            else
+            {
+                HotPathJson.SkipValue(ref reader);
+            }
+        }
+
+        return new CastEventDelta(actorId, kind, origin, direction, range);
+    }
+
+    internal static void WriteCast(Utf8JsonWriter writer, in CastEventDelta value)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber(ActorId, value.ActorId);
+        writer.WriteNumber(Kind, (int)value.Kind);
+        HotPathJson.WriteVector3(writer, Origin, value.Origin);
+        HotPathJson.WriteVector3(writer, Direction, value.Direction);
+        writer.WriteNumber(Range, value.Range);
         writer.WriteEndObject();
     }
 }

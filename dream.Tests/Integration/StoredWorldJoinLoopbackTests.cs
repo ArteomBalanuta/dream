@@ -52,7 +52,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     //   -------
     //   6,117 B  measured
     // The protocol bump contributes nothing at all here, and not merely because the digit is the same
-    // width: CaptureGeneratedJoinAsync below normalises "protocolVersion":21 to "protocolVersion":8 on
+    // width: CaptureGeneratedJoinAsync below normalises "protocolVersion":22 to "protocolVersion":8 on
     // every frame before it hashes or counts, exactly as it previously normalised ":19" to ":8". Both
     // versions collapse to identical normalised text, so the bump moves neither the byte count nor the
     // sha-256. That is why the hash here is byte-for-byte the attribute wave's 90a7bf84... rather than a
@@ -213,7 +213,7 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
             // and WaveBTesterWorldsLoopbackTests has the opposite symptom - those go green while verifying nothing -
             // so after ANY bump, grep Replace("\"protocolVersion across the test tree even if the suite is green.
             string text = StripInventory(
-                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":21", "\"protocolVersion\":8"));
+                TickNumber().Replace(System.Text.Encoding.UTF8.GetString(frame.Payload), "\"$1\":0").Replace("\"protocolVersion\":22", "\"protocolVersion\":8"));
             texts.Add(text);
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
             hash.AppendData(BitConverter.GetBytes(bytes.Length));
