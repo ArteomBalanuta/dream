@@ -42,10 +42,9 @@ public class RemoteSessionPlayerStateTests
 
         // One command drives MaxCommandRepeatTicks (16) ticks before the seat starves to idle, and
         // the motor ramps instead of snapping to speed, so that window is a ramp up to the cruise
-        // and then a brake back to rest: about 0.75 m, where the old instant-velocity motor did a
-        // flat 16/64 x 6 = 1.5 m. What this asserts is unchanged -- the seat moves along the
-        // client's facing (+X) and not across it.
-        Assert.True(state.Position.X > 4.5f, $"x={state.Position.X}");
+        // and then a brake back to rest, a fraction of the window's cruise travel. What this
+        // asserts is that the seat moves along the client's facing (+X) and not across it.
+        Assert.True(state.Position.X > 4.2f, $"x={state.Position.X}");
         Assert.Equal(4f, state.Position.Z, 1);
     }
 

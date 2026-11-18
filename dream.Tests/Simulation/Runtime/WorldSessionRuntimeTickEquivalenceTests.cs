@@ -93,10 +93,17 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // The previous values were 0x47C9098CA55E6A2A, 0x75C725B66AC87974, 0xC5C7582BCA65AB27,
     // 0xFA8959A59E2744C9, 0xB1D85FAD2772C596, 0xD2EF1B9E1AE71866, 0xBF218B5A237681DA,
     // 0x589E0C5D08B17BC1, 0xA1F2C1A7DCC7D338, 0xC3A8C27C48C84BA2.
+    // Re-pinned again by the player-speeds change: the default cruise, the sprint and the walk floor
+    // were slowed, so every walking tick puts the seats somewhere new and all ten checkpoints moved.
+    // The script's shape is unchanged: the build is accepted, the wolf hits players 3 times, players
+    // hit enemies 8 times, 2 wolves die, 2 mutations export and 20 queued actions are processed
+    // (the wolf now chases for 91 ticks). The previous values were
+    // 0x1A1BAA6E45BBACD3, 0x040DC65A79CDD59F, 0xBC1CC1AC529E604A, 0xF1E4FE4528377000, 0xB709A19E46CCC057,
+    // 0x015F2B430951B84B, 0xEAF32C18E2FF7370, 0x6013610680906590, 0x7EC02EE1E4B36B83, 0x18F2DDA4A60C2E40.
     private static readonly ulong[] GoldenCheckpoints =
     [
-        0x1A1BAA6E45BBACD3UL, 0x040DC65A79CDD59FUL, 0xBC1CC1AC529E604AUL, 0xF1E4FE4528377000UL, 0xB709A19E46CCC057UL,
-        0x015F2B430951B84BUL, 0xEAF32C18E2FF7370UL, 0x6013610680906590UL, 0x7EC02EE1E4B36B83UL, 0x18F2DDA4A60C2E40UL
+        0x3DC5F3B5EF51BCCEUL, 0x2A79F9C880D771C6UL, 0xEAA7CDE2A30B6FCCUL, 0x931A5174CA7B7091UL, 0x1E73BCE72892C7BCUL,
+        0x24C6ADDAD2F642FEUL, 0x31EFA8E2A7F09351UL, 0x0DD188E4D622C4F1UL, 0x27E966A1972E9736UL, 0x65D2F5003D1A9FCFUL
     ];
 
     [Fact]

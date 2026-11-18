@@ -89,7 +89,7 @@ public sealed class LocalPlayerRenderer : IDisposable
 
         // Moving comes from the render pose (tick speed with hysteresis, see
         // LocalPlayerRenderSmoother); how fast is the body's, when it reports any. With no usable
-        // speed the fallback assumes a WALK - ReferenceWalkSpeed is the walk tier's 1.6 m/s, so the
+        // speed the fallback assumes a WALK - ReferenceWalkSpeed is the walk clip's authored speed, so the
         // body plays the walk cycle at its authored rate rather than guessing at a faster gait.
         float speed = !localPlayer.IsMoving
             ? 0f

@@ -21,11 +21,12 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
     private const string Steady = "session-a";
     private const string Walker = "session-b";
     private const int WalkTicks = 2;
-    // The snap threshold is a distance (3 m), so how long a stall has to be before the ack after it
-    // snaps depends on the cruise speed. At the old flat 6 m/s a 64-tick (1 s) stall diverged 4.5 m;
-    // at the 4.3 m/s run cruise the same stall is 2.99 m, just under the threshold, and the ack
-    // smooths instead. 80 ticks (1.25 s) puts this scenario back where it was testing the snap.
-    private const int StallTicks = 80;
+    // The snap threshold is a distance, so how long a stall has to be before the ack after it snaps
+    // depends on the cruise speed: the ticks the cruise needs to cover the snap distance plus a
+    // margin that also pays for the server's own walk and braking.
+    private const int StallTicks = (int)(
+        (ClientPredictionReconciler.DefaultSnapDistance + 2f)
+        / (PlayerSimulationTuning.DefaultRunSpeed / SimulationClock.AuthoritativeTicksPerSecond));
     private const int UnacknowledgedTicks = 6;
 
     private const int FloorSize = 48;
@@ -35,9 +36,8 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
     // edge and the measurement became a wall slide instead of a reconciliation.
     private static readonly Vector3 WalkerStart = new(36f, 1.5f, 36f);
     // The motor accelerates over the first ticks, so a free walk falls a little short of
-    // ticks x MoveSpeed x dt, by a fixed amount independent of the tick count: 0.43 m observed
-    // from the solver's own settling, plus the explicit ground ramp's v^2 / 2a =
-    // 4.3^2 / (2 x 18) = 0.51 m. 1.2 covers the 0.94 m sum with a little room.
+    // ticks x MoveSpeed x dt, by a fixed amount independent of the tick count: what the solver's
+    // own settling costs plus the explicit ground ramp's v^2 / 2a. 1.2 m covers the sum with room.
     private const float AccelerationRampMeters = 1.2f;
     private const float StraightLaneDriftMeters = 0.01f;
 
@@ -76,15 +76,15 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
         // The old snap put the player on the acknowledged server position; the replay carries the
         // client's unacknowledged travel on top of it, a whole window of cruise further on.
         float replayGain = (landing - server[ackIndex]).Xz.Length;
-        Assert.True(replayGain > 0.3f, $"replay only moved the snap {replayGain} m past the ack");
+        float cruiseTravel = UnacknowledgedTicks * SimulationClock.FixedDeltaSeconds * PlayerSimulationTuning.DefaultRunSpeed;
+        Assert.True(replayGain > 0.5f * cruiseTravel, $"replay only moved the snap {replayGain} m past the ack");
         // It lands a little ahead of where the server actually goes, and cannot do better: the
         // server idled the seat through the stall, so it resumes from rest and ramps back up while
         // the client body never stopped cruising, and a replay that translates the client's path
-        // cannot model that velocity gap. Over these 6 ticks it is the client's cruise travel
-        // (6/64 x 4.3 = 0.40 m) less the server's ramp-up (0.09 m), about 0.31 m; the reconciler
-        // smooths the remainder away. Before the ramp both sides were at cruise instantly and the
+        // cannot model that velocity gap. Over these ticks it is at most the client's cruise travel,
+        // less the server's ramp-up; the reconciler smooths the remainder away. Before the ramp both sides were at cruise instantly and the
         // translation was exact, which is what the old 0.05 m tolerance measured.
-        Assert.True(miss < 0.35f, $"snap landed {miss} m from where the server went");
+        Assert.True(miss < cruiseTravel, $"snap landed {miss} m from where the server went");
     }
 
     // Character-gaits fix loop 1 (M1): a snap zeroes the body's VERTICAL velocity and keeps its

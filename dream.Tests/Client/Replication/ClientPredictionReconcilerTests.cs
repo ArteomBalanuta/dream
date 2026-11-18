@@ -372,14 +372,25 @@ public class ClientPredictionReconcilerTests
     // extrapolation is actually used for (when they keep matching, the client's own sample carries
     // the real ramp and is compared instead). Past BufferedPlayerCommandInbox.ServerRepeatTicks
     // the server idles, and the motor brakes at GroundDeceleration instead of stopping at once, so
-    // the server coasts dt x sum(max(v - 24 dt k, 0)) = 0.3523 m from the 4.3 m/s cruise.
+    // the server coasts dt x sum(max(v - 24 dt k, 0)) from the cruise.
     // The old fixed-step extrapolation predicted an instant stop and was that much short.
     [Fact]
     public void Reconcile_StarvedPastTheRepeatWindow_WithDivergedCommands_ExtrapolatesTheIdleCoast()
     {
         const float CruiseStep = PlayerSimulationTuning.DefaultRunSpeed * Dt;
-        // dt x sum over k of max(4.3 - 0.375 k, 0), k = 1..12: the motor's braking tail.
-        const float ExpectedCoast = 0.3523f;
+        // dt x sum over k of max(cruise - decel x dt x k, 0): the motor's braking tail.
+        float expectedCoast = 0f;
+        for (int k = 1; ; k++)
+        {
+            float v = PlayerSimulationTuning.DefaultRunSpeed - (PlayerSimulationTuning.DefaultGroundDeceleration * Dt * k);
+            if (v <= 0f)
+            {
+                break;
+            }
+
+            expectedCoast += v * Dt;
+        }
+
         const int StarvedTicks = 28;
         ClientPredictionReconciler reconciler = new();
         RecordRun(reconciler, firstSequence: 1, lastSequence: 10, stepPerTick: CruiseStep, Forward);
@@ -389,31 +400,36 @@ public class ClientPredictionReconcilerTests
         RecordRun(reconciler, firstSequence: 11, lastSequence: 18, stepPerTick: CruiseStep, Turned, acknowledged);
 
         Vector3 serverPosition = acknowledged
-            + new Vector3((RepeatTicks * CruiseStep) + ExpectedCoast, 0f, 0f);
+            + new Vector3((RepeatTicks * CruiseStep) + expectedCoast, 0f, 0f);
         ClientReconciliationResult result = reconciler.Reconcile(10, serverPosition, map: null, StarvedTicks);
         Vector3 predicted = serverPosition - result.Error;
         float coast = predicted.X - (acknowledged.X + (RepeatTicks * CruiseStep));
 
         // The repeat window is at the cruise tier already, so it holds the ack's step; what the
         // fixed-step model missed is the whole braking tail after it.
-        Assert.Equal(ExpectedCoast, coast, 2);
+        Assert.Equal(expectedCoast, coast, 2);
         Assert.Equal(ClientReconciliationKind.None, result.Kind);
     }
 
     // The other half: a starve short enough to stay inside the repeat window, acknowledged
-    // mid-ramp (four ticks after a standing start, so 1.125 m/s). The server keeps accelerating at
-    // 18 m/s^2 toward the cruise, covering dt x sum(1.125 + 0.28125 k), k = 1..5 = 0.1538 m, where
-    // repeating the ack tick's step gives only 5 x 0.0176 = 0.0879 m. The 0.066 m difference is the
-    // first starve that crosses the 0.05 m deadband, and it has no idle part at all.
+    // mid-ramp (two ticks after a standing start). The server keeps accelerating toward the cruise,
+    // covering dt x sum(min(entry + accel x k, cruise)), k = 1..5, where repeating the ack tick's
+    // step gives only 5 x entry x dt. The difference is the first starve that crosses the
+    // deadband, and it has no idle part at all.
     [Fact]
     public void Reconcile_StarvedInsideTheRepeatWindow_FromAMidRampAck_KeepsAcceleratingTowardTheTier()
     {
-        const int RampTicks = 4;
+        const int RampTicks = 2;
         const int StarvedTicks = 5;
         const float AccelerationPerTick = PlayerSimulationTuning.DefaultGroundAcceleration * Dt;
         const float EntrySpeed = RampTicks * AccelerationPerTick;
-        // dt x sum over k = 1..5 of (1.125 + 0.28125 k).
-        const float ExpectedRampDistance = 0.1538086f;
+        float expectedRampDistance = 0f;
+        for (int k = 1; k <= StarvedTicks; k++)
+        {
+            expectedRampDistance += MathF.Min(
+                EntrySpeed + (AccelerationPerTick * k), PlayerSimulationTuning.AuthoritativeDefault.MoveSpeed) * Dt;
+        }
+
         ClientPredictionReconciler reconciler = new();
         // A standing start: tick k ends at speed k x 0.28125, so its step grows every tick.
         Vector3 position = Vector3.Zero;
@@ -428,15 +444,15 @@ public class ClientPredictionReconcilerTests
         Vector3 acknowledged = position;
         RecordRun(reconciler, firstSequence: RampTicks + 1, lastSequence: RampTicks + 3, stepPerTick: EntrySpeed * Dt, Turned, acknowledged);
 
-        Vector3 serverPosition = acknowledged + new Vector3(ExpectedRampDistance, 0f, 0f);
+        Vector3 serverPosition = acknowledged + new Vector3(expectedRampDistance, 0f, 0f);
         ClientReconciliationResult result = reconciler.Reconcile(RampTicks, serverPosition, map: null, StarvedTicks);
         Vector3 predicted = serverPosition - result.Error;
 
-        Assert.Equal(ExpectedRampDistance, predicted.X - acknowledged.X, 3);
+        Assert.Equal(expectedRampDistance, predicted.X - acknowledged.X, 3);
         Assert.Equal(ClientReconciliationKind.None, result.Kind);
         // The fixed-step model's answer, for the record: over the deadband, so it corrected.
         Assert.True(
-            ExpectedRampDistance - (StarvedTicks * EntrySpeed * Dt) > ClientPredictionReconciler.DefaultDeadbandDistance,
+            expectedRampDistance - (StarvedTicks * EntrySpeed * Dt) > ClientPredictionReconciler.DefaultDeadbandDistance,
             "the un-ramped extrapolation should be over the deadband");
     }
 

@@ -95,9 +95,8 @@ public static class ClientCorrectionApplier
                 // momentum used to be free: the old motor set the commanded velocity outright, so
                 // the tick after a snap was back at full speed. PlayerMotor now ramps from the
                 // body's own horizontal velocity (RampGroundVelocity), so a zeroed body needs v/a
-                // to recover -- 0.24 s at the 4.3 m/s cruise, 0.33 s at the 6.0 m/s sprint -- and
-                // falls v^2/2a behind a server that never stopped: 0.51 m at cruise, 1.00 m at
-                // sprint, on every snap. It also reads HorizontalSpeed ~ 0 for those frames, so
+                // to recover (longer at the sprint than at the cruise) and falls v^2/2a behind a
+                // server that never stopped, on every snap. It also reads HorizontalSpeed ~ 0 for those frames, so
                 // the local figure replays idle -> walk -> run, the stride restart
                 // GaitHysteresisSpeed exists to prevent.
                 //
