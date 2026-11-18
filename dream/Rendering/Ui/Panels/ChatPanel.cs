@@ -156,6 +156,9 @@ public sealed class ChatHudState
 // Bottom-left chat log of the last 8 lines, the typing line, and the Tab list of players seen.
 public static class ChatPanel
 {
+    // Drawn in front of every System line, from the channel and never from the message.
+    public const string ServerMark = "[Server] ";
+
     private static readonly UiColor World = new(0xD8, 0xD2, 0xC4, 255);
     private static readonly UiColor Say = new(0xF5, 0xDD, 0xA5, 255);
     private static readonly UiColor Whisper = new(0xC4, 0x9B, 0xE0, 255);
@@ -215,11 +218,26 @@ public static class ChatPanel
             for (int k = 0; k < count; k++)
             {
                 ChatHudState.ChatLine line = chat.GetLine(first + k);
-                ReadOnlySpan<char> text = line.Text;
-                text = text[..PanelText.FitLength(c, text, style, width - 2f * pad)];
+                UiColor color = ChannelColor(line.Channel);
                 float ty = MathF.Round(top + pad + k * rowH);
-                c.Text(text, new Vector2(x + pad + hair, ty + hair), style, Shadow);
-                c.Text(text, new Vector2(x + pad, ty), style, ChannelColor(line.Channel));
+                float tx = x + pad;
+                float avail = width - 2f * pad;
+                // Say, Whisper and Party already lead with their channel in brackets; System said
+                // nothing, so a quoted player name inside a server line was the only sign that part
+                // of it came from a player. The marker is drawn here, from the channel, so no text
+                // a player can send ever carries it.
+                if (line.Channel == ChatChannel.System)
+                {
+                    c.Text(ServerMark, new Vector2(tx + hair, ty + hair), style, Shadow);
+                    float markW = c.Text(ServerMark, new Vector2(tx, ty), style, color);
+                    tx += markW;
+                    avail = MathF.Max(0f, avail - markW);
+                }
+
+                ReadOnlySpan<char> text = line.Text;
+                text = text[..PanelText.FitLength(c, text, style, avail)];
+                c.Text(text, new Vector2(tx + hair, ty + hair), style, Shadow);
+                c.Text(text, new Vector2(tx, ty), style, color);
             }
         }
 
