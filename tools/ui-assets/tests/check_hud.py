@@ -154,16 +154,27 @@ def check_gems(errs, S):
         full, empty, mask, spec = (S(f"gem.{kind}.{x}") for x in ("full", "empty", "mask", "spec"))
         ins = full[..., 3] > 127
         rgb = full[..., :3].astype(int)
+        # Blood and ink in a cage, not candy. These were a saturated body (R > 190 with G, B < 80, share >= 0.06), deep
+        # facets at R 40..130 and hot highlights over luma 0.80 (share >= 0.01): the toy ruby. They are re-tuned to the
+        # aged stone; every number is measured on the shipped sprites (hp / mp).
         if hue == "red":
-            body = (rgb[..., 0] > 190) & (rgb[..., 1] < 80) & (rgb[..., 2] < 80)
-            deep = (rgb[..., 0] > 40) & (rgb[..., 0] < 130) & (rgb[..., 1] < 30) & (rgb[..., 2] < 40)
+            body = (rgb[..., 0] > 70) & (rgb[..., 0] > 1.8 * rgb[..., 1]) & (rgb[..., 0] > 1.8 * rgb[..., 2])
+            deep = (rgb[..., 0] > 20) & (rgb[..., 0] < 130) & (rgb[..., 1] < 30) & (rgb[..., 2] < 40)
         else:
-            body = (rgb[..., 2] > 190) & (rgb[..., 0] < 80)
-            deep = (rgb[..., 2] > 40) & (rgb[..., 2] < 140) & (rgb[..., 0] < 30)
-        hot = luma(full) > 0.80
-        for label, m, need in (("saturated body", body, 0.06), ("deep facets", deep, 0.02), ("hot highlights", hot, 0.01)):
+            body = (rgb[..., 2] > 70) & (rgb[..., 2] > 1.5 * rgb[..., 0])
+            deep = (rgb[..., 2] > 20) & (rgb[..., 2] < 140) & (rgb[..., 0] < 30)
+        fl = rgb / 255.0
+        sat = (fl.max(axis=2) - fl.min(axis=2)) / np.maximum(fl.max(axis=2), 1e-6)
+        iron = (sat < 0.30) & (luma(full) > 0.06) & (luma(full) < 0.6)
+        for label, m, need in (("oxidised body", body, 0.15), ("deep glass", deep, 0.30), ("iron cage", iron, 0.04)):   # measured: body 0.436/0.254, deep 0.602/0.650, iron 0.099/0.137
             if (m & ins).sum() < need * ins.sum():
                 errs.append(f"gem.{kind}.full: {label} cover {(m & ins).sum() / ins.sum():.3f} of the stone, want {need}")
+        if (luma(full)[ins] > 0.80).mean() > 0.004:   # measured 0.0010 / 0.0002: no plastic hot spot survives
+            errs.append(f"gem.{kind}.full: plastic highlights cover {(luma(full)[ins] > 0.80).mean():.4f} of the stone")
+        if np.percentile(fl.max(axis=2)[ins], 99) > 0.70:   # measured p99 of the brightest channel 0.596 / 0.525
+            errs.append(f"gem.{kind}.full: p99 channel {np.percentile(fl.max(axis=2)[ins], 99):.3f} over the 0.70 ceiling")
+        if np.percentile(sat[ins], 50) > 0.85:   # measured median saturation 0.76 / 0.70
+            errs.append(f"gem.{kind}.full: median saturation {np.percentile(sat[ins], 50):.2f} is candy")
         if not (np.array_equal(full[..., 3], empty[..., 3]) and np.array_equal(full[..., 3], mask[..., 3]) and np.array_equal(full[..., 3], spec[..., 3])):
             errs.append(f"gem.{kind}: alpha differs across layers")
         # mask: R rises upward and spans the stone, with no stray islands at 25, 50 and 75 percent
