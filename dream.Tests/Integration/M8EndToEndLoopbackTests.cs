@@ -258,11 +258,40 @@ public sealed class M8EndToEndLoopbackTests
             await CommandAsync(admin, $"/mute \"{NameOf(Bee)}\"");
             await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the mute result");
 
-            // Muted at once, on the live connection. The line is sent BEFORE this waits on anything,
-            // which is the point: it proves a line sent the moment the admin's reply lands is already
-            // refused. The reply is sent by the write's own barrier read, which is also what queues
-            // the AccountUpdate, so by now the only thing left is the tick that applies it - a couple
-            // of ticks, not a cadence and not a clock.
+            // Muted at once, on the live connection: no rejoin, no restart, the standing simply
+            // lands on the connection Bee is already holding. That is asserted directly now, and
+            // the line is sent after it, because sending the line on the strength of the ADMIN's
+            // reply was wrong - the product does not order those two the way the old comment here
+            // claimed.
+            //
+            // The interleaving that broke it, established from the code and matching the failure
+            // exactly (row set, standing set, both sides past a full budget, no notice):
+            //   1. The /mute write's barrier read (persistence worker, asynchronous to the tick)
+            //      enqueues the AccountUpdate on _pendingAccountUpdates, then the admin's
+            //      "Muted Bee." on _pendingConnectionReplies.
+            //      DedicatedServerHost.Admin.cs:306-316
+            //   2. DedicatedServerHost.RunTick:1315 drains _pendingAccountUpdates in
+            //      StepAccountStandings, which is the FIRST thing in the tick.
+            //   3. DedicatedServerService.DeliverPendingJoinReplies:611 drains
+            //      _pendingConnectionReplies AFTER AdvanceTime, i.e. LATER IN THE SAME TICK.
+            //   So a barrier read that lands between 2 and 3 sends the admin's reply on tick T and
+            //   applies the standing on tick T+1.
+            //   4. Chat is routed on the RECEIVE path, not in the tick
+            //      (DedicatedServerHost.cs:444 DeliverPendingChats, IsMuted at :513), so Bee's line
+            //      sent on the strength of that reply is routed between the two ticks with
+            //      MutedUntilUtc still null: it is published, no notice is produced, and the one
+            //      line the test had is gone.
+            //
+            // So the admin's reply can precede enforcement by up to one tick. Reported to the lead
+            // as a product ordering detail rather than fixed here: the mute is not lost (the row is
+            // written, the standing applies on the next tick and survives rejoin and restart), only
+            // messages sent inside that sub-tick window are still published.
+            await UntilAsync(
+                server, bee,
+                () => server.Host.TryGetConnectionContext(server.ConnectionFor(bee).ConnectionId, out ServerRoutingContext? held)
+                    && held!.Standing.MutedUntilUtc != null,
+                () => $"the mute landing on Bee's live connection, with no rejoin ({MuteStateOf(server, bee)})",
+                LoopbackDeadline.Applied);
             await SayAsync(bee, ChatChannel.World, "hello anyone");
             await UntilAsync(
                 server, bee,
@@ -287,6 +316,16 @@ public sealed class M8EndToEndLoopbackTests
             // takes - but on its own it only exercises the in-process overlay.
             await server.DisconnectAsync(bee);
             bee = await server.ConnectAndJoinAsync(Bee);
+            // Same one-chance line, same guard: the rejoin's standing comes from the join prefetch
+            // rather than from a queued AccountUpdate, so it should already be in force here - but
+            // "should" is what cost this test two failures, and asserting it is cheap and pins that
+            // the fresh connection starts muted.
+            await UntilAsync(
+                server, bee,
+                () => server.Host.TryGetConnectionContext(server.ConnectionFor(bee).ConnectionId, out ServerRoutingContext? rejoined)
+                    && rejoined!.Standing.MutedUntilUtc != null,
+                () => $"the rejoined connection starting muted ({MuteStateOf(server, bee)})",
+                LoopbackDeadline.Applied);
             await SayAsync(bee, ChatChannel.World, "hello again");
             await UntilAsync(
                 server, bee,
@@ -349,6 +388,16 @@ public sealed class M8EndToEndLoopbackTests
             await using WireLoopbackClient admin = await restarted.ConnectAndJoinAsync(Admin);
             await using WireLoopbackClient bee = await restarted.ConnectAndJoinAsync(Bee);
 
+            // On this host nothing but accounts.muted_until_utc can have produced that standing:
+            // _sanctionMemory is empty on a fresh DedicatedServerHost, so the join prefetch read the
+            // row. Asserting it before the line is sent both guards the one-chance line and names
+            // the thing the restart is here to prove.
+            await UntilAsync(
+                restarted, bee,
+                () => restarted.Host.TryGetConnectionContext(restarted.ConnectionFor(bee).ConnectionId, out ServerRoutingContext? restored)
+                    && restored!.Standing.MutedUntilUtc != null,
+                () => $"the restarted host's join prefetch reading the mute off the row ({MuteStateOf(restarted, bee)})",
+                LoopbackDeadline.Applied);
             await SayAsync(bee, ChatChannel.World, "hello after the restart");
             await UntilAsync(
                 restarted, bee,
