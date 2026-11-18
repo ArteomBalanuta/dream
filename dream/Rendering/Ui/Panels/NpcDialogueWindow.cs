@@ -70,10 +70,26 @@ public static class NpcDialogueWindow
     internal static int ActionId(QuestOfferState state) => IdAction + (int)state;
 
     // The id the action button is actually registered with: the state, the NPC and the quest key.
-    internal static int ActionId(QuestOfferState state, int npcActorId, ReadOnlySpan<char> questKey)
+    internal static int ActionId(QuestOfferState state, int npcActorId, ReadOnlySpan<char> questKey) =>
+        IdentityOf(ActionId(state), npcActorId, questKey);
+
+    // The id an offer ROW is registered with. The same defect, one block up: a row bound to its
+    // POSITION lets a ServerQuestLog push between the press and the release move a different quest
+    // under the pointer, and quests.Select(n) then highlights the quest that took the row rather
+    // than the one that was pressed. Bounded harm (the action button's own id carries the quest, so
+    // it cannot act on the wrong one), but the cure is the established one: the row's id carries
+    // the NPC and the quest key, so a row that changed hands drops the click instead of moving the
+    // selection. The seed is IdOfferRow, which is distinct from every ActionId(state) seed, so a
+    // row and the action button cannot share an id; both land in the 0x4000_0000 band, which no
+    // other HUD id uses (ordinary ids are below 0x0100_0000 and HudWidgetId owns 0x5000_0000).
+    internal static int OfferRowId(int npcActorId, ReadOnlySpan<char> questKey) =>
+        IdentityOf(IdOfferRow, npcActorId, questKey);
+
+    // Pure arithmetic over the seed, the NPC and the key: a per-frame caller allocates nothing.
+    private static int IdentityOf(int seed, int npcActorId, ReadOnlySpan<char> questKey)
     {
         uint hash = 2166136261u;
-        hash = Fold(hash, (uint)ActionId(state));
+        hash = Fold(hash, (uint)seed);
         hash = Fold(hash, (uint)npcActorId);
         hash = Fold(hash, (uint)questKey.Length);
         for (int i = 0; i < questKey.Length; i++)
@@ -127,16 +143,18 @@ public static class NpcDialogueWindow
         {
             UiRect r = l.FromUnits(win, RowX, OfferTop + (n * RowPitch), RowW, RowH);
             DrawRowPlate(c, s, r);
+            // The quest this row stands for, not the row's position: see OfferRowId.
+            int rowId = OfferRowId(quests.NpcActorId, offers[n].Key);
             if (n == quests.SelectedOffer)
             {
                 c.Solid(r, SelectFill);
             }
-            else if (live && i.Hovered(IdOfferRow + n, r))
+            else if (live && i.Hovered(rowId, r))
             {
                 c.Solid(r, HoverFill);
             }
 
-            if (live && i.Button(IdOfferRow + n, r))
+            if (live && i.Button(rowId, r))
             {
                 quests.Select(n);
             }
