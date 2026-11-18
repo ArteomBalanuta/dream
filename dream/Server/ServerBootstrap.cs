@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net;
 using Dream.Assets;
+using Dream.Client.Presentation;
+using Dream.Rendering.Actors;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Server.Hosting;
@@ -441,7 +443,17 @@ public static class ServerBootstrap
     {
         // Every dedicated and integrated start comes through here, so a bad content file stops the
         // start before the database is touched, and JSON is never first parsed on a tick.
-        ContentCatalog content = ReadStartupContent(static () => ContentCatalog.Shipped, log);
+        // The content the runtime will spawn from: the shipped catalog, read (and so validated) first so
+        // a bad file still surfaces as a ContentValidationException, then the default enemy content,
+        // which is that same catalog unless a test swapped it. The integrity check and the enemy_kinds
+        // tuning are both built on what this returns.
+        ContentCatalog content = ReadStartupContent(
+            static () =>
+            {
+                _ = ContentCatalog.Shipped;
+                return WorldSessionRuntime.DefaultEnemyContent;
+            },
+            log);
 
         SqliteSchemaBootstrapper schema = new(databasePath, schemaScriptPath);
 
@@ -657,7 +669,7 @@ public static class ServerBootstrap
         ulong simulationSeed = ResolveSimulationSeed(storedSeed, simulationSeedOverride, log);
         SqliteCombatFormulaRepository formulas = new(schema);
         CombatFormulaService formulaService = CombatFormulaService.Create(formulas);
-        ContentCatalog enemyContent = ApplyEnemyKindTuning(new SqliteEnemyKindRepository(schema).LoadAll(), log);
+        ContentCatalog enemyContent = ApplyEnemyKindTuning(new SqliteEnemyKindRepository(schema).LoadAll(), log, content);
         ProbeFormulas(formulaService, enemyContent);
         return new ServerPersistenceBundle(
             schema,
@@ -676,14 +688,17 @@ public static class ServerBootstrap
             enemyContent: enemyContent);
     }
 
-    // The content the runtime spawns and restores enemies from: the default enemy content (the shipped
-    // catalog; tests swap it) with every valid enemy_kinds row laid over its kind. A row that fails the content rules (EnemyKindTuning.IsValid)
+    // The content the runtime spawns and restores enemies from: content (the catalog the start validated;
+    // the default enemy content when null) with every valid enemy_kinds row laid over its kind. A row that fails the content rules (EnemyKindTuning.IsValid)
     // or names a kind the content does not have is skipped with a log line and that kind keeps its
     // authored numbers; the table is edited by hand, so nothing in it may stop the start.
-    internal static ContentCatalog ApplyEnemyKindTuning(IReadOnlyList<EnemyKindTuning> rows, Action<string>? log)
+    internal static ContentCatalog ApplyEnemyKindTuning(
+        IReadOnlyList<EnemyKindTuning> rows,
+        Action<string>? log,
+        ContentCatalog? content = null)
     {
         ArgumentNullException.ThrowIfNull(rows);
-        ContentCatalog baseContent = WorldSessionRuntime.DefaultEnemyContent;
+        ContentCatalog baseContent = content ?? WorldSessionRuntime.DefaultEnemyContent;
         List<EnemyKindTuning> accepted = [];
         int skipped = 0;
         foreach (EnemyKindTuning row in rows)
@@ -701,11 +716,43 @@ public static class ServerBootstrap
             else
             {
                 accepted.Add(row);
+                WarnWhenOutsideTheClientBand(row, log);
             }
         }
 
         log?.Invoke($"server.content.enemy-tuning rows={accepted.Count} skipped={skipped}");
         return baseContent.WithEnemyTuning(accepted);
+    }
+
+    // A valid row can still leave the band the client's presentation assumes: a speed inside the
+    // enemy gait hysteresis band around the gait threshold flickers the walk and gallop clips, and a
+    // chase faster than the client's teleport distance per second looks like a teleport. This warns and
+    // never rejects: the row is the designer's to keep.
+    internal static void WarnWhenOutsideTheClientBand(EnemyKindTuning row, Action<string>? log)
+    {
+        if (log == null)
+        {
+            return;
+        }
+
+        float low = EnemyVisualCatalog.GaitThresholdSpeed - EnemyVisualCatalog.GaitHysteresisSpeed;
+        float high = EnemyVisualCatalog.GaitThresholdSpeed + EnemyVisualCatalog.GaitHysteresisSpeed;
+        foreach ((string name, float speed) in new[] { ("chase_speed", row.ChaseSpeed), ("patrol_speed", row.PatrolSpeed) })
+        {
+            if (speed > low && speed < high)
+            {
+                log($"server.content.enemy-tuning-warning kind={row.EnemyKind} {name}={Num(speed)} " +
+                    $"reason=inside the client gait band ({Num(low)}, {Num(high)}); the walk and gallop clips will flicker");
+            }
+        }
+
+        if (row.ChaseSpeed > ClientScenePresenter.EnemyTeleportDistance)
+        {
+            log($"server.content.enemy-tuning-warning kind={row.EnemyKind} chase_speed={Num(row.ChaseSpeed)} " +
+                $"reason=covers more than the client teleport distance ({Num(ClientScenePresenter.EnemyTeleportDistance)} m) per second; the client will snap it");
+        }
+
+        static string Num(float value) => value.ToString("0.###", CultureInfo.InvariantCulture);
     }
 
     // The world ticks to start the clock at: storedTicks moved forward to the next tick showing the

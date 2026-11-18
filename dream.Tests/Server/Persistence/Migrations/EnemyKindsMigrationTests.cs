@@ -227,14 +227,14 @@ public sealed class EnemyKindsMigrationTests
     {
         const float playerCruise = PlayerSimulationTuning.DefaultRunSpeed;
         const float playerSprint = PlayerSimulationTuning.DefaultSprintSpeed;
+        static bool CatchesAWalkerAndLosesToASprinter(float chase) => chase > playerCruise && chase < playerSprint;
         Assert.All(ContentCatalog.Shipped.Enemies, template =>
-        {
-            Assert.True(template.MoveSpeed > playerCruise, $"{template.Key} chases at {template.MoveSpeed}");
-            Assert.True(template.MoveSpeed < playerSprint, $"{template.Key} chases at {template.MoveSpeed}");
-        });
+            Assert.True(CatchesAWalkerAndLosesToASprinter(template.MoveSpeed), $"{template.Key} chases at {template.MoveSpeed}"));
 
-        // The synthetic negative: the old chase speeds do not satisfy the relation.
-        Assert.False(5.0f < playerSprint);
+        // The synthetic negatives, through the same predicate: the old chase speed outruns the sprint,
+        // and a chase at the walk cannot catch a walker.
+        Assert.False(CatchesAWalkerAndLosesToASprinter(5.0f));
+        Assert.False(CatchesAWalkerAndLosesToASprinter(playerCruise));
     }
 
     private static PersistedEnemyInstance WolfRow(float chaseSpeedOnRow) =>

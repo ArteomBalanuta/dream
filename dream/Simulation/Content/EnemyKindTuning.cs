@@ -19,19 +19,6 @@ public readonly record struct EnemyKindTuning(
     public const float MaxSpeed = 100f;
     public const float MaxRange = 1000f;
 
-    // The tuning an authored template already carries (its interval, or 1 / attackSpeed when it has none).
-    public static EnemyKindTuning From(EnemyTemplate template)
-    {
-        ArgumentNullException.ThrowIfNull(template);
-        return new EnemyKindTuning(
-            template.Key,
-            template.MoveSpeed,
-            template.PatrolSpeed,
-            template.AttackIntervalSeconds ?? 1f / template.AttackSpeed,
-            template.AttackRange,
-            template.AggroRange);
-    }
-
     // Whether the row meets the content rules; reason says which one it breaks when it does not.
     public bool IsValid(out string reason)
     {
