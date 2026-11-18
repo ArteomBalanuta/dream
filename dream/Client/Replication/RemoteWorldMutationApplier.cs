@@ -94,6 +94,25 @@ public static class RemoteWorldMutationApplier
                 continue;
             }
 
+            // The snapshot lists the rubble without its pieces. The fallback fracture rebuilds them
+            // locally, but it fractures the cell, which removes whatever cube is in it - and the
+            // placed-cube loop above has already built the cube this same snapshot lists there (a
+            // cube built over old rubble). Restoring the first-pass pieces directly reproduces the
+            // same rubble without touching the cube, so the client converges on exactly the world
+            // the snapshot describes instead of ending up with less than it listed.
+            // The delta path (CubeFractured) keeps the plain fallback on purpose: a delta is a
+            // single event that says this cell's cube just fractured, so removing the cube is the
+            // point there. Only the full snapshot describes a cell as holding both a cube and rubble.
+            if (desiredCells.Contains((x, y, z)))
+            {
+                map.RestoreFracturePieces(
+                    new GeometryCellKey(x, y, z),
+                    fracturedCube.MaterialId,
+                    CubeFracturePattern.CreateFirstPassRubble(new GeometryCellKey(x, y, z)),
+                    withPhysics: true);
+                continue;
+            }
+
             ApplyFallbackFracture(map, new GeometryCellKey(x, y, z), fracturedCube.MaterialId, "snapshot");
         }
 
