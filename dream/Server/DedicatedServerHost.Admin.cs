@@ -26,6 +26,9 @@ public sealed partial class DedicatedServerHost
 
     internal const string KickedText = "You were kicked from the server.";
 
+    // BH-XFER-4: this world lost the character's presence lease while the player was still seated here.
+    internal const string PresenceLostText = "Your character is being played in another world.";
+
     // A sanction set this recently is kept in memory, because a join whose persisted-state load started
     // before the write reaches the database would otherwise be judged on the old standing.
     private static readonly TimeSpan SanctionMemoryWindow = TimeSpan.FromMinutes(2);
@@ -332,7 +335,7 @@ public sealed partial class DedicatedServerHost
     // How often (in ticks) the role and sanctions of the connected accounts are read again, so another
     // world's ban, or a revoked role, reaches a player who stays connected. It rides the presence renew's
     // cadence by default; 0 turns it off.
-    internal ulong StandingRefreshIntervalTicks { get; set; } = WorldSessionRuntime.PresenceRenewIntervalTicks;
+    internal ulong StandingRefreshIntervalTicks { get; set; } = WorldSessionRuntime.StandingRefreshDefaultIntervalTicks;
 
     // Runs first in a tick, under the tick lock: applies the queued account changes to the live
     // connections and, on the refresh cadence, queues one read of the connected accounts' standing.
@@ -446,6 +449,51 @@ public sealed partial class DedicatedServerHost
                 CloseConnectionWithReason(connection.Key, BanMessage.Format(next));
             }
         }
+    }
+
+    // BH-XFER-4. A renewal that changed no row means this world no longer holds that character's lease:
+    // it ran out while the host was stalled, or another world took it over. The seat is not the owner any
+    // more, so its connection is closed the way a kick closes one -- the detach saves the profile and
+    // drops the seat, and nothing here keeps writing the global profile row against the other world.
+    // Under the tick lock. A character that has already left is simply skipped.
+    private void StepLostPresence(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null)
+        {
+            return;
+        }
+
+        while (runtime.TryTakeLostPresence(out string characterKey))
+        {
+            if (!TryFindOnlineCharacter(runtime, characterKey, out string connectionId))
+            {
+                continue;
+            }
+
+            NetworkDiagnosticsLog.Write("server.presence.lease-lost", $"connection={connectionId}");
+            CloseConnectionWithReason(connectionId, PresenceLostText);
+        }
+    }
+
+    // The online connection playing this character key (not its display name). Under the tick lock.
+    private bool TryFindOnlineCharacter(WorldSessionRuntime runtime, string characterKey, out string connectionId)
+    {
+        foreach (KeyValuePair<string, string> claim in _connectionClaims)
+        {
+            if (runtime.Sessions.TryGet(new PlayerSessionId(claim.Value), out ConnectedPlayer? player)
+                && player != null
+                && player.IsSpawned
+                && !player.IsLocal
+                && CharacterNames.Comparer.Equals(player.CharacterKey.Value, characterKey)
+                && _connections.ContainsKey(claim.Key))
+            {
+                connectionId = claim.Key;
+                return true;
+            }
+        }
+
+        connectionId = string.Empty;
+        return false;
     }
 
     // The online player with this character name (display name, ASCII case folded). Under the tick lock.

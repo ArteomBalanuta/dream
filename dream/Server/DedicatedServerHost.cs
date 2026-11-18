@@ -1223,7 +1223,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                         _pendingJoins.RemoveAt(i);
                         if (!IsPlayerPrefetchSharedByAnotherJoin(playerName, joinAccount, connectionId))
                         {
-                            Runtime?.DiscardPersistedPlayerPrefetch(playerName, joinAccount);
+                            AbandonJoinPrefetch(Runtime, playerName, joinAccount);
                         }
                     }
                 }
@@ -1313,6 +1313,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
     private void RunTick(ulong tick, float fixedDeltaSeconds)
     {
         StepAccountStandings(Runtime, tick);
+        StepLostPresence(Runtime);
         ApplyPendingJoins();
         RefreshJoinedSessionIds();
         _commandInbox.DrainInto(_joinedSessionIds, _tickCommands);
@@ -1605,7 +1606,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
             PendingJoin join = joins[i];
             if (!_connections.TryGetValue(join.ConnectionId, out ServerRoutingContext? context))
             {
-                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
+                AbandonJoinPrefetch(runtime, join.PlayerName, join.Request.ResolvedAccount);
                 continue;
             }
 
@@ -1641,7 +1642,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
             // A ban set here since this join's load started: refused without routing it.
             if (RecentBanText(join.Request.ResolvedAccount) is { } recentBan)
             {
-                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
+                AbandonJoinPrefetch(runtime, join.PlayerName, join.Request.ResolvedAccount);
                 _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, new JoinRejectedMessage(recentBan)));
                 continue;
             }
@@ -1684,9 +1685,21 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
         joins.Clear();
     }
 
+    // A join that is given up on before it is routed: its prefetch's load may already have taken the
+    // character's presence lease, and no other path will ever release it (the release keys on the
+    // prefetch, which the discard removes), so the lease goes first and the prefetch after.
+    // BH-XFER-1 (connection dropped), BH-XFER-2 (ban found at routing time), prefetch-failed and
+    // prefetch-timeout all come through here. The routed-and-refused path keeps its own release at the
+    // end of ApplyPendingJoins, where the accepted case must not release.
+    private static void AbandonJoinPrefetch(WorldSessionRuntime? runtime, string playerName, AccountKey? account)
+    {
+        runtime?.ReleasePresenceOfRejectedJoin(playerName, account);
+        runtime?.DiscardPersistedPlayerPrefetch(playerName, account);
+    }
+
     private void RejectJoinForRetry(PendingJoin join, string reason)
     {
-        Runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
+        AbandonJoinPrefetch(Runtime, join.PlayerName, join.Request.ResolvedAccount);
         _pendingConnectionReplies.Enqueue(new PendingConnectionReply(
             join.ConnectionId,
             new JoinRejectedMessage(JoinRetryRejectionReason)));

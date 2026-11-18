@@ -640,10 +640,21 @@ internal sealed class AuthoritativeCombatResolver
         float minDot = Math.Clamp(MathF.Cos(MathHelper.DegreesToRadians(skill.ArcDegrees * 0.5f)), -1f, 1f);
         Map map = _map();
 
-        // Collect first: a kill prunes the registry. The cap is the content maximum, so enemies behind a
-        // wall do not use up the skill's targets.
+        // Collect first: a kill prunes the registry. CollectInArc runs no occlusion test, so the cap has
+        // to leave room for every blocked candidate ahead of a reachable one -- otherwise enemies behind a
+        // wall use up the skill's targets, which is exactly what the cap exists to prevent. BH-XFER-5: a
+        // fixed 16 was not that room. A crowd whose nearest 16 stood behind a cube hid every reachable
+        // enemy, and the cast hit nothing with its mana and its 96-tick cooldown already spent. The
+        // registry's own size is the only honest ceiling; the arc and range tests have already thrown out
+        // everything else, and the PvP half below walks every candidate for the same reason.
         _arcScratch.Clear();
-        _enemies.CollectInArc(origin, horizontal, skill.Range, minDot, Math.Max(skill.MaxTargets, 16), _arcScratch);
+        _enemies.CollectInArc(
+            origin,
+            horizontal,
+            skill.Range,
+            minDot,
+            Math.Max(skill.MaxTargets, _enemies.ActiveActors.Count),
+            _arcScratch);
         for (int i = 0; i < _arcScratch.Count && targetsHit < skill.MaxTargets; i++)
         {
             EnemyActor enemy = _arcScratch[i];

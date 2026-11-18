@@ -207,7 +207,19 @@ public sealed class SqliteAccountRepository(SqliteSchemaBootstrapper schema)
         return command.ExecuteNonQuery() > 0;
     }
 
-    public void RenewPresence(IReadOnlyList<string> characterKeys, WorldId world, DateTime expiresUtc)
+    public void RenewPresence(IReadOnlyList<string> characterKeys, WorldId world, DateTime expiresUtc) =>
+        RenewPresenceReporting(characterKeys, world, expiresUtc, lost: null);
+
+    public void RenewPresence(IReadOnlyList<string> characterKeys, WorldId world, DateTime expiresUtc, List<string> lost)
+    {
+        ArgumentNullException.ThrowIfNull(lost);
+        RenewPresenceReporting(characterKeys, world, expiresUtc, lost);
+    }
+
+    // The UPDATE is world-scoped, so a key it changes no row for is one this world does not hold any
+    // more: the lease ran out, or another world claimed it. BH-XFER-4: that answer used to be thrown
+    // away, and a host that had silently lost a lease kept playing the character as its owner.
+    private void RenewPresenceReporting(IReadOnlyList<string> characterKeys, WorldId world, DateTime expiresUtc, List<string>? lost)
     {
         ArgumentNullException.ThrowIfNull(characterKeys);
         if (characterKeys.Count == 0)
@@ -222,7 +234,10 @@ public sealed class SqliteAccountRepository(SqliteSchemaBootstrapper schema)
         for (int i = 0; i < characterKeys.Count; i++)
         {
             command.BindText("$key", characterKeys[i]);
-            command.ExecuteNonQuery();
+            if (command.ExecuteNonQuery() == 0)
+            {
+                lost?.Add(characterKeys[i]);
+            }
         }
     }
 

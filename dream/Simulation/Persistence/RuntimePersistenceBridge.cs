@@ -161,7 +161,13 @@ internal sealed partial class RuntimePersistenceBridge
                 // may differ from the typed name.
                 CharacterLookup? lookup = accounts?.Lookup(playerName, account);
                 // M8: the lease of a character the account owns; another world's live one marks it held.
-                lookup = accounts == null ? lookup : ClaimPresenceForJoin(accounts, lookup, account);
+                // BH-XFER-3: not when this prefetch has already been given up on (the join timed out
+                // waiting for this very load, or its connection dropped). Every release path keys on the
+                // prefetch registry, so a lease claimed after the entry is gone is unreachable by all of
+                // them and would only free itself when it expires.
+                lookup = accounts == null || !IsRegisteredPrefetch(playerName, account, prefetch)
+                    ? lookup
+                    : ClaimPresenceForJoin(accounts, lookup, account, playerName, prefetch);
                 string key = lookup?.Existing?.Key.Value ?? playerName;
                 PersistedPlayerProfile? profile = profiles.TryGet(key);
                 prefetch.Complete(
@@ -255,6 +261,12 @@ internal sealed partial class RuntimePersistenceBridge
 
         return state == PersistedPlayerLoadState.Ready;
     }
+
+    // True while this prefetch is still the one registered for the name (a newer prefetch replaces it,
+    // and a given-up-on join removes it). Read from the persistence worker inside Load.
+    private bool IsRegisteredPrefetch(string playerName, AccountKey? account, PersistedPlayerPrefetch prefetch) =>
+        _playerPrefetches.TryGetValue(new PrefetchKey(playerName, account), out PersistedPlayerPrefetch? current)
+        && ReferenceEquals(current, prefetch);
 
     // Drops a prefetch whose join was not applied (rejected or released), so a later join loads fresh.
     public void DiscardPersistedPlayerPrefetch(string playerName, AccountKey? account = null)
