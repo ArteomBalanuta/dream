@@ -136,6 +136,13 @@ public static class ServerBootstrap
             // the bundle once it exists; before that the write queue and the bundle are released here.
             if (host != null)
             {
+                // This world was never served -- the start aborted between CreateDefault and the
+                // return -- so no final checkpoint may be written over what the database holds
+                // (WorldSessionRuntime.DisposeWithoutFinalCheckpoint states that rule; a full
+                // checkpoint here would overwrite the stored world clock with the runtime's, which
+                // a failure at or before ConfigureWorldClock leaves at 0). The runtime's Dispose is
+                // idempotent, so host.Dispose() below still releases the owned bundle.
+                host.Runtime.DisposeWithoutFinalCheckpoint();
                 host.Dispose();
             }
             else
