@@ -91,7 +91,14 @@ internal static class EnemyFactory
             attackIntervalSeconds: derived.AttackIntervalSeconds,
             anchorHeightOffset: WolfDefinition.CombatAnchorHeight,
             baseStats: stats);
-        combatant.Health.SetAuthoritativeState(stored.CurrentHealth, maxHealth);
+        // BH-DEATH-2: current health is hostile too, and the schema's CHECK is only (current_hp >= 0), so a
+        // row of 0 is storable. A kill deletes its row and a checkpoint skips an inactive enemy, so a stored
+        // 0 can only be a tampered, cloned or legacy row - and restoring it made a permanently dead enemy:
+        // PruneInactive drops it from the registry with no credit and NO row delete, so it came back and
+        // burned one more enemy actor id on every restart, forever. Clamp to at least 1, like the maximum
+        // two lines above: the enemy restores killable, the next checkpoint writes the clamped value back,
+        // and killing it deletes the row.
+        combatant.Health.SetAuthoritativeState(Math.Clamp(stored.CurrentHealth, 1, maxHealth), maxHealth);
 
         // The chase speed is hostile too, and it is the actor's real movement input: take it from the
         // clamped sheet above (ClampEnemyBase maps NaN to the minimum and bounds the ceiling) rather
