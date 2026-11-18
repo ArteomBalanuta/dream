@@ -42,6 +42,19 @@ PACK = (
 )
 assert len(PACK) == 30 and len(set(PACK)) == 30
 
+# Fizz guard for the pack's one-shots: energy above FIZZ_HZ must sit at least FIZZ_MAX_DB below the
+# 40 Hz..2 kHz body. Saturation and dense click-like grain clouds once put it at -8..-20 dB, which
+# plays as a crackle ("crisping") over hits, steps and growls.
+FIZZ_HZ = 8000.0
+FIZZ_MAX_DB = -30.0
+
+
+def fizz_db(mono: np.ndarray, sr: int) -> float:
+    power = np.abs(np.fft.rfft(mono)) ** 2
+    freqs = np.fft.rfftfreq(len(mono), 1.0 / sr)
+    body = float(power[(freqs > 40) & (freqs < 2000)].sum()) or 1e-18
+    return 10.0 * np.log10(float(power[freqs >= FIZZ_HZ].sum()) / body + 1e-18)
+
 
 def generate(out_root: Path) -> list[Path]:
     """Run every family build(), then delete any wav in out_root/{sfx,ambience,music} that no build() returned."""
@@ -100,6 +113,11 @@ def check(root: Path) -> list[str]:
                 problems.append(f"{rel}: one-shot edge {edge:.3f} is not silent (click risk)")
             if not 0.04 <= seconds <= 6.0:
                 problems.append(f"{rel}: length {seconds:.2f}s outside 0.04..6 s")
+        if rel in PACK and folder == "sfx":
+            fizz = fizz_db(mono, sr)
+            if fizz > FIZZ_MAX_DB:
+                problems.append(f"{rel}: fizz above {FIZZ_HZ:.0f} Hz is {fizz:.1f} dB vs the body "
+                                f"(max {FIZZ_MAX_DB:.0f} dB; it plays as crackle)")
         if peak > 0.97:
             problems.append(f"{rel}: peak {peak:.3f} too close to clipping")
         if peak < 0.2:

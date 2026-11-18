@@ -45,7 +45,7 @@ def _verb(x: np.ndarray, rng, seconds: float, wet: float, damp: float = 2600.0,
           predelay: float = 0.010, early=(), air: float = 4200.0) -> np.ndarray:
     """Dry sound (softened by `air`, a gentle high-frequency loss) plus a wet-only outdoor
     reflection (a short dark tail and a few slap-backs)."""
-    x = lowpass(x, air, 1)
+    x = lowpass(x, air, 2)
     ir = room_ir(seconds, rng, damp=damp, predelay=predelay, early=early)
     y = fir_convolve(x, ir)
     out = np.zeros(len(y))
@@ -54,13 +54,19 @@ def _verb(x: np.ndarray, rng, seconds: float, wet: float, damp: float = 2600.0,
     return out
 
 
+def _onset(t: np.ndarray, rise: float) -> np.ndarray:
+    """Raised-cosine onset over `rise` seconds. A grain that snaps on in a fraction of a
+    millisecond is a click, and a cloud of clicks is the crackle this replaces."""
+    return 0.5 - 0.5 * np.cos(np.pi * np.clip(t / rise, 0.0, 1.0))
+
+
 def _tick(rng, f: float, tau: float, noisy: float = 0.5) -> np.ndarray:
     """One tiny resonant strike (a pebble, a chain link): a damped tone mixed with band noise."""
     ln = samples(min(tau * 7.0, 0.08))
     t = tvec(ln)
     tone = np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28))
-    band = _unit(bandpass(noise(ln, rng), f * 0.7, min(f * 1.6, 19000.0), 1))
-    return (tone * (1.0 - noisy) + band * noisy) * np.exp(-t / tau) * np.minimum(1.0, t / 0.0002)
+    band = _unit(bandpass(noise(ln, rng), f * 0.7, min(f * 1.6, 8000.0), 2))
+    return (tone * (1.0 - noisy) + band * noisy) * np.exp(-t / tau) * _onset(t, 0.001)
 
 
 def _cloud(n: int, rng, count: int, t0: float, t1: float, flo: float, fhi: float,
@@ -83,7 +89,7 @@ def _burst(rng, dur: float, lo: float, hi: float, tau: float, attack: float = 0.
 
 def _hp_click(rng, dur: float, fc: float, tau: float) -> np.ndarray:
     ln = samples(dur)
-    return _unit(highpass(noise(ln, rng), fc) * decay(ln, tau, attack=0.00007))
+    return _unit(lowpass(highpass(noise(ln, rng), fc), 7000.0, 2) * decay(ln, tau, attack=0.0005))
 
 
 def _body(n: int, rng, fc: float, tau: float, modes=(), attack: float = 0.0015) -> np.ndarray:
@@ -119,7 +125,7 @@ def _contact(rng, w: float, bright: float, fc: float, soft: float = 1.0) -> np.n
 
 
 def _hp_click_n(rng, n: int, fc: float, tau: float) -> np.ndarray:
-    return _unit(highpass(noise(n, rng), fc) * decay(n, tau, attack=0.0001))
+    return _unit(lowpass(highpass(noise(n, rng), fc), 7000.0, 2) * decay(n, tau, attack=0.0005))
 
 
 def footstep(variant: int) -> np.ndarray:
@@ -132,8 +138,8 @@ def footstep(variant: int) -> np.ndarray:
     _at(out, _contact(rng, p["w"] * 0.6, p["bright"] * 1.1, p["fc"] * 1.3, soft=0.8),
         0.004 + p["gap"], 0.62)
     # Grit crunch under and after the heel (dense then sparse), and the scuff of the sole rolling.
-    out += _cloud(n, rng, p["grit"], 0.004, 0.17, 1400, 5200, 0.0012, 0.004, skew=1.7,
-                  amp_lo=0.1, noisy=0.8, fall=0.5) * 0.10
+    out += _cloud(n, rng, p["grit"], 0.004, 0.17, 900, 3800, 0.0012, 0.004, skew=1.7,
+                  amp_lo=0.1, noisy=0.8, fall=0.5) * 0.05
     out += _unit(bandpass(noise(n, rng), 220, 1500) * decay(n, 0.07, attack=0.015)) * 0.035
     if variant in (2, 3):  # one loose stone knocked on the way
         _at(out, _tick(rng, rng.uniform(2300, 3600), 0.006, 0.3), 0.004 + p["gap"] * 1.8, 0.07)
@@ -154,10 +160,10 @@ def land() -> np.ndarray:
         _at(out, _contact(rng, 1.45, 0.9, 135), t, g)
     out += _body(n, rng, 95, 0.07, modes=((52, 0.06, 0.7), (78, 0.05, 0.4))) * 0.4
     out += _cloud(n, rng, 70, 0.01, 0.30, 1000, 5500, 0.0015, 0.006, skew=1.5, amp_lo=0.1,
-                  noisy=0.75, fall=0.4) * 0.12
+                  noisy=0.75, fall=0.4) * 0.06
     # Armour and mail rattle shaken by the landing, plate shifting on plate.
     out += _cloud(n, rng, 55, 0.02, 0.36, 2600, 8000, 0.003, 0.012, skew=1.3, amp_lo=0.1,
-                  noisy=0.3, fall=0.7) * 0.07
+                  noisy=0.3, fall=0.7) * 0.04
     out += modal([380, 720], [0.03, 0.03], [0.18, 0.12], n, rng) * decay(n, 0.03, attack=0.004) * 0.15
     out = _verb(out, rng, 0.22, 0.14, damp=2200.0, predelay=0.012, early=((0.021, 0.07), (0.05, 0.04)))
     return finalize(_fit(out, dur), 0.85, 0.0002, 0.12)
@@ -548,16 +554,31 @@ SINGLES = {
 }
 
 
+# Highest frequency each sound keeps (Hz). Saturation and dense grain clouds leave fizz above
+# this that reads as crackle; real dirt, flesh and leather heard outdoors have little up there.
+_FIZZ_CAP = {
+    "footstep": 5500.0, "land": 5500.0, "jump": 8000.0, "swing": 9000.0, "hit": 7500.0,
+    "hit_critical": 8000.0, "player_hurt": 7000.0, "player_death": 7000.0,
+    "equip": 6500.0, "unequip": 9000.0, "block_break": 5500.0, "block_crack": 6500.0,
+}
+
+
+def _defizz(x: np.ndarray, name: str) -> np.ndarray:
+    """Steep low-pass at the sound's cap, then the usual peak, DC and edge treatment."""
+    peak = float(np.max(np.abs(x))) or 1.0
+    return finalize(lowpass(x, _FIZZ_CAP[name], 4), peak, 0.0003, 0.01)
+
+
 def build(out_root: Path) -> list[Path]:
     written: list[Path] = []
     sfx = out_root / "sfx"
     for name, (fn, count) in VARIANTS.items():
         for v in range(1, count + 1):
             p = sfx / f"{name}_{v}.wav"
-            write_wav(p, fn(v), SR)
+            write_wav(p, _defizz(fn(v), name), SR)
             written.append(p)
     for name, fn in SINGLES.items():
         p = sfx / f"{name}.wav"
-        write_wav(p, fn(), SR)
+        write_wav(p, _defizz(fn(), name), SR)
         written.append(p)
     return written
