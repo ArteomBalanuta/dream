@@ -177,3 +177,30 @@ siblings on the same row are clamped**: `max_health`, `movement_speed`, `Starter
 is applied per field at the call site rather than by the row's loader, so a new field does not
 inherit its neighbours' bounds, and the bad value is only reachable from a corrupt, tampered or
 old-scale row.
+
+### Wave 8 - using the skipped load tests as a map
+
+Of the 47 `[LoadFact]` tests, 33 assert a timing budget and **14 assert a correctness invariant** -
+so that behaviour has no coverage in a normal run. Reading the production code those 14 cover found:
+
+- `PlayerInventoryService.Evict` leaked one `_inventoryRevisions` and one `_questRevisions` entry per
+  departed character, forever - a real leak on a long-lived server. The other eight per-character
+  dictionaries in that class were audited and are clean; only these two leaked. The `Retained` path is
+  deliberately left alone, since it keeps the inventory loaded on purpose.
+- `EnemyFactory.Restore` used the persisted **position** and **facing** unclamped. Position is now
+  sanitised in `RuntimePersistenceBridge.RestoreEnemies`, where map and home are in scope - finiteness
+  checked before `Math.Clamp`, the same bound as `EnemyRegistry.ClampToMapBounds`, non-finite falling
+  back to the resolved home, and clamped rows logged. `FaceDirection` only rejected a near-zero vector,
+  so a NaN normalised to a NaN forward; also guarded.
+- The `Migration0008` load test asserted `ToVersion == 10` while 16 migrations exist, so its
+  row-preservation gate was dead even with `DREAM_LOAD_TEST=1`. It now reads the version from the
+  loaded set and covers v7 -> v16 across 100,003 item rows with equal before/after counts. No product
+  bug; no migration file touched.
+
+**Field-audit lesson.** Position was the third unclamped field found in `EnemyFactory.Restore` after
+`max_health` and `movement_speed`. Auditing *every* field the method reads then found a fourth
+(`Facing`) that nobody had reported. On a second instance in one method, audit the whole method rather
+than fixing one field per wave. Severity calibration: `Microsoft.Data.Sqlite` cannot bind a non-finite
+REAL, so NaN reaches a row only via hand-edit, raw SQL or import - never the game's own writer.
+
+Suite after this wave: **8953 passed, 0 failed, 47 skipped** - a third consecutive clean full run.
