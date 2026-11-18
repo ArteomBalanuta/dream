@@ -20,7 +20,12 @@ internal sealed partial class RuntimePersistenceBridge
     // Called by the prefetch's load on the persistence worker, right after the account lookup. A lease is
     // taken only for an existing character the account owns; another world's live lease marks the lookup
     // HeldElsewhere, which AuthorizeJoin refuses.
-    private CharacterLookup? ClaimPresenceForJoin(IAccountRepository accounts, CharacterLookup? lookup, AccountKey? account)
+    private CharacterLookup? ClaimPresenceForJoin(
+        IAccountRepository accounts,
+        CharacterLookup? lookup,
+        AccountKey? account,
+        string playerName,
+        PersistedPlayerPrefetch prefetch)
     {
         if (lookup is not { } read
             || account is not { } joining
@@ -30,10 +35,25 @@ internal sealed partial class RuntimePersistenceBridge
             return lookup;
         }
 
+        WorldId world = PresenceWorld;
         DateTime now = DateTime.UtcNow;
-        return accounts.TryClaimPresence(existing.Key.Value, PresenceWorld, now, now + PresenceTimeToLive)
-            ? lookup
-            : read with { HeldElsewhere = true };
+        if (!accounts.TryClaimPresence(existing.Key.Value, world, now, now + PresenceTimeToLive))
+        {
+            return read with { HeldElsewhere = true };
+        }
+
+        // BH-XFER-1/-3: published before the second registration check, so an abandoning tick either sees
+        // the claim here (and releases it) or removes the entry before this check (and this releases it).
+        // Without one of the two, a join given up on while its load ran would leave a lease nothing can
+        // reach: every release path keys on the prefetch registry.
+        prefetch.ClaimedPresenceKey = existing.Key.Value;
+        if (!IsRegisteredPrefetch(playerName, account, prefetch))
+        {
+            prefetch.ClaimedPresenceKey = null;
+            accounts.ReleasePresence(existing.Key.Value, world);
+        }
+
+        return lookup;
     }
 
     // Queues a renewal of the leases of these characters (the players now in this world).
@@ -66,28 +86,31 @@ internal sealed partial class RuntimePersistenceBridge
         });
     }
 
-    // A join that was refused after its prefetch took the lease (a session in use, say): the lease goes
-    // unless the character is already being played here.
+    // A join that was refused, or given up on, after its prefetch took the lease: the lease goes unless the
+    // character is already being played here. The prefetch is taken out of the registry first, so a load
+    // still running cannot claim behind this release (ClaimPresenceForJoin re-checks registration), and
+    // the claim is read from the prefetch rather than from its completed lookup, so a load that claimed
+    // but has not finished is covered too.
     public void ReleasePresenceOfRejectedJoin(string typedName, AccountKey? account)
     {
         if (_accounts == null
             || account is not { } joining
-            || !_playerPrefetches.TryGetValue(new PrefetchKey(typedName, joining), out PersistedPlayerPrefetch? prefetch)
-            || prefetch.Lookup is not { HeldElsewhere: false, Existing: { Owner: { } owner } existing }
-            || !owner.Equals(joining))
+            || !_playerPrefetches.TryRemove(new PrefetchKey(typedName, joining), out PersistedPlayerPrefetch? prefetch)
+            || prefetch.ClaimedPresenceKey is not { } claimed)
         {
             return;
         }
 
         foreach (Dream.Multiplayer.Sessions.ConnectedPlayer player in _host.Sessions.Players)
         {
-            if (player.IsSpawned && !player.IsLocal && player.CharacterKey.Equals(existing.Key))
+            if (player.IsSpawned && !player.IsLocal && CharacterNames.Comparer.Equals(player.CharacterKey.Value, claimed))
             {
                 return;
             }
         }
 
-        ReleasePresence(existing.Key.Value);
+        prefetch.ClaimedPresenceKey = null;
+        ReleasePresence(claimed);
     }
 
     // Queues dropping the lease; only this world's own is dropped.

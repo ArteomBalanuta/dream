@@ -47,6 +47,12 @@ public sealed class PersistedPlayerPrefetch
     // What the account lookup read; null until completed, and when the runtime has no accounts.
     public CharacterLookup? Lookup => _done.IsSet ? _lookup : null;
 
+    // The character key whose presence lease this prefetch's load took, published as soon as the claim
+    // commits -- before the load completes, which is what Lookup waits for. The release path reads it, so
+    // a join abandoned while its load was still running still lets the lease go instead of leaving it to
+    // time out. Null while this prefetch holds no lease.
+    internal volatile string? ClaimedPresenceKey;
+
     public bool IsCompleted => _done.IsSet;
 
     // Finished without an error: its result can be applied.
