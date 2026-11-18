@@ -315,6 +315,27 @@ public static class ServerBootstrap
 
     private static async Task<int> RunServerModeAsync(ServerStartOptions options)
     {
+        // The signal hooks are installed out here, around the body's `using`s, because the drain a
+        // stop signal waits for is exactly what those disposals do: the body returns, the service,
+        // the transport and the host unwind -- presence released, checkpoint writer drained, final
+        // full checkpoint written, write queue closed -- and only then is the drain announced to
+        // whatever handler is still waiting on it. Ctrl+C, SIGTERM (docker stop, systemctl stop,
+        // kill), a closed console window and a logoff all land here, and only the first of them
+        // starts that one teardown.
+        using OrderlyShutdownSignals signals = new(ConsoleLog);
+        signals.Install();
+        try
+        {
+            return await RunServerModeAsync(options, signals);
+        }
+        finally
+        {
+            signals.NotifyDrained();
+        }
+    }
+
+    private static async Task<int> RunServerModeAsync(ServerStartOptions options, OrderlyShutdownSignals signals)
+    {
         // Before the database is touched: a server that was asked to listen somewhere it cannot is not started.
         ServerRuntimeConfig? config = ServerRuntimeConfig.FromEnvironment(ConsoleLog);
         if (config == null)
@@ -348,14 +369,6 @@ public static class ServerBootstrap
                 Environment.GetEnvironmentVariable(ServerConnectionOptions.MaxConnectionsEnvironmentVariable),
                 log));
 
-        using CancellationTokenSource cancellation = new();
-        ConsoleCancelEventHandler? cancelHandler = (_, args) =>
-        {
-            args.Cancel = true;
-            cancellation.Cancel();
-        };
-
-        Console.CancelKeyPress += cancelHandler;
         try
         {
             bool allInterfaces = config.BindAddress.Equals(IPAddress.Any) || config.BindAddress.Equals(IPAddress.IPv6Any);
@@ -363,17 +376,13 @@ public static class ServerBootstrap
                 $"Server listening on {FormatEndpoint(config.BindAddress, service.Port)}" +
                 (allInterfaces ? " (all network interfaces: the dedicated server default; set DREAM_BIND_ADDRESS to narrow it)" : string.Empty) +
                 $" with protocol version {TransportEnvelope.CurrentProtocolVersion}, up to {config.MaxPlayers} players. " +
-                "Single-session authoritative runtime is active; press Ctrl+C to stop.");
-            await service.RunAsync(cancellation.Token);
+                "Single-session authoritative runtime is active; press Ctrl+C (or send SIGTERM) to stop.");
+            await service.RunAsync(signals.Token);
             return 0;
         }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (signals.Token.IsCancellationRequested)
         {
             return 0;
-        }
-        finally
-        {
-            Console.CancelKeyPress -= cancelHandler;
         }
     }
 
