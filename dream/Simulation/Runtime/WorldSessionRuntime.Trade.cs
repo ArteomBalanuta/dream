@@ -65,6 +65,14 @@ public sealed partial class WorldSessionRuntime
             return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, "You cannot trade with yourself.");
         }
 
+        // A muted account cannot reach other players through a trade request either: the request puts a
+        // notice on a named player's screen, which is the reach a mute takes away. The party invite states
+        // the same rule in the same place (WorldSessionRuntime.Party.cs).
+        if (IsSessionMuted?.Invoke(player.SessionId) == true)
+        {
+            return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, "You are muted.");
+        }
+
         if (TryGetTrade(player, out _))
         {
             return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, "You are already trading.");
