@@ -227,9 +227,14 @@ public static class InventoryWindow
     }
 
     // The bag cell under p (0..63), or -1 off the board (or for a non-finite p).
-    internal static int CellAt(in UiLayout l, UiRect win, Vector2 p)
+    internal static int CellAt(in UiLayout l, UiRect win, Vector2 p) => CellIn(BagRect(l, win), in l, p);
+
+    // The cell of ANY board laid out on the bag's grid (8 x 8 at CellUnits pitch) under p, or -1 off it.
+    // The shop board mirrors the bag exactly, so both boards resolve a point through this one method:
+    // two copies of this arithmetic could drift, and a drift would put the drop on a different cell
+    // from the one the player saw highlighted.
+    internal static int CellIn(UiRect board, in UiLayout l, Vector2 p)
     {
-        UiRect board = BagRect(l, win);
         if (!board.Contains(p))
         {
             return -1;

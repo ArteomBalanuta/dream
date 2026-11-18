@@ -22,21 +22,10 @@ public static class VendorGrid
     public static UiRect CellRect(in UiLayout l, UiRect win, int cell) =>
         l.FromUnits(win, LeftUnits + (cell % Columns * CellUnits), TopUnits + (cell / Columns * CellUnits), CellUnits, CellUnits);
 
-    // The board cell under p (0..63), or -1 off the board (or for a non-finite p). The same arithmetic as
-    // InventoryWindow.CellAt; a test pins the two together, because the board must mirror the bag.
-    internal static int CellAt(in UiLayout l, UiRect win, Vector2 p)
-    {
-        UiRect board = BoardRect(in l, win);
-        if (!board.Contains(p))
-        {
-            return -1;
-        }
-
-        float cell = CellUnits * l.Scale;
-        int col = Math.Clamp((int)MathF.Floor((p.X - board.X) / cell), 0, Columns - 1);
-        int row = Math.Clamp((int)MathF.Floor((p.Y - board.Y) / cell), 0, Rows - 1);
-        return (row * Columns) + col;
-    }
+    // The board cell under p (0..63), or -1 off the board (or for a non-finite p). This is the bag's own
+    // arithmetic, called on the shop's rect, so the two boards cannot drift apart.
+    internal static int CellAt(in UiLayout l, UiRect win, Vector2 p) =>
+        InventoryWindow.CellIn(BoardRect(in l, win), in l, p);
 
     public static UiRect ItemRect(in UiLayout l, UiRect win, int anchor, ItemFootprint f) =>
         l.FromUnits(
