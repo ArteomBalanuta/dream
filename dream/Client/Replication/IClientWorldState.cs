@@ -2,6 +2,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.MapSources;
+using OpenTK.Mathematics;
 
 namespace Dream.Client.Replication;
 
@@ -38,4 +39,12 @@ public interface IClientWorldState : IReplicatedSessionStateTarget
     }
 
     bool TryResolveCombatActor(int actorId, out CombatActorHandle actor);
+
+    // A presentation-only handle for a remote player at the given world position (the victim's pose
+    // from the snapshot). False when the id is the local player's.
+    bool TryResolveRemotePlayerActor(int actorId, Vector3 worldPosition, out CombatActorHandle actor)
+    {
+        actor = default;
+        return false;
+    }
 }

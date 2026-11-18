@@ -24,7 +24,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         new ClientHelloHandler().Handle(context, new ClientHelloMessage("client-a"));
 
-        Assert.Equal(21, TransportEnvelope.CurrentProtocolVersion);
+        Assert.Equal(22, TransportEnvelope.CurrentProtocolVersion);
         ServerHelloMessage hello = Assert.IsType<ServerHelloMessage>(Assert.Single(context.OutboundMessages));
         Assert.Equal(TransportEnvelope.CurrentProtocolVersion, hello.ProtocolVersion);
     }
@@ -131,7 +131,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
     {
         TransportJsonCodec codec = new();
         string v1Payload = JsonSerializer.Serialize(message, message.GetType(), ProtocolWireOptions.V1WithV3World);
-        string json = $"{{\"protocolVersion\":21,\"messageKind\":\"{message.MessageKind}\",\"sequence\":1,\"payload\":{v1Payload}}}";
+        string json = $"{{\"protocolVersion\":22,\"messageKind\":\"{message.MessageKind}\",\"sequence\":1,\"payload\":{v1Payload}}}";
 
         IProtocolMessage fromExplicitNulls = codec.Decode(Encoding.UTF8.GetBytes(json)).Message;
         IProtocolMessage fromSlim = codec.Decode(Encode(codec, new TransportEnvelope(TransportEnvelope.CurrentProtocolVersion, message.MessageKind, 1), message)).Message;
@@ -145,7 +145,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
     {
         DecodedProtocolMessage decoded = DecodeJson(
             """
-            {"protocolVersion":21,"messageKind":"server.snapshot","sequence":9,"payload":{"snapshot":{
+            {"protocolVersion":22,"messageKind":"server.snapshot","sequence":9,"payload":{"snapshot":{
               "serverTick":120,
               "lastAcceptedCommandSequences":{"session-a":4},
               "actors":[
@@ -196,7 +196,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
     public void Decode_HandWrittenV2JoinAndAction_WithOptionalFieldsOmitted()
     {
         JoinAcceptedMessage join = Assert.IsType<JoinAcceptedMessage>(DecodeJson(
-            """{"protocolVersion":21,"messageKind":"server.join-accepted","sequence":1,"payload":{"sessionId":"session-a","actorId":101,"currentServerTick":22}}""").Message);
+            """{"protocolVersion":22,"messageKind":"server.join-accepted","sequence":1,"payload":{"sessionId":"session-a","actorId":101,"currentServerTick":22}}""").Message);
 
         Assert.Equal(new JoinAcceptedMessage("session-a", 101, 22, InitialWorld: null), join);
         Assert.Empty(join.EffectiveRoster);
@@ -204,7 +204,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         ServerActionMessage action = Assert.IsType<ServerActionMessage>(DecodeJson(
             """
-            {"protocolVersion":21,"messageKind":"server.action","sequence":2,"payload":{"result":{
+            {"protocolVersion":22,"messageKind":"server.action","sequence":2,"payload":{"result":{
               "sessionId":"session-a","actionSequence":5,"serverTick":6,"accepted":true,
               "payload":{"$type":"combat.resolution","damageApplied":3,"targetDied":false,"currentHealth":7,"maxHealth":10},
               "correction":{"correctedFacing":{"x":0,"y":1,"z":0}}}}}
@@ -223,7 +223,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         PlayerCommandMessage command = Assert.IsType<PlayerCommandMessage>(DecodeJson(
             """
-            {"protocolVersion":21,"messageKind":"player.command","sequence":3,"payload":{"commandFrame":{
+            {"protocolVersion":22,"messageKind":"player.command","sequence":3,"payload":{"commandFrame":{
               "sessionId":{"value":"session-a"},"sequence":8,"requestedMode":{},
               "moveIntent":{"forwardAxis":1,"strafeAxis":0},"lookIntent":{"yawDelta":0,"pitchDelta":0},
               "primaryUsePressed":false}}}
@@ -250,7 +250,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => new TransportJsonCodec().Decode(v1));
 
-        Assert.Equal("Unsupported protocol version 1. Supported version: 21.", ex.Message);
+        Assert.Equal("Unsupported protocol version 1. Supported version: 22.", ex.Message);
     }
 
     [Fact]
@@ -261,7 +261,7 @@ public class ProtocolV2SlimmingTests(ITestOutputHelper output)
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
             () => new TransportJsonCodec().Encode(new TransportEnvelope(1, message.MessageKind, 1), message));
 
-        Assert.Equal("Cannot encode protocol version 1. Supported version: 21.", ex.Message);
+        Assert.Equal("Cannot encode protocol version 1. Supported version: 22.", ex.Message);
     }
 
     [Fact]

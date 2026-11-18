@@ -73,8 +73,13 @@ public readonly record struct TransportEnvelope(
     //   two meanings for one digit is a disagreement neither side could ever detect - which is what
     //   this comment exists to prevent. Before claiming a version, check the unmerged branches:
     //   git show <branch>:dream/Multiplayer/Protocol/TransportEnvelope.cs | grep CurrentProtocolVersion
+    // Version 22 (remote cast visibility) adds the optional trailing "castEvents" of a server snapshot
+    // (CastEventDelta: caster actor id, skill kind, origin, direction and range), written only when a
+    // cast happened in the interval, so a tick without a cast is byte-identical to v21 apart from the
+    // version digit; a v21 client would skip the unknown property and never show a peer's cast, so
+    // both sides refuse the other.
     // Decode rejects any other version.
-    public const int CurrentProtocolVersion = 21;
+    public const int CurrentProtocolVersion = 22;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

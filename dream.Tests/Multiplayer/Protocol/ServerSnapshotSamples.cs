@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -119,6 +120,23 @@ internal static class ServerSnapshotSamples
                 random.Next(2) == 0,
                 RandomInt(random),
                 RandomInt(random));
+        }
+
+        return events;
+    }
+
+    // Edge floats and ints for every field, and kinds outside the enum, which the wire keeps as sent.
+    public static CastEventDelta[] RandomCastEvents(Random random, int count)
+    {
+        CastEventDelta[] events = new CastEventDelta[count];
+        for (int i = 0; i < count; i++)
+        {
+            events[i] = new CastEventDelta(
+                RandomInt(random),
+                (SkillKind)random.Next(-1, 4),
+                RandomVector(random),
+                RandomVector(random),
+                RandomFloat(random));
         }
 
         return events;

@@ -15,6 +15,14 @@ public sealed partial class WorldSessionRuntime
     private readonly List<WorldMutationDelta> _pendingWorldMutations = [];
     private readonly List<DamageEventDelta> _pendingDamageEvents = [];
 
+    // Presentation only: one entry per accepted skill cast, exported on the next snapshot and cleared
+    // with it. Never sequenced, never read by the simulation, never part of WorldStateChecksum.
+    private readonly List<CastEventDelta> _pendingCastEvents = [];
+
+    // At most one cast per session per tick is possible (cooldowns are >= 64 ticks); the cap makes
+    // the per-tick bound unconditional.
+    private const int MaxPendingCastEvents = 256;
+
     public const ulong WorldChecksumIntervalTicks = 64;
     private ulong _nextWorldChecksumTick;
 
@@ -54,14 +62,27 @@ public sealed partial class WorldSessionRuntime
             // The envelope's collections are wire payloads and stay fresh per snapshot.
             _pendingDamageEvents.Count == 0 ? Array.Empty<DamageEventDelta>() : _pendingDamageEvents.ToArray(),
             checksum,
-            checksum.HasValue ? LastWorldMutationSequence : 0)
+            checksum.HasValue ? LastWorldMutationSequence : 0,
+            // Empty is absent: a tick without a cast carries no castEvents property at all.
+            _pendingCastEvents.Count == 0 ? null : _pendingCastEvents.ToArray())
         {
             ActorDelta = _actorDeltaChain.Next(CurrentServerTick, actors)
         };
 
         _pendingWorldMutations.Clear();
         _pendingDamageEvents.Clear();
+        _pendingCastEvents.Clear();
         return envelope;
+    }
+
+    internal void QueueCastEvent(in CastEventDelta cast)
+    {
+        if (_pendingCastEvents.Count >= MaxPendingCastEvents)
+        {
+            return;
+        }
+
+        _pendingCastEvents.Add(cast);
     }
 
     // Full world for a client that reported a checksum mismatch. Pending deltas stay queued for

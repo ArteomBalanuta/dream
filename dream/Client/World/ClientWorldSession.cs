@@ -101,6 +101,49 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         return Enemies.TryGetActorById(actorId, out actor);
     }
 
+    // Remote players have no combatant on the client, so a hit on one resolves to a presentation-only
+    // handle whose anchor is the position the caller supplies (the victim's pose in the snapshot that
+    // carries the hit). The handle object is cached per actor id and re-aimed on every call, so the
+    // hit path allocates only the first time a peer is hit. Consumers read the anchor synchronously
+    // when the event is published; nothing damages it and it never feeds the simulation.
+    public bool TryResolveRemotePlayerActor(int actorId, Vector3 worldPosition, out CombatActorHandle actor)
+    {
+        if (actorId == Player.Combatant.Actor.Id)
+        {
+            actor = default;
+            return false;
+        }
+
+        if (!_remotePlayerActors.TryGetValue(actorId, out RemotePlayerCombatActor? remote))
+        {
+            remote = new RemotePlayerCombatActor(actorId);
+            _remotePlayerActors[actorId] = remote;
+        }
+
+        remote.Position = worldPosition;
+        actor = remote.Handle;
+        return true;
+    }
+
+    private readonly Dictionary<int, RemotePlayerCombatActor> _remotePlayerActors = [];
+
+    private sealed class RemotePlayerCombatActor : ICombatAnchorProvider
+    {
+        // PlayerCombatant's default anchor height: the chest of a body-position pose.
+        private const float AnchorHeight = 1.2f;
+
+        public RemotePlayerCombatActor(int actorId)
+        {
+            Handle = new CombatActorHandle(actorId, CreatureKind.Player, new HealthState(1), this);
+        }
+
+        public CombatActorHandle Handle { get; }
+
+        public Vector3 Position { get; set; }
+
+        public Vector3 GetCombatAnchorWorldPosition() => Position + new Vector3(0f, AnchorHeight, 0f);
+    }
+
     // One local prediction tick: the local player moves through physics and fracture pieces
     // settle locally. Placed cubes are kinematic replicated bodies and only move through
     // server deltas, so syncing dynamic bodies here touches rubble only.

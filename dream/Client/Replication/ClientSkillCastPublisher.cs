@@ -26,17 +26,27 @@ public static class ClientSkillCastPublisher
             return false;
         }
 
+        return Publish(events, skill.Kind, origin, forward, skill.Range);
+    }
+
+    // The shared tail, and the entry for a peer's cast, whose kind, origin and range arrive on the wire.
+    // An unmapped kind, a non-finite vector or a negative/non-finite range publishes nothing. A range of
+    // zero is legal only for Mend, which has none; an Arc or Bolt of no reach is nonsense and is dropped.
+    public static bool Publish(SceneEventHub events, SkillKind skillKind, Vector3 origin, Vector3 forward, float range)
+    {
+        if (events == null || !IsFinite(origin) || !IsFinite(forward) || !float.IsFinite(range) || range < 0f)
+        {
+            return false;
+        }
+
         SkillFxKind kind;
-        float range;
-        switch (skill.Kind)
+        switch (skillKind)
         {
             case SkillKind.MeleeArc:
                 kind = SkillFxKind.Arc;
-                range = skill.Range;
                 break;
             case SkillKind.RangedBolt:
                 kind = SkillFxKind.Bolt;
-                range = skill.Range;
                 break;
             case SkillKind.SelfHeal:
                 kind = SkillFxKind.Mend;
@@ -44,6 +54,11 @@ public static class ClientSkillCastPublisher
                 break;
             default:
                 return false;
+        }
+
+        if (range <= 0f && kind != SkillFxKind.Mend)
+        {
+            return false;
         }
 
         // The contract wants a horizontal unit vector; a vertical or zero aim becomes "no direction".

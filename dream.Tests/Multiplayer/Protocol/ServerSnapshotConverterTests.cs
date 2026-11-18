@@ -560,6 +560,7 @@ public class ServerSnapshotConverterTests(ITestOutputHelper output)
         Assert.Equal(expected.Snapshot.Actors is null, actual.Snapshot.Actors is null);
         Assert.Equal(expected.Snapshot.WorldMutations is null, actual.Snapshot.WorldMutations is null);
         Assert.Equal(expected.Snapshot.DamageEvents is null, actual.Snapshot.DamageEvents is null);
+        Assert.Equal(expected.Snapshot.CastEvents is null, actual.Snapshot.CastEvents is null);
     }
 
     private static void AssertMutationsEqual(IReadOnlyList<WorldMutationDelta>? expected, IReadOnlyList<WorldMutationDelta>? actual)

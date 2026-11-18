@@ -114,7 +114,7 @@ public sealed class M4ContractCodecTests
         Assert.DoesNotContain("quick", json, StringComparison.Ordinal);
         // Apart from the version digit, this is exactly the v16 frame.
         Assert.Equal(
-            "{\"protocolVersion\":21,\"messageKind\":\"server.action\",\"sequence\":1,\"payload\":{\"result\":{\"sessionId\":\"s\",\"actionSequence\":1,\"serverTick\":1,\"accepted\":true,\"payload\":{\"$type\":\"inventory.changed\",\"inventory\":{\"playerName\":\"p\",\"columns\":8,\"rows\":8,\"bag\":[],\"worn\":[]}}}}}",
+            "{\"protocolVersion\":22,\"messageKind\":\"server.action\",\"sequence\":1,\"payload\":{\"result\":{\"sessionId\":\"s\",\"actionSequence\":1,\"serverTick\":1,\"accepted\":true,\"payload\":{\"$type\":\"inventory.changed\",\"inventory\":{\"playerName\":\"p\",\"columns\":8,\"rows\":8,\"bag\":[],\"worn\":[]}}}}}",
             json);
         Assert.Null(Decode(json).Quickbar);
     }

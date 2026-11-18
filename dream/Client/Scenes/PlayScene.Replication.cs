@@ -243,6 +243,8 @@ public partial class PlayScene
             }
 
             ObserveLocalDeath(snapshotMessage.Snapshot.Actors, snapshotMessage.Snapshot.ServerTick);
+            // A peer's casts only: pass the raw server id, not LocalActorId, which falls back to a local id.
+            ClientSnapshotCastApplier.Apply(_events, snapshotMessage.Snapshot, _serverLocalActorId);
             LogPresenterDiagnostics("snapshot");
         }
         else if (message is InventoryPushMessage pushMessage)

@@ -23,7 +23,7 @@ public sealed class M3ContractCodecTests
     [Fact]
     public void TheProtocolVersion_IsSeventeen_AndTheNpcIdBlockSitsInsideTheEnemyRange()
     {
-        Assert.Equal(21, TransportEnvelope.CurrentProtocolVersion);
+        Assert.Equal(22, TransportEnvelope.CurrentProtocolVersion);
         Assert.Equal(3, (int)CreatureKind.Npc);
         Assert.Equal((1 << 30) - 1024, ReplicatedActorIdRanges.FirstNpcId);
         Assert.True(ReplicatedActorIdRanges.IsEnemyId(ReplicatedActorIdRanges.FirstNpcId));

@@ -136,7 +136,7 @@ public sealed class RaceConcurrencyTests : IDisposable
     public void BH_RACE_2_ALostConnection_DoesNotOverwriteAProtocolFault()
     {
         RemoteClientSession session = NewSession();
-        const string mismatch = "Server uses protocol v20; this client uses v21.";
+        const string mismatch = "Server uses protocol v21; this client uses v22.";
 
         session.EndSessionWithReason(mismatch, "test.protocol");
         session.EndSessionWithReason("Connection lost: IOException: broken pipe", "test.lost");
