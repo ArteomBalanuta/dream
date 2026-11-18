@@ -62,6 +62,20 @@ public sealed class EnemyVisualStateCache
         }
     }
 
+    // Drops an enemy's state and hands its animation instance to the caller WITHOUT pooling it:
+    // the caller takes ownership and gives it back with ReturnInstance when it is done (see
+    // EnemyDeathLinger, which keeps a dead enemy's model going for the length of its death clip).
+    // Null when the enemy had no state or no instance - which is also when it was never drawn.
+    internal AnimatedModelInstance? TakeInstance(int actorId)
+    {
+        if (!_states.Remove(actorId, out EnemyVisualState? state))
+        {
+            return null;
+        }
+
+        return state.ReleaseInstance();
+    }
+
     // A pooled instance of the skeleton, reset, or a new one.
     internal AnimatedModelInstance RentInstance(AnimatedModelSkeleton skeleton)
     {

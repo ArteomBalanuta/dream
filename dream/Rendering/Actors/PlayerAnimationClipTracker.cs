@@ -83,13 +83,28 @@ public sealed class PlayerAnimationClipTracker
 
                 break;
             case PlayerClipMode.OneShot:
-                if (!(tracked && last.Mode == PlayerClipMode.OneShot && last.Serial == frame.OneShotSerial))
+                // The instance-liveness check the Loop and Hold branches both have. A far release
+                // (RemotePlayerRenderer.ReleaseFarModels) disposes the handle and deliberately
+                // keeps the actor's clip record, so the next TryGet hands over a brand-new,
+                // Stopped instance under the same recorded serial; without this the record
+                // suppresses the swing on an instance that is not playing it and the returning
+                // player stands in the bind pose until the next serial.
+                if (!(tracked && last.Mode == PlayerClipMode.OneShot && last.Serial == frame.OneShotSerial &&
+                    instance.Playback.IsPlaying))
                 {
                     if (!instance.Playback.IsPlaying)
                     {
                         instance.PlayLoop(PlayerAnimationStateMachine.IdleClip);
                     }
 
+                    // The other direction of the Hold compensation above, for the same reason:
+                    // the attack clips animate the torso, head and arms and no leg or root node
+                    // at all, so Pose.Apply would leave the legs frozen wherever the gait last
+                    // sampled them - up to 42 degrees off neutral on the sprint cycle - for the
+                    // whole swing, while the body keeps sliding. Back to the authored rest stance
+                    // first; the nodes the one-shot DOES animate are written by the Update that
+                    // follows, so a clip with a full channel set is unaffected.
+                    instance.Pose.ResetToRest();
                     instance.PlayOneShot(clip);
                 }
 
