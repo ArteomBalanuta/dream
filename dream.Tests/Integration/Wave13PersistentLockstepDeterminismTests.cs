@@ -32,14 +32,7 @@ public sealed class Wave13PersistentLockstepDeterminismTests(ITestOutputHelper o
             seed = bundle.SimulationSeed!.Value;
         }
 
-        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
-        foreach (string suffix in new[] { "", "-wal", "-shm" })
-        {
-            if (File.Exists(left.DatabasePath + suffix))
-            {
-                File.Copy(left.DatabasePath + suffix, right.DatabasePath + suffix);
-            }
-        }
+        DatabaseImageCopy.Seed(left.DatabasePath, right.DatabasePath);
 
         int firstDivergence = -1;
         RunRecord record;

@@ -60,16 +60,8 @@ internal sealed class StoredWorldDb : IDisposable
 
     private StoredWorldDb(StoredWorldDb source)
     {
-        // The SOURCE's pool, so its file (and its -wal) is closed before the byte copy below.
-        SqlitePools.Release(source.DatabasePath);
         _database = new MigrationTestDatabase();
-        foreach (string suffix in new[] { "", "-wal", "-shm" })
-        {
-            if (File.Exists(source.DatabasePath + suffix))
-            {
-                File.Copy(source.DatabasePath + suffix, _database.DatabasePath + suffix);
-            }
-        }
+        DatabaseImageCopy.Seed(source.DatabasePath, _database.DatabasePath);
 
         Size = source.Size;
         Definition = source.Definition;

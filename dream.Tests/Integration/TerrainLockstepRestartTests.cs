@@ -25,14 +25,7 @@ public sealed class TerrainLockstepRestartTests(ITestOutputHelper output)
         {
         }
 
-        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
-        foreach (string suffix in new[] { "", "-wal", "-shm" })
-        {
-            if (File.Exists(left.DatabasePath + suffix))
-            {
-                File.Copy(left.DatabasePath + suffix, right.DatabasePath + suffix);
-            }
-        }
+        DatabaseImageCopy.Seed(left.DatabasePath, right.DatabasePath);
 
         long previousOverrides = 0;
         for (int phase = 0; phase < PhaseTicks.Length; phase++)

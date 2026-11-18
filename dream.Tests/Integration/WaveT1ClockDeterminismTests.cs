@@ -41,14 +41,7 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
             Assert.NotNull(bundle.SimulationSeed);
         }
 
-        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
-        foreach (string suffix in new[] { "", "-wal", "-shm" })
-        {
-            if (File.Exists(left.DatabasePath + suffix))
-            {
-                File.Copy(left.DatabasePath + suffix, right.DatabasePath + suffix);
-            }
-        }
+        DatabaseImageCopy.Seed(left.DatabasePath, right.DatabasePath);
 
         const long rightPersisted = 7 * 115_200L + 50_000L;
         using (ServerPersistenceBundle bundle = right.OpenBundle())

@@ -43,27 +43,44 @@ public class ProtocolV2SlowClientLoopbackIntegrationTests(ITestOutputHelper outp
 
         int builds = 0;
         int tick = 0;
-        int ticksAfterFirstMerge = 0;
-        while (ticksAfterFirstMerge < 120)
+        int mergingTicks = 0;
+        int buildsEnqueuedWhileMerging = 0;
+        // ServerConnection.CoalescedSnapshots is a monotonic LIFETIME total, never reset, so
+        // "> 0" is true forever after the first merge this connection ever did. Gating on it made
+        // the build gate degenerate to "a build every 15 ticks" and let the window close 120 ticks
+        // after the first merge whether or not merging was still happening - so whether any build
+        // landed on a tick that was actually merged away was left to timing, and mergedMutations
+        // came out 0 under load. Both now use the per-tick DELTA: merging now, not merged once.
+        bool mergingNow = false;
+        while (mergingTicks < 120)
         {
             Assert.True(tick < 6000, $"The slow connection never coalesced (pending {slowConnection.PendingOutboundCount}).");
             await primary.SendCommandAsync(walking: false);
             await fast.SendCommandAsync(walking: tick % 90 < 30);
             // Builds keep coming while the slow client lags, so merged snapshots carry mutations.
-            if (tick % 15 == 3 && builds < BuildCells.Length && (builds < 2 || slowConnection.CoalescedSnapshots > 0))
+            if (tick % 15 == 3 && builds < BuildCells.Length && (builds < 2 || mergingNow))
             {
                 EnqueuePrimaryBuild(server, builds++);
+                buildsEnqueuedWhileMerging += mergingNow ? 1 : 0;
             }
 
+            long coalescedBefore = slowConnection.CoalescedSnapshots;
             await server.TickAsync();
             Assert.True(await OutboundDrain.FlushAsync(server.ConnectionFor(primary), ProtocolV2SharedSnapshotLoopbackIntegrationTests.Timeout));
             Assert.True(await OutboundDrain.FlushAsync(server.ConnectionFor(fast), ProtocolV2SharedSnapshotLoopbackIntegrationTests.Timeout));
             Assert.False(slowConnection.IsFaulted, "The slow connection faulted instead of coalescing.");
-            ticksAfterFirstMerge += slowConnection.CoalescedSnapshots > 0 ? 1 : 0;
+            mergingNow = slowConnection.CoalescedSnapshots > coalescedBefore;
+            mergingTicks += mergingNow ? 1 : 0;
             tick++;
         }
 
         Assert.Equal(BuildCells.Length, builds);
+        // The central claim of the test, asserted where it is observable instead of inferred from
+        // mergedMutations below: builds really were enqueued into the merge window, on ticks the
+        // connection was coalescing on.
+        Assert.True(
+            buildsEnqueuedWhileMerging > 0,
+            $"{builds} builds were enqueued but none while the slow connection was coalescing.");
         slow.ResumeReading();
         Assert.True(await slowConnection.FlushOutboundAsync(ProtocolV2SharedSnapshotLoopbackIntegrationTests.Timeout), "The slow connection never drained.");
         ulong lastTick = server.Host.Runtime!.CurrentServerTick;
