@@ -54,17 +54,40 @@ public static class ChatRouter
                 break;
             case ChatChannel.Whisper:
                 string target = CharacterNames.Normalize(chat.Target ?? "");
-                ChatParticipant? recipient = null;
+                // BH-CLOCK-2. Two live seats can share a CharacterKey and so a display name, so the
+                // first match is not the only one: every distinct connection holding the name is a
+                // recipient, the same de-duplication by connection the Party case does below. Stopping
+                // at the first match dropped the line for the other seat while the sender, who gets an
+                // echo either way, saw nothing wrong.
+                // The recipients and the sender (the echo) get the same line.
+                ServerChatMessage whisper = new(ChatChannel.Whisper, sender.Name, chat.Text, serverTick);
+                bool found = false;
+                bool senderHeard = false;
                 for (int i = 0; i < participants.Count; i++)
                 {
-                    if (CharacterNames.Comparer.Equals(participants[i].Name, target))
+                    if (!CharacterNames.Comparer.Equals(participants[i].Name, target))
                     {
-                        recipient = participants[i];
-                        break;
+                        continue;
                     }
+
+                    bool repeated = false;
+                    for (int j = 0; j < i && !repeated; j++)
+                    {
+                        repeated = CharacterNames.Comparer.Equals(participants[j].Name, target)
+                            && string.Equals(participants[j].ConnectionId, participants[i].ConnectionId, StringComparison.Ordinal);
+                    }
+
+                    if (repeated)
+                    {
+                        continue;
+                    }
+
+                    found = true;
+                    replies.Add(new PendingConnectionReply(participants[i].ConnectionId, whisper));
+                    senderHeard |= string.Equals(participants[i].ConnectionId, sender.ConnectionId, StringComparison.Ordinal);
                 }
 
-                if (recipient is not { } found)
+                if (!found)
                 {
                     replies.Add(new PendingConnectionReply(
                         sender.ConnectionId,
@@ -72,10 +95,7 @@ public static class ChatRouter
                     break;
                 }
 
-                // The recipient and the sender (the echo) get the same line.
-                ServerChatMessage whisper = new(ChatChannel.Whisper, sender.Name, chat.Text, serverTick);
-                replies.Add(new PendingConnectionReply(found.ConnectionId, whisper));
-                if (!string.Equals(found.ConnectionId, sender.ConnectionId, StringComparison.Ordinal))
+                if (!senderHeard)
                 {
                     replies.Add(new PendingConnectionReply(sender.ConnectionId, whisper));
                 }
