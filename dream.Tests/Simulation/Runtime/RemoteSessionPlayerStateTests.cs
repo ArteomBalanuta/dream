@@ -44,7 +44,16 @@ public class RemoteSessionPlayerStateTests
         // the motor ramps instead of snapping to speed, so that window is a ramp up to the cruise
         // and then a brake back to rest, a fraction of the window's cruise travel. What this
         // asserts is that the seat moves along the client's facing (+X) and not across it.
-        Assert.True(state.Position.X > 4.2f, $"x={state.Position.X}");
+        // The travel is v^2/2a up, cruise for the rest of the window, v^2/2d down; the bound keeps the 2/3 of
+        // it that the assertion has always kept (0.5 m of the 0.75 m this ramp covered at the old cruise).
+        float cruise = Tuning.MoveSpeed;
+        float window = BufferedPlayerCommandInbox.ServerRepeatTicks / (float)SimulationClock.AuthoritativeTicksPerSecond;
+        float rampTime = cruise / PlayerSimulationTuning.DefaultGroundAcceleration;
+        float expectedTravel = (cruise * cruise / (2f * PlayerSimulationTuning.DefaultGroundAcceleration))
+            + (cruise * (window - rampTime))
+            + (cruise * cruise / (2f * PlayerSimulationTuning.DefaultGroundDeceleration));
+        Assert.True(rampTime < window);
+        Assert.True(state.Position.X > 4f + (2f / 3f * expectedTravel), $"x={state.Position.X}, expected travel {expectedTravel}");
         Assert.Equal(4f, state.Position.Z, 1);
     }
 

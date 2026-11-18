@@ -175,7 +175,13 @@ public class CubeRestFreezerTests
         _output.WriteLine(
             $"row end moved {moved:0.000} m; active {scene.CountActive()}; "
             + $"player at {player.GetWorldPosition().X:0.000} doing {new TkVector2(player.PhysicsBody.LinearVelocity.X, player.PhysicsBody.LinearVelocity.Z).Length:0.000} m/s");
-        Assert.True(moved > 0.25f, $"the pushed row moved {moved} m");
+        // The floor was 0.5 m at the old 6 m/s sprint (measured 0.719 m); the arrival energy, and so the movement,
+        // scales with the square of the sprint speed.
+        const float OldSprintSpeed = 6f;
+        const float OldRowFloorMetres = 0.5f;
+        float sprintRatio = PlayerSimulationTuning.DefaultSprintSpeed / OldSprintSpeed;
+        float rowFloor = OldRowFloorMetres * sprintRatio * sprintRatio;
+        Assert.True(moved > rowFloor, $"the pushed row moved {moved} m, floor {rowFloor} m");
         Assert.All(row, body => Assert.True(body.IsActive));
         Assert.False(carpetWoke);
         Assert.False(sideWoke);
