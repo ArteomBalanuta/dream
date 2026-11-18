@@ -66,7 +66,7 @@ internal static class WaveIRuntimeKit
         EnemyActor wolf = runtime.Enemies.ActiveActors.First();
         Vector3 eye = target.EyePosition;
         Vector3 facing = target.Facing;
-        wolf.SetPosition(eye + facing * 2f - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+        wolf.SetPosition(eye + facing * 1f - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
         wolf.Combatant.Health.SetAuthoritativeState(wolfHealth, wolf.Combatant.Health.MaxHealth);
         return wolf;
     }

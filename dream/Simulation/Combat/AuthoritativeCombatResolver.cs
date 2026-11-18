@@ -69,6 +69,10 @@ internal interface IAuthoritativeCombatHost
     // The combatant behind a PvP candidate's actor id. A player's actor handle holds only its health, so
     // damage must go through the combatant to be mitigated by armor and to publish the death event.
     PlayerCombatant? ResolvePvpVictim(int actorId) => null;
+
+    // The reach in metres of the attacker's primary attack (WeaponReach of the equipped main-hand item). The
+    // default is the unarmed reach, so a host that does not model equipment attacks bare-handed.
+    float ResolveAttackReach(PlayerSessionId attacker) => WeaponReach.UnarmedMetres;
 }
 
 // Resolves an authoritative combat use: the seeded attack roll, the enemy or destructible cube it
@@ -180,11 +184,21 @@ internal sealed class AuthoritativeCombatResolver
             return CreateRejectedResult(message, tick, "Combat action rejected because attack is on cooldown.");
         }
 
+        // A swing reaches only as far as the equipped weapon (the server's own gate: the client's approach
+        // distance is not trusted). An out-of-reach swing is accepted and spends the cooldown but hits nothing
+        // in reach, like any other miss.
+        float reach = _host.ResolveAttackReach(message.SessionId);
+        float acceptedReach = reach + WeaponReach.ServerToleranceMetres;
         EnemyActor? enemy = CombatUseResolver.TryResolveEnemyHit(
             _enemies,
             intent.RayOrigin,
             intent.RayDirection,
-            CombatUseResolver.DefaultHitRange);
+            reach + CombatUseResolver.RayHeadroomMetres);
+        if (enemy != null && !IsWithinReach(intent.RayOrigin, enemy.Combatant.GetCombatAnchorWorldPosition(), acceptedReach))
+        {
+            enemy = null;
+        }
+
         // A wall between the ray origin and the enemy's combat anchor blocks the hit, as for bolts, the
         // melee arc and PvP - and as the enemy's own bite line does in the other direction. When it is
         // blocked, fall through to the PvP and cube branches rather than resolving the enemy.
@@ -200,9 +214,11 @@ internal sealed class AuthoritativeCombatResolver
                 message.SessionId,
                 intent.RayOrigin,
                 intent.RayDirection,
-                CombatUseResolver.DefaultHitRange);
+                reach + CombatUseResolver.RayHeadroomMetres);
             // A wall between the ray origin and the player's body centre blocks the hit, as for bolts.
-            if (player.HasValue && !IsBlockedByWall(_map(), intent.RayOrigin, player.Value.GetWorldAnchor()))
+            if (player.HasValue
+                && IsWithinReach(intent.RayOrigin, player.Value.GetWorldAnchor(), acceptedReach)
+                && !IsBlockedByWall(_map(), intent.RayOrigin, player.Value.GetWorldAnchor()))
             {
                 return ResolvePlayerHit(message, combatant, tick, player.Value, 100);
             }
@@ -472,6 +488,15 @@ internal sealed class AuthoritativeCombatResolver
     }
 
     // PvP: the first player on the ray, within maxDistance, among the host's candidates.
+    // Horizontal (XZ) distance from the ray origin, which sits directly above the attacker's body centre, to
+    // the target's combat anchor.
+    internal static bool IsWithinReach(Vector3 origin, Vector3 anchor, float reach)
+    {
+        float dx = anchor.X - origin.X;
+        float dz = anchor.Z - origin.Z;
+        return dx * dx + dz * dz <= reach * reach;
+    }
+
     private CombatActorHandle? TryResolvePvpTarget(
         PlayerSessionId attacker,
         Vector3 origin,

@@ -9,6 +9,10 @@ public static class CombatUseResolver
 {
     public const float DefaultHitRange = 4f;
 
+    // How far past the weapon's reach the primary attack's ray is cast. The ray finds the enemy near the
+    // line of sight; the reach itself is then judged on the horizontal distance to the enemy's anchor.
+    public const float RayHeadroomMetres = 2f;
+
     public static WorldObjectRecord? TryResolveDestructibleCubeHit(
         Map map,
         WorldObjectRegistry registry,

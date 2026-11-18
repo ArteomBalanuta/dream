@@ -176,7 +176,7 @@ public class FairKillTests
             _tick += 100;
             AuthoritativeActionResult result = _resolver.ProcessCombatUse(
                 new PlayerActionMessage(id, ++_sequence, new CombatUseIntent(Vector3.Zero, Vector3.UnitX)),
-                new CombatUseIntent(Enemy.Combatant.GetCombatAnchorWorldPosition() + new Vector3(0f, 0f, 2f), -Vector3.UnitZ),
+                new CombatUseIntent(Enemy.Combatant.GetCombatAnchorWorldPosition() + new Vector3(0f, 0f, 1f), -Vector3.UnitZ),
                 PlayerInteractionMode.Combat,
                 Host.Combatants[id],
                 _tick);

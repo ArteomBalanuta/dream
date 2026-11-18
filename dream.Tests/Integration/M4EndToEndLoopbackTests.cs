@@ -460,7 +460,7 @@ public sealed class M4EndToEndLoopbackTests
         Assert.Equal(a.Quickbar.MaxMana, a.Quickbar.CurrentMana);
 
         EnemyActor enemy = server.Runtime.Enemies.ActiveActors.First(e => e.IsActive && e.Combatant.Health.IsAlive);
-        enemy.SetPosition(target.EyePosition + (target.Facing * 2f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+        enemy.SetPosition(target.EyePosition + (target.Facing * 1f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
         int healthBefore = enemy.Combatant.Health.CurrentHealth;
         int manaBefore = target.Combatant.CurrentMana;
 

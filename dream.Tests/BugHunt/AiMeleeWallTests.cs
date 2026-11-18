@@ -23,7 +23,7 @@ public sealed class AiMeleeWallTests
     private static readonly PlayerSessionId SessionA = new("session-a");
 
     // The enemy stands at z = 3.5, the attacker's eye at z = 6.5 looking down -Z: 3 m apart, inside
-    // the 4 m primary reach, with cell (5, 1, 5) free for the wall.
+    // the reach this host grants, with cell (5, 1, 5) free for the wall.
     private static readonly Vector3 EnemyPosition = new(5.5f, 1.5f, 3.5f);
     private static readonly Vector3 Eye = new(5.5f, 1.5f, 6.5f);
 
@@ -140,6 +140,9 @@ public sealed class AiMeleeWallTests
 
     private sealed class SilentHost : IAuthoritativeCombatHost
     {
+        // The geometry above needs a 3 m swing; this test is about the wall, not the reach.
+        public float ResolveAttackReach(PlayerSessionId attacker) => 4f;
+
         public Dictionary<PlayerSessionId, PlayerCombatant> Combatants { get; } = [];
 
         public bool TryGetSessionCombatant(PlayerSessionId sessionId, out PlayerCombatant? combatant)

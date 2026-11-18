@@ -34,7 +34,9 @@ public readonly record struct HudStatusSnapshot(
     // M4: the owner's mana from ServerPlayerVitals. MaxMana 0 means none is known and the MP gem keeps
     // StatusBarPanel.ManaGemFill.
     int CurrentMana = 0,
-    int MaxMana = 0)
+    int MaxMana = 0,
+    // The main hand's attack reach in metres (WeaponReach); 0 means none is known and the sheet shows the unarmed reach.
+    float AttackRange = 0f)
 {
     public const string DeathTitle = "You died";
     public const string RespawningNow = "Respawning";

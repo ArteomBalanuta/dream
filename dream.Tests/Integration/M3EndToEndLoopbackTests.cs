@@ -228,7 +228,7 @@ public sealed class M3EndToEndLoopbackTests
             Vector3 placed = default;
             if (enemy != null)
             {
-                enemy.SetPosition(target.EyePosition + (target.Facing * 2f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+                enemy.SetPosition(target.EyePosition + (target.Facing * 1f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
                 enemy.Combatant.Health.SetAuthoritativeState(1, enemy.Combatant.Health.MaxHealth);
                 placed = enemy.Position;
             }

@@ -282,7 +282,7 @@ public class SkillResolutionTests
     {
         // A primary attack and a 100 percent hit on the same roll inputs differ by nothing.
         Rig rig = new();
-        EnemyActor enemy = rig.AddEnemy(100, new Vector3(0f, 0f, -2f));
+        EnemyActor enemy = rig.AddEnemy(100, new Vector3(0f, 0f, -1f));
         AuthoritativeActionResult primary = rig.Resolver.ProcessCombatUse(
             new PlayerActionMessage(Caster, 1, new CombatUseIntent(rig.Eye, -Vector3.UnitZ)),
             new CombatUseIntent(rig.Eye, -Vector3.UnitZ),

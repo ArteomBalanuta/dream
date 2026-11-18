@@ -162,6 +162,39 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         Assert.Empty(fixture.Host.Calls);
     }
 
+    // The reach gate is horizontal anchor distance <= reach + tolerance. Both sides of the line are asserted, so a
+    // gate that stopped measuring (always true, or always false) fails one of them.
+    [Theory]
+    [InlineData(1.5f, 1.5f, true)]
+    [InlineData(1.5f, 1.5f + WeaponReach.ServerToleranceMetres - 0.01f, true)]
+    [InlineData(1.5f, 1.5f + WeaponReach.ServerToleranceMetres + 0.05f, false)]
+    [InlineData(1.5f, 2.0f, false)]
+    [InlineData(14f, 12f, true)]
+    [InlineData(14f, 14f + WeaponReach.ServerToleranceMetres + 0.05f, false)]
+    [InlineData(WeaponReach.UnarmedMetres, 1.4f, true)]
+    [InlineData(WeaponReach.UnarmedMetres, 2.0f, false)]
+    public void ProcessCombatUse_HitsAnEnemyOnlyWithinTheWeaponsReachPlusTolerance(float reach, float distance, bool expectHit)
+    {
+        Fixture fixture = new(simulationSeed: 4242UL);
+        fixture.Host.Reach = reach;
+        EnemyActor enemy = fixture.AddEnemy(new Vector3(5f, 1f, 3f), maxHealth: 1_000_000);
+        PlayerCombatant combatant = new(() => Vector3.Zero);
+
+        AuthoritativeActionResult result = fixture.Resolver.ProcessCombatUse(
+            new PlayerActionMessage(SessionA, 3, new CombatUseIntent(Vector3.Zero, Vector3.UnitX)),
+            fixture.RayAt(enemy.Combatant.GetCombatAnchorWorldPosition(), distance),
+            PlayerInteractionMode.Combat,
+            combatant,
+            tick: 77UL);
+
+        // A swing out of reach is accepted like any miss: no damage, no target, the cooldown is spent.
+        Assert.True(result.Accepted);
+        CombatResolutionResult payload = Assert.IsType<CombatResolutionResult>(result.Payload);
+        Assert.Equal(expectHit, payload.TargetActorId == EnemyActorId);
+        Assert.Equal(expectHit, fixture.Damage.Count == 1);
+        Assert.Equal(expectHit, enemy.Combatant.Health.CurrentHealth < 1_000_000);
+    }
+
     [Fact]
     public void ProcessCombatUse_FatalEnemyHit_AwardsKillExperienceLevelsUpAndPersists()
     {
@@ -430,9 +463,11 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
             return enemy;
         }
 
-        public CombatUseIntent RayAt(Vector3 anchor)
+        // A ray that starts the given horizontal distance from the anchor and looks at it; inside the unarmed
+        // reach by default.
+        public CombatUseIntent RayAt(Vector3 anchor, float distance = 1f)
         {
-            return new CombatUseIntent(anchor + new Vector3(0f, 0f, 2f), -Vector3.UnitZ);
+            return new CombatUseIntent(anchor + new Vector3(0f, 0f, distance), -Vector3.UnitZ);
         }
     }
 
@@ -441,6 +476,10 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         public Dictionary<PlayerSessionId, PlayerCombatant> Combatants { get; } = [];
 
         public List<string> Calls { get; } = [];
+
+        public float Reach { get; set; } = WeaponReach.UnarmedMetres;
+
+        public float ResolveAttackReach(PlayerSessionId attacker) => Reach;
 
         public bool TryGetSessionCombatant(PlayerSessionId sessionId, out PlayerCombatant? combatant)
         {

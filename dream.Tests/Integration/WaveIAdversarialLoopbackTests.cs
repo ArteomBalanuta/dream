@@ -163,7 +163,7 @@ public sealed class WaveIAdversarialLoopbackTests(ITestOutputHelper output)
         {
             if (server.Runtime.Enemies.ActiveActors.FirstOrDefault() is { } wolf)
             {
-                wolf.SetPosition(target.EyePosition + (target.Facing * 2f) - new Vector3(0f, Dream.Simulation.Enemies.WolfDefinition.CombatAnchorHeight, 0f));
+                wolf.SetPosition(target.EyePosition + (target.Facing * 1f) - new Vector3(0f, Dream.Simulation.Enemies.WolfDefinition.CombatAnchorHeight, 0f));
                 wolf.Combatant.Health.SetAuthoritativeState(1, wolf.Combatant.Health.MaxHealth);
             }
 
