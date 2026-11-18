@@ -203,17 +203,24 @@ public static class TradeWindow
             UiRect r = l.FromUnits(win, RowX, BagTop + (n * RowPitch), RowW, RowH);
             HudItemView item = v.Backpack[anchors[n]];
             bool offered = trade.OffersItem(item.Item.ItemInstanceId);
+            // BH-INPUT-2: the row's id is the item it was drawn from, not its place on the page. The
+            // bag stays live while a trade is open (a quickbar potion, a loot push), and CollectPage
+            // renumbers every later row when an item at a lower anchor leaves, so a position id lets a
+            // press on row n release as an offer of whatever moved into row n. With the item in the id
+            // such a change makes the router's press id no longer match and the click is dropped: the
+            // other party, who is watching the window, can never be offered an item nobody pressed.
+            int rowId = HudWidgetId.Of(IdBagRow, item.Item.ItemInstanceId);
             DrawRowPlate(c, s, r);
             if (offered)
             {
                 c.Solid(r, OfferFill);
             }
-            else if (editable && i.Hovered(IdBagRow + n, r))
+            else if (editable && i.Hovered(rowId, r))
             {
                 c.Solid(r, HoverFill);
             }
 
-            if (editable && i.Button(IdBagRow + n, r))
+            if (editable && i.Button(rowId, r))
             {
                 // Put in or taken out: the whole new offer replaces the old one.
                 bool full = !offered && trade.MyCount >= OfferRows;
