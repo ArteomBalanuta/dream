@@ -111,6 +111,8 @@ public sealed class OnDemandLocalServerHandle : ILocalServerHandle
 
     public string? ErrorMessage => _started?.ErrorMessage ?? _startFailure;
 
+    public bool DevCommandsAllowed => _started?.DevCommandsAllowed ?? false;
+
     public DedicatedServerPerformanceSnapshot LatestPerformance =>
         _started?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
 

@@ -26,6 +26,9 @@ public sealed partial class DedicatedServerHost
 
     internal const string KickedText = "You were kicked from the server.";
 
+    // BH-XFER-4: this world lost the character's presence lease while the player was still seated here.
+    internal const string PresenceLostText = "Your character is being played in another world.";
+
     // A sanction set this recently is kept in memory, because a join whose persisted-state load started
     // before the write reaches the database would otherwise be judged on the old standing.
     private static readonly TimeSpan SanctionMemoryWindow = TimeSpan.FromMinutes(2);
@@ -41,15 +44,21 @@ public sealed partial class DedicatedServerHost
     // One System chat line sent after each accepted join (already cleaned); null for none.
     public string? Motd { get; set; }
 
+    // Counts the sanctions this host remembered, so a standing read can tell which of them it already
+    // saw in the rows (the clock cannot: two events can share one DateTime.UtcNow).
+    private long _sanctionSequence;
+
     // A sanction as the host last set it: Set says whether it was set or cleared (a cleared one still
-    // overrides a stale prefetch that read the old value).
+    // overrides a stale prefetch that read the old value). Sequence is its position in _sanctionSequence.
     private readonly record struct SanctionMemory(
+        AccountKey Key,
         bool BanSet,
         DateTime? BanUntilUtc,
         string? BanReason,
         bool MuteSet,
         DateTime? MuteUntilUtc,
-        DateTime StampUtc);
+        DateTime StampUtc,
+        long Sequence);
 
     // One /command line a client sent as ChatChannel.Command. Replies go to the sender.
     private void HandleAdminCommand(
@@ -85,6 +94,15 @@ public sealed partial class DedicatedServerHost
         switch (command.Kind)
         {
             case AdminCommandKind.Announce:
+                // M8: a muted account is not heard, the admin role included. Announce is the one command
+                // that speaks to everyone, so the mute is checked here as it is on the chat path; the other
+                // verbs only reply to the sender, which a mute does not cover.
+                if (IsMuted(context))
+                {
+                    Reply(MutedText);
+                    return;
+                }
+
                 AnnounceToEveryone(sender, command.Text, tick, replies);
                 return;
             case AdminCommandKind.Kick:
@@ -296,14 +314,24 @@ public sealed partial class DedicatedServerHost
         });
         bool barrier = queued && writes.EnqueueRead(() =>
         {
+            ServerChatMessage reply = new(ChatChannel.System, "", outcome.Text ?? "The change could not be saved.", tick);
             if (outcome.Applied is { } account)
             {
-                _pendingAccountUpdates.Enqueue(new AccountUpdate(account, null));
+                // The confirmation rides with the account update instead of taking the reply queue
+                // directly. The two queues drain at different points of a tick -- account updates first
+                // (StepAccountStandings), replies after AdvanceTime -- so a barrier landing between them
+                // told the administrator "Muted X." a whole tick before the standing reached X's
+                // connection, and a line X sent in that window was still published. Carried here, the
+                // reply is queued by ApplyAccountUpdate once the standing is in force, and goes out on
+                // that same tick's drain.
+                _pendingAccountUpdates.Enqueue(
+                    new AccountUpdate(account, null, new PendingConnectionReply(adminConnection, reply)));
+                return;
             }
 
-            EnqueueConnectionReply(
-                adminConnection,
-                new ServerChatMessage(ChatChannel.System, "", outcome.Text ?? "The change could not be saved.", tick));
+            // Nothing was applied (no such account, a guard refused, or the write failed), so there is no
+            // update to ride with: the administrator still hears what happened, on the direct path.
+            EnqueueConnectionReply(adminConnection, reply);
         });
         if (!barrier)
         {
@@ -313,8 +341,17 @@ public sealed partial class DedicatedServerHost
 
     // A change to what the host knows of an account, made off the tick and applied to its connections
     // on the next tick. Read null: re-apply the recent sanctions on top of the connection's standing;
-    // otherwise the standing was just read from the database (role included).
-    private readonly record struct AccountUpdate(AccountKey Account, AccountStanding? Read);
+    // otherwise the standing was just read from the database (role included). Reply, when set, is the
+    // administrator's confirmation of the sanction that produced this update: it is queued as the update
+    // is applied, so the confirmation never runs ahead of the enforcement it reports. ReadSequence is the
+    // sanction sequence the read saw when it STARTED (0 for an update that read nothing): a recent-sanction
+    // memory newer than it was written after the read looked at the row, so the read's standing is stale
+    // for it and the memory must survive (see ApplyAccountUpdate).
+    private readonly record struct AccountUpdate(
+        AccountKey Account,
+        AccountStanding? Read,
+        PendingConnectionReply? Reply = null,
+        long ReadSequence = 0);
 
     private readonly ConcurrentQueue<AccountUpdate> _pendingAccountUpdates = new();
     private int _standingRefreshInFlight;
@@ -322,7 +359,7 @@ public sealed partial class DedicatedServerHost
     // How often (in ticks) the role and sanctions of the connected accounts are read again, so another
     // world's ban, or a revoked role, reaches a player who stays connected. It rides the presence renew's
     // cadence by default; 0 turns it off.
-    internal ulong StandingRefreshIntervalTicks { get; set; } = WorldSessionRuntime.PresenceRenewIntervalTicks;
+    internal ulong StandingRefreshIntervalTicks { get; set; } = WorldSessionRuntime.StandingRefreshDefaultIntervalTicks;
 
     // Runs first in a tick, under the tick lock: applies the queued account changes to the live
     // connections and, on the refresh cadence, queues one read of the connected accounts' standing.
@@ -361,6 +398,15 @@ public sealed partial class DedicatedServerHost
             }
         }
 
+        // The accounts this host sanctioned recently are read too, even when nobody of theirs is
+        // connected: the read drops their recent-sanction memory (ApplyAccountUpdate), which is what the
+        // join refusal consults, so a change another process wrote to the row is honoured on the next
+        // refresh instead of being overridden for the whole SanctionMemoryWindow.
+        foreach (KeyValuePair<string, SanctionMemory> entry in _sanctionMemory)
+        {
+            connected[entry.Key] = entry.Value.Key;
+        }
+
         if (connected.Count == 0)
         {
             Volatile.Write(ref _standingRefreshInFlight, 0);
@@ -370,13 +416,17 @@ public sealed partial class DedicatedServerHost
         AccountKey[] keys = [.. connected.Values];
         bool queued = writes.EnqueueRead(() =>
         {
+            // Taken where the read runs, not where it was queued: every sanction this host wrote before
+            // this point is in the rows the read is about to see, and a sanction remembered after it is
+            // not. A monotonic counter, not the clock: two events inside one clock tick must still order.
+            long sequence = Interlocked.Read(ref _sanctionSequence);
             try
             {
                 foreach (AccountKey key in keys)
                 {
                     if (accounts.ReadStanding(key) is { } read)
                     {
-                        _pendingAccountUpdates.Enqueue(new AccountUpdate(key, read));
+                        _pendingAccountUpdates.Enqueue(new AccountUpdate(key, read, null, sequence));
                     }
                 }
             }
@@ -399,6 +449,24 @@ public sealed partial class DedicatedServerHost
     private void ApplyAccountUpdate(in AccountUpdate update)
     {
         DateTime now = DateTime.UtcNow;
+        if (update.Read != null
+            && _sanctionMemory.TryGetValue(update.Account.HashHex, out SanctionMemory seen)
+            && seen.Sequence <= update.ReadSequence)
+        {
+            // The row was read AFTER this memory was written (the sequence it took at its start already
+            // counted it), so the read is the newer of the two and the memory's job -- covering a read
+            // that started before the write -- is done. Dropping it here is what lets a change another
+            // process wrote -- an `--accounts unban` while the window is open -- decide, instead of being
+            // overridden for two minutes by what this host last set.
+            //
+            // A memory with a HIGHER sequence was written after the read started, so the read's standing
+            // predates it: dropping it would put the stale, unsanctioned standing on the live connection
+            // and throw away the join-refusal memory, while the administrator's confirmation (which rides
+            // with the sanction's own update) still claimed the ban or mute was in force. The compare
+            // removes only the entry it just checked, so a sanction landing beside this tick is kept too.
+            _sanctionMemory.TryRemove(new KeyValuePair<string, SanctionMemory>(update.Account.HashHex, seen));
+        }
+
         foreach (KeyValuePair<string, ServerRoutingContext> connection in _connections)
         {
             ServerRoutingContext context = connection.Value;
@@ -417,6 +485,60 @@ public sealed partial class DedicatedServerHost
                 CloseConnectionWithReason(connection.Key, BanMessage.Format(next));
             }
         }
+
+        // Last, and unconditionally: every connection of the account now carries the new standing, so the
+        // administrator's confirmation is true when it is queued. It is queued even when the account has
+        // no connection here (nobody to apply it to, but the row was still written), so a sanction can
+        // never report nothing.
+        if (update.Reply is { } reply)
+        {
+            _pendingConnectionReplies.Enqueue(reply);
+        }
+    }
+
+    // BH-XFER-4. A renewal that changed no row means this world no longer holds that character's lease:
+    // it ran out while the host was stalled, or another world took it over. The seat is not the owner any
+    // more, so its connection is closed the way a kick closes one -- the detach saves the profile and
+    // drops the seat, and nothing here keeps writing the global profile row against the other world.
+    // Under the tick lock. A character that has already left is simply skipped.
+    private void StepLostPresence(WorldSessionRuntime? runtime)
+    {
+        if (runtime == null)
+        {
+            return;
+        }
+
+        while (runtime.TryTakeLostPresence(out string characterKey))
+        {
+            if (!TryFindOnlineCharacter(runtime, characterKey, out string connectionId))
+            {
+                continue;
+            }
+
+            NetworkDiagnosticsLog.Write("server.presence.lease-lost", $"connection={connectionId}");
+            CloseConnectionWithReason(connectionId, PresenceLostText);
+        }
+    }
+
+    // The online connection playing this character key (not its display name). Under the tick lock.
+    private bool TryFindOnlineCharacter(WorldSessionRuntime runtime, string characterKey, out string connectionId)
+    {
+        foreach (KeyValuePair<string, string> claim in _connectionClaims)
+        {
+            if (runtime.Sessions.TryGet(new PlayerSessionId(claim.Value), out ConnectedPlayer? player)
+                && player != null
+                && player.IsSpawned
+                && !player.IsLocal
+                && CharacterNames.Comparer.Equals(player.CharacterKey.Value, characterKey)
+                && _connections.ContainsKey(claim.Key))
+            {
+                connectionId = claim.Key;
+                return true;
+            }
+        }
+
+        connectionId = string.Empty;
+        return false;
     }
 
     // The online player with this character name (display name, ASCII case folded). Under the tick lock.
@@ -465,14 +587,46 @@ public sealed partial class DedicatedServerHost
                     _sanctionMemory.TryRemove(entry.Key, out _);
                 }
             }
+
+            // The age sweep frees nothing when every entry is younger than the window, so the oldest
+            // entries go next (as NewAccountLimiter.MakeRoom does): MaxSanctionMemory is a hard bound.
+            while (_sanctionMemory.Count >= MaxSanctionMemory)
+            {
+                string? oldest = null;
+                DateTime oldestStamp = DateTime.MaxValue;
+                foreach (KeyValuePair<string, SanctionMemory> entry in _sanctionMemory)
+                {
+                    if (entry.Value.StampUtc < oldestStamp)
+                    {
+                        oldestStamp = entry.Value.StampUtc;
+                        oldest = entry.Key;
+                    }
+                }
+
+                if (oldest == null || !_sanctionMemory.TryRemove(oldest, out _))
+                {
+                    break;
+                }
+            }
         }
 
+        // Taken before the entry is written, so a standing read that starts after this call sees a
+        // sequence at least this high and may drop the memory, while one that started earlier cannot.
+        long sequence = Interlocked.Increment(ref _sanctionSequence);
         _sanctionMemory.AddOrUpdate(
             key.HashHex,
             _ => new SanctionMemory(
-                ban != null || clearBan, ban?.Until, ban?.Reason, mute != null || clearMute, mute, DateTime.UtcNow),
+                key,
+                ban != null || clearBan,
+                ban?.Until,
+                ban?.Reason,
+                mute != null || clearMute,
+                mute,
+                DateTime.UtcNow,
+                sequence),
             (_, old) => old with
             {
+                Sequence = sequence,
                 BanSet = ban != null || clearBan || old.BanSet,
                 BanUntilUtc = ban != null ? ban.Value.Until : clearBan ? null : old.BanUntilUtc,
                 BanReason = ban != null ? ban.Value.Reason : clearBan ? null : old.BanReason,
@@ -561,7 +715,10 @@ public sealed partial class DedicatedServerHost
         int slots = _connectionClaims.Count;
         for (int i = 0; i < _pendingJoins.Count; i++)
         {
-            if (!string.Equals(_pendingJoins[i].ConnectionId, connectionId, StringComparison.Ordinal))
+            // A pending join whose connection already holds a claim (a repeat join from a seated
+            // player) is that same seat, already counted in _connectionClaims.
+            if (!string.Equals(_pendingJoins[i].ConnectionId, connectionId, StringComparison.Ordinal)
+                && !_connectionClaims.ContainsKey(_pendingJoins[i].ConnectionId))
             {
                 slots++;
             }
@@ -582,7 +739,9 @@ public sealed partial class DedicatedServerHost
     private bool HoldsSeat(string connectionId, ClientJoinRequestMessage join)
     {
         AccountKey? account = join.ResolvedAccount;
-        string name = join.DisplayName.Trim();
+        // A client-supplied field: a join with no displayName decodes as null, and a host without
+        // accounts validates nothing before the cap is checked.
+        string name = join.DisplayName?.Trim() ?? string.Empty;
         foreach (KeyValuePair<string, string> claim in _connectionClaims)
         {
             if (string.Equals(claim.Key, connectionId, StringComparison.Ordinal))
@@ -601,9 +760,12 @@ public sealed partial class DedicatedServerHost
                 continue;
             }
 
+            // A seat is the joiner's own only when the stable identity matches: the account when the
+            // joiner has one, and the character name only when it has none. Character names ride in
+            // every snapshot, so a name alone is attacker-chosen and must not open the cap.
             if (other.JoinedIdentity is { } identity
                 && ((account is { } joining && identity.Account.Equals(joining))
-                    || CharacterNames.Comparer.Equals(identity.Character.Value, name)))
+                    || (account is null && CharacterNames.Comparer.Equals(identity.Character.Value, name))))
             {
                 return true;
             }

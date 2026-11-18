@@ -108,7 +108,7 @@ public sealed class PerPlayerInventoryPersistenceTests
             host.ReleaseSession("a");
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using WorldSessionRuntime restarted = CreateRuntime(database);
         // Nothing is loaded at startup, yet the counter starts above every persisted id.
         Assert.Equal(0, restarted.LoadedInventoryCount);

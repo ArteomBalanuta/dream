@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 using OpenTK.Mathematics;
 using Xunit;
@@ -41,14 +42,7 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
             Assert.NotNull(bundle.SimulationSeed);
         }
 
-        SqliteConnection.ClearAllPools();
-        foreach (string suffix in new[] { "", "-wal", "-shm" })
-        {
-            if (File.Exists(left.DatabasePath + suffix))
-            {
-                File.Copy(left.DatabasePath + suffix, right.DatabasePath + suffix);
-            }
-        }
+        DatabaseImageCopy.Seed(left.DatabasePath, right.DatabasePath);
 
         const long rightPersisted = 7 * 115_200L + 50_000L;
         using (ServerPersistenceBundle bundle = right.OpenBundle())
@@ -56,7 +50,7 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
             new SqlitePersistenceCheckpointWriter(bundle.Schema).Write(PersistenceCheckpoint.Empty with { WorldTimeTicks = rightPersisted });
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         long leftFinal;
         long rightFinal;
         ServerPersistenceBundle rightBundle = right.OpenBundle();
@@ -101,7 +95,7 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
             Assert.Equal(rightPersisted - 0L, rightFinal - leftFinal);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         using (ServerPersistenceBundle reopened = left.OpenBundle())
         {
             Assert.Equal(leftFinal, reopened.WorldTimeTicks);
@@ -204,12 +198,26 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
 
         int changesBefore = phaseChanges;
         long dayBefore = runtime.WorldClock.DayNumber;
-        const int measuredDays = 2;
         long[] tickBytes = new long[dayTicks];
         Array.Fill(tickBytes, long.MaxValue);
         WorldDayPhase[] tickPhases = new WorldDayPhase[dayTicks];
         int[] tickWolves = new int[dayTicks];
-        for (int day = 0; day < measuredDays; day++)
+        int spawnTick = -1;
+        int despawnTick = -1;
+        int[] allocatingTicks = [];
+
+        // Two days used to be the whole measurement, so a shared generic parked in the runtime's
+        // instrumented tier by another test could charge the same boxes to the same tick index on
+        // both days and fail a tick that allocates nothing of its own. AllocationAssert.AtMost
+        // answers that by measuring more rounds until one meets the budget or a settle span runs
+        // out; a day here is the round (the tick body advances the simulation, so it is only
+        // repeatable over a whole day). Days therefore keep going while any tick outside the
+        // spawn and despawn still reads non-zero, up to the same 10 s. A real per-tick allocation
+        // repeats on every day, so it still fails - only later.
+        TimeSpan settleSpan = TimeSpan.FromSeconds(10);
+        Stopwatch settling = Stopwatch.StartNew();
+        int measuredDays = 0;
+        do
         {
             for (int i = 0; i < dayTicks; i++)
             {
@@ -220,23 +228,26 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
                 tickPhases[i] = runtime.WorldClock.Phase;
                 tickWolves[i] = runtime.Enemies.ActiveActors.Count;
             }
-        }
 
-        int spawnTick = -1;
-        int despawnTick = -1;
-        for (int i = 1; i < dayTicks; i++)
-        {
-            if (tickPhases[i] == WorldDayPhase.Night && tickPhases[i - 1] == WorldDayPhase.Dusk)
+            measuredDays++;
+            spawnTick = -1;
+            despawnTick = -1;
+            for (int i = 1; i < dayTicks; i++)
             {
-                spawnTick = i;
+                if (tickPhases[i] == WorldDayPhase.Night && tickPhases[i - 1] == WorldDayPhase.Dusk)
+                {
+                    spawnTick = i;
+                }
+                else if (tickPhases[i] == WorldDayPhase.Dawn && tickPhases[i - 1] == WorldDayPhase.Night)
+                {
+                    despawnTick = i;
+                }
             }
-            else if (tickPhases[i] == WorldDayPhase.Dawn && tickPhases[i - 1] == WorldDayPhase.Night)
-            {
-                despawnTick = i;
-            }
-        }
 
-        int[] allocatingTicks = Enumerable.Range(0, dayTicks).Where(i => tickBytes[i] != 0).ToArray();
+            allocatingTicks = Enumerable.Range(0, dayTicks).Where(i => tickBytes[i] != 0).ToArray();
+        }
+        while (measuredDays < 2
+            || (allocatingTicks.Any(i => i != spawnTick && i != despawnTick) && settling.Elapsed < settleSpan));
         output.WriteLine(
             $"{settings.TicksPerDay} ticks per day ({measuredDays} measured days, {phaseChanges - changesBefore} phase changes): {tickBytes.Sum()} B; " +
             $"allocating ticks {string.Join(", ", allocatingTicks.Select(i => $"{i} ({tickPhases[i]}, {tickBytes[i]} B)"))}");

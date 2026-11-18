@@ -14,13 +14,23 @@ public static class ViewModelRigTextConfig
     {
         if (!File.Exists(path))
         {
-            string? directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(directory))
+            // Seeding the file is a convenience: a read-only install directory must still start the game
+            // on the in-memory defaults rather than throw out of the Game constructor.
+            try
             {
-                Directory.CreateDirectory(directory);
-            }
+                string? directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
 
-            File.WriteAllText(path, Serialize(ViewModelRigSettings.CreateDefault()));
+                File.WriteAllText(path, Serialize(ViewModelRigSettings.CreateDefault()));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or System.Security.SecurityException)
+            {
+                Console.Error.WriteLine($"[settings] could not write {path}: {ex.Message}");
+                return ViewModelRigSettings.CreateDefault();
+            }
         }
 
         ViewModelRigSettings settings = ViewModelRigSettings.CreateDefault();
@@ -65,7 +75,10 @@ public static class ViewModelRigTextConfig
 
     private static void ApplyValue(ViewModelRigSettings settings, string key, string value)
     {
-        if (!float.TryParse(value, CultureInfo.InvariantCulture, out float parsed))
+        // "NaN", "Infinity" and "-Infinity" all parse successfully. Keeping one would make the held-item
+        // model matrix NaN and the weapon or torch would silently vanish for the whole run, so the
+        // default for that key is kept instead.
+        if (!float.TryParse(value, CultureInfo.InvariantCulture, out float parsed) || !float.IsFinite(parsed))
         {
             return;
         }

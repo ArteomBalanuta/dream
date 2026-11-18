@@ -9,7 +9,10 @@ public class ProjectBuildConfigurationTests
     [Fact]
     public void DreamProject_DeclaresExecutableOutputWithAppHost()
     {
-        XDocument project = XDocument.Load(Path.Combine("..", "..", "..", "..", "dream", "dream.csproj"));
+        // Walk up to the repo root instead of counting "..": the output folder's depth changes
+        // when the build redirects BaseOutputPath, and a fixed hop then misses the project file.
+        XDocument project = XDocument.Load(
+            Path.Combine(Dream.Tests.Integration.RepoRoot.Find(), "dream", "dream.csproj"));
 
         string? outputType = ReadProperty(project, "OutputType");
         string? useAppHost = ReadProperty(project, "UseAppHost");

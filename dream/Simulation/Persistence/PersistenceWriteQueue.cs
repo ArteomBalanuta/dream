@@ -38,6 +38,11 @@ public sealed class PersistenceWriteQueue : IDisposable
     public static readonly TimeSpan InitialLockRetryDelay = TimeSpan.FromMilliseconds(100);
     public static readonly TimeSpan MaxLockRetryDelay = TimeSpan.FromSeconds(2);
 
+    // How many times a worker tries to open its write batch before it gives up on the queued work.
+    // The waits between the attempts are InitialLockRetryDelay * attempt (100 ms, then 200 ms), so a
+    // transient factory failure costs at most ~300 ms and never an unbounded wait.
+    public const int BatchOpenAttempts = 3;
+
     // Creates the batch each background worker runs its groups in. Server persistence installs the
     // SQLite group-commit batch when the assembly loads (SqliteWriteBatch.RegisterAsDefault); with
     // nothing installed each write runs on its own.
@@ -337,8 +342,35 @@ public sealed class PersistenceWriteQueue : IDisposable
     {
         List<QueuedWrite> group = new(Math.Min(MaxWritesPerGroup, 64));
         List<QueuedWrite> requeue = [];
-        using IPersistenceWriteBatch batch = WriteBatchFactory();
-        batch.Activate();
+        // Opening the batch is part of the worker's run: a throw here used to escape before the
+        // try below, leaving _running set with no worker, so every later Enqueue queued silently
+        // into a queue nothing drains and Flush waited on a faulted task. Fail what is queued and
+        // clear _running instead, so the next Enqueue starts a fresh worker.
+        //
+        // A factory failure is usually transient (the file momentarily unavailable, a pool exhausted),
+        // so TryOpenBatch retries it a bounded number of times before the queue gives up, the way the
+        // in-group lock path requeues and backs off. What it does drop is not dropped silently: the
+        // queued READS are run here, because a read's action is the only thing that ever completes its
+        // caller (the join prefetch, a checkpoint barrier, an inventory settle), and a caller that
+        // EnqueueRead told "true" would otherwise wait for ever.
+        IPersistenceWriteBatch? opened = TryOpenBatch(out Exception? openError);
+        if (opened == null)
+        {
+            List<QueuedWrite>? droppedReads;
+            lock (_sync)
+            {
+                droppedReads = DropPendingLocked("batch-unavailable", collectReads: true);
+                _running = false;
+            }
+
+            NetworkDiagnosticsLog.Write(
+                "server.persistence.error",
+                $"write batch unavailable after {BatchOpenAttempts} attempts: {openError?.GetType().Name}: {openError?.Message}");
+            RunDroppedReads(droppedReads);
+            return;
+        }
+
+        using IPersistenceWriteBatch batch = opened;
         try
         {
             while (true)
@@ -492,15 +524,99 @@ public sealed class PersistenceWriteQueue : IDisposable
         NetworkDiagnosticsLog.Write("server.persistence.locked", $"database unlocked; lockRetries={LockRetries}");
     }
 
-    // Called under _sync once the drain deadline passed.
-    private void DropPendingLocked()
+    // Opens the batch this worker runs its groups in, retrying a failing factory BatchOpenAttempts
+    // times with the lock backoff (100 ms doubling, so at most ~300 ms in all before it gives up).
+    // Null, with the last error, when every attempt failed.
+    private IPersistenceWriteBatch? TryOpenBatch(out Exception? error)
+    {
+        error = null;
+        for (int attempt = 1; attempt <= BatchOpenAttempts; attempt++)
+        {
+            IPersistenceWriteBatch? opened = null;
+            try
+            {
+                opened = WriteBatchFactory();
+                opened.Activate();
+                return opened;
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+                try
+                {
+                    opened?.Dispose();
+                }
+                catch (Exception disposeError)
+                {
+                    NetworkDiagnosticsLog.Write(
+                        "server.persistence.error",
+                        $"write batch dispose failed: {disposeError.GetType().Name}: {disposeError.Message}");
+                }
+            }
+
+            if (attempt == BatchOpenAttempts || _cancelled)
+            {
+                break;
+            }
+
+            lock (_sync)
+            {
+                if (_cancelled)
+                {
+                    break;
+                }
+
+                // Dispose pulses on cancel, so a shutdown is never held up by the full backoff.
+                Monitor.Wait(_sync, TimeSpan.FromTicks(InitialLockRetryDelay.Ticks * attempt));
+            }
+        }
+
+        return null;
+    }
+
+    // Runs the reads a failed batch dropped, outside any batch (the repositories open their own
+    // connection), so their callers learn instead of waiting for ever. Each is guarded, exactly as
+    // RunRead guards a read it runs normally, so one throwing read still lets the others complete.
+    // The worker has already cleared _running, so a slow read here delays nothing: the next Enqueue
+    // starts a fresh worker beside it.
+    private static void RunDroppedReads(List<QueuedWrite>? reads)
+    {
+        if (reads == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < reads.Count; i++)
+        {
+            try
+            {
+                reads[i].Action();
+            }
+            catch (Exception ex)
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.persistence.error",
+                    $"dropped read failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    // Called under _sync once the drain deadline passed, or when no batch could be opened. With
+    // collectReads the dropped reads are returned instead of discarded, so the caller can run them.
+    private List<QueuedWrite>? DropPendingLocked(string reason = "dispose-deadline", bool collectReads = false)
     {
         int dropped = 0;
+        List<QueuedWrite>? reads = null;
         while (_pending.Count > 0)
         {
-            if (_pending.Dequeue().CountsAsWrite)
+            QueuedWrite queued = _pending.Dequeue();
+            if (queued.CountsAsWrite)
             {
                 dropped++;
+            }
+            else if (collectReads)
+            {
+                (reads ??= []).Add(queued);
             }
         }
 
@@ -510,7 +626,10 @@ public sealed class PersistenceWriteQueue : IDisposable
             Interlocked.Add(ref _failedWrites, dropped);
         }
 
-        NetworkDiagnosticsLog.Write("server.persistence.dropped", $"writes={dropped} reason=dispose-deadline");
+        NetworkDiagnosticsLog.Write(
+            "server.persistence.dropped",
+            $"writes={dropped} reads={reads?.Count ?? 0} reason={reason}");
+        return reads;
     }
 
     // Outside any transaction: the group before it has committed (or failed), and the repositories

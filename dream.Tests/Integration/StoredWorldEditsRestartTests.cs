@@ -48,7 +48,7 @@ public sealed class StoredWorldEditsRestartTests(ITestOutputHelper output)
             Assert.True(pieces > 0);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         Assert.Equal(1L, Scalar(db.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides;"));
         long overrideId = Scalar(db.DatabasePath,
             $"SELECT object_id FROM terrain_cell_overrides WHERE cell_x = {cell.X} AND cell_y = {cell.Y} AND cell_z = {cell.Z} AND kind = 0 AND cell_data IS NULL;");
@@ -78,7 +78,7 @@ public sealed class StoredWorldEditsRestartTests(ITestOutputHelper output)
             placedPieces = pieces;
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         PersistedIds afterPlace = ReadIds(db.DatabasePath);
         Assert.Single(afterPlace.Cubes);
         Assert.Equal(1L, Scalar(db.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides;"));
@@ -92,7 +92,7 @@ public sealed class StoredWorldEditsRestartTests(ITestOutputHelper output)
             Assert.Empty(map.FindInvariantViolations());
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         PersistedIds afterRestart = ReadIds(db.DatabasePath);
         Assert.Equal(afterPlace.Cubes, afterRestart.Cubes);
         Assert.Equal(afterPlace.Pieces, afterRestart.Pieces);
@@ -124,7 +124,7 @@ public sealed class StoredWorldEditsRestartTests(ITestOutputHelper output)
 
         using (StoredRig rig = new(db))
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(db.DatabasePath);
             string summary = StoredWorldChecks.AssertConsistent(db, rig.Host.Map);
             Assert.Single(rig.Host.Map.CaptureFracturePieces().Select(piece => piece.Cell).Distinct());
             output.WriteLine(summary);
@@ -149,7 +149,7 @@ public sealed class StoredWorldEditsRestartTests(ITestOutputHelper output)
         {
             int divergence = RunPhase(left, right, PhaseTicks[phase], out int compared, out int rubbleCells);
             Assert.True(divergence < 0, $"phase {phase + 1}: the servers diverged at tick {divergence}");
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(left.DatabasePath, right.DatabasePath);
             string leftDump = DumpWorld(left.DatabasePath);
             Assert.Equal(leftDump, DumpWorld(right.DatabasePath));
             PersistedIds ids = ReadIds(left.DatabasePath);
@@ -167,7 +167,7 @@ public sealed class StoredWorldEditsRestartTests(ITestOutputHelper output)
         using StoredRig first = new(left);
         using StoredRig second = new(right);
         Assert.Equal(first.Host.Map.WorldChecksum, second.Host.Map.WorldChecksum);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         StoredWorldChecks.AssertConsistent(left, first.Host.Map);
     }
 

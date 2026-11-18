@@ -269,10 +269,11 @@ public sealed class M3EndToEndLoopbackTests
     private static PlayerInventorySnapshot InventoryOf(WireLoopbackServer server, string session) =>
         server.Runtime.TryCaptureInventorySnapshot(new PlayerSessionId(session))!.Value;
 
-    private static void Flush(WireLoopbackServer server)
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    private static async Task FlushAsync(WireLoopbackServer server)
     {
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
-        Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
+        await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
+        Assert.Equal(0, server.Runtime.PersistenceWrites!.FailedWrites);
     }
 
     private static long Count(MigrationTestDatabase db, string sql) => Convert.ToInt64(db.Scalar(sql));
@@ -358,7 +359,7 @@ public sealed class M3EndToEndLoopbackTests
                 Assert.False(string.IsNullOrWhiteSpace(seen.DisplayName));
             }
 
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal(1, Count(db, "SELECT COUNT(*) FROM item_instances WHERE state = 'Ground' AND owner_player_name IS NULL"));
 
             // ---- the claim blocks the stranger: whatever her E does, the server refuses; so does a forced intent ----
@@ -396,7 +397,7 @@ public sealed class M3EndToEndLoopbackTests
 
             // E again with nothing in reach does nothing (no second pickup of the same item).
             Assert.Null(PressE(a));
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal(0, Count(db, "SELECT COUNT(*) FROM item_instances WHERE state = 'Ground'"));
             Assert.Equal(1, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {groundId}"));
 
@@ -460,7 +461,7 @@ public sealed class M3EndToEndLoopbackTests
             Assert.False(a.Vendor.IsOpen);
 
             // ---- what the server holds, then a restart ----
-            Flush(server);
+            await FlushAsync(server);
             goldAtTheEnd = afterSell;
             Assert.Equal(goldAtTheEnd, Count(db, $"SELECT COALESCE(SUM(gold), 0) FROM player_wallets WHERE player_name = '{keyA}'"));
             itemIdsAtTheEnd = [.. InventoryOf(server, SessionA).AllItems().Select(item => item.ItemInstanceId).Order()];
@@ -472,7 +473,7 @@ public sealed class M3EndToEndLoopbackTests
 
             await a.LeaveAsync();
             await b.LeaveAsync();
-            Flush(server);
+            await FlushAsync(server);
         }
 
         SqlitePools.Release(db.Schema);

@@ -39,8 +39,77 @@ public static class NpcDialogueWindow
 
     // Clear of the inventory (0x100..0x502), the character window and the vendor window (0x600..0x643).
     internal const int IdOfferRow = InventoryWindow.IdBase + 0x7A0;
+
+    // Four seeds, one per QuestOfferState (0x7B0..0x7B3): the action button's id carries the state the
+    // button was drawn from. The one button stands for three mutually exclusive, non-equivalent actions
+    // chosen from live server state, and a ServerQuestLog push can rewrite that state between the press
+    // and the release (a collect objective counts bag contents, so Ready can fall back to InProgress).
+    // With the state in the id, such a flip makes the router's press id no longer match and the click is
+    // dropped, instead of sending the action the release frame computed: a press on "Turn in" can never
+    // release as "Abandon".
     internal const int IdAction = InventoryWindow.IdBase + 0x7B0;
-    internal const int IdClose = InventoryWindow.IdBase + 0x7B1;
+    internal const int IdClose = InventoryWindow.IdBase + 0x7B4;
+
+    // BH-QUEST-1: the state alone is not the button's identity. A dialogue re-open (E pressed while the
+    // left button is still down) rebuilds the offers and resets SelectedOffer to 0, so the release frame
+    // can compute the SAME state id for a DIFFERENT quest and the click is redirected — an abandon of
+    // another quest deletes its stored progress. The id therefore carries the whole identity the button
+    // was drawn from: the offer state, the NPC it belongs to and the quest key. Anything that changes
+    // between the press and the release makes the router's press id no longer match, so the click is
+    // dropped (the established failure mode), never redirected.
+    //
+    // The identity does not fit in an int, so it is hashed into a band of its own, 0x4000_0000..
+    // 0x4FFF_FFFF, which no other HUD id uses (every other id is below 0x0100_0000). A stable FNV-1a is
+    // used, not string.GetHashCode: that is randomised per process and the id must be the same in the
+    // press frame and the release frame of the same run.
+    internal const int IdActionBand = 0x4000_0000;
+    internal const int IdActionBandMask = 0x0FFF_FFFF;
+
+    // The state seed of the action id; the state's own contribution, kept separate so the four states
+    // stay distinguishable on their own.
+    internal static int ActionId(QuestOfferState state) => IdAction + (int)state;
+
+    // The id the action button is actually registered with: the state, the NPC and the quest key.
+    internal static int ActionId(QuestOfferState state, int npcActorId, ReadOnlySpan<char> questKey) =>
+        IdentityOf(ActionId(state), npcActorId, questKey);
+
+    // The id an offer ROW is registered with. The same defect, one block up: a row bound to its
+    // POSITION lets a ServerQuestLog push between the press and the release move a different quest
+    // under the pointer, and quests.Select(n) then highlights the quest that took the row rather
+    // than the one that was pressed. Bounded harm (the action button's own id carries the quest, so
+    // it cannot act on the wrong one), but the cure is the established one: the row's id carries
+    // the NPC and the quest key, so a row that changed hands drops the click instead of moving the
+    // selection. The seed is IdOfferRow, which is distinct from every ActionId(state) seed, so a
+    // row and the action button cannot share an id; both land in the 0x4000_0000 band, which no
+    // other HUD id uses (ordinary ids are below 0x0100_0000 and HudWidgetId owns 0x5000_0000).
+    internal static int OfferRowId(int npcActorId, ReadOnlySpan<char> questKey) =>
+        IdentityOf(IdOfferRow, npcActorId, questKey);
+
+    // Pure arithmetic over the seed, the NPC and the key: a per-frame caller allocates nothing.
+    private static int IdentityOf(int seed, int npcActorId, ReadOnlySpan<char> questKey)
+    {
+        uint hash = 2166136261u;
+        hash = Fold(hash, (uint)seed);
+        hash = Fold(hash, (uint)npcActorId);
+        hash = Fold(hash, (uint)questKey.Length);
+        for (int i = 0; i < questKey.Length; i++)
+        {
+            hash = (hash ^ questKey[i]) * 16777619u;
+            hash = (hash ^ (uint)(questKey[i] >> 8)) * 16777619u;
+        }
+
+        return IdActionBand + (int)(hash & IdActionBandMask);
+    }
+
+    private static uint Fold(uint hash, uint value)
+    {
+        for (int b = 0; b < 4; b++)
+        {
+            hash = (hash ^ ((value >> (b * 8)) & 0xFF)) * 16777619u;
+        }
+
+        return hash;
+    }
 
     private static readonly UiColor GoldColor = new(0xD8, 0xB4, 0x5A, 255);
     private static readonly UiColor ReadyColor = new(0x5F, 0xD6, 0xA0, 255);
@@ -74,16 +143,18 @@ public static class NpcDialogueWindow
         {
             UiRect r = l.FromUnits(win, RowX, OfferTop + (n * RowPitch), RowW, RowH);
             DrawRowPlate(c, s, r);
+            // The quest this row stands for, not the row's position: see OfferRowId.
+            int rowId = OfferRowId(quests.NpcActorId, offers[n].Key);
             if (n == quests.SelectedOffer)
             {
                 c.Solid(r, SelectFill);
             }
-            else if (live && i.Hovered(IdOfferRow + n, r))
+            else if (live && i.Hovered(rowId, r))
             {
                 c.Solid(r, HoverFill);
             }
 
-            if (live && i.Button(IdOfferRow + n, r))
+            if (live && i.Button(rowId, r))
             {
                 quests.Select(n);
             }
@@ -95,12 +166,13 @@ public static class NpcDialogueWindow
         DrawRowPlate(c, s, action);
         if (selected != null && actionText != null)
         {
-            if (live && i.Hovered(IdAction, action))
+            int actionId = ActionId(selected.State, quests.NpcActorId, selected.Key);
+            if (live && i.Hovered(actionId, action))
             {
                 c.Solid(action, HoverFill);
             }
 
-            if (live && i.Button(IdAction, action) && intents != null)
+            if (live && i.Button(actionId, action) && intents != null)
             {
                 intents.Enqueue(IntentFor(quests.NpcActorId, selected));
             }

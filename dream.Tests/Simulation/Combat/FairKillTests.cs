@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Tests.Utilities;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
@@ -106,13 +107,12 @@ public class FairKillTests
 
         PlayerSessionId again = new("s7");
         enemy.RecordDamage(again, 1);
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 1000; i++)
-        {
-            enemy.RecordDamage(again, 1);
-        }
 
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        // One warm-up call is far short of the runtime's tier-up threshold, and a single window
+        // charges any tiering transition that lands inside it to the measurement. AllocationAssert
+        // warms past the threshold and keeps the cleanest of several rounds, so the figure is the
+        // steady state this gate is about.
+        AllocationAssert.AtMost(0, () => enemy.RecordDamage(again, 1));
     }
 
     private static int Find(EnemyActor enemy, string session)

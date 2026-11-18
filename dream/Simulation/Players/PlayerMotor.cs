@@ -162,7 +162,9 @@ public class PlayerMotor
             IsFrozen = nextFrozen;
             if (IsFrozen)
             {
-                _originalMass = body.InvMass;
+                // SetMassProps takes a mass, so store a mass: InvMass is 1/m (and 0 for a static
+                // body, whose round trip back is 0). LocalInertia is already in mass space.
+                _originalMass = body.InvMass > 0f ? 1f / body.InvMass : 0f;
                 _originalInertia = body.LocalInertia;
                 body.Gravity = BulletSharp.Math.Vector3.Zero;
                 body.LinearVelocity = BulletSharp.Math.Vector3.Zero;

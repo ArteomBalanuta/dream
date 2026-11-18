@@ -129,7 +129,22 @@ public static class Program
     private static int RunDesktop()
     {
         using var game = new Game();
-        game.Run();
+        try
+        {
+            game.Run();
+        }
+        catch (Exception ex)
+        {
+            // GameWindow.Run has no exception handling of its own, so a frame callback or a teardown
+            // failure would otherwise end the process as an unhandled exception. Report it and return a
+            // failure code; the `using` above still runs Game.Dispose, which stops the integrated server.
+            Console.Error.WriteLine($"[fatal] desktop client stopped: {ex}");
+            return DesktopFailureExitCode;
+        }
+
         return 0;
     }
+
+    // Returned when the desktop client ends on an exception rather than a clean window close.
+    private const int DesktopFailureExitCode = 3;
 }

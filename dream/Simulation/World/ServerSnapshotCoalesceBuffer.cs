@@ -70,6 +70,12 @@ public sealed class ServerSnapshotCoalesceBuffer
     {
         _mutations.Clear();
         _damageEvents.Clear();
+
+        // The checksum covered the deltas we just dropped, so it no longer describes what
+        // this snapshot carries. ServerConnection.WithoutDeltas drops it on the unmerged
+        // path for the same reason; keeping it here makes the client acknowledge mutation
+        // sequences it never applied and then ask for a second resync.
+        _latest = _latest with { WorldChecksum = null, WorldChecksumSequence = 0 };
     }
 
     public ServerSnapshotEnvelope ToEnvelope()

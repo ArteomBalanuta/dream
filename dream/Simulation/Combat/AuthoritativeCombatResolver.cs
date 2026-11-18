@@ -185,7 +185,10 @@ internal sealed class AuthoritativeCombatResolver
             intent.RayOrigin,
             intent.RayDirection,
             CombatUseResolver.DefaultHitRange);
-        if (enemy != null)
+        // A wall between the ray origin and the enemy's combat anchor blocks the hit, as for bolts, the
+        // melee arc and PvP - and as the enemy's own bite line does in the other direction. When it is
+        // blocked, fall through to the PvP and cube branches rather than resolving the enemy.
+        if (enemy != null && !IsBlockedByWall(_map(), intent.RayOrigin, enemy.Combatant.GetCombatAnchorWorldPosition()))
         {
             return ResolveEnemyHit(message, combatant, tick, enemy);
         }
@@ -228,10 +231,15 @@ internal sealed class AuthoritativeCombatResolver
                     MaxHealth: 0));
         }
 
-        // Build protection: nothing is damaged, repaired or written for a cube that is someone else's.
+        // The identity repair has to run BEFORE the ownership test: a record whose registry link was lost
+        // carries no owner, and only the repair puts the persisted owner back, so testing the unrepaired
+        // record would hand someone else's wall to the attacker. Build protection then damages nothing
+        // for a cube that is someone else's, and gives the swing back (CancelStartedAttack) so that
+        // standing in front of a protected wall does not eat the player's attack cadence.
         record = _host.RepairCubeRecord(record);
         if (!_host.CanDamageCube(message.SessionId, record))
         {
+            combatant.CancelStartedAttack();
             return CreateRejectedResult(message, tick, "That belongs to someone else.");
         }
 
@@ -632,10 +640,21 @@ internal sealed class AuthoritativeCombatResolver
         float minDot = Math.Clamp(MathF.Cos(MathHelper.DegreesToRadians(skill.ArcDegrees * 0.5f)), -1f, 1f);
         Map map = _map();
 
-        // Collect first: a kill prunes the registry. The cap is the content maximum, so enemies behind a
-        // wall do not use up the skill's targets.
+        // Collect first: a kill prunes the registry. CollectInArc runs no occlusion test, so the cap has
+        // to leave room for every blocked candidate ahead of a reachable one -- otherwise enemies behind a
+        // wall use up the skill's targets, which is exactly what the cap exists to prevent. BH-XFER-5: a
+        // fixed 16 was not that room. A crowd whose nearest 16 stood behind a cube hid every reachable
+        // enemy, and the cast hit nothing with its mana and its 96-tick cooldown already spent. The
+        // registry's own size is the only honest ceiling; the arc and range tests have already thrown out
+        // everything else, and the PvP half below walks every candidate for the same reason.
         _arcScratch.Clear();
-        _enemies.CollectInArc(origin, horizontal, skill.Range, minDot, Math.Max(skill.MaxTargets, 16), _arcScratch);
+        _enemies.CollectInArc(
+            origin,
+            horizontal,
+            skill.Range,
+            minDot,
+            Math.Max(skill.MaxTargets, _enemies.ActiveActors.Count),
+            _arcScratch);
         for (int i = 0; i < _arcScratch.Count && targetsHit < skill.MaxTargets; i++)
         {
             EnemyActor enemy = _arcScratch[i];

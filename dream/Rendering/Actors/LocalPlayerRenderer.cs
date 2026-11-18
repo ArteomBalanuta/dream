@@ -126,6 +126,9 @@ public sealed class LocalPlayerRenderer : IDisposable
             GL.DepthMask(false);
             shader.Use();
             shader.SetVector3("uActorTintOffset", new Vector3(0.5f, 2f, 6f));
+            // AnimatedModel.BindProgram is the only thing that uploads the tint to the MASK variant,
+            // and it uploads the model's own value: without this a MASK part draws untinted.
+            model.ActorTintOffset = new Vector3(0.5f, 2f, 6f);
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: true);
             model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
             model.EndRender();
@@ -133,6 +136,7 @@ public sealed class LocalPlayerRenderer : IDisposable
             _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
             shader.Use();
             shader.SetVector3("uActorTintOffset", Vector3.Zero);
+            model.ActorTintOffset = Vector3.Zero;
             GL.DepthMask(true);
             GL.DepthFunc(DepthFunction.Less);
         }
@@ -142,6 +146,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         {
             shader.Use();
             shader.SetVector3("uActorTintOffset", PlayerPoseLayers.HitFlashOffset(frame.HitFlinch));
+            model.ActorTintOffset = PlayerPoseLayers.HitFlashOffset(frame.HitFlinch);
         }
 
         model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
@@ -154,6 +159,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         {
             shader.Use();
             shader.SetVector3("uActorTintOffset", Vector3.Zero);
+            model.ActorTintOffset = Vector3.Zero;
         }
     }
 

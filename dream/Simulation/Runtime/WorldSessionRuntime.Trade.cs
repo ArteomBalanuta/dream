@@ -1,3 +1,4 @@
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Characters;
@@ -12,13 +13,23 @@ namespace Dream.Simulation.Runtime;
 // budget. Any change cancels: a difference in either inventory's fingerprint (an item moved, gold looted,
 // anything that touched the bag or the wallet), an offer edit after a lock, walking out of range, death,
 // a detach, a target that is gone, 120 s. The state goes to both sides as ServerTradeState through the
-// session queue, once per tick while it changes and at once when the trade ends.
+// session queue, once per tick while it changes, every TradeRules.RefreshIntervalTicks ticks while it
+// lives (so a dropped push self-corrects) and at once when the trade ends.
 public sealed partial class WorldSessionRuntime
 {
     private readonly Dictionary<string, TradeSession> _tradeOf = new(CharacterNames.Comparer);
     private readonly List<TradeSession> _trades = [];
 
+    // The tick each character's last accepted trade request was opened at (TradeRules.RequestCooldownTicks),
+    // the shape PartyRegistry._lastInviteTick has for invites. Dropped when the character leaves, so it
+    // stays bounded by the players seen online.
+    private readonly Dictionary<string, ulong> _lastTradeRequestTick = new(CharacterNames.Comparer);
+
     internal int ActiveTradeCount => _trades.Count;
+
+    // Trade requests refused by the cooldown since this runtime started: a griefing loop is visible to an
+    // operator through this and the server.trade.request-cooldown line.
+    internal int TradeRequestCooldownRefusals { get; private set; }
 
     private bool TryGetTrade(ConnectedPlayer player, out TradeSession session)
         => _tradeOf.TryGetValue(player.CharacterKey.Value, out session!);
@@ -54,6 +65,14 @@ public sealed partial class WorldSessionRuntime
             return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, "You cannot trade with yourself.");
         }
 
+        // A muted account cannot reach other players through a trade request either: the request puts a
+        // notice on a named player's screen, which is the reach a mute takes away. The party invite states
+        // the same rule in the same place (WorldSessionRuntime.Party.cs).
+        if (IsSessionMuted?.Invoke(player.SessionId) == true)
+        {
+            return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, "You are muted.");
+        }
+
         if (TryGetTrade(player, out _))
         {
             return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, "You are already trading.");
@@ -61,7 +80,7 @@ public sealed partial class WorldSessionRuntime
 
         if (TryGetTrade(target, out _))
         {
-            return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, $"{target.DisplayName} is already trading.");
+            return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, $"Trade: {QuotedName(target.DisplayName)} is already trading.");
         }
 
         if (!TryGetTradePositions(player, target, out bool bothAlive, out bool inRange) || !bothAlive)
@@ -71,7 +90,25 @@ public sealed partial class WorldSessionRuntime
 
         if (!inRange)
         {
-            return RejectTrade(message, player, InventoryEquipOutcome.TooFar, $"{target.DisplayName} is too far away to trade.");
+            return RejectTrade(message, player, InventoryEquipOutcome.TooFar, $"Trade: {QuotedName(target.DisplayName)} is too far away to trade.");
+        }
+
+        // Last of the guards, so a refused request (offline, too far, already trading) is unaffected. The
+        // cooldown was started by this sender's previous request ending before the target answered it
+        // (CloseTrade), which is what a request/cancel loop does every time; a trade the target answered
+        // starts none, so trading, cancelling and asking again stays immediate.
+        if (_lastTradeRequestTick.TryGetValue(player.CharacterKey.Value, out ulong lastRequestTick)
+            && CurrentServerTick - lastRequestTick < (ulong)TradeRules.RequestCooldownTicks)
+        {
+            TradeRequestCooldownRefusals++;
+            NetworkDiagnosticsLog.Write(
+                "server.trade.request-cooldown",
+                $"session={player.SessionId.Value} target={target.DisplayName} tick={CurrentServerTick}");
+            return RejectTrade(
+                message,
+                player,
+                InventoryEquipOutcome.TradeUnavailable,
+                "Wait a moment before asking to trade again.");
         }
 
         TradeSession session = new(player.CharacterKey.Value, target.CharacterKey.Value, CurrentServerTick);
@@ -377,7 +414,7 @@ public sealed partial class WorldSessionRuntime
 
     // Cancels trades that went out of range, timed out, lost a partner or saw an inventory change, and
     // sends the state of the ones that changed. A steady tick with no trade reads a count.
-    private void StepTrades(ulong tick)
+    internal void StepTrades(ulong tick)
     {
         for (int i = _trades.Count - 1; i >= 0; i--)
         {
@@ -429,7 +466,11 @@ public sealed partial class WorldSessionRuntime
                 continue;
             }
 
-            if (session.Dirty)
+            // On change, and every TradeRules.RefreshIntervalTicks ticks while the trade lives. The cadence
+            // is what makes the state eventually consistent on both screens: one push can be dropped by a
+            // client that cannot take it yet (its settings overlay is up), and the authoritative side must
+            // not leave a player in a trade they cannot see. Ticks, so this stays deterministic.
+            if (session.Dirty || tick % (ulong)TradeRules.RefreshIntervalTicks == 0)
             {
                 session.Dirty = false;
                 SendTradeState(session, first, second);
@@ -440,15 +481,17 @@ public sealed partial class WorldSessionRuntime
     private void CancelTradeOnDetach(PlayerSessionId session, string characterKey)
     {
         _ = session;
-        if (!_tradeOf.TryGetValue(characterKey, out TradeSession? trade))
+        if (_tradeOf.TryGetValue(characterKey, out TradeSession? trade))
         {
-            return;
+            string name = DisplayNameOfKey(characterKey);
+            int side = trade.SideOf(characterKey);
+            string left = $"{name} left the game.";
+            EndTrade(trade, TradeStage.Cancelled, side == 0 ? "You left the game." : left, side == 0 ? left : "You left the game.");
         }
 
-        string name = DisplayNameOfKey(characterKey);
-        int side = trade.SideOf(characterKey);
-        string left = $"{name} left the game.";
-        EndTrade(trade, TradeStage.Cancelled, side == 0 ? "You left the game." : left, side == 0 ? left : "You left the game.");
+        // Last: the request cooldown goes with the character, and that EndTrade may have started one
+        // (a rejoin costs far more than the 2 s it resets).
+        _lastTradeRequestTick.Remove(characterKey);
     }
 
     // Ends the trade and tells both sides.
@@ -460,6 +503,13 @@ public sealed partial class WorldSessionRuntime
 
     private void CloseTrade(TradeSession session)
     {
+        // A request the target never answered (still Requested when it closes: cancelled, declined or
+        // timed out) starts the requester's cooldown. Read before Close, which moves the phase.
+        if (session.Phase == TradePhase.Requested)
+        {
+            _lastTradeRequestTick[session.Key(0)] = CurrentServerTick;
+        }
+
         session.Close();
         _trades.Remove(session);
         if (_tradeOf.TryGetValue(session.Key(0), out TradeSession? mapped0) && ReferenceEquals(mapped0, session))

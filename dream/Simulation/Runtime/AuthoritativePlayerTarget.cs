@@ -12,6 +12,7 @@ public sealed class AuthoritativePlayerTarget : IAuthoritativePlayerTarget
     private readonly Func<Vector3> _eyePositionProvider;
     private readonly Func<PlayerInteractionMode> _interactionModeProvider;
     private readonly Action<Vector3> _setWorldPosition;
+    private readonly Func<bool> _isNoclipEnabledProvider;
 
     public AuthoritativePlayerTarget(
         PlayerSessionId sessionId,
@@ -22,7 +23,8 @@ public sealed class AuthoritativePlayerTarget : IAuthoritativePlayerTarget
         PlayerInteractionMode interactionMode,
         Action<Vector3> setWorldPosition,
         Func<Vector3>? eyePositionProvider = null,
-        bool isSpawned = true)
+        bool isSpawned = true,
+        Func<bool>? isNoclipEnabledProvider = null)
         : this(
             sessionId,
             actorId,
@@ -32,7 +34,8 @@ public sealed class AuthoritativePlayerTarget : IAuthoritativePlayerTarget
             () => interactionMode,
             setWorldPosition,
             eyePositionProvider,
-            isSpawned)
+            isSpawned,
+            isNoclipEnabledProvider)
     {
     }
 
@@ -45,7 +48,8 @@ public sealed class AuthoritativePlayerTarget : IAuthoritativePlayerTarget
         Func<PlayerInteractionMode> interactionModeProvider,
         Action<Vector3> setWorldPosition,
         Func<Vector3>? eyePositionProvider = null,
-        bool isSpawned = true)
+        bool isSpawned = true,
+        Func<bool>? isNoclipEnabledProvider = null)
     {
         ArgumentNullException.ThrowIfNull(positionProvider);
         ArgumentNullException.ThrowIfNull(facingProvider);
@@ -62,6 +66,7 @@ public sealed class AuthoritativePlayerTarget : IAuthoritativePlayerTarget
         _setWorldPosition = setWorldPosition;
         _eyePositionProvider = eyePositionProvider ?? (() => _positionProvider() + new Vector3(0f, 0.35f, 0f));
         IsSpawned = isSpawned;
+        _isNoclipEnabledProvider = isNoclipEnabledProvider ?? (() => false);
     }
 
     public PlayerSessionId SessionId { get; }
@@ -81,6 +86,9 @@ public sealed class AuthoritativePlayerTarget : IAuthoritativePlayerTarget
     public bool IsAlive => Combatant.Health.IsAlive;
 
     public bool IsSpawned { get; }
+
+    // The seat's live noclip toggle (false when the caller wired none).
+    public bool IsNoclipEnabled => _isNoclipEnabledProvider();
 
     public void SetWorldPosition(Vector3 position)
     {

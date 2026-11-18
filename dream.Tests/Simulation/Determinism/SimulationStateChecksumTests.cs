@@ -7,6 +7,7 @@ using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using Xunit;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Simulation.Determinism;
 
@@ -342,20 +343,15 @@ public class SimulationStateChecksumTests
         Assert.False(map.TryGetReplicatedId(plain, out int none));
         Assert.Equal(0, none);
 
-        for (int warm = 0; warm < 3; warm++)
+        // Three warm-up rounds are short of the runtime's tier-up threshold, and a single window
+        // charges any tiering transition that lands inside it to the measurement. AllocationAssert
+        // warms past the threshold and keeps the cleanest of several rounds, so the figure is the
+        // steady state this gate is about.
+        AllocationAssert.AtMost(0, () =>
         {
             map.TryGetReplicatedId(replicated, out _);
             map.TryGetReplicatedId(plain, out _);
-        }
-
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int call = 0; call < 1000; call++)
-        {
-            map.TryGetReplicatedId(replicated, out _);
-            map.TryGetReplicatedId(plain, out _);
-        }
-
-        Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
+        });
     }
 
     [Fact]

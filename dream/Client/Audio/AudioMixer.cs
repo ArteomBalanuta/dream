@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using OpenTK.Mathematics;
 
 namespace Dream.Client.Audio;
@@ -51,13 +52,17 @@ public sealed class AudioMixer
     private readonly AudioLoop[] _loops = new AudioLoop[4];
     private readonly bool[] _loopIsMusic = [true, true, false, false];
     private long _clock;
-    private AudioVolumes _volumes;
+    // Read by the audio callback thread, replaced by the main thread when a slider moves. AudioVolumes is
+    // several floats wide, so a plain struct field cannot be copied in one go: a buffer could mix an old
+    // master against new bus gains. Held behind a box instead, so publishing and reading it are a single
+    // atomic reference and every read sees one coherent set of gains. The audio thread never blocks.
+    private StrongBox<AudioVolumes> _volumes;
     private int _activeVoices;
     private int _queued;
 
     public AudioMixer(AudioVolumes volumes)
     {
-        _volumes = volumes;
+        _volumes = new StrongBox<AudioVolumes>(volumes);
         for (int i = 0; i < _loops.Length; i++)
         {
             _loops[i] = new AudioLoop(null);
@@ -66,7 +71,7 @@ public sealed class AudioMixer
         Array.Fill(_lastStart, long.MinValue / 2);
     }
 
-    public AudioVolumes Volumes => _volumes;
+    public AudioVolumes Volumes => Volatile.Read(ref _volumes).Value;
 
     // Voices playing as of the last Read.
     public int ActiveVoiceCount => Volatile.Read(ref _activeVoices);
@@ -74,12 +79,16 @@ public sealed class AudioMixer
     // Current gain of a loop bed (diagnostics and tests; a racy read is fine).
     public float LoopGain(AudioLoopId loop) => _loops[(int)loop].Gain;
 
-    public string DescribeLoops() =>
-        $"music={LoopGain(AudioLoopId.MusicMenu):F2}/{LoopGain(AudioLoopId.MusicWorld):F2} wind={LoopGain(AudioLoopId.Wind):F2} night={LoopGain(AudioLoopId.Night):F2} voices={ActiveVoiceCount} vol={_volumes.Master:F2}/{_volumes.Sfx:F2}/{_volumes.Music:F2}";
+    public string DescribeLoops()
+    {
+        AudioVolumes volumes = Volumes;
+        return
+        $"music={LoopGain(AudioLoopId.MusicMenu):F2}/{LoopGain(AudioLoopId.MusicWorld):F2} wind={LoopGain(AudioLoopId.Wind):F2} night={LoopGain(AudioLoopId.Night):F2} voices={ActiveVoiceCount} vol={volumes.Master:F2}/{volumes.Sfx:F2}/{volumes.Music:F2}";
+    }
 
     public void SetVolumes(AudioVolumes volumes)
     {
-        _volumes = volumes;
+        Volatile.Write(ref _volumes, new StrongBox<AudioVolumes>(volumes));
     }
 
     // Commands waiting for the audio thread.
@@ -115,7 +124,7 @@ public sealed class AudioMixer
         int frames = count / 2;
         new Span<float>(buffer, offset, frames * 2).Clear();
         DrainCommands();
-        AudioVolumes volumes = _volumes;
+        AudioVolumes volumes = Volatile.Read(ref _volumes).Value;
         float sfx = volumes.BusGain(AudioBus.Sfx);
         float music = volumes.BusGain(AudioBus.Music);
         float ui = volumes.BusGain(AudioBus.Ui);

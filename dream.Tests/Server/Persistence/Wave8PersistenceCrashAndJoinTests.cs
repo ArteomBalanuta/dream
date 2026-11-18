@@ -117,7 +117,7 @@ public sealed class Wave8PersistenceCrashAndJoinTests(ITestOutputHelper output)
         }
 
         Assert.Equal(GroupRows, CountProfiles(crashed, "open-group-%"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     // A queued read (the join prefetch, WorldSessionRuntime.BeginPersistedPlayerPrefetch) used to
@@ -164,7 +164,7 @@ public sealed class Wave8PersistenceCrashAndJoinTests(ITestOutputHelper output)
         Assert.True(writes.FailedWrites >= 1);
         Assert.Null(stored);
         Assert.Null(seen);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     // A join that arrives while 1000 writes are queued: its prefetch read waits behind all of them
@@ -213,7 +213,7 @@ public sealed class Wave8PersistenceCrashAndJoinTests(ITestOutputHelper output)
         output.WriteLine($"{kind}: prefetch behind 1000 queued writes completed in {wait.Elapsed.TotalMilliseconds:0} ms, groups={writes.CommittedGroups}, failed={writes.FailedWrites}");
         Assert.Equal(0, writes.FailedWrites);
         Assert.True(wait.Elapsed < TimeSpan.FromSeconds(5), $"{wait.Elapsed.TotalMilliseconds:0} ms");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     private static bool CopyShared(string source, string destination)

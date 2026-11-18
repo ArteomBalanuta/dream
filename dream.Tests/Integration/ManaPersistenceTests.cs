@@ -33,7 +33,7 @@ public sealed class ManaPersistenceTests
             Assert.True(combatant.TrySpendMana(30));
             spentTo = combatant.CurrentMana;
             await a.LeaveAsync();
-            M4AKit.Flush(server);
+            await M4AKit.FlushAsync(server);
             Assert.Equal(spentTo, M4AKit.Count(db, $"SELECT current_energy FROM player_world_state WHERE player_name = '{keyA}'"));
         }
 
@@ -64,7 +64,7 @@ public sealed class ManaPersistenceTests
         {
             await using HeadlessPlayScene a = await M4AKit.JoinAsync(server, SessionA);
             await a.LeaveAsync();
-            M4AKit.Flush(server);
+            await M4AKit.FlushAsync(server);
         }
 
         SqlitePools.Release(db.Schema);

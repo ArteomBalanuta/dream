@@ -318,7 +318,7 @@ public sealed class CharacterWindowTests : IDisposable
         CountingCanvas canvas = new();
         CharacterWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
 
-        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = Dream.Tests.Utilities.AllocationAssert.AtMost(0, () =>
         {
             CharacterWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
         });

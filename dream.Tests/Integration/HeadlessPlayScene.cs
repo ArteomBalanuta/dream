@@ -80,14 +80,18 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
         Task<ServerConnection> accept = server.Service.AcceptOnThreadPoolAsync();
         string name = $"Name {sessionId}";
         RemoteClientSession session = await RemoteClientSession.ConnectAsync(
-            new RemoteClientOptions("127.0.0.1", server.Port, sessionId, name, "headless-scene", TestAccountTokens.For(name)));
+            new RemoteClientOptions("127.0.0.1", server.Port, sessionId, name, "headless-scene", TestAccountTokens.For(name)),
+            // The test is this server's tick source, so the session's silence watchdog would be
+            // measuring how fast the test thread runs. See SlowedTestClock.
+            timeProvider: SlowedTestClock.Instance);
         ServerConnection connection = await accept.WaitAsync(WireLoopbackServer.Timeout);
         HeadlessPlayScene client = new(server, session, connection, CreateScene(session));
 
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        ProgressCounter[] joinProgress = [server.ServerTicks, new($"messages applied by {sessionId}", () => client.Applied.Count)];
+        LoopbackDeadline joining = new(joinProgress);
         while (!server.Host.IsConnectionJoined(connection.ConnectionId))
         {
-            Assert.True(DateTime.UtcNow < deadline, $"{sessionId} never joined");
+            joining.AssertAlive(joinProgress, () => $"{sessionId} join");
             await Task.Delay(2);
             await server.TickAsync();
             Assert.True(await client.FlushAsync());
@@ -161,9 +165,16 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
         }
     }
 
+    // Bounded by LoopbackDeadline rather than by a flat 30 s of wall clock, with the number of
+    // applied server messages as the progress counter: the failure worth catching here is a session
+    // that stops being told anything, which is exactly "nothing applied for the no-progress
+    // window". A session that is merely slow because the suite is loaded keeps applying messages
+    // and keeps this wait alive, up to LoopbackDeadline.HardTimeout. The connection check is
+    // unchanged and still fails first when the session actually drops.
     public async Task PumpUntilAsync(Func<HeadlessPlayScene, bool> done, string what)
     {
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        ProgressCounter[] applying = [new($"messages applied by {SessionId}", () => Applied.Count)];
+        LoopbackDeadline deadline = new(applying);
         while (true)
         {
             Pump();
@@ -173,7 +184,7 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
             }
 
             Assert.True(Session.IsConnected, $"{SessionId} lost its session: {Session.DisconnectReason}");
-            Assert.True(DateTime.UtcNow < deadline, $"{SessionId} never reached {what}");
+            deadline.AssertAlive(applying, () => $"{what} on {SessionId}");
             await Task.Delay(1);
         }
     }

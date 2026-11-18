@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Xunit;
 using Dream.Multiplayer.Diagnostics;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Multiplayer.Diagnostics;
 
@@ -100,13 +101,17 @@ public sealed class NetworkDiagnosticsRateLimiterTests
         limiter.ShouldLog(key, Interval, now);
         limiter.ShouldLog(key, Interval, now + 1);
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        bool suppressed = limiter.ShouldLog(key, Interval, now + 2);
-        bool passed = limiter.ShouldLog(key, Interval, now + IntervalTicks);
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        // Two calls are nowhere near the runtime's tier-up threshold, so a single window of two
+        // more calls charges the tiering transition to the measurement: it reads 0 B alone and
+        // 168 B under a loaded suite. AllocationAssert warms past the threshold and takes the
+        // cleanest of several rounds, which measures the steady state the gate is about. Both
+        // branches get their own repeatable action: suppression leaves the stored tick alone, and
+        // the passing branch walks time forward so it keeps passing on an already-present key.
+        Assert.False(limiter.ShouldLog(key, Interval, now + 2));
+        AllocationAssert.AtMost(0, () => limiter.ShouldLog(key, Interval, now + 2));
 
-        Assert.False(suppressed);
-        Assert.True(passed);
-        Assert.Equal(0, allocated);
+        long interval = 1;
+        Assert.True(limiter.ShouldLog(key, Interval, now + (++interval * IntervalTicks)));
+        AllocationAssert.AtMost(0, () => limiter.ShouldLog(key, Interval, now + (++interval * IntervalTicks)));
     }
 }

@@ -55,20 +55,13 @@ internal sealed class StoredWorldDb : IDisposable
         }
 
         IsStored = stored;
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(_database.DatabasePath);
     }
 
     private StoredWorldDb(StoredWorldDb source)
     {
-        SqliteConnection.ClearAllPools();
         _database = new MigrationTestDatabase();
-        foreach (string suffix in new[] { "", "-wal", "-shm" })
-        {
-            if (File.Exists(source.DatabasePath + suffix))
-            {
-                File.Copy(source.DatabasePath + suffix, _database.DatabasePath + suffix);
-            }
-        }
+        DatabaseImageCopy.Seed(source.DatabasePath, _database.DatabasePath);
 
         Size = source.Size;
         Definition = source.Definition;
@@ -148,10 +141,10 @@ internal static class StoredWorldChecks
     // Restored map against the database: the override rows are exactly the removed source cells, the
     // rubble in the map is the rubble in the database (one group per parent cell), ids are unique and
     // below the counter, the map holds no invariant violation, and the file passes integrity_check.
-    // Call with the server disposed (SqliteConnection.ClearAllPools first).
+    // Call with the server disposed (SqlitePools.Release(db.DatabasePath) first).
     public static string AssertConsistent(StoredWorldDb db, Map map, long minimumNextObjectId = 0)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         // 1. Overrides == removed base cells.
         HashSet<GeometryCellKey> baseCells = [.. new StoredMapSource(db.Definition, db.BaseChunks).CreateCells()

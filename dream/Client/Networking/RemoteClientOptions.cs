@@ -25,6 +25,11 @@ public sealed record RemoteClientOptions(
         return true;
     }
 
+    // The port a client assumes when nothing else says otherwise. Mirrors the server's own default
+    // from the one allowlisted place the client may read it, so the rest of the client (the menu's
+    // join/host form, for one) does not have to reach into Dream.Server for a number.
+    public const int DefaultPort = ServerBootstrap.DefaultPort;
+
     public const string HostEnvironmentVariable = "DREAM_SERVER_HOST";
     public const string PortEnvironmentVariable = "DREAM_SERVER_PORT";
     public const string SessionIdEnvironmentVariable = "DREAM_CLIENT_SESSION_ID";

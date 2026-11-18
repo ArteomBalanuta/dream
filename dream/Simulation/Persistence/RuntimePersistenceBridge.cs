@@ -161,7 +161,13 @@ internal sealed partial class RuntimePersistenceBridge
                 // may differ from the typed name.
                 CharacterLookup? lookup = accounts?.Lookup(playerName, account);
                 // M8: the lease of a character the account owns; another world's live one marks it held.
-                lookup = accounts == null ? lookup : ClaimPresenceForJoin(accounts, lookup, account);
+                // BH-XFER-3: not when this prefetch has already been given up on (the join timed out
+                // waiting for this very load, or its connection dropped). Every release path keys on the
+                // prefetch registry, so a lease claimed after the entry is gone is unreachable by all of
+                // them and would only free itself when it expires.
+                lookup = accounts == null || !IsRegisteredPrefetch(playerName, account, prefetch)
+                    ? lookup
+                    : ClaimPresenceForJoin(accounts, lookup, account, playerName, prefetch);
                 string key = lookup?.Existing?.Key.Value ?? playerName;
                 PersistedPlayerProfile? profile = profiles.TryGet(key);
                 prefetch.Complete(
@@ -255,6 +261,12 @@ internal sealed partial class RuntimePersistenceBridge
 
         return state == PersistedPlayerLoadState.Ready;
     }
+
+    // True while this prefetch is still the one registered for the name (a newer prefetch replaces it,
+    // and a given-up-on join removes it). Read from the persistence worker inside Load.
+    private bool IsRegisteredPrefetch(string playerName, AccountKey? account, PersistedPlayerPrefetch prefetch) =>
+        _playerPrefetches.TryGetValue(new PrefetchKey(playerName, account), out PersistedPlayerPrefetch? current)
+        && ReferenceEquals(current, prefetch);
 
     // Drops a prefetch whose join was not applied (rejected or released), so a later join loads fresh.
     public void DiscardPersistedPlayerPrefetch(string playerName, AccountKey? account = null)
@@ -592,7 +604,8 @@ internal sealed partial class RuntimePersistenceBridge
             }
 
             restoredHomes.Add(home);
-            _enemies.Add(EnemyFactory.Restore(enemy, template, actorId, _events, _host.CombatFormulas, home));
+            PersistedEnemyInstance row = enemy with { Position = SanitizeEnemyPosition(map, enemy.Position, home, enemy.ObjectId) };
+            _enemies.Add(EnemyFactory.Restore(row, template, actorId, _events, _host.CombatFormulas, home));
             _objectIdentities.Bind(enemy.ObjectId, actorId);
             if (campKey != null)
             {
@@ -601,7 +614,54 @@ internal sealed partial class RuntimePersistenceBridge
         }
     }
 
+    // The stored position is hostile like every other enemy column (EnemyFactory.Restore clamps the level,
+    // the health pool and every stat, and takes the chase speed from the clamped sheet): enemy_instances has
+    // no CHECK on position_x/y/z, so a row can carry a position outside this map - a world exported or cloned
+    // onto a smaller floor, a physics excursion past the edge, a hand edit - or a non-finite one. Out of
+    // bounds strands the enemy outside the playable area and a camp keeps counting it as a live member;
+    // non-finite is worse, because the chase arithmetic never resolves (the same failure mode the
+    // movement_speed clamp was written for) and ActorQuantization maps it to 0 on the wire, so clients see
+    // it at the origin while the server does not. Checkpoints re-capture the row, so neither self-heals.
+    // The bound is the one the map already implies - identical to EnemyRegistry.ClampToMapBounds and the
+    // floor-resize path - and a non-finite component falls back to the home resolved for the row.
+    // Restore does not rewrite the row; the first checkpoint with a diff writes the sanitized value.
+    private static Vector3 SanitizeEnemyPosition(Map map, Vector3 position, Vector3 home, ObjectId objectId)
+    {
+        // Math.Clamp(float) returns the value when both comparisons are false, so NaN passes straight
+        // through a clamp: the finiteness check has to come first.
+        Vector3 candidate = float.IsFinite(position.X) && float.IsFinite(position.Y) && float.IsFinite(position.Z)
+            ? position
+            : home;
+        Vector3 sanitized = new(
+            Math.Clamp(candidate.X, 0.5f, map.Width - 0.5f),
+            Math.Clamp(candidate.Y, 0f, map.Height - 0.5f),
+            Math.Clamp(candidate.Z, 0.5f, map.Depth - 0.5f));
+        if (sanitized != position)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.persistence.restore-clamped-enemy",
+                $"objectId={objectId} stored={position} restored={sanitized} reason=out-of-bounds-or-non-finite");
+        }
+
+        return sanitized;
+    }
+
     public void PersistPlayerProfile(PlayerSessionId sessionId, PlayerCombatant combatant)
+    {
+        Action? write = PrepareProfileWrite(sessionId, combatant);
+        if (write != null)
+        {
+            _writes?.Enqueue(write);
+        }
+    }
+
+    // As PersistPlayerProfile, but the repository call is RETURNED instead of queued, so the caller
+    // decides which closure (and so which savepoint) it belongs to. The quest turn-in appends its XP's
+    // profile write to its own closure: queued after that closure it was a savepoint of its own, so a
+    // failed completion rolled back while the XP committed, and the quest stayed turn-in-able after a
+    // restart (BH-QUEST-2). Null when this session has no profile to save. The profile is stamped and
+    // cached here, exactly as a queued save would.
+    public Action? PrepareProfileWrite(PlayerSessionId sessionId, PlayerCombatant combatant)
     {
         if (_playerProfiles == null
             || !_host.Sessions.TryGet(sessionId, out ConnectedPlayer? player)
@@ -609,13 +669,13 @@ internal sealed partial class RuntimePersistenceBridge
             || player.IsLocal
             || _unrestoredPlayerSessions.Contains(sessionId))
         {
-            return;
+            return null;
         }
 
         // MovementSpeed is not simulated: they keep the values the row was loaded with.
         string key = player.CharacterKey.Value;
         PersistedPlayerProfile existing = GetCachedProfile(key);
-        SaveProfile(key, existing with
+        return PrepareProfileWrite(key, existing with
         {
             DisplayName = player.DisplayName,
             InteractionMode = _host.GetSessionInteractionMode(sessionId),
@@ -631,7 +691,7 @@ internal sealed partial class RuntimePersistenceBridge
                 Level = combatant.Level,
                 Experience = combatant.Experience
             }
-        });
+        }, out _);
     }
 
     // Saves a leaving player's position, facing and HP (player_world_state), queued ahead of its
@@ -908,6 +968,43 @@ internal sealed partial class RuntimePersistenceBridge
     // Returns the profile as cached and queued, with its stamp.
     public PersistedPlayerProfile SaveProfile(string playerName, PersistedPlayerProfile profile)
     {
+        Action write = PrepareProfileWrite(playerName, profile, out PersistedPlayerProfile stamped);
+        _writes?.Enqueue(write);
+        return stamped;
+    }
+
+    // Takes a quest turn-in's XP back out of the cached profile (and off to the row) when the turn-in's
+    // closure did not commit, for a character whose seat has already gone: the cache is what the next
+    // save would write durably, which is how XP for a still-active quest became permanent and let a
+    // rejoin pay it a second time (BH-REV2-3). Only when the cached profile still holds exactly what the
+    // grant put there, so progression earned since is never erased; false otherwise, and false when the
+    // profile is not cached here at all. Never reads the database: it runs on the tick thread.
+    public bool TryRollBackProfileExperience(
+        string characterKey,
+        int grantedLevel,
+        int grantedExperience,
+        int beforeLevel,
+        int beforeExperience)
+    {
+        if (_playerProfiles == null
+            || !_profileCache.TryGetValue(characterKey, out PersistedPlayerProfile cached)
+            || cached.Stats.Level != grantedLevel
+            || cached.Stats.Experience != grantedExperience)
+        {
+            return false;
+        }
+
+        Action write = PrepareProfileWrite(
+            characterKey,
+            cached with { Stats = cached.Stats with { Level = beforeLevel, Experience = beforeExperience } },
+            out _);
+        _writes?.Enqueue(write);
+        return true;
+    }
+
+    // Stamps and caches the profile and returns its repository call, without queueing it.
+    private Action PrepareProfileWrite(string playerName, PersistedPlayerProfile profile, out PersistedPlayerProfile stamped)
+    {
         // Stamped when queued, and strictly after the copy it replaces (the clock may not have moved):
         // the repository stores this stamp, and a restore compares it with a prefetched row's.
         DateTime stamp = DateTime.UtcNow;
@@ -916,11 +1013,11 @@ internal sealed partial class RuntimePersistenceBridge
             stamp = previous.UpdatedUtc.AddTicks(1);
         }
 
-        profile = profile with { UpdatedUtc = stamp };
-        CacheProfile(playerName, profile);
+        stamped = profile with { UpdatedUtc = stamp };
+        CacheProfile(playerName, stamped);
         IPlayerProfileRepository profiles = _playerProfiles!;
-        _writes?.Enqueue(() => profiles.Save(profile));
-        return profile;
+        PersistedPlayerProfile saved = stamped;
+        return () => profiles.Save(saved);
     }
 
     // Loads the rubble groups, prunes the stale ones and heals lost terrain overrides; returns the kept
@@ -1164,16 +1261,22 @@ internal sealed partial class RuntimePersistenceBridge
             _fracturePieceCellScratch;
         cellPieces.Clear();
         _host.Map.CaptureFracturePiecesInto(cell, cellPieces);
-        ObjectId[] pieceIds = new ObjectId[cellPieces.Count];
+        // PieceIds is indexed by map piece index, and the capture skips invalid pieces, so the
+        // array has to span the highest index it emits, not the count of pieces it emitted:
+        // sizing it by the count dropped the last piece's id and left the first slot empty
+        // whenever any piece of the cell was invalid.
+        int highestPieceIndex = -1;
+        for (int i = 0; i < cellPieces.Count; i++)
+        {
+            highestPieceIndex = Math.Max(highestPieceIndex, cellPieces[i].PieceIndex);
+        }
+
+        ObjectId[] pieceIds = new ObjectId[highestPieceIndex + 1];
         for (int i = 0; i < cellPieces.Count; i++)
         {
             (GeometryCellKey PieceCell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId) = cellPieces[i];
             ObjectId pieceId = _objectIds.Take();
-            // PieceIds is indexed by map piece index; a fresh fracture's pieces are valid and 0..n-1.
-            if (PieceIndex < pieceIds.Length)
-            {
-                pieceIds[PieceIndex] = pieceId;
-            }
+            pieceIds[PieceIndex] = pieceId;
 
             PersistedCubeFracturePiece persistedPiece = new(
                 ObjectId: pieceId,
@@ -1365,13 +1468,44 @@ internal sealed partial class RuntimePersistenceBridge
         PersistedPlacedCube[] exactCellMatches = _persistedCubes.Values
             .Where(candidate => ToGeometryCellKey(candidate.CellPosition) == currentCell)
             .ToArray();
-        if (exactCellMatches.Length == 1)
+        if (exactCellMatches.Length == 1 && DescribesThisCube(exactCellMatches[0], cube))
         {
             persistedCube = exactCellMatches[0];
             return true;
         }
 
         return false;
+    }
+
+    // A cell is not a durable key for a cube's identity: a dynamic cube is pushed out of its cell
+    // without its row's CellPosition following (that only refreshes at the next checkpoint), and a
+    // restore-skipped row describes no live cube at all. Either way the cell match above would hand
+    // a brand-new placement another cube's ObjectId, owner and damaged health, so the row's own
+    // actor binding decides whether it really describes this cube:
+    //   * unbound: an orphan row whose id is only reserved (RestoreWorld's skip) - never adopt it.
+    //   * bound to a live cube that is not this one: that cube still owns the identity.
+    //   * bound to an actor with no record, or whose record's cube has left the map: the registry
+    //     link was lost and this is the repair the row exists for.
+    private bool DescribesThisCube(PersistedPlacedCube row, Cube cube)
+    {
+        if (!_objectIdentities.TryGetActorId(row.ObjectId, out int boundActorId))
+        {
+            return false;
+        }
+
+        // An "any" scan, so the answer cannot depend on _records' iteration order.
+        foreach (WorldObjectRecord record in _worldObjects.Records)
+        {
+            if (record.Actor.Id == boundActorId &&
+                record.SourceObject is Cube bound &&
+                !ReferenceEquals(bound, cube) &&
+                _host.Map.TryGetCellForCube(bound, out _))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private bool IsValidPersistenceOwnerName(string? ownerPlayerName)

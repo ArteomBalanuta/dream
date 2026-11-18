@@ -95,19 +95,26 @@ public static class VendorWindow
         for (int n = 0; n < shown; n++)
         {
             UiRect r = l.FromUnits(win, RowX, SellTop + (n * RowPitch), RowW, RowH);
+            long rowItemId = v.Backpack[anchors[n]].Item.ItemInstanceId;
+            // BH-INPUT-3: same shape as the trade bag row. CollectPage renumbers the sell rows when an
+            // item at a lower anchor leaves the bag mid-press (a quickbar potion, a loot push), so a
+            // position id would move the selection onto an item the player never clicked — and the
+            // Sell step would then carry that item's own instance id, so the server would accept it.
+            // The id carries the item, so a mid-press change drops the click instead.
+            int rowId = HudWidgetId.Of(IdSellRow, rowItemId);
             DrawRowPlate(c, s, r);
             if (anchors[n] == vendor.SelectedAnchor)
             {
                 c.Solid(r, SelectFill);
             }
-            else if (live && i.Hovered(IdSellRow + n, r))
+            else if (live && i.Hovered(rowId, r))
             {
                 c.Solid(r, HoverFill);
             }
 
-            if (live && i.Button(IdSellRow + n, r))
+            if (live && i.Button(rowId, r))
             {
-                vendor.Select(anchors[n], v.Backpack[anchors[n]].Item.ItemInstanceId);
+                vendor.Select(anchors[n], rowItemId);
             }
         }
 

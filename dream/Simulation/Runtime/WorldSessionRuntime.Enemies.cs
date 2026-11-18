@@ -230,7 +230,15 @@ public sealed partial class WorldSessionRuntime
         public int Pending;
         public int NextSlot;
         public bool Seeded;
+
+        // Consecutive camp steps on which the day/out-of-band despawn wanted to remove a member and
+        // could not. Reset on every successful removal and whenever the camp has no survivors left.
+        public int DespawnBlockedTicks;
     }
+
+    // How long the dawn despawn waits for a member that looks busy before it stops honouring that
+    // member's damage ledger. Three seconds of simulation, the same patience as spawn protection.
+    private const int DawnDespawnPatienceTicks = PlayerRespawnRules.SpawnProtectionTicks;
 
     private CampState[] _campStates = [];
     private readonly Dictionary<string, int> _campIndexByKey = new(StringComparer.Ordinal);
@@ -316,7 +324,18 @@ public sealed partial class WorldSessionRuntime
                 state.Seeded = false;
                 if (alive[c] > 0)
                 {
-                    RemoveHighestCampMember(c);
+                    // The wait for a member in a fight has an end: once the despawn has been blocked for
+                    // DawnDespawnPatienceTicks in a row, a lifetime damage ledger no longer holds the member
+                    // back. Without an end the camp never finished despawning and accumulated night enemies
+                    // across days (see RemoveHighestCampMember).
+                    bool removed = RemoveHighestCampMember(
+                        c,
+                        ignoreContributors: state.DespawnBlockedTicks >= DawnDespawnPatienceTicks);
+                    state.DespawnBlockedTicks = removed ? 0 : state.DespawnBlockedTicks + 1;
+                }
+                else
+                {
+                    state.DespawnBlockedTicks = 0;
                 }
 
                 continue;
@@ -391,8 +410,12 @@ public sealed partial class WorldSessionRuntime
     }
 
     // Dawn removes a night camp's highest-id member, but not one in a fight: with damage contributors, or
-    // chasing or attacking, it stays and is removed on a later tick once it idles.
-    private void RemoveHighestCampMember(int campIndex)
+    // chasing or attacking, it stays and is removed on a later tick once it idles. Contributors are a
+    // lifetime damage ledger, not a combat flag - nothing clears them outside a session detach - so the
+    // caller stops honouring them once the despawn has been blocked for DawnDespawnPatienceTicks in a row.
+    // The behaviour-state test is never waived: an enemy in an actual fight stops chasing on its own.
+    // Returns true when a member was removed.
+    private bool RemoveHighestCampMember(int campIndex, bool ignoreContributors = false)
     {
         int removeId = 0;
         IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
@@ -402,7 +425,7 @@ public sealed partial class WorldSessionRuntime
             int actorId = enemy.Combatant.Actor.Id;
             if (enemy.IsActive
                 && actorId > removeId
-                && enemy.Contributors.Length == 0
+                && (ignoreContributors || enemy.Contributors.Length == 0)
                 && enemy.BehaviorState != EnemyBehaviorState.Chasing
                 && enemy.BehaviorState != EnemyBehaviorState.Attacking
                 && _persistence.TryGetEnemyCampKey(actorId, out string campKey)
@@ -416,7 +439,10 @@ public sealed partial class WorldSessionRuntime
         if (removeId != 0 && _enemies.Remove(removeId))
         {
             DeletePersistedEnemy(removeId);
+            return true;
         }
+
+        return false;
     }
 
     // The template for the night slot: a NightExtra unless an active enemy already is one.
@@ -466,7 +492,9 @@ public sealed partial class WorldSessionRuntime
         IReadOnlyList<EnemyActor> enemies = _enemies.ActiveActors;
         foreach (IAuthoritativePlayerTarget playerTarget in playerTargets)
         {
-            if (playerTarget.ActorId == Player.Combatant.Actor.Id && Player.IsNoclipEnabled)
+            // A noclipping seat is not displaced by world collision - any seat, not just the primary
+            // one: every seat holds its own Player and its own noclip toggle.
+            if (playerTarget.IsNoclipEnabled)
             {
                 continue;
             }

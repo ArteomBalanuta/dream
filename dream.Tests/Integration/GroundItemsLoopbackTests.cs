@@ -117,10 +117,11 @@ public sealed class GroundItemsLoopbackTests
 
     private static long Count(MigrationTestDatabase db, string sql) => Convert.ToInt64(db.Scalar(sql));
 
-    private static void Flush(WireLoopbackServer server)
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    private static async Task FlushAsync(WireLoopbackServer server)
     {
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
-        Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
+        await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
+        Assert.Equal(0, server.Runtime.PersistenceWrites!.FailedWrites);
     }
 
     // The security property of the whole drop design, end to end: InventoryDropIntent carries no
@@ -205,7 +206,7 @@ public sealed class GroundItemsLoopbackTests
             Assert.Equal(1, client.Frames.Select(frame => frame.Decoded.Message).OfType<ServerGroundItems>().SelectMany(m => m.Upserts).Count(u => u.ItemInstanceId == id));
         }
 
-        Flush(server);
+        await FlushAsync(server);
         Assert.Equal("Ground", db.Scalar($"SELECT state FROM item_instances WHERE item_instance_id = {id};"));
         Assert.IsType<DBNull>(db.Scalar($"SELECT owner_player_name FROM item_instances WHERE item_instance_id = {id};"));
         Assert.Equal(0, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {id};"));
@@ -226,7 +227,7 @@ public sealed class GroundItemsLoopbackTests
             await WaitGroundAsync(client, ground => ground.Count == 0, "the pickup removed the item");
         }
 
-        Flush(server);
+        await FlushAsync(server);
         Assert.Equal("Inventory", db.Scalar($"SELECT state FROM item_instances WHERE item_instance_id = {id};"));
         Assert.Equal(1, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {id};"));
 
@@ -243,7 +244,7 @@ public sealed class GroundItemsLoopbackTests
         await server.DisconnectAsync(a);
         await server.DisconnectAsync(b);
         await TickAsync(server, 2);
-        Flush(server);
+        await FlushAsync(server);
     }
 
     [Fact]
@@ -291,7 +292,7 @@ public sealed class GroundItemsLoopbackTests
 
         await server.DisconnectAsync(a);
         await TickAsync(server, 2);
-        Flush(server);
+        await FlushAsync(server);
     }
 
     [Fact]
@@ -343,7 +344,7 @@ public sealed class GroundItemsLoopbackTests
             idForClaimantPickup = ids[0];
             idForRace = ids[1];
             idLeftOnGround = ids[2];
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal(3, Count(db, "SELECT COUNT(*) FROM item_instances WHERE state = 'Ground' AND owner_player_name IS NULL;"));
             Assert.Equal(0, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id IN ({idForClaimantPickup},{idForRace},{idLeftOnGround});"));
 
@@ -372,7 +373,7 @@ public sealed class GroundItemsLoopbackTests
                 await WaitGroundAsync(client, ground => ground.Count == 2 && !ground.ContainsKey(idForClaimantPickup), "the pickup removed from both lists");
             }
 
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal("Inventory", db.Scalar($"SELECT state FROM item_instances WHERE item_instance_id = {idForClaimantPickup};"));
             Assert.Equal(KeyOf(SessionA), db.Scalar($"SELECT owner_player_name FROM item_instances WHERE item_instance_id = {idForClaimantPickup};"));
             Assert.IsType<DBNull>(db.Scalar($"SELECT world_position_x FROM item_instances WHERE item_instance_id = {idForClaimantPickup};"));
@@ -403,7 +404,7 @@ public sealed class GroundItemsLoopbackTests
             Assert.DoesNotContain(runtime.TryCaptureInventorySnapshot(new PlayerSessionId(loserSession))!.Value.AllItems(), item => item.ItemInstanceId == idForRace);
             Assert.Equal(1, runtime.GroundItemCount);
             await TickAsync(server);
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal(1, Count(db, $"SELECT COUNT(*) FROM player_inventory_slots WHERE item_instance_id = {idForRace};"));
             Assert.Equal(winnerKey, db.Scalar($"SELECT player_name FROM player_inventory_slots WHERE item_instance_id = {idForRace};"));
             Assert.Equal(0, Count(db, "SELECT COUNT(*) FROM (SELECT 1 FROM player_inventory_slots GROUP BY world_id, item_instance_id HAVING COUNT(*) > 1);"));
@@ -415,10 +416,10 @@ public sealed class GroundItemsLoopbackTests
             await server.DisconnectAsync(a);
             await server.DisconnectAsync(b);
             await TickAsync(server, 2);
-            Flush(server);
+            await FlushAsync(server);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         // ---- restart: the one item left is back on the ground, free, once, and its id stays reserved ----
         Assert.Equal(1, Count(db, "SELECT COUNT(*) FROM item_instances WHERE state = 'Ground';"));
@@ -446,13 +447,13 @@ public sealed class GroundItemsLoopbackTests
             Assert.Equal(InventoryEquipOutcome.ItemGone, runtime.InventoryService.TryPickUpGround(KeyOf(SessionA), idLeftOnGround, Spot, runtime.CurrentServerTick));
             await TickAsync(server);
             await WaitGroundAsync(a, ground => ground.Count == 0, "the despawn");
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal(0, Count(db, "SELECT COUNT(*) FROM item_instances WHERE state = 'Ground';"));
             Assert.Equal(0, Count(db, $"SELECT COUNT(*) FROM item_instances WHERE item_instance_id = {idLeftOnGround};"));
             await server.DisconnectAsync(a);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         await using (WireLoopbackServer server = await StartAsync(db))
         {
             Assert.Equal(0, server.Runtime.GroundItemCount);

@@ -12,13 +12,17 @@ public static class DesktopClientTextConfig
     {
         if (!File.Exists(path))
         {
-            string? directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
+            // Seeding the file is a convenience: a read-only install directory must still start the game
+            // on the in-memory defaults rather than throw out of the Game constructor. Save creates the
+            // directory itself.
+            TrySave(path, new DesktopClientConfig());
+        }
 
-            Save(path, new DesktopClientConfig());
+        if (!File.Exists(path))
+        {
+            DesktopClientConfig defaults = new();
+            defaults.Sanitize();
+            return defaults;
         }
 
         DesktopClientConfig config = new();
@@ -53,6 +57,25 @@ public static class DesktopClientTextConfig
         }
 
         File.WriteAllText(path, Serialize(config));
+    }
+
+    /// <summary>
+    /// Saves the config, reporting a write failure instead of throwing. A settings change may fail to
+    /// persist (read-only install directory, the file held open by a backup or AV scanner), but the
+    /// commit callbacks run inside the render pass, so a throw there would take the session down.
+    /// </summary>
+    public static bool TrySave(string path, DesktopClientConfig config)
+    {
+        try
+        {
+            Save(path, config);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or System.Security.SecurityException)
+        {
+            Console.Error.WriteLine($"[settings] could not save {path}: {ex.Message}");
+            return false;
+        }
     }
 
     public static string Serialize(DesktopClientConfig config)

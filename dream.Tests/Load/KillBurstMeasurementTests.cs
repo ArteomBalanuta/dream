@@ -139,7 +139,7 @@ public sealed class KillBurstMeasurementTests(ITestOutputHelper output)
 
     private static long ItemCount(MigrationTestDatabase db)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return Convert.ToInt64(
             db.Scalar("SELECT COUNT(*) FROM item_instances WHERE world_id = 1 AND owner_player_name IS NOT NULL;"),
             System.Globalization.CultureInfo.InvariantCulture);

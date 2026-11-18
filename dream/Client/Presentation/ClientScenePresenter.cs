@@ -74,6 +74,9 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
     private readonly List<int> _staleRemoteActorIds = [];
     private readonly List<string> _staleRosterSessions = [];
     private readonly HashSet<int> _observedEnemyActorIds = [];
+    // The actors this snapshot withheld as stale (ClientSnapshotActorCompleteness): present, but
+    // not carried by this snapshot's actor list.
+    private readonly HashSet<int> _withheldActorIds = [];
     private readonly List<int> _staleEnemyActorIds = [];
     private readonly List<Vector3> _struckEnemyPositions = [];
 
@@ -162,6 +165,30 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 snapshot.ServerTick,
                 actor.Position,
                 actor.Facing));
+        }
+
+        // An actor the cache withheld as stale is absent from this snapshot without having left, so
+        // it counts as observed and its avatar and roster entry stay until a snapshot carries it
+        // again. Every other absent actor is gone and is pruned exactly as before, so a snapshot
+        // that withholds one actor and drops another still prunes the one that left - a coalesced
+        // death and respawn is that snapshot, and the respawn only snaps if the dead actor goes.
+        // A withheld player's session comes from the snapshot before this one, the only place a
+        // delta record's session id can be read from.
+        //
+        // _observedEnemyActorIds is deliberately NOT extended: the enemy entries below are
+        // interpolation buffers, pose continuity rather than existence, and a withheld actor has no
+        // current pose. Holding its buffer would keep drawing the last position the client had as
+        // if it were current, which is the very thing the cache withholds the actor to avoid; the
+        // renderer falls back to the authoritative pose instead, and the enemy itself survives
+        // because the registry keeps it (RemoteEnemyStateApplier.RemoveAbsentEnemies).
+        ClientSnapshotActorCompleteness.CollectWithheldActorIds(snapshot, _withheldActorIds);
+        foreach (int actorId in _withheldActorIds)
+        {
+            _observedRemoteActorIds.Add(actorId);
+            if (_lastSnapshotPlayerSessions.TryGetValue(actorId, out string? withheldSession))
+            {
+                _observedPlayerSessions.Add(withheldSession);
+            }
         }
 
         // Collected first so neither dictionary is modified while it is enumerated; removal keeps

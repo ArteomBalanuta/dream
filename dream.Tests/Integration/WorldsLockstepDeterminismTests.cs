@@ -55,7 +55,7 @@ public sealed class WorldsLockstepDeterminismTests(ITestOutputHelper output)
             "reference", Seed: MigratedSeed, GeneratorKey: WorldGeneratorCatalog.DefaultKey));
         new SqlitePersistenceCheckpointWriter(reference.Schema, created.Descriptor.Id)
             .Write(PersistenceCheckpoint.Empty with { WorldTimeTicks = DayClockTicks });
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(reference.DatabasePath);
         WorldRecord referenceWorld = referenceCatalog.TryGet(created.Descriptor.Id)!;
         Assert.Equal(DayClockTicks, referenceWorld.WorldTimeTicks);
 
@@ -64,7 +64,7 @@ public sealed class WorldsLockstepDeterminismTests(ITestOutputHelper output)
         migrated.Schema.EnsureSchema(MigrationTestDatabase.BaselineOnlyMigrator());
         migrated.ExecuteScript(
             $"INSERT INTO world_metadata (key, value) VALUES ('simulation_seed', '{MigratedSeed}'), ('world_time_ticks', '{DayClockTicks}');");
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(migrated.DatabasePath);
         SqliteWorldCatalog migratedCatalog = WorldBundles.OpenCatalog(migrated);
         WorldRecord migratedWorld = migratedCatalog.TryGet(WorldId.Default)!;
         Assert.Equal(MigratedSeed, migratedWorld.Seed);

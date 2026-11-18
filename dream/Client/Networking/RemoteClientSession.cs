@@ -8,6 +8,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Transport;
 using Dream.Server;
 using Dream.Simulation.Players;
+using Dream.Simulation.World;
 
 namespace Dream.Client.Networking;
 
@@ -124,6 +125,14 @@ public sealed class RemoteClientSession : IAsyncDisposable
     public static readonly TimeSpan ServerSilenceTimeout = TimeSpan.FromSeconds(8);
     public const string ServerSilenceDisconnectReason = "Connection lost: no data from the server for 8 s";
 
+    // How long DisposeAsync waits for each background loop, and for a direct send holding the frame
+    // buffer, before it gives up on that one and carries on with the teardown. Cancelling _shutdown
+    // normally ends them in microseconds -- a pending socket receive included, which .NET aborts on
+    // the token -- so this is only the bound that keeps a loop that does not from freezing the
+    // render thread that joins DisposeAsync. Matched to the server's own
+    // DedicatedServerService.ConnectionLoopShutdownTimeout.
+    public static readonly TimeSpan LoopShutdownTimeout = TimeSpan.FromSeconds(5);
+
     // The prefix of every reason a session ends with when the link broke, as opposed to the server
     // refusing or removing the player (a join rejection, a kick, a ban, a protocol mismatch).
     public const string ConnectionLostPrefix = "Connection lost:";
@@ -166,7 +175,23 @@ public sealed class RemoteClientSession : IAsyncDisposable
     // server closed the socket (an idle or stall close) or a send failed. Null while connected.
     // Also set when the join fails: "Join rejected: ..." or "Join timed out: ...", and by the
     // server-silence watchdog (ServerSilenceDisconnectReason).
-    public string? DisconnectReason { get; private set; }
+    //
+    // The send loop, the receive loop and the owner thread can all end the same session at once, so this is
+    // one field written under Interlocked rather than a plain `??=`: a read-then-write let a late
+    // "Connection lost: ..." overwrite a protocol mismatch, which turns a non-retryable end into a retryable
+    // one and sends the connection screen into an auto-reconnect loop against a server it cannot speak to.
+    public string? DisconnectReason => Volatile.Read(ref _disconnectReason);
+
+    private string? _disconnectReason;
+
+    // First writer wins, atomically.
+    private void TrySetDisconnectReason(string reason) =>
+        Interlocked.CompareExchange(ref _disconnectReason, reason, null);
+
+    // A protocol or world-transfer fault is the real cause and replaces whatever the dying socket recorded
+    // (what the unconditional assignments on those two paths have always meant).
+    private void SetDisconnectReasonOutright(string reason) =>
+        Volatile.Write(ref _disconnectReason, reason);
 
     // True once the server accepted this session's join.
     public bool IsJoined { get; private set; }
@@ -417,7 +442,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
             return;
         }
 
-        DisconnectReason ??= reason;
+        TrySetDisconnectReason(reason);
         IsConnected = false;
         NetworkDiagnosticsLog.Write(
             logEvent,
@@ -564,7 +589,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         catch (Exception ex)
         {
             IsConnected = false;
-            DisconnectReason ??= $"Connection lost: {ex.GetType().Name}: {ex.Message}";
+            TrySetDisconnectReason($"Connection lost: {ex.GetType().Name}: {ex.Message}");
             NetworkDiagnosticsLog.Write(
                 "client.send.error",
                 $"endpoint={Options.EndpointLabel} session={Options.SessionId} error={ex.GetType().Name}: {ex.Message}");
@@ -591,6 +616,24 @@ public sealed class RemoteClientSession : IAsyncDisposable
         _receiveBuffer.Append(_receiveChunk.AsSpan(0, bytesRead));
         DrainInboundFrames();
         return true;
+    }
+
+    // A decoded snapshot the client cannot apply: one of its collections was absent from the payload
+    // (null, not empty), or its actors came neither as a list nor as a frame. Thrown on the receive
+    // loop, which ends the session with the reason, like any other malformed frame.
+    private static void RejectMalformedSnapshot(ServerSnapshotEnvelope snapshot)
+    {
+        string? missing =
+            snapshot.LastAcceptedCommandSequences == null ? nameof(snapshot.LastAcceptedCommandSequences)
+            : snapshot.WorldMutations == null ? nameof(snapshot.WorldMutations)
+            : snapshot.DamageEvents == null ? nameof(snapshot.DamageEvents)
+            : snapshot.Actors == null && snapshot.ActorFrame == null ? nameof(snapshot.Actors)
+            : null;
+        if (missing != null)
+        {
+            throw new InvalidDataException(
+                $"Malformed server.snapshot payload: {missing} is missing (tick {snapshot.ServerTick}).");
+        }
     }
 
     private void DrainInboundFrames()
@@ -623,6 +666,11 @@ public sealed class RemoteClientSession : IAsyncDisposable
                     $"Received non-server message kind '{decoded.Message.MessageKind}' on client transport.");
             if (serverMessage is ServerSnapshotMessage snapshotMessage)
             {
+                // A snapshot payload that omits one of its collections decodes to null: the decoder
+                // keeps that parity with the reference serializer deliberately, so the rejection
+                // belongs here, at the client's application boundary. Without it the null reaches the
+                // frame thread and throws there instead of ending the session as a protocol error.
+                RejectMalformedSnapshot(snapshotMessage.Snapshot);
                 // Before any holding (a world transfer), so frames apply in the order they came.
                 serverMessage = _actorStates.Apply(snapshotMessage);
             }
@@ -654,7 +702,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
                 // A rejection after the join settled (a takeover by another connection): the
                 // server closes next, so its reason is the player-facing one. Here, not in
                 // DeliverInbound, as the message can be held behind a world transfer.
-                DisconnectReason ??= rejected.Reason;
+                TrySetDisconnectReason(rejected.Reason);
             }
 
             bool wasReceivingWorld = _worldTransfers.Current != null;
@@ -809,75 +857,39 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
         _shutdown.Cancel();
         // First, so it cannot start a send loop after the one below has been awaited.
-        if (_keepaliveTask != null)
-        {
-            try
-            {
-                await _keepaliveTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        if (_watchdogTask != null)
-        {
-            try
-            {
-                await _watchdogTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
+        await StopLoopAsync(_keepaliveTask, "keepalive");
+        await StopLoopAsync(_watchdogTask, "watchdog");
         // Before the send loop: a retry it queued must not start a send loop after that one ended.
-        if (Volatile.Read(ref _joinSupervisorTask) is Task joinSupervisor)
-        {
-            try
-            {
-                await joinSupervisor;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        if (_sendLoopTask != null)
-        {
-            try
-            {
-                await _sendLoopTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        if (_receiveLoopTask != null)
-        {
-            try
-            {
-                await _receiveLoopTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
+        await StopLoopAsync(Volatile.Read(ref _joinSupervisorTask), "join-supervisor");
+        await StopLoopAsync(_sendLoopTask, "send");
+        await StopLoopAsync(_receiveLoopTask, "receive");
 
         // The send loop has exited, but a direct Send*Async call (SendHelloAsync and friends) does
         // not run on it and may still be writing the pooled frame buffer to the transport. Take
         // _sendLock so the buffer goes back to ArrayPool<byte>.Shared only after that send ends.
         // Senders that get the lock after this see _disposeState and throw ObjectDisposedException
         // instead of encoding into the returned buffer.
-        await _sendLock.WaitAsync();
-        try
+        //
+        // Bounded like the loop waits above, and for the same reason. A send that is still holding
+        // the lock when the bound expires keeps the pooled buffer: returning it to the pool under a
+        // live send would hand that send's bytes to the next borrower, so the buffer is abandoned
+        // (the GC collects it; the pool simply loses one rented array) rather than recycled.
+        if (await _sendLock.WaitAsync(LoopShutdownTimeout))
         {
-            _frameWriter.Dispose();
+            try
+            {
+                _frameWriter.Dispose();
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
         }
-        finally
+        else
         {
-            _sendLock.Release();
+            NetworkDiagnosticsLog.Write(
+                "client.shutdown.timeout",
+                $"endpoint={Options.EndpointLabel} session={Options.SessionId} send still in flight after {LoopShutdownTimeout.TotalSeconds:0} s: the frame buffer is not returned to the pool");
         }
 
         // _sendLock is deliberately not disposed: a sender still queued on WaitAsync would never be
@@ -885,6 +897,35 @@ public sealed class RemoteClientSession : IAsyncDisposable
         // is read, which this class never does.
         _shutdown.Dispose();
         await _connection.DisposeAsync();
+    }
+
+    // Waits for one background loop to end after _shutdown was cancelled, for at most
+    // LoopShutdownTimeout. The bound is what keeps the caller's thread free: PlayScene.Dispose joins
+    // DisposeAsync synchronously on the render thread (PlayScene.Lifetime.DisposeRemoteClient), and
+    // this process has no second thread that could close the window if that join never returned. A
+    // loop that outstays the bound is abandoned, not killed; it runs on a thread-pool thread, its
+    // cancellation is already requested, and the transport dispose at the end of DisposeAsync ends
+    // the socket operation it may be parked in.
+    private async ValueTask StopLoopAsync(Task? loop, string label)
+    {
+        if (loop == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await loop.WaitAsync(LoopShutdownTimeout);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (TimeoutException)
+        {
+            NetworkDiagnosticsLog.Write(
+                "client.shutdown.timeout",
+                $"endpoint={Options.EndpointLabel} session={Options.SessionId} loop={label} still running after {LoopShutdownTimeout.TotalSeconds:0} s: abandoning it");
+        }
     }
 
     private async ValueTask SendMessageAsync(IClientToServerMessage message, CancellationToken cancellationToken)
@@ -993,7 +1034,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
             // server shutdown. None of these is announced by a message.
             if (!cancellationToken.IsCancellationRequested)
             {
-                DisconnectReason ??= "Connection lost: the server closed the connection.";
+                TrySetDisconnectReason("Connection lost: the server closed the connection.");
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1001,11 +1042,11 @@ public sealed class RemoteClientSession : IAsyncDisposable
         }
         catch (WorldTransferLimitException ex)
         {
-            DisconnectReason = $"World transfer failed: {ex.Message}";
+            SetDisconnectReasonOutright($"World transfer failed: {ex.Message}");
         }
         catch (ProtocolVersionMismatchException ex)
         {
-            DisconnectReason = ex.Message;
+            SetDisconnectReasonOutright(ex.Message);
             if (_serverHello.TrySetException(ex))
             {
                 // Mark the fault observed: nobody awaits it once ConnectAsync has returned.
@@ -1016,7 +1057,7 @@ public sealed class RemoteClientSession : IAsyncDisposable
         {
             // A malformed frame or a transport error; previously this faulted the loop task and
             // resurfaced from DisposeAsync.
-            DisconnectReason ??= $"Connection lost: {ex.GetType().Name}: {ex.Message}";
+            TrySetDisconnectReason($"Connection lost: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {

@@ -82,7 +82,7 @@ public sealed class ShutdownDrainDeadlineTests(ITestOutputHelper output)
         // Nothing writes after dispose returned.
         Thread.Sleep(TimeSpan.FromMilliseconds(300));
         Assert.Equal(0, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'shutdown-locked-%';"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     // Without a lock the shutdown path still writes the final full checkpoint, and behind every
@@ -127,7 +127,7 @@ public sealed class ShutdownDrainDeadlineTests(ITestOutputHelper output)
         Assert.Equal(1, background.CompletedWrites);
         Assert.Equal(0, background.DeferredAtShutdownCheckpoints);
         Assert.Equal(3, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'shutdown-clean-%';"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     // Wave 9 fix loop 2 (S4): the drain deadline starts at BackgroundCheckpointWriter.Dispose, and
@@ -186,7 +186,7 @@ public sealed class ShutdownDrainDeadlineTests(ITestOutputHelper output)
         // Nothing writes after dispose returned.
         Thread.Sleep(TimeSpan.FromMilliseconds(300));
         Assert.Equal(ranWrites, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'shutdown-slow-%';"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     private static WorldSessionRuntime CreateRuntime(

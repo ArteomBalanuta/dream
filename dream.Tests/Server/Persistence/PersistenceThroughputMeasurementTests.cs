@@ -52,7 +52,7 @@ public sealed class PersistenceThroughputMeasurementTests(ITestOutputHelper outp
     {
         using MeasurementDatabase database = new();
         WorldSeeder.Seed(database.DatabasePath, database.SchemaPath, LoadScenario.Smoke8);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(database.DatabasePath, database.SchemaPath);
         using DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(bundle);
         PersistenceWriteQueue writes = host.Runtime!.PersistenceWrites!;
@@ -219,7 +219,7 @@ public sealed class PersistenceThroughputMeasurementTests(ITestOutputHelper outp
 
         public void Dispose()
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(DatabasePath);
             try
             {
                 Directory.Delete(_rootDirectory, recursive: true);

@@ -26,7 +26,7 @@ public sealed class ObjectIdCrashSafetyTests(ITestOutputHelper output)
             Assert.True(server.BuiltCubeFractureTick > 0, "the built cube should have fractured, giving the pieces ids");
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds crashed = ReadIds(database.DatabasePath);
         output.WriteLine($"after the crash: cubes {crashed.Cubes.Count}, pieces {crashed.Pieces.Count}, enemies {crashed.Enemies.Count}, items {crashed.Items.Count}, next_object_id {crashed.NextObjectId}");
         Assert.NotEmpty(crashed.Pieces);
@@ -44,7 +44,7 @@ public sealed class ObjectIdCrashSafetyTests(ITestOutputHelper output)
             restarted.RunScript(CubeOnlyScript, ticks: CheckpointTicks - 10);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds second = ReadIds(database.DatabasePath);
         Assert.True(second.NextObjectId >= crashed.NextObjectId);
         Assert.All(second.AllObjects, id => Assert.True(id < second.NextObjectId));

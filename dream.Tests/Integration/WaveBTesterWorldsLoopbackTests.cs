@@ -63,7 +63,7 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
             Assert.True(server.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(1L, WorldBundles.Count(database, "placed_cube_instances", new WorldId(2)));
         Assert.Equal(0L, WorldBundles.Count(database, "placed_cube_instances", WorldId.Default));
         Assert.Equal(2L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
@@ -83,7 +83,7 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
         }
 
         // World 1 (default selector) is its own 56 map without the lamp.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         using (ServerPersistenceBundle bundle = ServerBootstrap.CreatePersistenceBundle(
             database.DatabasePath, MigrationTestDatabase.InitScriptPath, start: ServerStartOptions.Default))
         using (DedicatedServerHost host = ServerBootstrap.CreateAuthoritativeHost(bundle))
@@ -192,7 +192,7 @@ public sealed class WaveBTesterWorldsLoopbackTests(ITestOutputHelper output)
 
         Assert.True(writesOne > 0 && writesTwo > 0);
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(schemaOne, schemaTwo);
         Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
         using (SqliteConnection connection = database.Open())
         {

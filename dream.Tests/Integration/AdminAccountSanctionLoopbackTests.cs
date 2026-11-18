@@ -42,14 +42,15 @@ public sealed class AdminAccountSanctionLoopbackTests
         return await WireLoopbackServer.StartAsync(host);
     }
 
-    private static void Flush(WireLoopbackServer server) =>
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    private static Task FlushAsync(WireLoopbackServer server) =>
+        PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
 
     private static async Task GrantAdminAsync(WireLoopbackServer server, MigrationTestDatabase db, string session)
     {
         WireLoopbackClient first = await server.ConnectAndJoinAsync(session);
         await server.DisconnectAsync(first);
-        Flush(server);
+        await FlushAsync(server);
         Assert.True(new SqliteAccountRepository(db.Schema).TrySetRole(NameOf(session), 1));
     }
 
@@ -58,7 +59,7 @@ public sealed class AdminAccountSanctionLoopbackTests
     {
         WireLoopbackClient client = await server.ConnectAndJoinAsync(alt, asName: NameOf(alt), withTokenOf: NameOf(ofMain));
         await server.DisconnectAsync(client);
-        Flush(server);
+        await FlushAsync(server);
     }
 
     // A client the harness does not track, for a player the server is going to close.
@@ -68,10 +69,11 @@ public sealed class AdminAccountSanctionLoopbackTests
         WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(server.Port, session);
         ServerConnection connection = await accept.WaitAsync(WireLoopbackServer.Timeout);
         await client.HandshakeAsync();
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        ProgressCounter[] joinProgress = [server.ServerTicks, WireLoopbackServer.Observing(client)];
+        LoopbackDeadline joining = new(joinProgress);
         while (!server.Host.IsConnectionJoined(connection.ConnectionId))
         {
-            Assert.True(DateTime.UtcNow < deadline, $"{session} never joined");
+            joining.AssertAlive(joinProgress, () => $"{session} join");
             await Task.Delay(5);
             await server.TickAsync();
             Assert.True(await OutboundDrain.FlushAsync(connection, WireLoopbackServer.Timeout));
@@ -81,17 +83,9 @@ public sealed class AdminAccountSanctionLoopbackTests
         return client;
     }
 
-    private static async Task UntilAsync(WireLoopbackServer server, Func<bool> done, string what)
-    {
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
-        while (!done())
-        {
-            Assert.True(DateTime.UtcNow < deadline, $"never saw {what}");
-            await server.TickAsync();
-            await server.FlushAllAsync();
-            await Task.Delay(2);
-        }
-    }
+    // Bounded by LoopbackDeadline, not by a flat 30 s of wall clock: see WireLoopbackHarness.
+    private static Task UntilAsync(WireLoopbackServer server, Func<bool> done, string what) =>
+        server.UntilAsync(done, what);
 
     private static string[] SystemLines(WireLoopbackClient client) =>
         [.. client.Frames.Select(frame => frame.Decoded.Message).OfType<ServerChatMessage>()
@@ -155,12 +149,33 @@ public sealed class AdminAccountSanctionLoopbackTests
         await main.SendAsync(new ClientChatMessage(ChatChannel.World, "hello from the main"));
         await UntilAsync(server, () => SystemLines(main).Contains(DedicatedServerHost.MutedText), "the muted notice");
 
+        // The live connection's standing above is the in-process overlay, which a mute that wrote
+        // nothing would still satisfy. The row is what survives a restart, so it is asserted too:
+        // exactly one account is muted, and it is the one BOTH characters hang off. Polled while
+        // the server ticks rather than waited for with a blocking Flush, which would park this
+        // thread for up to 30 s and starve the rest of the parallel phase.
+        await UntilAsync(
+            server,
+            () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 1L,
+            "the mute on exactly one account row");
+        Assert.Equal(
+            2L,
+            Convert.ToInt64(db.Scalar(
+                "SELECT COUNT(*) FROM player_profiles p JOIN accounts a ON a.account_id = p.account_id " +
+                $"WHERE a.muted_until_utc IS NOT NULL AND p.player_name IN ('{NameOf(Alt)}', '{NameOf(Main)}');")));
+
         await CommandAsync(admin, $"/unmute \"{NameOf(Alt)}\"");
         await UntilAsync(server, () => SystemLines(admin).Contains($"Unmuted {NameOf(Alt)}."), "the unmute result");
         await UntilAsync(
             server,
             () => server.Host.TryGetConnectionContext(server.ConnectionFor(main).ConnectionId, out ServerRoutingContext? context) && context!.Standing.MutedUntilUtc == null,
             "the unmute on the main's connection");
+
+        // And the unmute cleared the row, so a restart does not bring the mute back.
+        await UntilAsync(
+            server,
+            () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 0L,
+            "the unmute reaching the account row");
     }
 
     [Fact]
@@ -184,7 +199,7 @@ public sealed class AdminAccountSanctionLoopbackTests
         await CommandAsync(other, $"/ban \"{NameOf("m8a-adm2")}\" 5");
         await UntilAsync(server, () => SystemLines(other).Contains("You cannot do that to yourself."), "the self refusal");
 
-        Flush(server);
+        await FlushAsync(server);
         Assert.Equal(0L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE banned_until_utc IS NOT NULL OR muted_until_utc IS NOT NULL;")));
     }
 
@@ -203,7 +218,7 @@ public sealed class AdminAccountSanctionLoopbackTests
         Assert.True(adminContext!.IsAdmin);
 
         // The joined accounts' rows are written by the persistence queue; wait for them to exist.
-        Flush(server);
+        await FlushAsync(server);
         // Another process changes the database: the admin is demoted, one player banned, another muted.
         Assert.True(accounts.TrySetRole(NameOf(Admin), 0));
         Assert.True(accounts.TrySetBan(NameOf("m8a-bee"), DateTime.UtcNow.AddMinutes(30), "banned elsewhere"));
@@ -212,8 +227,18 @@ public sealed class AdminAccountSanctionLoopbackTests
         await UntilAsync(server, () => !adminContext.IsAdmin, "the demotion");
         await UntilAsync(server, () => RejectionOf(bee) != null, "the remote ban closing the connection");
         Assert.Contains("banned elsewhere", RejectionOf(bee)!.Reason, StringComparison.Ordinal);
+        // The same one-chance shape as M8's unmuted line, inverted: this line is sent once, and if
+        // the standing refresh has not reached Cee's connection yet the line is routed normally and
+        // MutedText never comes, so the wait below would ask for something that cannot arrive. The
+        // refresh is what this test is about, so it is asserted on the connection first - more than
+        // the test checked before - and the silencing of the line is still proved after it.
+        await UntilAsync(
+            server,
+            () => server.Host.TryGetConnectionContext(server.ConnectionFor(cee).ConnectionId, out ServerRoutingContext? muted)
+                && muted!.Standing.MutedUntilUtc != null,
+            "the remote mute reaching Cee's connection");
         await cee.SendAsync(new ClientChatMessage(ChatChannel.World, "can anyone hear me"));
-        await UntilAsync(server, () => SystemLines(cee).Contains(DedicatedServerHost.MutedText), "the remote mute");
+        await UntilAsync(server, () => SystemLines(cee).Contains(DedicatedServerHost.MutedText), "the remote mute silencing the line");
 
         await CommandAsync(admin, "/announce still an admin?");
         await UntilAsync(server, () => SystemLines(admin).Contains(DedicatedServerHost.PermissionDeniedText), "the refusal for the demoted admin");
@@ -270,10 +295,29 @@ public sealed class AdminAccountSanctionLoopbackTests
         using (SqliteTransaction writeLock = holder.BeginTransaction(deferred: false))
         {
             await CommandAsync(admin, $"/ban \"{NameOf(Alt)}\" 5");
-            // Past the 5 s busy timeout the group cannot start. The admin hears nothing yet.
-            await Task.Delay(TimeSpan.FromSeconds(7));
+            // The group cannot start while the lock is held, so the write waits out its 5 s busy
+            // timeout and is retried, and the admin hears nothing meanwhile.
+            //
+            // This used to wait a fixed 7 s and then assert the retry had happened. That is a wall
+            // clock measurement, and it is wrong under load: on a busy machine the worker can take
+            // longer than 7 s just to get its first attempt in, and the assertion then fired on a
+            // retry that had not happened YET - a false failure, reproduced by opening the
+            // collection gate to 64 on 16 cores. Polling for the retry instead removes the clock
+            // from the claim without removing the claim, and the admin's silence is now checked on
+            // every pass, so it is proved for the whole time the lock is held rather than once at
+            // the 7 s mark. The cap is generous but finite: a retry that never happens still fails
+            // the test instead of hanging it.
+            DateTime retryDeadline = DateTime.UtcNow + LoopbackDeadline.HardTimeout;
+            while (server.Runtime.PersistenceWrites!.LockRetries < 1)
+            {
+                Assert.DoesNotContain($"Banned {NameOf(Alt)}.", SystemLines(admin));
+                Assert.True(
+                    DateTime.UtcNow < retryDeadline,
+                    "the ban write was never retried against the held lock");
+                await Task.Delay(25);
+            }
+
             Assert.DoesNotContain($"Banned {NameOf(Alt)}.", SystemLines(admin));
-            Assert.True(server.Runtime.PersistenceWrites!.LockRetries >= 1);
             writeLock.Rollback();
         }
 

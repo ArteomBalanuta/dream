@@ -168,6 +168,12 @@ public partial class PlayScene
             }
 
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
+            // The presenter just released every enemy interpolation buffer of the old world; the
+            // renderer's render-only death linger has to go the same way. Its enemies did not die,
+            // they ceased, and a linger left standing would start a death clip for every one of
+            // them, frozen at its old-world matrix and casting shadows in the new world.
+            // (_render is null only in a headless scene, which draws nothing.)
+            _render?.Enemies.ClearDeathLinger();
             // A new session shows no mana, cooldowns or bar from the one before; the join's inventory
             // brings the bar, and the first vitals message the mana.
             _quickbarHud.Clear();
@@ -220,12 +226,22 @@ public partial class PlayScene
             // resolves. All three still run before the presenter.
             RemoteEnemyStateApplier.AddOrUpdateEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
             ClientSnapshotDamageApplier.ApplyToRuntime(_runtime, _events, snapshotMessage.Snapshot, _scenePresenter);
-            RemoteEnemyStateApplier.RemoveAbsentEnemies(_runtime.Enemies, snapshotMessage.Snapshot.Actors);
+            // Takes the whole snapshot, not just its actor list: an actor the cache withheld as stale
+            // is missing from the list without having left, and is kept. An enemy that really died or
+            // left is still dropped, even on a snapshot that withholds other actors.
+            RemoteEnemyStateApplier.RemoveAbsentEnemies(_runtime.Enemies, snapshotMessage.Snapshot);
             _diagnostics.RecordSnapshotApplied(snapshotMessage.Snapshot, _remoteClient.SessionId);
 
             _serverTickClock.Observe(snapshotMessage.Snapshot.ServerTick);
             _scenePresenter.ApplySnapshot(snapshotMessage.Snapshot);
-            _npcs.ApplyActors(snapshotMessage.Snapshot.Actors);
+            if (!ClientSnapshotActorCompleteness.WithholdsActors(snapshotMessage.Snapshot))
+            {
+                // ApplyActors rebuilds the whole NPC list from the snapshot, with no per-actor way in,
+                // so an incomplete snapshot would clear every NPC it does not name. The NPCs keep the
+                // last complete snapshot's positions until the next one; they do not move.
+                _npcs.ApplyActors(snapshotMessage.Snapshot.Actors);
+            }
+
             ObserveLocalDeath(snapshotMessage.Snapshot.Actors, snapshotMessage.Snapshot.ServerTick);
             LogPresenterDiagnostics("snapshot");
         }

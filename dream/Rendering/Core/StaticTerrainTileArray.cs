@@ -99,7 +99,9 @@ public sealed class StaticTerrainTileArray : IDisposable
                 continue;
             }
 
-            if (BackgroundWork.TryTakeCompleted(ref _pending[layer], out DecodedTexture? decoded, out Exception? fault))
+            // The type argument is spelled out so the nullable decode result matches the task's own
+            // DecodedTexture?; a null decode is expected and handled right below.
+            if (BackgroundWork.TryTakeCompleted<DecodedTexture?>(ref _pending[layer], out DecodedTexture? decoded, out Exception? fault))
             {
                 if (decoded == null || decoded.Width != TileSize || decoded.Height != TileSize ||
                     decoded.Rgba.Length != 4 * TileSize * TileSize)

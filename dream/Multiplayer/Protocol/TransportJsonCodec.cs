@@ -387,7 +387,9 @@ public sealed class TransportJsonCodec : IProtocolCodec
         IProtocolMessage message = messageKind switch
         {
             "client.hello" => DeserializeMessage<ClientHelloMessage>(ref payloadReader, hasPayload),
-            "client.join-request" => DeserializeMessage<ClientJoinRequestMessage>(ref payloadReader, hasPayload),
+            "client.join-request" => ValidateJoinRequest(
+                DeserializeMessage<ClientJoinRequestMessage>(ref payloadReader, hasPayload),
+                fromClient),
             "player.command" => DeserializeMessage<PlayerCommandMessage>(ref payloadReader, hasPayload),
             "player.action" => DeserializeMessage<PlayerActionMessage>(ref payloadReader, hasPayload),
             "client.world-resync" => DeserializeMessage<ClientWorldResyncRequestMessage>(ref payloadReader, hasPayload),
@@ -444,6 +446,29 @@ public sealed class TransportJsonCodec : IProtocolCodec
 
     // payloadReader is a checkpoint positioned on the "payload" property name; a missing payload
     // throws the same parameterless InvalidOperationException an undefined JsonElement used to.
+    // A join request is the first payload an unidentified client sends, and both of its strings are
+    // non-nullable record parameters that System.Text.Json still binds to null when the property is
+    // missing. They reach APIs that throw on a blank or null value (JoinSession's
+    // ArgumentException.ThrowIfNullOrWhiteSpace on the session id, DisplayName.Trim on the seat check),
+    // so a malformed one is refused here, at the protocol boundary, for that connection alone.
+    private static ClientJoinRequestMessage ValidateJoinRequest(ClientJoinRequestMessage joinRequest, bool fromClient)
+    {
+        if (!fromClient)
+        {
+            return joinRequest;
+        }
+
+        if (string.IsNullOrWhiteSpace(joinRequest.RequestedSessionId))
+        {
+            throw new InvalidOperationException(
+                "Join request 'requestedSessionId' must be a non-empty string.");
+        }
+
+        // A missing display name is legal (a host without accounts then names the player after the
+        // session); null is not, so it decodes as empty and every reader downstream sees a string.
+        return joinRequest.DisplayName == null ? joinRequest with { DisplayName = string.Empty } : joinRequest;
+    }
+
     private static TMessage DeserializeMessage<TMessage>(ref Utf8JsonReader payloadReader, bool hasPayload)
     {
         if (!hasPayload)

@@ -17,8 +17,17 @@ internal sealed partial class PlayerInventoryService
     internal const int QuestActive = 1;
     internal const int QuestCompleted = 2;
 
-    // The most quest rows one player keeps (the log message holds as many).
-    internal const int MaxQuestRecords = 32;
+    // The most quest rows one player keeps, live and stale together: the hostile-input bound on the rows
+    // a load will take. Deliberately above MaxLiveQuestRecords (BH-QUEST-4): a row whose key the running
+    // content no longer has is kept inert, and it needs room of its own so it cannot crowd out a quest
+    // the content does have.
+    internal const int MaxQuestRecords = ContentCatalog.MaxQuests * 2;
+
+    // The most rows of quests the running content still has - what the accept gate counts. Equal to
+    // ContentCatalog.MaxQuests, so a character can hold every quest the content offers, and to
+    // ServerQuestLog.MaxEntries, so the log message can carry all of them (BuildQuestLog emits the live
+    // quests only, so the log can never overflow however many stale rows there are).
+    internal const int MaxLiveQuestRecords = ContentCatalog.MaxQuests;
 
     private const int MaxStoredKillCount = ContentCatalog.MaxQuestCount;
 
@@ -107,7 +116,10 @@ internal sealed partial class PlayerInventoryService
     // Takes the quest. QuestUnavailable when the player already has a row for it (active or completed: a
     // quest is done once) or the log is full; WriteFailed after an earlier failed write, because the rows may
     // then lack the quest and a later completion would throw.
-    internal InventoryEquipOutcome TryAcceptQuest(string playerName, QuestDefinition quest)
+    //
+    // "Full" counts the rows of quests content still has (BH-QUEST-4); pass that content to get it. See
+    // LiveQuestRecordCount for why a stale row must not take a live one's place.
+    internal InventoryEquipOutcome TryAcceptQuest(string playerName, QuestDefinition quest, ContentCatalog? content = null)
     {
         if (!Ensure(playerName))
         {
@@ -125,7 +137,9 @@ internal sealed partial class PlayerInventoryService
             _questsByPlayer[playerName] = records;
         }
 
-        if (records.ContainsKey(quest.Key) || records.Count >= MaxQuestRecords)
+        if (records.ContainsKey(quest.Key)
+            || LiveQuestRecordCount(records, content) >= MaxLiveQuestRecords
+            || records.Count >= MaxQuestRecords)
         {
             return InventoryEquipOutcome.QuestUnavailable;
         }
@@ -230,7 +244,18 @@ internal sealed partial class PlayerInventoryService
     // The closure order is the guard order: CompleteQuest first (it throws unless the quest is still
     // active, so a second turn-in that raced a failed first one stops there), then the consumed items (the
     // held destroy throws on an item that was never persisted), the credit, then the reward rows.
-    internal InventoryEquipOutcome TryTurnInQuest(string playerName, QuestDefinition quest, out long rewardedXp)
+    //
+    // rewardWrite (BH-QUEST-2) is the caller's own durable part of the reward: the XP's profile write. It
+    // is asked for only once every guard has passed, and the write it returns runs LAST inside this one
+    // closure, so it commits with the completion or rolls back with it. Queued after the closure it was a
+    // savepoint of its own, so a failed completion paid the XP and left the quest active in the rows -
+    // and a restart allowed the same turn-in, and the same XP, again.
+    internal InventoryEquipOutcome TryTurnInQuest(
+        string playerName,
+        QuestDefinition quest,
+        out long rewardedXp,
+        Func<Action?>? rewardWrite = null,
+        ContentCatalog? content = null)
     {
         rewardedXp = 0;
         if (!Ensure(playerName))
@@ -283,9 +308,16 @@ internal sealed partial class PlayerInventoryService
 
         BagBoard board = BuildBoard(remaining);
         List<(ItemDefinition Definition, int Slot)> placements = [];
+
+        // BH-QUEST-5: through the catalog the quest came from, not ContentCatalog.Shipped. The offer
+        // side reads the definitions through the runtime's own EnemyContent, so a reward item that only
+        // the runtime's items.json has would never resolve here and every turn-in returned
+        // QuestUnavailable with no diagnostic - the quest could never be handed in. The load-time check
+        // (ParseQuestRewards) already validates the reward against that same file's items.
+        ContentCatalog rewardSource = content ?? ContentCatalog.Shipped;
         foreach (QuestRewardItem reward in rewards.Items)
         {
-            if (!ContentCatalog.Shipped.TryGetItem(reward.ItemKind, out ItemDefinition? definition) || definition.Rolls != null)
+            if (!rewardSource.TryGetItem(reward.ItemKind, out ItemDefinition? definition) || definition.Rolls != null)
             {
                 return InventoryEquipOutcome.QuestUnavailable;
             }
@@ -330,13 +362,16 @@ internal sealed partial class PlayerInventoryService
         List<PersistedInventorySlot> newSlots = new(placements.Count);
         foreach ((ItemDefinition definition, int slotIndex) in placements)
         {
-            ToolDefinition tool = ToolCatalog.Resolve(definition.Key);
+            // The resolved definition's own fields, not ToolCatalog's: ToolCatalog is built from the
+            // shipped items alone and Resolve THROWS on a kind it does not know, so an alternate
+            // catalog's reward item would crash the turn-in. For a shipped kind the two are the same
+            // projection (ToolCatalog.BuildDefinitions copies Key, DisplayName and VisualId).
             long itemInstanceId = _objectIds.Take().Value;
             PersistedItemInstance item = new(
                 itemInstanceId,
-                tool.ItemKind,
-                tool.DisplayName,
-                tool.VisualId,
+                definition.Key,
+                definition.DisplayName,
+                definition.VisualId,
                 playerName,
                 WorldPosition: null,
                 State: "Inventory",
@@ -350,10 +385,20 @@ internal sealed partial class PlayerInventoryService
             newSlots.Add(new PersistedInventorySlot(playerName, slotIndex, itemInstanceId, now));
         }
 
+        // BH-QUEST-6: the consumed collect items vacated anchors, so this is a path that frees room, and
+        // "held-back rows wait for room and drain, in order, after every accepted move, destroy, equip or
+        // unequip" (PlayerInventoryService's own rule). The drain runs after the reward placements, on the
+        // bag as it now is, and its slot writes are appended to the one closure below - the turn-in must
+        // stay one closure, so they cannot be queued on their own.
+        SlotChanges drained = new();
+        DrainHeldBack(slots, drained);
+        Action<IWorldPersistenceRepository>? drainWrite = drained.IsEmpty ? null : drained.ToWrite(playerName, null);
+
         // ---- the one closure ----
         string questKey = quest.Key;
         long credit = rewards.Gold;
         long[] consumedIds = [.. consumed.Select(entry => entry.ItemInstanceId)];
+        Action? paidReward = rewardWrite?.Invoke();
         NoteWriteQueued(playerName);
         EnqueueWorldWrite(world =>
         {
@@ -377,6 +422,11 @@ internal sealed partial class PlayerInventoryService
             {
                 world.SaveInventorySlot(slot);
             }
+
+            drainWrite?.Invoke(world);
+
+            // Last, and inside this savepoint: the XP cannot land without everything above it.
+            paidReward?.Invoke();
         });
         RefreshEquippedSummary(playerName);
         rewardedXp = rewards.Xp;
@@ -407,6 +457,37 @@ internal sealed partial class PlayerInventoryService
         }
 
         return needed == 0;
+    }
+
+    // How many of the player's rows are quests the content still has. BH-QUEST-4: a row for a key the
+    // running content no longer knows (a quest renamed or removed in quests.json, a world moved between
+    // content versions) is kept inert and is unreachable from the client - BuildQuestLog and
+    // BuildNpcDialogue both filter to catalog quests, so the client is never told the key and can never
+    // send an abandon for it, and a completed row cannot be abandoned at all. Such rows must therefore
+    // not take the place of a quest the content does have, or a few of them would leave a character
+    // permanently unable to accept anything. Making them visible instead would mean inventing a title and
+    // objectives the content no longer has, on both sides of the protocol; keeping them inert is what the
+    // surrounding code (and QuestServiceTests's "kept inert") already does.
+    //
+    // Order-independent: it only counts, so a dictionary's iteration order cannot change the answer.
+    // Without a catalog every row counts, which is the old behaviour.
+    private static int LiveQuestRecordCount(Dictionary<string, QuestRecord> records, ContentCatalog? content)
+    {
+        if (content == null)
+        {
+            return records.Count;
+        }
+
+        int live = 0;
+        foreach (QuestRecord record in records.Values)
+        {
+            if (content.TryGetQuest(record.Key, out _))
+            {
+                live++;
+            }
+        }
+
+        return live;
     }
 
     private void BumpQuestRevision(string playerName)

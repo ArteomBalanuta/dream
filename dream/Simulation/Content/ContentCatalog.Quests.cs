@@ -12,6 +12,16 @@ public sealed partial class ContentCatalog
     public const string QuestsFileName = "quests.json";
 
     public const int MaxQuests = 32;
+
+    // The most quests one giver may be authored with. BuildNpcDialogue sends an NPC's whole list, and the
+    // dialogue window keeps the first QuestHudState.MaxOffers of them and silently drops the rest, so a
+    // ninth quest on one NPC is simply unreachable - it can be neither accepted nor turned in
+    // (BH-QUEST-3). The shipped content already has 7 of 8 on the gate warden, so one more authored quest
+    // would have broken it with no complaint at load. Rendering cannot be referenced from the simulation,
+    // so the number is repeated here and QuestGiverCapTests pins the two together. Raising it means
+    // teaching the dialogue window to page or scroll: it draws MaxOffers fixed row plates from the art.
+    public const int MaxQuestsPerGiver = 8;
+
     public const int MaxQuestObjectives = 4;
     public const int MaxQuestRewardItems = 4;
     public const int MaxQuestCount = 99;
@@ -91,6 +101,11 @@ public sealed partial class ContentCatalog
 
         List<QuestDefinition> list = [];
         HashSet<string> keys = new(StringComparer.Ordinal);
+
+        // Quests per giver, folded the way QuestsFor groups them. Counted as the file is read, so the
+        // quest that breaks the cap is the one named in the failure - and the check is file-order
+        // deterministic.
+        Dictionary<string, int> perGiver = new(StringComparer.OrdinalIgnoreCase);
         JsonElement questsElement = properties["quests"];
         ExpectArray(QuestsFileName, "$.quests", questsElement);
         int index = 0;
@@ -121,10 +136,21 @@ public sealed partial class ContentCatalog
                 throw Fail(QuestsFileName, $"{path}.giver", $"references missing npc '{Truncate(giver)}'");
             }
 
+            int given = perGiver.GetValueOrDefault(giver) + 1;
+            perGiver[giver] = given;
+            if (given > MaxQuestsPerGiver)
+            {
+                throw Fail(
+                    QuestsFileName,
+                    $"{path}.giver",
+                    $"npc '{Truncate(giver)}' is given more than {MaxQuestsPerGiver} quests; "
+                        + "the dialogue window shows only the first few, so the rest would be unreachable");
+            }
+
             List<QuestObjective> objectives = ParseQuestObjectives($"{path}.objectives", quest["objectives"], items, enemies);
             QuestRewards rewards = ParseQuestRewards($"{path}.rewards", quest["rewards"], items);
             string title = ReadName(QuestsFileName, $"{path}.title", quest["title"]);
-            string description = ReadText(QuestsFileName, $"{path}.description", quest["description"], MaxDescriptionLength);
+            string description = ReadText(QuestsFileName, $"{path}.description", quest["description"], MaxPanelDescriptionLength);
             int minWorldSize = 0;
             if (quest.TryGetValue("minWorldSize", out JsonElement minElement))
             {

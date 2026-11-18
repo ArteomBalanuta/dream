@@ -30,7 +30,7 @@ public sealed class EquipmentSqliteActionTests
     {
         MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('Alice', 'Alice'), ('Bob', 'Bob');");
         return db;
     }
@@ -40,9 +40,11 @@ public sealed class EquipmentSqliteActionTests
     {
         private readonly ServerPersistenceBundle _bundle;
         private readonly PersistenceWriteQueue _writes = PersistenceWriteQueue.Inline();
+        private readonly string _databasePath;
 
         public Run(MigrationTestDatabase db)
         {
+            _databasePath = db.DatabasePath;
             _bundle = ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath);
             Inventory = new PlayerInventoryService(_bundle.World, _writes, new ObjectIdAllocator(_bundle.World.LoadNextObjectId()));
         }
@@ -62,7 +64,7 @@ public sealed class EquipmentSqliteActionTests
             Assert.Equal(0, _writes.FailedWrites);
             _writes.Dispose();
             _bundle.Dispose();
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(_databasePath);
         }
     }
 

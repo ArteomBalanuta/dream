@@ -94,7 +94,7 @@ public sealed class Wave10GroupCommitRegistrationTests(ITestOutputHelper output)
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqlitePools.Release(Path.Combine(directory, "world.sqlite"));
             try
             {
                 Directory.Delete(directory, recursive: true);

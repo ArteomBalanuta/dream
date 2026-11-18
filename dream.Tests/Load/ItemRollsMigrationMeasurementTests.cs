@@ -7,8 +7,10 @@ using Xunit.Abstractions;
 
 namespace Dream.Tests.Load;
 
-// Wave H gate: migration 0008 (item_instances.rolled_modifiers) on a v7 database holding 100,000
-// item rows takes at most one second and leaves every row. The column add rewrites no table.
+// Wave H gate: the migrations from 0008 (item_instances.rolled_modifiers) onwards, on a v7 database
+// holding 100,000 item rows, take at most one second and leave every row. No migration in the set
+// rewrites item_instances. The target version is read from the migration set rather than pinned, so
+// the row-preservation half of the gate keeps running as migrations are added.
 public sealed class ItemRollsMigrationMeasurementTests(ITestOutputHelper output)
 {
     private const int Items = 100_000;
@@ -40,9 +42,11 @@ public sealed class ItemRollsMigrationMeasurementTests(ITestOutputHelper output)
         SchemaMigrationResult result = database.Schema.EnsureSchema();
         watch.Stop();
 
-        output.WriteLine($"migrations 0008 and 0009 on {before:N0} items: {watch.Elapsed.TotalMilliseconds:F1} ms (v{result.FromVersion} to v{result.ToVersion})");
+        output.WriteLine($"migrations 0008..{all.Count:0000} on {before:N0} items: {watch.Elapsed.TotalMilliseconds:F1} ms (v{result.FromVersion} to v{result.ToVersion})");
         Assert.Equal(7, result.FromVersion);
-        Assert.Equal(10, result.ToVersion);
+        // The whole remaining set, not a frozen version: the hard-coded 10 went stale as migrations were
+        // added, and the row-preservation assertion below never ran because this one failed first.
+        Assert.Equal(all.Count, result.ToVersion);
         Assert.True(before >= Items, $"seeded {before}");
         Assert.Equal(before, Count(database));
         Assert.True(watch.Elapsed.TotalMilliseconds <= 1000, $"migration took {watch.Elapsed.TotalMilliseconds:F1} ms (gate 1000 ms)");

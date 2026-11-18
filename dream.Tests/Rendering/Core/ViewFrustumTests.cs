@@ -205,7 +205,7 @@ public class ViewFrustumTests
         Matrix4 projection = GameProjection();
         int hits = 0;
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             ViewFrustum frustum = ViewFrustum.FromViewAndProjection(view, projection);
             for (int i = 0; i < 64; i++)

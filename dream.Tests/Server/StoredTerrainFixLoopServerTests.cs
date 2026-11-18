@@ -82,7 +82,7 @@ public sealed class StoredTerrainFixLoopServerTests
         Assert.NotNull(handle.ErrorMessage);
         Assert.Equal(1, spy.DisposeCount);
         // The database is free: nothing of the failed start still holds it.
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePools.Release(fixture.DatabasePath);
         _ = fixture.OpenBundle();
     }
 

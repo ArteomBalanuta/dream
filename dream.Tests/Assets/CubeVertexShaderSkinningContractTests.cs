@@ -10,12 +10,10 @@ public class CubeVertexShaderSkinningContractTests
     [Fact]
     public void CubeVertexShader_Declares_FirstPass_Skinning_Contract()
     {
+        // Walk up to the repo root instead of counting "..": the output folder's depth changes
+        // when the build redirects BaseOutputPath, and a fixed hop then misses the shader.
         string path = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
+            Dream.Tests.Integration.RepoRoot.Find(),
             "dream",
             "shaders",
             "cubeVertex.glsl"));

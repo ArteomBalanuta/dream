@@ -339,6 +339,10 @@ public sealed class SkillsLoopbackTests
         ConnectedPlayer player = rig.Player(rig.A);
         Assert.True(player.ProtectedThroughTick > rig.Runtime.CurrentServerTick, "a joined player starts protected");
 
+        // The mend has to be a real heal for this to test anything: a SelfHeal that would restore
+        // nothing is refused outright (BH-SKILL-1), and a refused cast is not what "does not end
+        // spawn protection" is about.
+        rig.Combatant(rig.A).Health.ApplyDamage(10);
         M4BRig.AssertUsed(await rig.ActAsync(rig.A, new SkillUseIntent("skill.mend")));
         Assert.True(player.ProtectedThroughTick > rig.Runtime.CurrentServerTick);
 

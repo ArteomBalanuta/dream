@@ -32,7 +32,7 @@ public class StaticTerrainBatchedPassTests
         Assert.True(stats.MeshCount >= 40, $"{stats.MeshCount} meshes");
         Assert.True(stats.MaterialBinds >= 8, $"{stats.MaterialBinds} material binds");
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() => renderer.Draw(render, camera, export));
+        long bytes = AllocationAssert.AtMost(0, () => renderer.Draw(render, camera, export));
 
         Assert.Equal(0, bytes);
     }
@@ -145,7 +145,7 @@ public class StaticTerrainBatchedPassTests
         Assert.True(visibleHandles.Length >= stats.MeshCount);
         Assert.All(visibleHandles, handle => Assert.Null(handle));
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() => renderer.Draw(render, camera, export));
+        long bytes = AllocationAssert.AtMost(0, () => renderer.Draw(render, camera, export));
         Assert.Equal(0, bytes);
     }
 
@@ -203,7 +203,7 @@ public class StaticTerrainBatchedPassTests
             StaticTerrainMaterialCatalog.ResolveRoles(GeometryMaterialId.Grass),
             StaticTerrainMaterialCatalog.ResolveRoles(GeometryMaterialId.Grass));
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             StaticTerrainMaterialCatalog.Resolve(GeometryMaterialId.Grass, StaticTerrainMaterialRole.Side);
             StaticTerrainMaterialCatalog.Resolve(GeometryMaterialId.GrassPath);

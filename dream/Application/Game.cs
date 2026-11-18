@@ -41,6 +41,10 @@ public class Game : GameWindow
     // The stops of the integrated servers let go of so far. They all share one world database, so
     // a new integrated server starts only after them, and the window close waits for them.
     private readonly LocalServerShutdownGate _localServerShutdown = new();
+    // OnUnload is called by GameWindow.Run only after the loop exits normally. An exception out of a
+    // frame callback leaves Run before that, so Dispose backstops the local-server stop; this flag
+    // keeps the two paths from both running it.
+    private bool _unloaded;
     // Title setters are synchronous Win32 calls; skip them when the text has not changed.
     private readonly ChangedTextSink _consoleTitle = new(text => Console.Title = text);
     private readonly ChangedTextSink _windowTitle;
@@ -892,6 +896,7 @@ public class Game : GameWindow
     protected override void OnUnload()
     {
         Console.WriteLine("[exit] window closing: releasing scenes and stopping the local server");
+        _unloaded = true;
         List<Exception>? failures = null;
         try
         {
@@ -978,8 +983,30 @@ public class Game : GameWindow
         PersistDesktopClientConfig();
     }
 
+    // These commit callbacks fire from inside the render pass (the Options rows are drawn there), so a
+    // read-only install directory, or a file held open by a backup or AV scanner, must not take the
+    // session down: the failure is reported and the setting simply does not persist.
     private void PersistDesktopClientConfig()
     {
-        DesktopClientTextConfig.Save(_desktopClientConfigPath, _desktopClientConfig);
+        DesktopClientTextConfig.TrySave(_desktopClientConfigPath, _desktopClientConfig);
+    }
+
+    // Backstop for the path OnUnload never sees: GameWindow.Run has no exception handling around the
+    // frame callbacks, so an exception out of a frame leaves Run without OnUnload ever being called, and
+    // GameWindow.Dispose does not call it either. Program.RunDesktop's `using` still reaches here, so the
+    // integrated server is stopped and the world drained to disk before the process goes down.
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && !_unloaded)
+        {
+            _unloaded = true;
+            Console.Error.WriteLine("[exit] window torn down without a clean unload: stopping the local server");
+            if (PlaySessionEndTransition.StopLocalServerForExit(_localServer, _localServerShutdown) is Exception stopFailure)
+            {
+                Console.Error.WriteLine($"[exit] {stopFailure.GetType().Name}: {stopFailure.Message}");
+            }
+        }
+
+        base.Dispose(disposing);
     }
 }

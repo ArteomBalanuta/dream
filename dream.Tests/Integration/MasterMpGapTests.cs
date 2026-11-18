@@ -102,7 +102,7 @@ public sealed class MasterMpGapTests
             Assert.Contains(a.Applied.OfType<ServerPlayerProgress>(), p => p.BaseStats.Agility == AgilityAfter && p.BaseStats.Energy == EnergyAfter);
 
             await a.LeaveAsync();
-            M4AKit.Flush(server);
+            await M4AKit.FlushAsync(server);
         }
 
         SqlitePools.Release(db.Schema);

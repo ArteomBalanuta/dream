@@ -38,7 +38,15 @@ public sealed partial class ContentCatalog
 
     // Vendors and gold (M3).
     public const int MaxNpcs = 64;
-    public const int MaxNpcStock = 32;
+
+    // The most stock entries one vendor may be authored with. The vendor window draws
+    // VendorWindow.BuyRows fixed row plates from the art and has no pager over the buy list (only the
+    // sell list pages), and VendorHudState keeps at most MaxStock lines, so a ninth stock entry is
+    // simply unbuyable - it never appears in any UI and nothing says so at load (BH-CONTENT-1). The
+    // shipped quartermaster already has 6 of 8. Rendering cannot be referenced from the simulation, so
+    // the number is repeated here and ContentVendorStockCapTests pins the two together. Raising it
+    // means teaching the vendor window to page or scroll the buy list: that is UI work, not content.
+    public const int MaxNpcStock = 8;
     public const int MaxNpcGreetingLength = 400;
     public const float MaxNpcOffset = 1000f;
     public const int MaxGoldAmount = 1_000_000;
@@ -407,7 +415,7 @@ public sealed partial class ContentCatalog
             optional: ["rolls", "footprint", "sellPrice", "use"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
-        string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxDescriptionLength);
+        string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxPanelDescriptionLength);
         string visualId = ReadVisualId(ItemsFileName, $"{path}.visualId", properties["visualId"]);
 
         List<string> detailLines = [];
@@ -478,8 +486,12 @@ public sealed partial class ContentCatalog
             throw Fail(ItemsFileName, path, "must restore health or mana");
         }
 
+        // The cooldown group is a content key: it is looked up by value (AbilityCooldowns.IsReady) and
+        // travels on the wire as AbilityCooldown.Key, and the quickbar drops a cooldown whose key is
+        // longer than its own key cap, which would leave the tile looking ready while every click is
+        // refused (BH-CONTENT-2). So it is read with the same rules as every other key.
         string? group = use.TryGetValue("cooldownGroup", out JsonElement groupElement)
-            ? ReadNonEmptyString(ItemsFileName, $"{path}.cooldownGroup", groupElement)
+            ? ReadKey(ItemsFileName, $"{path}.cooldownGroup", groupElement)
             : null;
         return new ItemUseDefinition(health, mana, cooldown, group);
     }
@@ -905,7 +917,10 @@ public sealed partial class ContentCatalog
         _ = ReadInt(NpcsFileName, "$.version", properties["version"], 1, 1);
 
         List<NpcDefinition> list = [];
-        HashSet<string> keys = new(StringComparer.Ordinal);
+        // Case-insensitive, like every other content collection: an NPC key is looked up case-insensitively
+        // (QuestsFor, _questsByGiver, the quest-giver match), so two case-variant NPCs would each offer and
+        // accept the other's quests (BH-CONTENT-4). The dedupe must use the comparer the lookups use.
+        HashSet<string> keys = new(StringComparer.OrdinalIgnoreCase);
         JsonElement npcsElement = properties["npcs"];
         ExpectArray(NpcsFileName, "$.npcs", npcsElement);
         int index = 0;
@@ -934,7 +949,11 @@ public sealed partial class ContentCatalog
             ExpectArray(NpcsFileName, $"{path}.stock", stockElement);
             if (stockElement.GetArrayLength() > MaxNpcStock)
             {
-                throw Fail(NpcsFileName, $"{path}.stock", $"has more than {MaxNpcStock} entries");
+                throw Fail(
+                    NpcsFileName,
+                    $"{path}.stock",
+                    $"has more than {MaxNpcStock} entries; the vendor window draws only the first few "
+                        + "buy rows and has no pager, so the rest would be unbuyable");
             }
 
             List<NpcStockEntry> stock = [];
@@ -1004,6 +1023,19 @@ public sealed partial class ContentCatalog
         Dictionary<string, JsonElement> properties = ReadProperties(SkillsFileName, "$", root, ["version", "skills", "defaultQuickbar"]);
         _ = ReadInt(SkillsFileName, "$.version", properties["version"], 1, 1);
 
+        // BH-SKILL-3: one AbilityCooldowns list serves both skill keys and item cooldown groups, compared
+        // ordinal-ignore-case, so a skill whose key equals an item's effective cooldown group would
+        // silently gate that item and be gated by it. Authors learn at load instead of shipping it.
+        Dictionary<string, string> cooldownGroupOwners = new(StringComparer.OrdinalIgnoreCase);
+        for (int itemIndex = 0; itemIndex < items.List.Count; itemIndex++)
+        {
+            ItemDefinition item = items.List[itemIndex];
+            if (item.Use != null)
+            {
+                cooldownGroupOwners.TryAdd(item.Use.EffectiveCooldownGroup, item.Key);
+            }
+        }
+
         Dictionary<string, SkillDefinition> byKey = new(StringComparer.OrdinalIgnoreCase);
         List<SkillDefinition> list = [];
         JsonElement skillsElement = properties["skills"];
@@ -1021,6 +1053,15 @@ public sealed partial class ContentCatalog
             if (!byKey.TryAdd(skill.Key, skill))
             {
                 throw Fail(SkillsFileName, $"{path}.key", $"duplicate skill key '{skill.Key}'");
+            }
+
+            if (cooldownGroupOwners.TryGetValue(skill.Key, out string? owningItem))
+            {
+                throw Fail(
+                    SkillsFileName,
+                    $"{path}.key",
+                    $"skill key '{skill.Key}' is also the cooldown group of item '{owningItem}', "
+                        + "so the two would share one cooldown");
             }
 
             list.Add(skill);
@@ -1256,7 +1297,7 @@ public sealed partial class ContentCatalog
         StringBuilder text = new();
         // Every free-text field is length-prefixed ("5:Stone"), so a '|' or a newline inside a value
         // cannot shift into the next field and make two different catalogs hash alike.
-        text.Append("items.v5;kit=").Append(items.StarterKitVersion.ToString(c))
+        text.Append("items.v6;kit=").Append(items.StarterKitVersion.ToString(c))
             .Append(";unrecorded=").Append(items.UnrecordedStarterKitVersion.ToString(c)).Append('\n');
         foreach (StarterKitEntry entry in items.StarterKit)
         {
@@ -1302,8 +1343,12 @@ public sealed partial class ContentCatalog
 
             if (item.Use != null)
             {
+                // The cooldown group is simulation-visible - it decides whether a use is accepted
+                // (Consumables.IsReady) - so two catalogs whose items.json differ only in the cooldown
+                // pool must not hash alike (BH-CONTENT-3).
                 text.Append("use|").Append(item.Use.RestoreHealth.ToString(c)).Append('|')
-                    .Append(item.Use.RestoreMana.ToString(c)).Append('|').Append(item.Use.CooldownTicks.ToString(c)).Append('\n');
+                    .Append(item.Use.RestoreMana.ToString(c)).Append('|').Append(item.Use.CooldownTicks.ToString(c)).Append('|');
+                AppendField(text, item.Use.CooldownGroup ?? "-").Append('\n');
             }
 
             if (item.Rolls != null)
@@ -1541,8 +1586,18 @@ public sealed partial class ContentCatalog
     public const int MaxDisplayNameLength = 64;
     public const int MaxVisualIdLength = 64;
     public const int MaxDescriptionLength = 512;
+
+    // A description the panels actually draw (an item tooltip, a quest's dialogue box) is cut to this
+    // many characters by the client, so authoring more is text no player ever sees and nothing says so
+    // at load (BH-CONTENT-5). It matches ItemOverlays' and QuestHudState's text cap, which
+    // ContentPanelTextCapTests pins; the NPC greeting cap is already the same number. A skill
+    // description is never drawn, so it keeps MaxDescriptionLength.
+    public const int MaxPanelDescriptionLength = 400;
     public const int MaxDetailLineLength = 256;
-    public const int MaxDetailLines = 16;
+
+    // The item tooltip draws this many detail lines and then stops (ItemOverlays.MaxDetailLines), so a
+    // ninth authored line is unreachable (BH-CONTENT-5). ContentPanelTextCapTests pins the two.
+    public const int MaxDetailLines = 8;
 
     // An enemy that cannot move at all (0, -0.0) or moves a hair per second is a content mistake.
     public const float MinMoveSpeed = 0.01f;

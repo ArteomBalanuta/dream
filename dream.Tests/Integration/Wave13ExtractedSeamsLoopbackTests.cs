@@ -225,7 +225,7 @@ public sealed class Wave13ExtractedSeamsLoopbackTests(ITestOutputHelper output)
             rig.Host.Dispose();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         {
             await using Wave12DeltaActorLoopbackTests.Rig rig = await StartAsync(database);

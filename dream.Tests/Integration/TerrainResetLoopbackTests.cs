@@ -34,14 +34,14 @@ public sealed class TerrainResetLoopbackTests(ITestOutputHelper output)
             fractures = script.Fractures;
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         Assert.True(fractures > 0);
         long overridesBefore = Scalar(db.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides;");
         long placedBefore = Scalar(db.DatabasePath, "SELECT COUNT(*) FROM placed_cube_instances;");
         Assert.True(overridesBefore > 0);
 
         TerrainResetResult result = new SqliteWorldCatalog(db.Schema).ResetTerrain(WorldId.Default);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         output.WriteLine($"reset: cleared={result.OverridesCleared} rubble={result.RubbleRowsDeleted} kept={result.CellsKeptForPlacedCubes} (placed cubes saved: {placedBefore})");
         Assert.Equal((int)overridesBefore - result.CellsKeptForPlacedCubes, result.OverridesCleared);
         Assert.Equal((long)result.CellsKeptForPlacedCubes, Scalar(db.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides;"));

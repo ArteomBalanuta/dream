@@ -76,6 +76,14 @@ public sealed partial class WorldSessionRuntime
     private string DisplayNameOfKey(string key)
         => TryFindSpawnedPlayerByKey(key, out ConnectedPlayer player) ? player.DisplayName : key;
 
+    // BH-CLOCK-1. A display name is player-supplied text, and the client renders a System line bare,
+    // with no name prefix, so a name that reads like a server message could pass for the whole line.
+    // Every name interpolated into a System line goes through here: it is quoted, and an apostrophe
+    // inside it becomes a typographic one so the quoted span cannot be closed early. Callers also
+    // keep server-authored words in front of the name, so a name never opens a System line.
+    internal static string QuotedName(string? name)
+        => string.Concat("'", (name ?? string.Empty).Replace("'", "\u2019"), "'");
+
     // One System chat line to one session, through the session queue.
     private void SendSystemLine(PlayerSessionId session, string text)
         => QueueSessionMessage(session, new ServerChatMessage(ChatChannel.System, "", text, CurrentServerTick));
@@ -114,9 +122,9 @@ public sealed partial class WorldSessionRuntime
                 PartyOutcome.Cooldown => "Wait a moment before inviting again.",
                 PartyOutcome.SelfInvite => "You cannot invite yourself.",
                 PartyOutcome.NotLeader => "Only the party leader can invite.",
-                PartyOutcome.TargetInParty => $"{target.DisplayName} is already in a party.",
+                PartyOutcome.TargetInParty => $"Party: {QuotedName(target.DisplayName)} is already in a party.",
                 PartyOutcome.PartyFull => "Your party is full.",
-                PartyOutcome.AlreadyInvited => $"{target.DisplayName} already has an invite pending.",
+                PartyOutcome.AlreadyInvited => $"Party: {QuotedName(target.DisplayName)} already has an invite pending.",
                 _ => "The invite was not valid.",
             };
             SendSystemLine(player.SessionId, text);
@@ -126,12 +134,12 @@ public sealed partial class WorldSessionRuntime
         if (refreshed)
         {
             // The invite is already on the target's screen: its time is renewed, and nothing is sent to it.
-            SendSystemLine(player.SessionId, $"{target.DisplayName} already has your invite.");
+            SendSystemLine(player.SessionId, $"Party: {QuotedName(target.DisplayName)} already has your invite.");
             return CreateAcceptedActionResult(message);
         }
 
-        SendSystemLine(player.SessionId, $"You invited {target.DisplayName} to your party.");
-        SendSystemLine(target.SessionId, $"{player.DisplayName} invited you to a party. Type /accept or /decline.");
+        SendSystemLine(player.SessionId, $"You invited {QuotedName(target.DisplayName)} to your party.");
+        SendSystemLine(target.SessionId, $"Party: {QuotedName(player.DisplayName)} invited you to a party. Type /accept or /decline.");
         return CreateAcceptedActionResult(message);
     }
 
@@ -154,6 +162,7 @@ public sealed partial class WorldSessionRuntime
                 PartyOutcome.InviteExpired => "The invite has expired.",
                 PartyOutcome.PartyFull => "That party is full.",
                 PartyOutcome.AlreadyInParty => "You are already in a party.",
+                PartyOutcome.NotLeader => "Whoever invited you no longer leads that party.",
                 _ => "The invite was not valid.",
             };
             SendSystemLine(player.SessionId, text);
@@ -163,10 +172,10 @@ public sealed partial class WorldSessionRuntime
         string inviterName = inviterKey == null ? "" : DisplayNameOfKey(inviterKey);
         if (intent.Accept)
         {
-            SendSystemLine(player.SessionId, $"You joined {inviterName}'s party.");
+            SendSystemLine(player.SessionId, $"You joined the party of {QuotedName(inviterName)}.");
             if (inviterKey != null && TryFindSpawnedPlayerByKey(inviterKey, out ConnectedPlayer inviter))
             {
-                SendSystemLine(inviter.SessionId, $"{player.DisplayName} joined the party.");
+                SendSystemLine(inviter.SessionId, $"Party: {QuotedName(player.DisplayName)} joined the party.");
             }
         }
         else
@@ -174,7 +183,7 @@ public sealed partial class WorldSessionRuntime
             SendSystemLine(player.SessionId, "Invite declined.");
             if (inviterKey != null && TryFindSpawnedPlayerByKey(inviterKey, out ConnectedPlayer inviter))
             {
-                SendSystemLine(inviter.SessionId, $"{player.DisplayName} declined the invite.");
+                SendSystemLine(inviter.SessionId, $"Party: {QuotedName(player.DisplayName)} declined the invite.");
             }
         }
 
@@ -212,7 +221,7 @@ public sealed partial class WorldSessionRuntime
         {
             if (TryFindSpawnedPlayerByKey(other, out ConnectedPlayer mate))
             {
-                SendSystemLine(mate.SessionId, $"{player.DisplayName} left the party.");
+                SendSystemLine(mate.SessionId, $"Party: {QuotedName(player.DisplayName)} left the party.");
             }
         }
 

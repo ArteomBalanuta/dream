@@ -16,7 +16,7 @@ public sealed class DatabaseCliTests
         StringWriter output = new();
         StringWriter error = new();
         int exit = DatabaseCli.Run(args, db.DatabasePath, MigrationTestDatabase.InitScriptPath, output, error);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return (exit, output.ToString(), error.ToString());
     }
 
@@ -25,7 +25,7 @@ public sealed class DatabaseCliTests
         MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
         db.ExecuteScript($"INSERT INTO player_profiles (player_name, display_name) VALUES ('{name}', '{name}');");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return db;
     }
 
@@ -88,7 +88,7 @@ public sealed class DatabaseCliTests
         string target = Backup(db);
         Assert.Equal(0, Run(db, "backup", target).Exit);
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('bob', 'bob');");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         (int exit, string output, string error) = Run(db, "restore", target, "--yes");
 
@@ -110,7 +110,7 @@ public sealed class DatabaseCliTests
         command.CommandText = $"SELECT COUNT(*) FROM player_profiles WHERE player_name = '{name}';";
         long count = (long)command.ExecuteScalar()!;
         connection.Close();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(databaseFile);
         return count;
     }
 
@@ -126,7 +126,7 @@ public sealed class DatabaseCliTests
             File.Copy(db.DatabasePath + "-wal", destination + "-wal", overwrite: true);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
     }
 
     private static string BackupOf(MigrationTestDatabase db, string fileName)
@@ -220,7 +220,7 @@ public sealed class DatabaseCliTests
         using MigrationTestDatabase db = WithPlayer("alice");
         string source = BackupOf(db, "source.db");
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('bob', 'bob');");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         byte[] before = File.ReadAllBytes(db.DatabasePath);
 
         int exit;
@@ -310,7 +310,7 @@ public sealed class DatabaseCliTests
         using MigrationTestDatabase db = WithPlayer("alice");
         string source = BackupOf(db, "source.db");
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('bob', 'bob');");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         byte[] before = File.ReadAllBytes(db.DatabasePath);
 
         int exit;
@@ -341,7 +341,7 @@ public sealed class DatabaseCliTests
             MigrationTestDatabase.Execute(connection, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT); INSERT INTO notes (body) VALUES ('x');");
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         (exit, _, error) = Run(db, "restore", foreign, "--yes");
         Assert.Equal(DatabaseCli.ExitSourceOrTargetInvalid, exit);
         Assert.Contains("not a Dream database", error, StringComparison.Ordinal);
@@ -443,7 +443,7 @@ public sealed class DatabaseCliTests
         string target = Backup(db);
         Assert.Equal(0, Run(db, "backup", target).Exit);
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('bob', 'bob');");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         using ServerPersistenceBundle server = ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath);
         (int exit, _, string error) = Run(db, "restore", target, "--yes");
@@ -466,7 +466,7 @@ public sealed class DatabaseCliTests
                 $"INSERT INTO schema_version (version, name, applied_utc) VALUES ({MigrationTestDatabase.ShippedLatestVersion + 1}, 'future', 'x');");
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         (int exit, _, string error) = Run(db, "restore", newer, "--yes");
         Assert.Equal(DatabaseCli.ExitSchemaTooNew, exit);
         Assert.Contains("newer than", error, StringComparison.Ordinal);

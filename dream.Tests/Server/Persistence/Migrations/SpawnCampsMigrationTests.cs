@@ -56,7 +56,7 @@ public sealed class SpawnCampsMigrationTests
         using MigrationTestDatabase database = V10WithEnemies();
         string before = Dump(database);
         Assert.NotEmpty(before);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
@@ -88,7 +88,7 @@ public sealed class SpawnCampsMigrationTests
     public void ACampKey_RoundTripsThroughTheRepository_AndALegacyRowReadsBackWithNone()
     {
         using MigrationTestDatabase database = V10WithEnemies();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         database.Schema.EnsureSchema();
         SqliteWorldPersistenceRepository world = new(database.Schema);
 

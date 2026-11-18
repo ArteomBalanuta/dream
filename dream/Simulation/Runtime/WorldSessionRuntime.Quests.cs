@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using Dream.Multiplayer.Diagnostics;
@@ -46,7 +47,7 @@ public sealed partial class WorldSessionRuntime
         {
             outcome = RunInventoryAction(
                 player,
-                static (service, key, definition) => service.TryAcceptQuest(key, definition),
+                (service, key, definition) => service.TryAcceptQuest(key, definition, EnemyContent),
                 quest!);
         }
 
@@ -61,21 +62,36 @@ public sealed partial class WorldSessionRuntime
         InventoryEquipOutcome outcome = ResolveQuestGiver(player, intent.NpcActorId, intent.QuestKey, out QuestDefinition? quest);
         if (outcome == InventoryEquipOutcome.Equipped)
         {
-            long xp = 0;
+            // BH-QUEST-2: the XP is part of the reward, so its profile write goes INSIDE the turn-in's
+            // own closure. The turn-in asks for it only once every guard has passed, so it is still
+            // granted only for an accepted turn-in, and never for a refused or failed one.
+            PlayerSessionId session = message.SessionId;
+            _pendingQuestXpGrant = null;
             outcome = RunInventoryAction(
                 player,
-                (service, key, definition) =>
-                {
-                    InventoryEquipOutcome result = service.TryTurnInQuest(key, definition, out long rewarded);
-                    xp = rewarded;
-                    return result;
-                },
+                (service, key, definition) => service.TryTurnInQuest(
+                    key,
+                    definition,
+                    out _,
+                    () => GrantQuestExperience(session, definition.Rewards.Xp),
+                    EnemyContent),
                 quest!);
+            QuestXpGrant? grant = _pendingQuestXpGrant;
+            _pendingQuestXpGrant = null;
             if (outcome == InventoryEquipOutcome.Equipped)
             {
-                // Only after the turn-in was accepted, and never for a refused or failed one.
-                GrantQuestExperience(message.SessionId, xp);
                 MarkInventoryPush(message.SessionId);
+                if (grant != null)
+                {
+                    WatchQuestExperience(grant);
+                }
+            }
+            else if (grant != null)
+            {
+                // The turn-in asks for the reward write only after its guards have passed, so this is
+                // belt and braces: a refusal that still took the XP puts it straight back, here on the
+                // tick thread.
+                _questXpRollbacks.Enqueue(grant);
             }
         }
 
@@ -199,11 +215,25 @@ public sealed partial class WorldSessionRuntime
             }
         }
 
+        // BH-DEATH-1: the list above dedupes by SESSION, but the credit below is by CHARACTER key - the
+        // key RecordKill's own records are held under (PlayerInventoryService._questsByPlayer, ordinal).
+        // Two live seats of one character (a returning session can be seated beside a second session that
+        // took its name while it was away) therefore counted one death twice. Dedupe on the key that is
+        // actually credited, so one character takes at most one kill from one death however many seats it
+        // holds. Ordinal and in contributor order, so the credit stays deterministic.
+        List<string> creditedKeys = [];
         foreach (PlayerSessionId session in credited)
         {
             if (TryResolveAuthoritativePlayerTarget(session, out ConnectedPlayer? who, out _) && who != null)
             {
-                _inventory.RecordKill(who.CharacterKey.Value, EnemyContent, enemyKind);
+                string key = who.CharacterKey.Value;
+                if (creditedKeys.Contains(key, StringComparer.Ordinal))
+                {
+                    continue;
+                }
+
+                creditedKeys.Add(key);
+                _inventory.RecordKill(key, EnemyContent, enemyKind);
             }
         }
     }
@@ -212,17 +242,24 @@ public sealed partial class WorldSessionRuntime
     private bool HasActiveQuestAnywhere() => EnemyContent.Quests.Count > 0;
 
     // XP of a quest through the combatant, like a kill's: level up while the bar is full, then save the
-    // profile. A separate write from the turn-in closure; see the accepted risk in the M5 plan.
-    private void GrantQuestExperience(PlayerSessionId session, long xp)
+    // profile. Called from the turn-in while it builds its one closure (BH-QUEST-2): the progression is
+    // applied in memory here and the profile write is RETURNED, so the turn-in runs it inside that
+    // closure. It used to be queued after the closure, as a savepoint of its own, which let a failed
+    // completion pay the XP durably and leave the quest turn-in-able again after a restart. Null when
+    // there is nothing to grant or no profile to save.
+    private Action? GrantQuestExperience(PlayerSessionId session, long xp)
     {
         if (xp <= 0
-            || !TryResolveAuthoritativePlayerTarget(session, out _, out IAuthoritativePlayerTarget? target)
-            || target == null)
+            || !TryResolveAuthoritativePlayerTarget(session, out ConnectedPlayer? who, out IAuthoritativePlayerTarget? target)
+            || target == null
+            || who == null)
         {
-            return;
+            return null;
         }
 
         PlayerCombatant combatant = target.Combatant;
+        int beforeLevel = combatant.Level;
+        int beforeExperience = combatant.Experience;
         int level = combatant.Level;
         long experience = combatant.Experience + xp;
         int required = _combatFormulaService.EvaluateExperienceToNextLevel(level, (int)Math.Min(experience, int.MaxValue));
@@ -233,8 +270,116 @@ public sealed partial class WorldSessionRuntime
             required = _combatFormulaService.EvaluateExperienceToNextLevel(level, (int)Math.Min(experience, int.MaxValue));
         }
 
-        combatant.ApplyProgression(level, (int)Math.Min(experience, int.MaxValue));
-        PersistPlayerProfile(session, combatant);
+        int grantedExperience = (int)Math.Min(experience, int.MaxValue);
+        combatant.ApplyProgression(level, grantedExperience);
+        Action? write = PrepareProfileWrite(session, combatant);
+        if (write == null)
+        {
+            // No profile to save (a local or unrestored seat): nothing durable rides with the closure,
+            // so there is nothing to roll back either, and the behaviour is what it has always been.
+            return null;
+        }
+
+        // BH-REV2-3: the progression above and the profile PrepareProfileWrite cached are in memory NOW,
+        // while the durable write only runs if the turn-in's closure commits. Remember enough to put both
+        // back, and mark the grant written from inside the closure, after the repository call returned.
+        QuestXpGrant grant = new(session, who.CharacterKey.Value, beforeLevel, beforeExperience, level, grantedExperience);
+        _pendingQuestXpGrant = grant;
+        return () =>
+        {
+            write();
+            grant.Written = true;
+        };
+    }
+
+    // What one turn-in's XP changed, so it can be undone when the turn-in's closure does not commit.
+    private sealed class QuestXpGrant(
+        PlayerSessionId session,
+        string characterKey,
+        int beforeLevel,
+        int beforeExperience,
+        int grantedLevel,
+        int grantedExperience)
+    {
+        public PlayerSessionId Session { get; } = session;
+
+        public string CharacterKey { get; } = characterKey;
+
+        public int BeforeLevel { get; } = beforeLevel;
+
+        public int BeforeExperience { get; } = beforeExperience;
+
+        public int GrantedLevel { get; } = grantedLevel;
+
+        public int GrantedExperience { get; } = grantedExperience;
+
+        // Set on the persistence worker inside the turn-in's closure; read there too (the check read runs
+        // on the same worker, after it), so the volatile write is all the ordering it needs.
+        public volatile bool Written;
+    }
+
+    // The grant of the turn-in being processed: GrantQuestExperience is called from inside TryTurnInQuest,
+    // which has no way to hand it back, and the action path is serial on the tick thread.
+    private QuestXpGrant? _pendingQuestXpGrant;
+
+    // Grants whose closure did not commit, applied on the tick thread by StepQuestLogs. FIFO, so the
+    // order never depends on a dictionary's.
+    private readonly ConcurrentQueue<QuestXpGrant> _questXpRollbacks = new();
+
+    // The XP's profile write rides inside the turn-in's one closure (BH-QUEST-2), so a rolled-back
+    // savepoint leaves the quest row active while the combatant and the cached profile already carry the
+    // XP -- and the next unrelated profile save (DetachRemoteSession -> PersistPlayerProfile, which reads
+    // GetCachedProfile) would make it durable, so a rejoin could hand the same quest in again for the same
+    // XP (BH-REV2-3). This read is queued AFTER the closure: it runs on the persistence worker once the
+    // closure has run or failed, reads no row and no clock, and only ever hands the tick thread a rollback.
+    // Bounded: one read per paid turn-in, and a queue that refuses it rolls the grant back at once.
+    private void WatchQuestExperience(QuestXpGrant grant)
+    {
+        if (PersistenceWrites is not { } writes || !writes.EnqueueRead(() =>
+            {
+                if (!grant.Written)
+                {
+                    _questXpRollbacks.Enqueue(grant);
+                }
+            }))
+        {
+            if (!grant.Written)
+            {
+                _questXpRollbacks.Enqueue(grant);
+            }
+        }
+    }
+
+    // Puts back the XP of a turn-in whose closure did not commit. Under the tick lock (StepQuestLogs).
+    private void ApplyQuestExperienceRollbacks()
+    {
+        while (_questXpRollbacks.TryDequeue(out QuestXpGrant? grant))
+        {
+            // Only while the progression is still exactly what the grant set: XP earned between the
+            // turn-in and this rollback is never erased.
+            if (TryResolveAuthoritativePlayerTarget(grant.Session, out _, out IAuthoritativePlayerTarget? target)
+                && target != null
+                && target.Combatant.Level == grant.GrantedLevel
+                && target.Combatant.Experience == grant.GrantedExperience)
+            {
+                target.Combatant.ApplyProgression(grant.BeforeLevel, grant.BeforeExperience);
+                // Re-caches the profile without the XP and saves it, so neither the cache nor the row
+                // can carry XP for a quest that stayed active.
+                PersistPlayerProfile(grant.Session, target.Combatant);
+                NetworkDiagnosticsLog.Write(
+                    "server.quest.xp-rolled-back",
+                    $"character={grant.CharacterKey} level={grant.BeforeLevel} experience={grant.BeforeExperience}");
+                continue;
+            }
+
+            // The seat has gone (or moved on): the cached profile is what a later save would write, so
+            // the XP comes out of there instead, when it is still exactly what the grant put in.
+            bool reverted = _persistence.TryRollBackProfileExperience(
+                grant.CharacterKey, grant.GrantedLevel, grant.GrantedExperience, grant.BeforeLevel, grant.BeforeExperience);
+            NetworkDiagnosticsLog.Write(
+                "server.quest.xp-rolled-back",
+                $"character={grant.CharacterKey} seat=gone cache={(reverted ? "reverted" : "moved-on")}");
+        }
     }
 
     // Once a tick (StepMultiplayerSystems): sends the quest log of a player when it was never sent for this
@@ -242,6 +387,11 @@ public sealed partial class WorldSessionRuntime
     // revision reads per spawned remote player when nothing changed.
     private void StepQuestLogs(ulong tick)
     {
+        if (!_questXpRollbacks.IsEmpty)
+        {
+            ApplyQuestExperienceRollbacks();
+        }
+
         if (EnemyContent.Quests.Count == 0 && _questLogSync.Count == 0)
         {
             return;

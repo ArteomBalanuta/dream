@@ -86,9 +86,9 @@ public sealed class DesktopClientConfig
         PlayerName = string.IsNullOrWhiteSpace(PlayerName) ? "dream-client" : PlayerName.Trim();
         Port = Port is < 1 or > 65535 ? ServerBootstrap.DefaultPort : Port;
         HostPort = HostPort is < 1 or > 65535 ? ServerBootstrap.DefaultPort : HostPort;
-        FieldOfViewDegrees = Math.Clamp(FieldOfViewDegrees, 50f, 100f);
-        MouseSensitivity = Math.Clamp(MouseSensitivity, 0.5f, 8f);
-        NoclipSpeed = Math.Clamp(NoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed);
+        FieldOfViewDegrees = SanitizeRange(FieldOfViewDegrees, 50f, 100f, 70f);
+        MouseSensitivity = SanitizeRange(MouseSensitivity, 0.5f, 8f, 2.5f);
+        NoclipSpeed = SanitizeRange(NoclipSpeed, GameSettings.MinNoclipSpeed, GameSettings.MaxNoclipSpeed, 18f);
         if (!Enum.IsDefined(CameraViewMode))
         {
             CameraViewMode = CameraViewMode.FirstPerson;
@@ -102,6 +102,13 @@ public sealed class DesktopClientConfig
         VolumeSfx = SanitizeVolume(VolumeSfx, 0.8f);
         VolumeMusic = SanitizeVolume(VolumeMusic, 0.5f);
         VolumeUi = SanitizeVolume(VolumeUi, 0.7f);
+    }
+
+    // Math.Clamp leaves NaN unchanged (both of its comparisons are false), and a NaN field of view poisons
+    // the projection matrix and is then written straight back to the file, so non-finite input falls back.
+    private static float SanitizeRange(float value, float min, float max, float fallback)
+    {
+        return float.IsFinite(value) ? Math.Clamp(value, min, max) : fallback;
     }
 
     private static float SanitizeVolume(float value, float fallback)

@@ -69,7 +69,7 @@ public sealed class PersistenceWriteQueueLockRetryTests(ITestOutputHelper output
         Assert.Equal(Enumerable.Range(0, Queued), landed);
         Assert.Equal(Queued, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'retried-%' AND player_name <> 'retried-ordered';"));
         Assert.Equal(Queued - 1, profiles.TryGet("retried-ordered")!.Value.Stats.Experience);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public sealed class PersistenceWriteQueueLockRetryTests(ITestOutputHelper output
         Assert.Equal(6, profiles.TryGet("reader-behind-lock")!.Value.Stats.Experience);
         Assert.Equal(0, writes.FailedWrites);
         Assert.Equal(6, writes.CompletedWrites);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     // Dispose with a drain deadline shorter than the lock: the worker retries while the deadline
@@ -161,7 +161,7 @@ public sealed class PersistenceWriteQueueLockRetryTests(ITestOutputHelper output
 
         Thread.Sleep(TimeSpan.FromMilliseconds(300));
         Assert.Equal(0, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'locked-drop-%';"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 
     // A short drain deadline that passes during the first lock wait: no retry, the group fails
@@ -211,6 +211,6 @@ public sealed class PersistenceWriteQueueLockRetryTests(ITestOutputHelper output
         // Failed fast without a retry, but the drain still saw the lock.
         Assert.True(writes.LockSeenDuringShutdownDrain);
         Assert.Equal(0, database.Count("SELECT COUNT(*) FROM player_profiles WHERE player_name LIKE 'short-drop-%';"));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
     }
 }

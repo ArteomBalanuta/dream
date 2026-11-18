@@ -110,6 +110,9 @@ internal sealed class StoredWorldFixture : IDisposable
 
     public IReadOnlyList<PersistedTerrainChunk> Chunks { get; }
 
+    // For SqlitePools.Release: this fixture's own database, never the whole process's pools.
+    public string DatabasePath => _database.DatabasePath;
+
     public ServerPersistenceBundle OpenBundle(Action<string>? log = null) =>
         ServerBootstrap.CreatePersistenceBundle(
             _database.DatabasePath,
@@ -159,7 +162,7 @@ internal sealed class StoredWorldFixture : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(_database.DatabasePath);
         _database.Dispose();
     }
 }

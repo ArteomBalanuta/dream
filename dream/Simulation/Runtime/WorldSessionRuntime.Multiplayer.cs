@@ -111,6 +111,7 @@ public sealed partial class WorldSessionRuntime
         StepOwnerProgress(tick);
         StepQuestLogs(tick);
         StepPresence(tick);
+        StepPendingModeSaves(tick);
     }
 
     // Called from the detach path, before MarkDespawned. Also drops the queued messages of the session,
@@ -122,5 +123,10 @@ public sealed partial class WorldSessionRuntime
         ForgetOwnerProgress(session);
         ReleasePresenceOnDetach(characterKey);
         _sessionMessages.RemoveAll(entry => entry.SessionId == session);
+        // Every increment of the per-session count needs its decrement on every exit path: the purge above
+        // took every entry of this session, so its count goes with them. Without this the count is a floor
+        // a reused session id inherits, and the cap ratchets down over reconnects until each push evicts
+        // the one before it. It also prunes the entry a departed session id would otherwise leak.
+        _sessionMessageCounts.Remove(session);
     }
 }

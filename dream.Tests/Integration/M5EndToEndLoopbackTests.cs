@@ -238,12 +238,13 @@ public sealed class M5EndToEndLoopbackTests
         return all;
     }
 
-    private static void Flush(WireLoopbackServer server, bool allowFailures = false)
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    private static async Task FlushAsync(WireLoopbackServer server, bool allowFailures = false)
     {
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
+        await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
         if (!allowFailures)
         {
-            Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
+            Assert.Equal(0, server.Runtime.PersistenceWrites!.FailedWrites);
         }
     }
 
@@ -623,7 +624,7 @@ public sealed class M5EndToEndLoopbackTests
             Assert.Equal(70 - 20 + 200, b.Inventory!.Value.Gold);
 
             // The server's memory and the rows agree.
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal(itemsA - 2 + 1, InventoryOf(server, SessionA).AllItems().Count());
             Assert.Equal(itemsB - 1 + 2, InventoryOf(server, SessionB).AllItems().Count());
             Assert.Equal(totalGold, InventoryOf(server, SessionA).Gold + InventoryOf(server, SessionB).Gold);
@@ -638,7 +639,7 @@ public sealed class M5EndToEndLoopbackTests
 
             await a.LeaveAsync();
             await b.LeaveAsync();
-            Flush(server);
+            await FlushAsync(server);
         }
 
         // ---- a restart: each item once, with its new owner, and the gold as traded ----
@@ -735,7 +736,7 @@ public sealed class M5EndToEndLoopbackTests
         Assert.Equal(0, server.Runtime.ActiveTradeCount);
         Assert.Contains(a1, InventoryOf(server, SessionA).AllItems().Select(item => item.ItemInstanceId));
         Assert.Equal(300, InventoryOf(server, SessionA).Gold);
-        Flush(server);
+        await FlushAsync(server);
         Assert.Equal(KeyOf(SessionA), Convert.ToString(db.Scalar($"SELECT player_name FROM player_inventory_slots WHERE item_instance_id = {a1}")));
         _ = pair;
     }
@@ -948,7 +949,7 @@ public sealed class M5EndToEndLoopbackTests
                 b1 = await GrantAsync(server, all, SessionB, 2);
                 await GoldAsync(server, all, SessionA, 100);
                 await GoldAsync(server, all, SessionB, 40);
-                Flush(server);
+                await FlushAsync(server);
 
                 db.ExecuteScript(trigger);
                 await OpenTradeAsync(server, all, a, b);
@@ -959,7 +960,7 @@ public sealed class M5EndToEndLoopbackTests
                 await AcceptedAsync(server, all, a, new TradeConfirmIntent());
                 await AcceptedAsync(server, all, b, new TradeConfirmIntent());
                 await StepUntilAsync(server, all, () => Ended(a, TradeStage.Completed) && Ended(b, TradeStage.Completed), "the trade ended on both screens");
-                Flush(server, allowFailures: true);
+                await FlushAsync(server, allowFailures: true);
 
                 // The closure failed as a whole: the rows are exactly as they were.
                 Assert.Equal(1, server.Runtime.PersistenceWrites!.FailedWrites);
@@ -1007,12 +1008,12 @@ public sealed class M5EndToEndLoopbackTests
         await using HeadlessPlayScene b = all[1];
         await GoldAsync(server, all, SessionA, 50);
         await GoldAsync(server, all, SessionB, 50);
-        Flush(server);
+        await FlushAsync(server);
 
         // One failed gold credit of the chosen player.
         db.ExecuteScript("CREATE TRIGGER fail_wallet BEFORE UPDATE ON player_wallets BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
         Assert.True(server.Runtime.InventoryService.TryAddGold(KeyOf(failer), 1));
-        Flush(server, allowFailures: true);
+        await FlushAsync(server, allowFailures: true);
         Assert.Equal(1, server.Runtime.PersistenceWrites!.FailedWrites);
         db.ExecuteScript("DROP TRIGGER fail_wallet;");
         await StepAsync(server, all);
@@ -1107,7 +1108,7 @@ public sealed class M5EndToEndLoopbackTests
         await BothClosedAsync(server, all, a, b);
 
         // Nothing moved through all of it.
-        Flush(server);
+        await FlushAsync(server);
         Assert.Equal(KeyOf(SessionA), Convert.ToString(db.Scalar($"SELECT player_name FROM player_inventory_slots WHERE item_instance_id = {a1}")));
         Assert.Equal(KeyOf(SessionB), Convert.ToString(db.Scalar($"SELECT player_name FROM player_inventory_slots WHERE item_instance_id = {b1}")));
         Assert.Equal(100, Count(db, $"SELECT gold FROM player_wallets WHERE player_name = '{KeyOf(SessionA)}'"));
@@ -1125,7 +1126,7 @@ public sealed class M5EndToEndLoopbackTests
         server.Runtime.InventoryService.FillBagLeaving(KeyOf(SessionB), freeCells: 0);
         server.Runtime.MarkInventoryPush(new PlayerSessionId(SessionB));
         await StepAsync(server, all);
-        Flush(server);
+        await FlushAsync(server);
         int itemsB = InventoryOf(server, SessionB).AllItems().Count();
 
         await OpenTradeAsync(server, all, a, b);
@@ -1141,7 +1142,7 @@ public sealed class M5EndToEndLoopbackTests
         Assert.Contains("backpack is full", EndReason(a, TradeStage.Cancelled), StringComparison.Ordinal);
         Assert.Contains(a1, InventoryOf(server, SessionA).AllItems().Select(item => item.ItemInstanceId));
         Assert.Equal(itemsB, InventoryOf(server, SessionB).AllItems().Count());
-        Flush(server);
+        await FlushAsync(server);
         Assert.Equal(KeyOf(SessionA), Convert.ToString(db.Scalar($"SELECT player_name FROM player_inventory_slots WHERE item_instance_id = {a1}")));
     }
 }

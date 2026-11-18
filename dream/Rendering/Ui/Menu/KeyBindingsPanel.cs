@@ -1,6 +1,14 @@
 namespace Dream.Rendering.Ui.Menu;
 
 // A read-only list of the controls. The bindings are fixed in the game, so this is a static table.
+//
+// BH-INPUT-5: it is the only binding reference the game has, so a row naming a key the game no longer
+// resolves to that action is a wrong instruction, not a stale comment. It listed "Q / E" for the
+// potions (E has been interact / pick up since the economy pass, and the mana potion is R) and
+// "1 / 2" for the modes (the quickbar took the digits; QuickbarInput.RemapModeKeys moved the modes
+// onto B and G), and it named none of the quickbar, walk, sprint, chat or online keys. The rows below
+// are the keys the resolvers really read; InputKeyBindingsTableTests pins each one against the
+// resolver's own constant, so a remap that does not come back here fails the tests.
 public static class KeyBindingsPanel
 {
     public const int FirstId = 0x5300;
@@ -13,9 +21,15 @@ public static class KeyBindingsPanel
         ("Left click", "Move / attack"),
         ("Right click", "Combat / build"),
         ("Space", "Jump"),
-        ("Q / E", "Use potions"),
+        ("Shift", "Sprint"),
+        ("Z", "Walk"),
+        ("Q / R", "Health / mana potion"),
+        ("E", "Interact / pick up"),
+        ("1 - 6", "Quickbar"),
+        ("B / G", "Build / combat mode"),
         ("V", "Inventory and character"),
-        ("1 / 2", "Combat / build mode"),
+        ("Enter", "Chat"),
+        ("Tab", "Who is online"),
         ("Esc", "Menu"),
         ("F3", "Admin HUD (when enabled)")
     ];

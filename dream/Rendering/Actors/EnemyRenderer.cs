@@ -17,6 +17,11 @@ public sealed class EnemyRenderer
     private readonly HashSet<int> _currentIds = new();
     private readonly ShadowActorCasters _casters = new();
 
+    // Render-only: the models of enemies that have already left the registry, still playing out
+    // their death clip. See EnemyDeathLinger - a dying model is not an entity.
+    private readonly EnemyDeathLinger _dying = new();
+    private readonly List<int> _departedIds = new();
+
     public EnemyRenderer(Render render)
     {
         _render = render;
@@ -26,6 +31,20 @@ public sealed class EnemyRenderer
     public int DrawCasters(in ShadowCasterView view) => _casters.Draw(_render, in view);
 
     public void ClearCasters() => _casters.Clear();
+
+    // Drops every corpse and every remembered last-drawn frame. Called when the world under the
+    // renderer is replaced (a join applied mid-session: a reconnect, a takeover, a world transfer).
+    // The old world's enemies do not die, they cease to exist, but the linger cannot tell the two
+    // apart: without this the next draw finds every old actor id in its last-drawn table and absent
+    // from the new world's id set, and starts a death clip for each one - frozen at its OLD-world
+    // matrix, drawn and casting shadows in the new world for up to MaxLingerSeconds.
+    //
+    // Render-only, exactly as the linger is: the instances go back to the visual-state pool and
+    // nothing outside this renderer is touched. The linger's other guarantees are unchanged - a
+    // corpse still holds no actor, no authoritative pose and no interpolation buffer, it is still
+    // bounded by its clip and by MaxLingerSeconds, and ObserveDrawn still releases one under a
+    // reused id so a respawn draws no corpse under itself.
+    public void ClearDeathLinger() => _dying.Clear(_visualStates);
 
     // Draws every enemy at its authoritative pose.
     public void Draw(Camera camera, IReadOnlyList<EnemyActor> actors, float deltaTime, bool showCollisionGeometry)
@@ -46,6 +65,9 @@ public sealed class EnemyRenderer
     {
         _currentIds.Clear();
         _casters.Clear();
+        // Releases the corpses that finished last frame and steps the rest, before any of this
+        // frame's live enemies are looked at.
+        _dying.Advance(deltaTime, _visualStates);
         foreach (EnemyActor actor in actors)
         {
             if (!actor.IsActive)
@@ -91,6 +113,21 @@ public sealed class EnemyRenderer
                 model.RenderPrepared(shader, instance, renderState.ModelMatrix);
                 model.EndRender();
                 _casters.Add(model, instance, renderState.ModelMatrix);
+
+                // The frame this enemy was last drawn at, so its model can finish a death clip
+                // after the actor is gone. A matrix and a clip name - no pose source, no actor.
+                // Also releases any corpse under this id: enemy actor ids are reused, and a
+                // respawn must not draw a corpse under itself.
+                _dying.ObserveDrawn(
+                    actorId,
+                    new EnemyDeathLinger.LastDrawnEnemy(
+                        visual.ModelPath,
+                        renderState.ShaderName,
+                        clips.Die,
+                        renderState.ModelMatrix,
+                        visual.TintOffset,
+                        model.Skeleton),
+                    _visualStates);
             }
 
             if (showCollisionGeometry)
@@ -102,10 +139,90 @@ public sealed class EnemyRenderer
             }
         }
 
-        // The player renderers share the enemy program, so the tint must not outlive the enemies.
+        BeginDeathLinger();
+        DrawDyingModels(camera);
+
+        // The player renderers share the enemy program, so the tint must not outlive the enemies -
+        // the dying models above are tinted like the enemies they were, so this still follows the
+        // last enemy draw of the frame.
         ResetTint();
 
         _visualStates.PruneExcept(_currentIds);
+    }
+
+    // An enemy drawn last frame and absent from this one has died: the client drops a dead enemy
+    // from its registry (RemoteEnemyStateApplier) and the presentation filters a locally killed one
+    // out (WorldSessionPresentationState.SelectActiveEnemies), so a departure is the only death
+    // signal the renderer ever gets. Nothing is started for a model that is no longer loaded or
+    // that carries no death clip, so the state machine's promise of Resolve(Dead) is kept exactly
+    // where the clip exists.
+    private void BeginDeathLinger()
+    {
+        if (_dying.LastDrawnCount == 0)
+        {
+            return;
+        }
+
+        _dying.CollectDeparted(_currentIds, _departedIds);
+        for (int i = 0; i < _departedIds.Count; i++)
+        {
+            int actorId = _departedIds[i];
+            if (!_dying.TryGetLastDrawn(actorId, out EnemyDeathLinger.LastDrawnEnemy last))
+            {
+                continue;
+            }
+
+            // The departed enemy's own instance, taken out of its visual state before PruneExcept
+            // can pool it: the corpse animates the very instance that was drawing the enemy, so a
+            // death allocates nothing, and the instance returns to the pool when the clip ends.
+            AnimatedModelInstance? instance = _visualStates.TakeInstance(actorId);
+            if (instance is null ||
+                !ModelAssets.TryGet(last.ModelPath, out AnimatedModel? model) ||
+                !ReferenceEquals(model.Skeleton, last.Skeleton) ||
+                !ReferenceEquals(instance.Skeleton, last.Skeleton) ||
+                !model.Skeleton.TryGetClip(last.DieClip, out _, out float duration) ||
+                !(duration > 0f))
+            {
+                _dying.Forget(actorId);
+                if (instance is not null)
+                {
+                    _visualStates.ReturnInstance(instance);
+                }
+
+                continue;
+            }
+
+            _dying.Begin(actorId, in last, instance);
+        }
+
+        _departedIds.Clear();
+    }
+
+    // The corpses, at the matrix each was frozen at. A model reloaded under a corpse (ModelAssets
+    // replaced the skeleton) is skipped and expires on its own cap rather than drawing against
+    // buffers that have been thrown away.
+    private void DrawDyingModels(Camera camera)
+    {
+        if (_dying.Count == 0)
+        {
+            return;
+        }
+
+        foreach (EnemyDeathLinger.DyingModel dying in _dying.Models)
+        {
+            if (!ModelAssets.TryGet(dying.Last.ModelPath, out AnimatedModel? model) ||
+                !ReferenceEquals(model.Skeleton, dying.Instance.Skeleton))
+            {
+                continue;
+            }
+
+            Shader shader = _render.GetShader(dying.Last.ShaderName);
+            model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
+            ApplyTint(model, shader, dying.Last.TintOffset);
+            model.RenderPrepared(shader, dying.Instance, dying.Last.ModelMatrix);
+            model.EndRender();
+            _casters.Add(model, dying.Instance, dying.Last.ModelMatrix);
+        }
     }
 
     // The tint last uploaded, the program it went to and the model that carries it to the MASK
@@ -114,9 +231,15 @@ public sealed class EnemyRenderer
     private Shader? _tintShader;
     private AnimatedModel? _tintModel;
 
+    // Set the moment a non-zero tint is handed to a model: AnimatedModel.BindProgram may have carried
+    // it into the MASK variant, and a later untinted enemy drives _appliedTint back to zero without
+    // touching the variant, so the base program's value alone cannot say whether the variant is clean.
+    private bool _maskTintDirty;
+
     private void ApplyTint(AnimatedModel model, Shader shader, Vector3 tint)
     {
         model.ActorTintOffset = tint;
+        _maskTintDirty |= !tint.Equals(Vector3.Zero);
         _tintShader = shader;
         _tintModel = model;
         if (tint.Equals(_appliedTint))
@@ -132,7 +255,7 @@ public sealed class EnemyRenderer
     // Back to zero in the base program, the model and the MASK variant. A no-op when nothing was tinted.
     private void ResetTint()
     {
-        if (_tintShader is null || _tintModel is null || _appliedTint.Equals(Vector3.Zero))
+        if (_tintShader is null || _tintModel is null || (_appliedTint.Equals(Vector3.Zero) && !_maskTintDirty))
         {
             return;
         }
@@ -148,6 +271,7 @@ public sealed class EnemyRenderer
         }
 
         _appliedTint = Vector3.Zero;
+        _maskTintDirty = false;
     }
 
     private const string TintUniformName = "uActorTintOffset";

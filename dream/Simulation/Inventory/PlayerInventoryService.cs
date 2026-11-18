@@ -132,6 +132,10 @@ internal sealed partial class PlayerInventoryService
     // The loaded inventories. slots by player name (item instance id by slot index; tests).
     internal IReadOnlyDictionary<string, Dictionary<int, long>> LoadedSlotsByPlayer => _slotsByPlayer;
 
+    // The inventory/quest revision entries held, which must track the loaded (and retained) inventories
+    // rather than every character ever seen (tests; see Evict).
+    internal int TrackedRevisionCount => _inventoryRevisions.Count + _questRevisions.Count;
+
     public int LoadedInventoryCount => _slotsByPlayer.Count;
 
     public int LoadedItemInstanceCount => _itemInstances.Count;
@@ -178,7 +182,21 @@ internal sealed partial class PlayerInventoryService
         Dictionary<int, long> slots = GetOrCreateSlots(playerName);
         if (inventory.StarterKitVersion is int starterKitVersion)
         {
-            _starterKitByPlayer[playerName] = starterKitVersion;
+            // Clamped like its sibling Gold below. The row's only bound is CHECK (kit_version >= 0), so a
+            // hand edit, or content that ran at a higher starterKitVersion and was then rolled back (the
+            // grant upsert only ever raises the stored version), can hold a version above the kit that is
+            // running. GrantStarterKit reads that as "has received everything this content knows" and
+            // grants no kind again, so the record is not a record of anything this content did: it is
+            // held at the running kit's version, which is the most it can attest, and the out-of-range
+            // row is reported rather than silently withholding the kit.
+            if (starterKitVersion > ToolCatalog.CurrentStarterKitVersion)
+            {
+                NetworkDiagnosticsLog.Write(
+                    "server.inventory.starter-grant-out-of-range",
+                    $"player={playerName} stored={starterKitVersion} current={ToolCatalog.CurrentStarterKitVersion}");
+            }
+
+            _starterKitByPlayer[playerName] = Math.Clamp(starterKitVersion, 0, ToolCatalog.CurrentStarterKitVersion);
         }
 
         if (inventory.Gold > 0)
@@ -824,6 +842,14 @@ internal sealed partial class PlayerInventoryService
                 _writeTrackers.Remove(playerName);
             }
 
+            // Keyed by name like every other map above, and not part of the moved-out copy: a reloaded or
+            // restored inventory legitimately restarts at 1, and the quest-log sync is per session and starts
+            // at 0, so the first write after a reload still reads as stale and resends. Dropped here as well
+            // as on the no-tracker path below, or a long-lived server keeps one entry pair per character that
+            // ever queued a write and then departed - growth by lifetime joins, not by players online, and no
+            // LRU bounds these two.
+            _inventoryRevisions.Remove(playerName);
+            _questRevisions.Remove(playerName);
             return;
         }
 
@@ -1519,6 +1545,7 @@ internal sealed partial class PlayerInventoryService
         SlotChanges changes = new();
         int rehomed = 0;
         int heldBack = 0;
+        int stranded = 0;
         if (unplaced.Count > 0)
         {
             List<(int Anchor, long ItemId, ItemFootprint Footprint)> lifted = new(unplaced.Count);
@@ -1548,7 +1575,28 @@ internal sealed partial class PlayerInventoryService
                 int held = FirstFreeRow(slots, InventoryConstants.HeldBackFirstIndex, InventoryConstants.HeldBackCount);
                 if (held < 0)
                 {
-                    held = FirstFreeRow(slots, InventoryConstants.ParkedFirstIndex, slots.Count + 1);
+                    // The parked scan stops below InventoryConstants.UnknownRowsFirstIndex: a row at or
+                    // above it is inert (PromoteParked skips it, IsKnownRow is false for it, BuildSnapshot
+                    // never sends it), so parking an item there would lose it silently. The parked range
+                    // holds 19,700 rows, so it only runs out for an inventory that already carries that
+                    // many overflow rows, and then there is no live row left to put this one in: it is
+                    // kept at the lowest free inert index (never a negative one, which the schema's
+                    // CHECK (slot_index >= 0) rejects) and reported as stranded rather than counted as an
+                    // ordinary held-back row.
+                    held = FirstFreeRow(
+                        slots,
+                        InventoryConstants.ParkedFirstIndex,
+                        InventoryConstants.UnknownRowsFirstIndex - InventoryConstants.ParkedFirstIndex);
+                    if (held < 0)
+                    {
+                        held = FirstFreeRow(slots, InventoryConstants.UnknownRowsFirstIndex, slots.Count + 1);
+                        SetSlot(slots, changes, held, itemInstanceId);
+                        stranded++;
+                        NetworkDiagnosticsLog.Write(
+                            "server.inventory.layout-row-stranded",
+                            $"player={playerName} item={itemInstanceId} slot={held}");
+                        continue;
+                    }
                 }
 
                 SetSlot(slots, changes, held, itemInstanceId);
@@ -1557,11 +1605,11 @@ internal sealed partial class PlayerInventoryService
         }
 
         DrainHeldBack(slots, changes);
-        if (rehomed > 0 || heldBack > 0)
+        if (rehomed > 0 || heldBack > 0 || stranded > 0)
         {
             NetworkDiagnosticsLog.Write(
                 "server.inventory.layout-repaired",
-                $"player={playerName} rehomed={rehomed} heldBack={heldBack}");
+                $"player={playerName} rehomed={rehomed} heldBack={heldBack} stranded={stranded}");
         }
 
         QueueChanges(playerName, changes);

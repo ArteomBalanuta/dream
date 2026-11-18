@@ -70,7 +70,112 @@ public sealed partial class WorldSessionRuntime
         seat.SetWorldPosition(ResolveRespawnPosition(Map, _worldSpawn, _respawnRubbleScratch));
         player.RespawnAtTick = 0;
         // Enemy steps of ticks tick+1 .. tick+SpawnProtectionTicks skip this player.
+        GrantSpawnProtection(player, tick, joinGrantTick: 0UL);
+    }
+
+    // BH-PVP-1. Spawn protection is tracked against the CHARACTER as well as the seat, because the seat is
+    // not a stable identity: a join by the same account takes the seat over, which detaches and re-attaches
+    // in a single tick, and the replacement join may even arrive under a different session id, so a
+    // brand-new ConnectedPlayer with no history of its own. Keyed on the seat alone, a player losing a fight
+    // could drop the connection and come back with a fresh 3 s of total immunity to PvP and to enemies, land
+    // a free hit, and repeat for as long as they liked.
+    //
+    // Two rules do it, both measured in PlayerRespawnRules.JoinHoldReattachCooldownTicks, the brake the join
+    // hold already uses against this same attack:
+    //  - a character that spent its window by ATTACKING within the cooldown gets nothing back for rejoining;
+    //  - otherwise a join may start a new window only once the cooldown has run since the last join granted
+    //    one, and in between it RESUMES what the character has left rather than arming a new one.
+    // A respawn still grants a full window and clears the join brake with it: dying is the legitimate way
+    // back into the world, and WolfBiteAdversarialTests pins that a rejoin after one is protected in its own
+    // right. So a genuine first join, a respawn and a reconnect by someone who was not fighting are all
+    // protected exactly as before, while the exploit -- attack, reconnect, attack again, for ever -- is shut,
+    // and a player who never attacks still cannot hold immunity by reconnecting faster than it expires.
+    // Everything here is in server ticks, so lockstep peers agree.
+    private readonly Dictionary<string, CharacterSpawnProtection> _characterSpawnProtection = new(StringComparer.Ordinal);
+
+    // JoinGrantTick: the tick a join last granted this character a window, 0 for none (a respawn clears it).
+    // ProtectedThroughTick: the last tick that window covers, 0 once an attack spent it. SpentTick: the tick
+    // an attack last spent it, 0 for never.
+    private readonly record struct CharacterSpawnProtection(ulong JoinGrantTick, ulong ProtectedThroughTick, ulong SpentTick);
+
+    // An entry older than the cooldown grants exactly what no entry grants, so the table is pruned of those
+    // once it grows past this. The removed set is a function of the tick and the contents, never of order.
+    private const int CharacterSpawnProtectionCap = 512;
+
+    // A respawn, or a join hold released by the player's first input: a legitimate new window. A respawn
+    // clears the join brake (joinGrant = 0); the hold's release is the join's own window, so it keeps it.
+    private void GrantSpawnProtection(ConnectedPlayer player, ulong tick, ulong joinGrantTick)
+    {
         player.ProtectedThroughTick = tick + PlayerRespawnRules.SpawnProtectionTicks;
+        PruneCharacterSpawnProtection(tick);
+        _characterSpawnProtection[player.CharacterKey.Value] =
+            new CharacterSpawnProtection(joinGrantTick, player.ProtectedThroughTick, SpentTick: 0);
+    }
+
+    private ulong CharacterJoinGrantTick(ConnectedPlayer player)
+        => _characterSpawnProtection.TryGetValue(player.CharacterKey.Value, out CharacterSpawnProtection prior)
+            ? prior.JoinGrantTick
+            : 0UL;
+
+    // The player attacked: protection ends, and the character is marked as having been in combat at this
+    // tick, so a reconnect inside the cooldown cannot hand it back.
+    private void SpendSpawnProtection(ConnectedPlayer player)
+    {
+        player.ProtectedThroughTick = 0;
+        ulong tick = Math.Max(1UL, CurrentServerTick);
+        string key = player.CharacterKey.Value;
+        CharacterSpawnProtection prior = _characterSpawnProtection.TryGetValue(key, out CharacterSpawnProtection found)
+            ? found
+            : new CharacterSpawnProtection(0UL, 0UL, 0UL);
+        _characterSpawnProtection[key] = prior with { ProtectedThroughTick = 0UL, SpentTick = tick };
+    }
+
+    // The window a join grants (AttachRemoteSession, on a fresh attach): resumed, or new once the cooldown ran.
+    private void ApplyJoinSpawnProtection(ConnectedPlayer attached)
+    {
+        ulong tick = CurrentServerTick;
+        const ulong cooldown = PlayerRespawnRules.JoinHoldReattachCooldownTicks;
+        if (_characterSpawnProtection.TryGetValue(attached.CharacterKey.Value, out CharacterSpawnProtection prior)
+            && ((prior.JoinGrantTick != 0 && tick < prior.JoinGrantTick + cooldown)
+                || (prior.SpentTick != 0 && tick < prior.SpentTick + cooldown)))
+        {
+            // Resume, never re-arm. A second live seat on the same character (wave 16: two seats can share a
+            // CharacterKey) resumes the same window too, so it cannot be used to fetch a second one.
+            attached.ProtectedThroughTick = prior.ProtectedThroughTick >= tick ? prior.ProtectedThroughTick : 0UL;
+            return;
+        }
+
+        GrantSpawnProtection(attached, tick, joinGrantTick: Math.Max(1UL, tick));
+    }
+
+    private void PruneCharacterSpawnProtection(ulong tick)
+    {
+        if (_characterSpawnProtection.Count < CharacterSpawnProtectionCap)
+        {
+            return;
+        }
+
+        const ulong cooldown = PlayerRespawnRules.JoinHoldReattachCooldownTicks;
+        List<string>? stale = null;
+        foreach (KeyValuePair<string, CharacterSpawnProtection> entry in _characterSpawnProtection)
+        {
+            if ((entry.Value.JoinGrantTick == 0 || tick >= entry.Value.JoinGrantTick + cooldown)
+                && tick > entry.Value.ProtectedThroughTick
+                && (entry.Value.SpentTick == 0 || tick >= entry.Value.SpentTick + cooldown))
+            {
+                (stale ??= []).Add(entry.Key);
+            }
+        }
+
+        if (stale == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < stale.Count; i++)
+        {
+            _characterSpawnProtection.Remove(stale[i]);
+        }
     }
 
     // The normal window, or a join's opt-in hold that no input has released yet. The hold is capped: if
@@ -83,11 +188,26 @@ public sealed partial class WorldSessionRuntime
 
     // Only honoured for the join that freshly attached the seat: a repeated join or a takeover of an
     // attached seat must not re-arm it.
+    //
+    // BH-REV1. FreshlyAttached is a property of the SEAT, and the client picks its own session id, so a
+    // rejoin under a brand-new id always had it: that walked straight past the character brake above, and
+    // the hold's release then wrote a full fresh window and a cleared spent mark into the character record.
+    // A hold only ever defers the window THIS join granted, so it is gated on the same character record
+    // ApplyJoinSpawnProtection consults: armed only when that join actually granted a new window, i.e. the
+    // record's JoinGrantTick is this seat's own fresh attach. A join that merely resumed -- the character
+    // attacked, or rejoined inside JoinHoldReattachCooldownTicks -- has nothing to defer and gets no hold,
+    // exactly as a reconnect inside the cooldown already got none under its old session id.
     public void HoldSpawnProtectionUntilInput(PlayerSessionId sessionId)
     {
         if (_sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null && player.IsSpawned
             && player.FreshlyAttached)
         {
+            ulong joinGrantTick = CharacterJoinGrantTick(player);
+            if (joinGrantTick == 0 || joinGrantTick < player.LastFreshAttachTick)
+            {
+                return;
+            }
+
             player.ProtectionHeldSinceTick = Math.Max(1UL, CurrentServerTick);
         }
     }
@@ -104,10 +224,23 @@ public sealed partial class WorldSessionRuntime
         ulong tick = CurrentServerTick;
         bool stillHeld = tick <= player.ProtectionHeldSinceTick + PlayerRespawnRules.JoinHoldMaxTicks;
         player.ProtectionHeldSinceTick = 0;
-        if (stillHeld)
+        if (!stillHeld)
         {
-            player.ProtectedThroughTick = tick + PlayerRespawnRules.SpawnProtectionTicks;
+            return;
         }
+
+        // BH-REV1, second half of the same brake: whatever armed the hold, the release may not hand back a
+        // window the character spent by attacking, nor erase the spent mark that refuses the next rejoin.
+        const ulong cooldown = PlayerRespawnRules.JoinHoldReattachCooldownTicks;
+        if (_characterSpawnProtection.TryGetValue(player.CharacterKey.Value, out CharacterSpawnProtection prior)
+            && prior.SpentTick != 0 && tick < prior.SpentTick + cooldown)
+        {
+            // Resume what is left (nothing, once an attack spent it), exactly as a rejoin does.
+            player.ProtectedThroughTick = prior.ProtectedThroughTick >= tick ? prior.ProtectedThroughTick : 0UL;
+            return;
+        }
+
+        GrantSpawnProtection(player, tick, CharacterJoinGrantTick(player));
     }
 
     private void ReleaseSpawnProtectionHold(PlayerCommandFrame frame, ConnectedPlayer? player)
@@ -160,12 +293,6 @@ public sealed partial class WorldSessionRuntime
         float x = Math.Clamp(spawn.X, 0.5f, map.Width - 0.5f);
         float z = Math.Clamp(spawn.Z, 0.5f, map.Depth - 0.5f);
         float y = Math.Clamp(spawn.Y, 0.5f, map.Height - 0.5f);
-        const float halfBody = 0.5f;
-        const float epsilon = 0.001f;
-        int minX = (int)MathF.Floor(x - halfBody + epsilon);
-        int maxX = (int)MathF.Floor(x + halfBody - epsilon);
-        int minZ = (int)MathF.Floor(z - halfBody + epsilon);
-        int maxZ = (int)MathF.Floor(z + halfBody - epsilon);
         // A fractured cube leaves no Cube in its cell: its rubble pieces are separate bodies that can lie
         // anywhere (they move), so they are tested by their own boxes, not by cell.
         List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble = scratch ?? [];
@@ -173,10 +300,7 @@ public sealed partial class WorldSessionRuntime
         map.CaptureFracturePiecesInto(rubble);
         while (y < map.Height - 0.5f)
         {
-            int cellY = (int)MathF.Floor(y);
-            if (!AnySolidCell(map, minX, maxX, cellY, minZ, maxZ)
-                && !AnySolidCell(map, minX, maxX, cellY + 1, minZ, maxZ)
-                && !AnyPieceInBody(rubble, x, z, cellY, halfBody - epsilon))
+            if (BodyFits(map, rubble, x, z, (int)MathF.Floor(y)))
             {
                 break;
             }
@@ -184,7 +308,144 @@ public sealed partial class WorldSessionRuntime
             y += 1f;
         }
 
-        return new Vector3(x, Math.Min(y, map.Height - 0.5f), z);
+        y = Math.Min(y, map.Height - 0.5f);
+        int bodyCell = (int)MathF.Floor(y);
+        // BH-PVP-2: the lift only escapes upwards and stops the moment the spawn's own cells are clear, so a
+        // ring of cubes around the spawn cell with a roof over it left every respawning player sealed in --
+        // and the cubes are their builder's (CanDamageCube), so the victim could never break out and a relog
+        // put them back in the same box. If the body cannot reach the edge of the search area from here, step
+        // to the nearest free cell that the sealed region does not contain. Columns are tried in a fixed ring
+        // and ordinal order and nothing but the Map is read, so every lockstep peer picks the same cell. If
+        // the lift hit the map's cap, or nothing free is in reach, this is the position the lift gave.
+        if (BodyFits(map, rubble, x, z, bodyCell))
+        {
+            return ResolveRespawnEscape(map, rubble, x, y, z, bodyCell);
+        }
+
+        return new Vector3(x, y, z);
+    }
+
+    // How far around the spawn a sealed-in player is searched for a way out, in cells, and how many cells of
+    // climb or drop the search may use on the way (a step or a short jump, so natural ground counts as open).
+    private const int RespawnEscapeRadius = 8;
+    private const int RespawnEscapeClimb = 3;
+    private const int RespawnEscapeSide = (2 * RespawnEscapeRadius) + 1;
+    private const int RespawnEscapeLevels = (2 * RespawnEscapeClimb) + 1;
+
+    private static Vector3 ResolveRespawnEscape(
+        Map map,
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble,
+        float x,
+        float y,
+        float z,
+        int bodyCell)
+    {
+        bool[] visited = new bool[RespawnEscapeSide * RespawnEscapeSide * RespawnEscapeLevels];
+        bool[] sealedColumn = new bool[RespawnEscapeSide * RespawnEscapeSide];
+        int[] queue = new int[RespawnEscapeSide * RespawnEscapeSide * RespawnEscapeLevels];
+        int head = 0;
+        int tail = 0;
+        int start = NodeIndex(0, 0, 0);
+        visited[start] = true;
+        queue[tail++] = start;
+        sealedColumn[ColumnIndex(0, 0)] = true;
+        while (head < tail)
+        {
+            int node = queue[head++];
+            int level = (node % RespawnEscapeLevels) - RespawnEscapeClimb;
+            int column = node / RespawnEscapeLevels;
+            int dx = (column / RespawnEscapeSide) - RespawnEscapeRadius;
+            int dz = (column % RespawnEscapeSide) - RespawnEscapeRadius;
+            if (Math.Abs(dx) == RespawnEscapeRadius || Math.Abs(dz) == RespawnEscapeRadius)
+            {
+                // Reached the edge of the search area: the player is not sealed in.
+                return new Vector3(x, y, z);
+            }
+
+            for (int step = 0; step < 4; step++)
+            {
+                int ndx = dx + (step == 0 ? 1 : step == 1 ? -1 : 0);
+                int ndz = dz + (step == 2 ? 1 : step == 3 ? -1 : 0);
+                float nx = x + ndx;
+                float nz = z + ndz;
+                if (nx < 0.5f || nx > map.Width - 0.5f || nz < 0.5f || nz > map.Depth - 0.5f)
+                {
+                    // The open edge of the map is a way out too.
+                    return new Vector3(x, y, z);
+                }
+
+                for (int nlevel = level - 1; nlevel <= level + 1; nlevel++)
+                {
+                    if (nlevel < -RespawnEscapeClimb || nlevel > RespawnEscapeClimb)
+                    {
+                        continue;
+                    }
+
+                    int next = NodeIndex(ndx, ndz, nlevel);
+                    if (visited[next] || !BodyFits(map, rubble, nx, nz, bodyCell + nlevel))
+                    {
+                        continue;
+                    }
+
+                    visited[next] = true;
+                    queue[tail++] = next;
+                    sealedColumn[ColumnIndex(ndx, ndz)] = true;
+                }
+            }
+        }
+
+        // Sealed in. The nearest cell outside the sealed region that the body fits in at the spawn's own
+        // level, by ring then ordinal order.
+        for (int ring = 1; ring <= RespawnEscapeRadius; ring++)
+        {
+            for (int dx = -ring; dx <= ring; dx++)
+            {
+                for (int dz = -ring; dz <= ring; dz++)
+                {
+                    if (Math.Max(Math.Abs(dx), Math.Abs(dz)) != ring || sealedColumn[ColumnIndex(dx, dz)])
+                    {
+                        continue;
+                    }
+
+                    float nx = x + dx;
+                    float nz = z + dz;
+                    if (nx < 0.5f || nx > map.Width - 0.5f || nz < 0.5f || nz > map.Depth - 0.5f
+                        || !BodyFits(map, rubble, nx, nz, bodyCell))
+                    {
+                        continue;
+                    }
+
+                    return new Vector3(nx, y, nz);
+                }
+            }
+        }
+
+        return new Vector3(x, y, z);
+
+        static int ColumnIndex(int dx, int dz)
+            => ((dx + RespawnEscapeRadius) * RespawnEscapeSide) + dz + RespawnEscapeRadius;
+
+        static int NodeIndex(int dx, int dz, int level)
+            => (ColumnIndex(dx, dz) * RespawnEscapeLevels) + level + RespawnEscapeClimb;
+    }
+
+    // The one-cell-wide, two-cell-tall body standing on cellY, against cubes and against rubble.
+    private static bool BodyFits(
+        Map map,
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble,
+        float x,
+        float z,
+        int cellY)
+    {
+        const float halfBody = 0.5f;
+        const float epsilon = 0.001f;
+        int minX = (int)MathF.Floor(x - halfBody + epsilon);
+        int maxX = (int)MathF.Floor(x + halfBody - epsilon);
+        int minZ = (int)MathF.Floor(z - halfBody + epsilon);
+        int maxZ = (int)MathF.Floor(z + halfBody - epsilon);
+        return !AnySolidCell(map, minX, maxX, cellY, minZ, maxZ)
+            && !AnySolidCell(map, minX, maxX, cellY + 1, minZ, maxZ)
+            && !AnyPieceInBody(rubble, x, z, cellY, halfBody - epsilon);
     }
 
     // The session's live player target (the primary seat's or a secondary's); tests drive health and position through it.

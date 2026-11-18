@@ -416,7 +416,7 @@ public sealed class WorldSimulationSeedTests
 
         public void Dispose()
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(DatabasePath);
             try
             {
                 Directory.Delete(_rootDirectory, recursive: true);

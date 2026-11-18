@@ -46,7 +46,15 @@ public sealed record StaticWorldChunkBuildRequest(
     }
 }
 
+// PresentChunks is the set of chunk keys the request's cells covered: every chunk the live static
+// content still produces a cell for. A resident mesh key outside that set belongs to a chunk that
+// simply stopped existing (a map swap to a smaller or differently shaped world, or a merged-block
+// reshape that emptied a chunk none of whose own cells were dirtied), and nothing else can ever
+// retire it: a chunk with no cells is never planned, so its cached signature is never compared.
+// Null means "not known" — a batch that did not come from a cell snapshot retires nothing outside
+// its dirty set.
 public sealed record StaticWorldChunkBuildBatch(
     int ExportSignature,
     IReadOnlySet<StaticWorldChunkKey> DirtyChunks,
-    IReadOnlyList<StaticWorldChunkBuildOutput> Outputs);
+    IReadOnlyList<StaticWorldChunkBuildOutput> Outputs,
+    IReadOnlySet<StaticWorldChunkKey>? PresentChunks = null);

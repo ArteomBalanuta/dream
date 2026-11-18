@@ -75,7 +75,7 @@ public sealed class StartupFormulaProbeTests
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         db.ExecuteScript("UPDATE combat_formulas SET expression_text = '100 / (armor - 500)' WHERE formula_key = 'player.damage_taken_factor';");
 
         List<string> log = [];

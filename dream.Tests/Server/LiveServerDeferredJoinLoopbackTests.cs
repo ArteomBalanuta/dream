@@ -6,6 +6,7 @@ using Dream.Multiplayer.Transport;
 using Dream.Server;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
+using Dream.Tests.Integration;
 using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Server;
@@ -326,13 +327,29 @@ public class LiveServerDeferredJoinLoopbackTests
             await WaitForAsync(messages => messages.OfType<ServerHelloMessage>().Count() >= 2, "two server hellos");
         }
 
+        // Every condition this waits on is "a message has arrived", and each is for a message the
+        // server has ALREADY produced before the wait starts: the ServerHello pair is answered on the
+        // receive thread, and every join reply and snapshot wait comes after the TickAsync calls that
+        // apply the deferred join and export the snapshot - and TickAsync flushes. So nothing here
+        // needs the test to keep ticking while it waits, which is the trap
+        // WireLoopbackClient.WaitForAsync is when the awaited thing still needs a tick.
+        //
+        // What it must not do is fail a wait that is merely slow. A flat 30 s of wall clock is the
+        // wrong measure under a loaded suite: messages can still be arriving one at a time while the
+        // budget runs out, and the test then reports a server that never sent what it did send.
+        // LoopbackDeadline measures the side the condition is read from - messages received by this
+        // client - so the wait fails once that side has gone QUIET for the window, which is the real
+        // failure (a wedged host, a socket that stopped delivering), and it is still capped by
+        // HardTimeout so a stuck test reports instead of hanging. No budget: no tick advances during
+        // these waits, so there is no second side to spend one on.
         public async Task WaitForAsync(Func<IReadOnlyList<IServerToClientMessage>, bool> condition, string what)
         {
-            DateTime deadline = DateTime.UtcNow + Timeout;
+            ProgressCounter[] arriving = [new($"messages received by {SessionId}", () => Messages.Count)];
+            LoopbackDeadline deadline = new(arriving);
             while (!condition(Messages))
             {
                 Assert.True(ReadFault == null, $"{SessionId} read loop faulted: {ReadFault}");
-                Assert.True(DateTime.UtcNow < deadline, $"{SessionId} never received {what}.");
+                deadline.AssertAlive(arriving, () => $"{what} on {SessionId}");
                 await Task.Delay(5);
             }
         }

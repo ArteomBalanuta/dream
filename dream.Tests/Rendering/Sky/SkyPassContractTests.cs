@@ -128,7 +128,7 @@ public class SkyPassContractTests
         Matrix4 projection = Projection();
         float sink = 0f;
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             sink += SkyRenderer.ComputeInverseViewProjection(view, projection).M11;
         });

@@ -442,6 +442,14 @@ public class WorldPhysicsBinder
             AngularFactor = BulletSharp.Math.Vector3.Zero
         };
 
+        // The floor is in no index, so _floorBody is the only handle on the previous one: drop it
+        // rather than leak a static body into the broadphase on every later floor descriptor.
+        if (_floorBody != null)
+        {
+            RemoveBody(_floorBody);
+            _floorBody = null;
+        }
+
         _physics.AddMapBodyToWorld(body);
         _physics.MapCubeBodies.Add(body);
         _floorBody = body;

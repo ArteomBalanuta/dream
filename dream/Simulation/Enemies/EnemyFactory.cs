@@ -69,6 +69,11 @@ internal static class EnemyFactory
         // rewrite the row; the first checkpoint with a diff writes the clamped value. Kill XP and the wire
         // value agree on one number.
         int level = Math.Clamp(stored.Level, 1, ContentCatalog.MaxEnemyLevel);
+        // The health pool is hostile too, and it is the one stat no StatId clamp covers: a row outside
+        // 1..the content ceiling (the same bound the enemy sheet is validated against) is clamped here,
+        // so a tampered row cannot restore an enemy nobody can kill. Current health follows the clamped
+        // maximum (SetAuthoritativeState clamps it into [0, max]).
+        int maxHealth = Math.Clamp(stored.MaxHealth, 1, ContentCatalog.MaxEnemyMaxHealth);
         EnemyCombatDerivedStats derived = formulas.EvaluateEnemyDerivedStats(
             (int)stats[StatId.Strength],
             stats[StatId.AttackSpeed],
@@ -81,15 +86,33 @@ internal static class EnemyFactory
             () => position,
             events,
             actorId: actorId,
-            maxHealth: stored.MaxHealth,
+            maxHealth: maxHealth,
             attackDamage: derived.AttackDamage,
             attackIntervalSeconds: derived.AttackIntervalSeconds,
             anchorHeightOffset: WolfDefinition.CombatAnchorHeight,
             baseStats: stats);
-        combatant.Health.SetAuthoritativeState(stored.CurrentHealth, stored.MaxHealth);
+        // BH-DEATH-2: current health is hostile too, and the schema's CHECK is only (current_hp >= 0), so a
+        // row of 0 is storable. A kill deletes its row and a checkpoint skips an inactive enemy, so a stored
+        // 0 can only be a tampered, cloned or legacy row - and restoring it made a permanently dead enemy:
+        // PruneInactive drops it from the registry with no credit and NO row delete, so it came back and
+        // burned one more enemy actor id on every restart, forever. Clamp to at least 1, like the maximum
+        // two lines above: the enemy restores killable, the next checkpoint writes the clamped value back,
+        // and killing it deletes the row.
+        combatant.Health.SetAuthoritativeState(Math.Clamp(stored.CurrentHealth, 1, maxHealth), maxHealth);
 
-        EnemyActor actor = Build(combatant, template, position, Math.Max(0f, stored.MovementSpeed), row.DisplayName, row.EnemyKind, level, home ?? position);
-        actor.SetFacing(row.Facing);
+        // The chase speed is hostile too, and it is the actor's real movement input: take it from the
+        // clamped sheet above (ClampEnemyBase maps NaN to the minimum and bounds the ceiling) rather
+        // than the raw column, so the actor cannot move at a speed its own replicated sheet denies -
+        // a NaN row otherwise froze the enemy for good and a huge one closed the whole gap in a tick.
+        EnemyActor actor = Build(combatant, template, position, stats[StatId.MovementSpeed], row.DisplayName, row.EnemyKind, level, home ?? position);
+        // The facing is hostile too, and facing_x/y/z carry no CHECK either. FaceDirection only rejects a
+        // near-zero direction: a non-finite one normalizes to a non-finite Forward, which poisons every
+        // later facing comparison and the wire value. Such a row keeps the actor's default forward instead.
+        if (float.IsFinite(row.Facing.X) && float.IsFinite(row.Facing.Y) && float.IsFinite(row.Facing.Z))
+        {
+            actor.SetFacing(row.Facing);
+        }
+
         return actor;
     }
 

@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace Dream.Tests.Integration;
 
 // Shared reads for the wave C ObjectId integration tests (wave C schema: migration 0005). Opens the
-// database after the servers are disposed, so call SqliteConnection.ClearAllPools() first.
+// database after the servers are disposed, so call SqlitePools.Release(databasePath) first.
 internal static class ObjectIdTestSupport
 {
     // Every persisted id, by object kind, and the world's stored counter (world 1).

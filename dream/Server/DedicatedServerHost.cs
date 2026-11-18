@@ -309,6 +309,10 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
         }
         catch
         {
+            // The host failed to construct, so this world was never served: no final checkpoint may
+            // be written over what the database holds. The runtime's Dispose is idempotent, so the
+            // host dispose below still releases its owned bundle.
+            runtimeHost.Runtime.DisposeWithoutFinalCheckpoint();
             runtimeHost.Dispose();
             throw;
         }
@@ -514,6 +518,18 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                 continue;
             }
 
+            // BH-CLOCK-4. The connection's own bucket is keyed by account, or, with no account, by the
+            // session id the client itself mints afresh on every connect, so a reconnect refills it.
+            // The character behind the connection is the only identity that survives a reconnect on an
+            // accountless host, and swapping it means playing as someone else, so the host charges a
+            // second bucket keyed on the character key - the same keying spawn protection and ability
+            // cooldowns use. Burst and refill are the limiter's own, so a normal chatter, reconnecting
+            // or not, is never held back by it.
+            if (!TryConsumeCharacterChatToken(context, runtime, senderSession))
+            {
+                continue;
+            }
+
             // M5: the party chat goes to the sender's party members only.
             List<ChatParticipant>? party = lines[i].Channel == ChatChannel.Party
                 ? BuildPartyParticipants(runtime, senderSession, participants)
@@ -525,6 +541,20 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
         {
             _pendingConnectionReplies.Enqueue(replies[i]);
         }
+    }
+
+    // BH-CLOCK-4. The character-keyed half of the chat token bucket, charged only for a connection
+    // that joined without an account (with one, the account key already survives the reconnect).
+    // True when the line may be routed.
+    private bool TryConsumeCharacterChatToken(ServerRoutingContext context, WorldSessionRuntime runtime, string senderSession)
+    {
+        if (context.JoinedIdentity != null
+            || !runtime.TryGetCharacterKey(new PlayerSessionId(senderSession), out string characterKey))
+        {
+            return true;
+        }
+
+        return _chatLimiter.TryConsume("c:" + characterKey, TimeProvider.GetTimestamp(), TimeProvider.TimestampFrequency);
     }
 
     // The chat participants that share the sender's party (the sender included); null when the sender is
@@ -1219,7 +1249,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                         _pendingJoins.RemoveAt(i);
                         if (!IsPlayerPrefetchSharedByAnotherJoin(playerName, joinAccount, connectionId))
                         {
-                            Runtime?.DiscardPersistedPlayerPrefetch(playerName, joinAccount);
+                            AbandonJoinPrefetch(Runtime, playerName, joinAccount);
                         }
                     }
                 }
@@ -1309,6 +1339,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
     private void RunTick(ulong tick, float fixedDeltaSeconds)
     {
         StepAccountStandings(Runtime, tick);
+        StepLostPresence(Runtime);
         ApplyPendingJoins();
         RefreshJoinedSessionIds();
         _commandInbox.DrainInto(_joinedSessionIds, _tickCommands);
@@ -1601,7 +1632,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
             PendingJoin join = joins[i];
             if (!_connections.TryGetValue(join.ConnectionId, out ServerRoutingContext? context))
             {
-                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
+                AbandonJoinPrefetch(runtime, join.PlayerName, join.Request.ResolvedAccount);
                 continue;
             }
 
@@ -1637,7 +1668,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
             // A ban set here since this join's load started: refused without routing it.
             if (RecentBanText(join.Request.ResolvedAccount) is { } recentBan)
             {
-                runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
+                AbandonJoinPrefetch(runtime, join.PlayerName, join.Request.ResolvedAccount);
                 _pendingConnectionReplies.Enqueue(new PendingConnectionReply(join.ConnectionId, new JoinRejectedMessage(recentBan)));
                 continue;
             }
@@ -1680,9 +1711,21 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
         joins.Clear();
     }
 
+    // A join that is given up on before it is routed: its prefetch's load may already have taken the
+    // character's presence lease, and no other path will ever release it (the release keys on the
+    // prefetch, which the discard removes), so the lease goes first and the prefetch after.
+    // BH-XFER-1 (connection dropped), BH-XFER-2 (ban found at routing time), prefetch-failed and
+    // prefetch-timeout all come through here. The routed-and-refused path keeps its own release at the
+    // end of ApplyPendingJoins, where the accepted case must not release.
+    private static void AbandonJoinPrefetch(WorldSessionRuntime? runtime, string playerName, AccountKey? account)
+    {
+        runtime?.ReleasePresenceOfRejectedJoin(playerName, account);
+        runtime?.DiscardPersistedPlayerPrefetch(playerName, account);
+    }
+
     private void RejectJoinForRetry(PendingJoin join, string reason)
     {
-        Runtime?.DiscardPersistedPlayerPrefetch(join.PlayerName, join.Request.ResolvedAccount);
+        AbandonJoinPrefetch(Runtime, join.PlayerName, join.Request.ResolvedAccount);
         _pendingConnectionReplies.Enqueue(new PendingConnectionReply(
             join.ConnectionId,
             new JoinRejectedMessage(JoinRetryRejectionReason)));

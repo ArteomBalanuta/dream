@@ -30,7 +30,7 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         string seedOne = (string)database.Scalar("SELECT seed FROM worlds WHERE world_id = 1;")!;
         long timeOne = Convert.ToInt64(database.Scalar("SELECT world_time_ticks FROM worlds WHERE world_id = 1;"), CultureInfo.InvariantCulture);
         string[] before = WorldBundles.WorldTables.Select(table => WorldBundles.Dump(database, table, WorldId.Default)).ToArray();
@@ -51,7 +51,7 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
         (exit, string copied) = Run(["copy", "1", "bar"]);
         Assert.Equal(0, exit);
         Assert.Equal(["3", "bar", "56x8x56", "default:1", timeOne.ToString(CultureInfo.InvariantCulture)], copied.TrimEnd().Split('\t'));
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         foreach (string table in WorldBundles.WorldTables)
         {
             Assert.Equal(WorldBundles.Count(database, table, WorldId.Default), WorldBundles.Count(database, table, new WorldId(3)));
@@ -75,7 +75,7 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
         Assert.Equal(1, Run([]).Exit);
         Assert.Equal(1, Run(["list", "--yes"]).Exit);
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         string seedFoo = (string)database.Scalar("SELECT seed FROM worlds WHERE world_id = 2;")!;
         Assert.NotEqual(seedOne, seedFoo);
         string everything = string.Join("\n", allText);
@@ -156,7 +156,7 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
         }
 
         Assert.Equal(WorldId.Default, first.WorldId);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM worlds;"));
@@ -191,7 +191,7 @@ public sealed class WaveBTesterCliTests(ITestOutputHelper output)
             }
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT COUNT(*) FROM schema_version;"));

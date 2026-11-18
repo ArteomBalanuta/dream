@@ -91,7 +91,7 @@ public class WorldRendererFrustumCullingTests
         }
 
         int kept = 0;
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             for (int i = 0; i < cubes.Length; i++)
             {

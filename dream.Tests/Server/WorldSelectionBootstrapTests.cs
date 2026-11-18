@@ -29,7 +29,7 @@ public sealed class WorldSelectionBootstrapTests : IDisposable
 
     public void Dispose()
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePools.Release(_databasePath);
         try
         {
             Directory.Delete(_rootDirectory, recursive: true);

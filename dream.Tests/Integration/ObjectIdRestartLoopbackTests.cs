@@ -32,7 +32,7 @@ public sealed class ObjectIdRestartLoopbackTests(ITestOutputHelper output)
             Assert.True(record.HitTicks[^1] > CheckpointTicks, "no hit after the first periodic checkpoint");
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         first = ReadIds(database.DatabasePath);
         Dictionary<long, (long Origin, long X, long Y, long Z)> firstPieces = ReadPieceGroups(database.DatabasePath);
         output.WriteLine($"first run: cubes {first.Cubes.Count}, pieces {first.Pieces.Count} (origins {string.Join(",", first.Origins)}), enemies {first.Enemies.Count}, items {first.Items.Count}, next_object_id {first.NextObjectId}");
@@ -57,7 +57,7 @@ public sealed class ObjectIdRestartLoopbackTests(ITestOutputHelper output)
             }
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds restarted = ReadIds(database.DatabasePath);
         Assert.Equal(first.Cubes, restarted.Cubes);
         Assert.Equal(first.Pieces, restarted.Pieces);
@@ -72,7 +72,7 @@ public sealed class ObjectIdRestartLoopbackTests(ITestOutputHelper output)
             server.RunScript(Script, ticks: 150);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds second = ReadIds(database.DatabasePath);
         output.WriteLine($"second run: cubes {second.Cubes.Count}, pieces {second.Pieces.Count}, enemies {second.Enemies.Count}, items {second.Items.Count}, next_object_id {second.NextObjectId}");
         AssertUniqueAndBelowCounter(second);

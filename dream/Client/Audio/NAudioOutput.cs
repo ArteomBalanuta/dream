@@ -19,14 +19,31 @@ public sealed class NAudioOutput : IAudioOutput
         _device = new WaveOutEvent { DesiredLatency = 200, NumberOfBuffers = 4 };
         AudioDiagnostics.Log($"device opened (latency={_device.DesiredLatency} buffers={_device.NumberOfBuffers})");
         _provider = new MixerProvider(mixer);
+        StartDevice(_device, _provider);
+    }
+
+    // Starts the device on the provider and, when opening fails, releases BOTH of the half-built
+    // output's disposables before rethrowing. The device alone is not enough: the provider owns an
+    // AudioReadStats, which under DREAM_AUDIO_LOG owns a 1-second Timer that would otherwise print
+    // against a mixer nobody pulls for the life of the process, and hold that mixer with it.
+    // GameAudio.EnsureStarted only ever sees the exception, so nothing else can reach either one.
+    //
+    // Internal and parameterised so the failure path can be exercised without a sound device
+    // (dream.Tests/BugHunt/AnimAudioOpenFailureDisposeTests.cs).
+    internal static void StartDevice<TProvider>(IWavePlayer device, TProvider provider)
+        where TProvider : ISampleProvider, IDisposable
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(provider);
         try
         {
-            _device.Init(_provider);
-            _device.Play();
+            device.Init(provider);
+            device.Play();
         }
         catch
         {
-            _device.Dispose();
+            device.Dispose();
+            provider.Dispose();
             throw;
         }
     }

@@ -44,7 +44,7 @@ public sealed class WorldRestartRestoreLoopbackTests(ITestOutputHelper output)
             Assert.True(server.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(1L, WorldBundles.Count(database, "placed_cube_instances", new WorldId(2)));
         Assert.Equal(0L, WorldBundles.Count(database, "placed_cube_instances", WorldId.Default));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE material_id = 'Lamp';"));
@@ -65,7 +65,7 @@ public sealed class WorldRestartRestoreLoopbackTests(ITestOutputHelper output)
             await TickAsync(server, 2);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         // World 1 of the same database: its own 56-cell map, no lamp.
         using (ServerPersistenceBundle bundle = WorldBundles.Open(database, WorldId.Default))

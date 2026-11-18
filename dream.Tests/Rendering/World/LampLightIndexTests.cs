@@ -102,7 +102,7 @@ public class LampLightIndexTests
         LightCollector lights = new();
         index.Collect(export, Camera, lights);
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             lights.Clear();
             index.Collect(export, Camera, lights);

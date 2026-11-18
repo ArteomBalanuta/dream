@@ -1,4 +1,6 @@
 using OpenTK.Mathematics;
+using Dream.Multiplayer.Diagnostics;
+using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
@@ -37,8 +39,9 @@ public sealed partial class WorldSessionRuntime
         // Every join, first or returning, is protected for the same window as a respawn and it ends on the
         // player's first attack. Without it a new player who stands still where they joined was bitten within
         // 9 ticks and killed in about 8.6 s, then looped through respawns (a wolf spawned near the world
-        // spawn). The window is per seat and counted in server ticks; a rejoin gets its own, not the old one.
-        // A repeated join of a seat that is already attached does not start a new window.
+        // spawn). The window is counted in server ticks and belongs to the character, not the seat: a rejoin
+        // resumes what is left of the one it already had and earns a new one only after the reattach
+        // cooldown. A repeated join of a seat that is already attached does not start a new window.
         // The join's opt-in hold is honoured only on a fresh attach that is not a quick re-seat of the same
         // session (a takeover detaches, then attaches fresh): see ConnectedPlayer.LastFreshAttachTick.
         attached.FreshlyAttached = !alreadyAttached
@@ -47,9 +50,15 @@ public sealed partial class WorldSessionRuntime
         if (!alreadyAttached)
         {
             attached.LastFreshAttachTick = Math.Max(1UL, CurrentServerTick);
-            attached.ProtectedThroughTick = CurrentServerTick + PlayerRespawnRules.SpawnProtectionTicks;
-            // M4: cooldowns live on the session and a join starts clean; the owner gets its vitals again.
-            attached.Cooldowns.Clear();
+            // BH-PVP-1: the window is the character's, not the seat's. A rejoin resumes what is left of it
+            // (nothing, once an attack spent it) and starts a new one only after the reattach cooldown, so
+            // dropping the connection mid-fight can no longer buy fresh immunity. See ApplyJoinSpawnProtection.
+            ApplyJoinSpawnProtection(attached);
+            // BH-SKILL-2: a join no longer starts clean. Cooldowns are a time cost and belong to the
+            // character, like the spawn-protection window above, so a reconnect resumes the ones still
+            // running instead of wiping them (mana, health and the potions in the bag already persist).
+            // The owner gets its vitals again either way.
+            RestoreCharacterCooldowns(attached);
             attached.VitalsDirty = true;
             attached.LastSentMana = -1;
             attached.LastSentMaxMana = -1;
@@ -58,6 +67,110 @@ public sealed partial class WorldSessionRuntime
         // An attached player's cached profile is never evicted (MarkProfileDeparted).
         MarkProfileActive(attached.CharacterKey.Value);
         return attached;
+    }
+
+    // BH-SKILL-2. Cooldowns used to live only on the seat, and AttachRemoteSession cleared them, so
+    // dropping the connection and rejoining handed back every running cooldown while mana, health and
+    // the bag survived -- a free reset of the only thing a cast costs besides mana. They are tracked
+    // against the CHARACTER as well now, exactly as the spawn-protection window is (see
+    // ApplyJoinSpawnProtection): a cooldown is recorded here whenever a seat starts one, and a fresh
+    // attach restores what is still running at the current server tick rather than clearing.
+    //
+    // Two live seats can share a CharacterKey (wave 16), which is why the record is written on every
+    // Start rather than on detach: a second seat joining the same character inherits the cooldowns the
+    // first one is already serving, so a seat swap cannot be used to defeat this either. Everything is
+    // in server ticks, so lockstep peers agree, and the restore keeps the recorded order.
+    private readonly Dictionary<string, List<AbilityCooldown>> _characterCooldowns = new(StringComparer.Ordinal);
+
+    // An entry whose cooldowns have all expired grants exactly what no entry grants, so the table is
+    // pruned of those once it grows past this. The removed set is a function of the tick and the
+    // contents, never of iteration order.
+    private const int CharacterCooldownCap = 512;
+
+    // Starts a cooldown on the seat and records it against the character.
+    private void StartCooldown(ConnectedPlayer player, string key, ulong readyTick, ulong nowTick)
+    {
+        player.Cooldowns.Start(key, readyTick, nowTick);
+
+        string character = player.CharacterKey.Value;
+        if (!_characterCooldowns.TryGetValue(character, out List<AbilityCooldown>? entries))
+        {
+            PruneCharacterCooldowns(nowTick);
+            entries = [];
+            _characterCooldowns[character] = entries;
+        }
+
+        for (int i = entries.Count - 1; i >= 0; i--)
+        {
+            if (entries[i].ReadyTick <= nowTick
+                || string.Equals(entries[i].Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                entries.RemoveAt(i);
+            }
+        }
+
+        entries.Add(new AbilityCooldown(key, readyTick));
+    }
+
+    // A fresh attach: the seat's list is replaced by the character's cooldowns that are still running.
+    private void RestoreCharacterCooldowns(ConnectedPlayer attached)
+    {
+        attached.Cooldowns.Clear();
+        if (!_characterCooldowns.TryGetValue(attached.CharacterKey.Value, out List<AbilityCooldown>? entries))
+        {
+            return;
+        }
+
+        ulong tick = CurrentServerTick;
+        for (int i = entries.Count - 1; i >= 0; i--)
+        {
+            if (entries[i].ReadyTick <= tick)
+            {
+                entries.RemoveAt(i);
+            }
+        }
+
+        for (int i = 0; i < entries.Count; i++)
+        {
+            attached.Cooldowns.Start(entries[i].Key, entries[i].ReadyTick);
+        }
+    }
+
+    private void PruneCharacterCooldowns(ulong tick)
+    {
+        if (_characterCooldowns.Count < CharacterCooldownCap)
+        {
+            return;
+        }
+
+        List<string>? stale = null;
+        foreach (KeyValuePair<string, List<AbilityCooldown>> entry in _characterCooldowns)
+        {
+            bool running = false;
+            for (int i = 0; i < entry.Value.Count; i++)
+            {
+                if (entry.Value[i].ReadyTick > tick)
+                {
+                    running = true;
+                    break;
+                }
+            }
+
+            if (!running)
+            {
+                (stale ??= []).Add(entry.Key);
+            }
+        }
+
+        if (stale == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < stale.Count; i++)
+        {
+            _characterCooldowns.Remove(stale[i]);
+        }
     }
 
     private ConnectedPlayer AttachRemoteSessionCore(PlayerSessionId sessionId, string? displayName)
@@ -176,6 +289,10 @@ public sealed partial class WorldSessionRuntime
             PersistPlayerProfile(sessionId, target.Combatant);
         }
 
+        // That save carried the live mode (RuntimePersistenceBridge reads GetSessionInteractionMode),
+        // so a paced write waiting for this session has nothing left to write.
+        _pendingModeSaves.Remove(sessionId);
+        _lastModeSaveTick.Remove(sessionId);
         _persistence.ForgetUnrestoredSession(sessionId);
         // The build material is per connection: a rejoin starts from Auto, as its HUD does.
         _buildMaterialSelections.Remove(sessionId);
@@ -236,10 +353,33 @@ public sealed partial class WorldSessionRuntime
         _sessionInteractionModes.Remove(player.SessionId);
         _buildMaterialSelections.Remove(player.SessionId);
         _pendingLoot.Remove(player.SessionId);
+        _lastModeSaveTick.Remove(player.SessionId);
+        _pendingModeSaves.Remove(player.SessionId);
     }
 
     // Sessions with a stored interaction mode (tests): at most the registry's Count.
     internal int SessionInteractionModeCount => _sessionInteractionModes.Count;
+
+    // At most one mode profile save per session per second. The change test below stops a starved
+    // (honest) seat's repeated request, but a client that alternates RequestedMode every tick changes
+    // the value every tick by construction, so the test passes and one SQLite profile write is queued
+    // per tick per connection - a remote write amplifier against the shared persistence queue, which
+    // every legitimate write (loot, inventory, sanctions, checkpoints) then queues behind. The mode
+    // itself stays immediate: only the write is paced, and the last mode of a paced burst is written
+    // by StepPendingModeSaves once the interval has passed, so a flip a player can actually make
+    // (a keypress) is persisted within a second of the press and the detach save writes the live mode
+    // in any case. Server ticks, never wall time, so the authoritative path stays deterministic.
+    internal const int ModeSaveIntervalTicks = SimulationClock.AuthoritativeTicksPerSecond;
+
+    private readonly Dictionary<PlayerSessionId, ulong> _lastModeSaveTick = [];
+    private readonly Dictionary<PlayerSessionId, PlayerInteractionMode> _pendingModeSaves = [];
+    private readonly List<PlayerSessionId> _modeSaveFlushScratch = [];
+
+    // Mode profile writes the pacing collapsed since this runtime started: an operator sees a
+    // per-tick flipper here and in the server.session.mode-save-paced line.
+    internal int ModeSavesPaced { get; private set; }
+
+    internal int PendingModeSaveCount => _pendingModeSaves.Count;
 
     private PlayerInteractionMode GetSessionInteractionMode(PlayerSessionId sessionId)
     {
@@ -277,12 +417,78 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
+        // The join's restore (saveUnchanged) is server driven, once per join, and is never paced; it
+        // also does not stamp the interval, so a player's first mode change after joining is immediate.
+        if (!saveUnchanged
+            && _lastModeSaveTick.TryGetValue(sessionId, out ulong lastSaveTick)
+            && CurrentServerTick - lastSaveTick < (ulong)ModeSaveIntervalTicks)
+        {
+            _pendingModeSaves[sessionId] = interactionMode;
+            ModeSavesPaced++;
+            NetworkDiagnosticsLog.Write(
+                "server.session.mode-save-paced",
+                $"session={sessionId.Value} tick={CurrentServerTick}");
+            return;
+        }
+
+        if (!saveUnchanged)
+        {
+            _lastModeSaveTick[sessionId] = CurrentServerTick;
+        }
+
+        _pendingModeSaves.Remove(sessionId);
+        SaveSessionInteractionModeProfile(player, interactionMode);
+    }
+
+    private void SaveSessionInteractionModeProfile(ConnectedPlayer player, PlayerInteractionMode interactionMode)
+    {
         PersistedPlayerProfile profile = GetCachedProfile(player.CharacterKey.Value);
         SaveProfile(player.CharacterKey.Value, profile with
         {
             DisplayName = player.DisplayName,
             InteractionMode = interactionMode
         });
+    }
+
+    // Writes the last mode of a paced burst once its session's interval has passed. Called once a tick.
+    private void StepPendingModeSaves(ulong tick)
+    {
+        if (_pendingModeSaves.Count == 0)
+        {
+            return;
+        }
+
+        _modeSaveFlushScratch.Clear();
+        foreach (KeyValuePair<PlayerSessionId, PlayerInteractionMode> entry in _pendingModeSaves)
+        {
+            if (!_lastModeSaveTick.TryGetValue(entry.Key, out ulong lastSaveTick)
+                || tick - lastSaveTick >= (ulong)ModeSaveIntervalTicks)
+            {
+                _modeSaveFlushScratch.Add(entry.Key);
+            }
+        }
+
+        for (int i = 0; i < _modeSaveFlushScratch.Count; i++)
+        {
+            PlayerSessionId sessionId = _modeSaveFlushScratch[i];
+            if (!_pendingModeSaves.Remove(sessionId, out PlayerInteractionMode interactionMode))
+            {
+                continue;
+            }
+
+            if (_playerProfiles == null
+                || !_sessions.TryGet(sessionId, out ConnectedPlayer? player)
+                || player == null
+                || player.IsLocal)
+            {
+                continue;
+            }
+
+            _lastModeSaveTick[sessionId] = tick;
+            SaveSessionInteractionModeProfile(player, interactionMode);
+        }
+
+        _modeSaveFlushScratch.Clear();
     }
 
     private PlayerSessionId ResolvePrimaryControlledSessionId()
@@ -360,6 +566,20 @@ public sealed partial class WorldSessionRuntime
         return _sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null
             ? player.DisplayName
             : sessionId.Value;
+    }
+
+    // BH-CLOCK-4. The character behind a live session, for host state that has to survive a
+    // reconnect (the chat token bucket). False for a session the runtime does not know.
+    public bool TryGetCharacterKey(PlayerSessionId sessionId, out string characterKey)
+    {
+        if (_sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null)
+        {
+            characterKey = player.CharacterKey.Value;
+            return true;
+        }
+
+        characterKey = string.Empty;
+        return false;
     }
 
     // The persistence key of the session's character (the session id for an unknown session).

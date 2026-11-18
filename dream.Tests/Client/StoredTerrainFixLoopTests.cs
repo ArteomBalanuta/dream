@@ -77,15 +77,20 @@ public sealed class StoredTerrainFixLoopTests
 
         using ClientWorldSession client = new(20, new Vector3(5f, 1.5f, 5f), new SceneEventHub());
         long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
-        Stopwatch clock = Stopwatch.StartNew();
 
         InvalidDataException error = Assert.Throws<InvalidDataException>(
             () => ClientJoinAcceptedApplier.ApplyToRuntime(client, join with { ReceivedTerrain = chunks }));
 
         Assert.StartsWith("Protocol error: stored terrain", error.Message, StringComparison.Ordinal);
         Assert.Contains("implied subcell budget", error.Message, StringComparison.Ordinal);
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"took {clock.Elapsed}");
-        Assert.True(GC.GetAllocatedBytesForCurrentThread() - allocatedBefore < 128L * 1024 * 1024);
+        // "Quickly" is proved by the allocation bound, not by a clock. The decoder gives up as
+        // soon as the implied-subcell budget is charged, so it never materialises the blob: that
+        // is what the bound below measures, and it is the same number on an idle and on a
+        // saturated host. The old clock budget measured the machine instead, and a host busy
+        // enough to breach it says nothing about whether the decoder gave up early.
+        Assert.True(
+            GC.GetAllocatedBytesForCurrentThread() - allocatedBefore < 128L * 1024 * 1024,
+            $"the refusal allocated {(GC.GetAllocatedBytesForCurrentThread() - allocatedBefore) / (1024 * 1024)} MB");
         Assert.Equal(20, client.Map.Width);
     }
 

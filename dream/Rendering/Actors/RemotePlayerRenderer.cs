@@ -119,6 +119,9 @@ public sealed class RemotePlayerRenderer : IDisposable
             {
                 shader.Use();
                 shader.SetVector3("uActorTintOffset", PlayerPoseLayers.HitFlashOffset(frame.HitFlinch));
+                // AnimatedModel.BindProgram carries the tint into the MASK variant from the model's
+                // own value, so a MASK part would flash untinted without this.
+                model.ActorTintOffset = PlayerPoseLayers.HitFlashOffset(frame.HitFlinch);
             }
 
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
@@ -131,6 +134,7 @@ public sealed class RemotePlayerRenderer : IDisposable
             {
                 shader.Use();
                 shader.SetVector3("uActorTintOffset", OpenTK.Mathematics.Vector3.Zero);
+                model.ActorTintOffset = OpenTK.Mathematics.Vector3.Zero;
             }
         }
 

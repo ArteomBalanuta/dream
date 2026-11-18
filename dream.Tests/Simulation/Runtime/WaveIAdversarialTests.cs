@@ -37,7 +37,7 @@ public sealed class WaveIAdversarialTests(ITestOutputHelper output)
 
     private static (string Owner, string Kind)[] ItemRows(MigrationTestDatabase db)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         using SqliteConnection connection = db.Schema.CreateOpenConnection();
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "SELECT owner_player_name, item_kind FROM item_instances WHERE world_id = 1 AND owner_player_name IS NOT NULL AND rolled_modifiers IS NOT NULL ORDER BY item_instance_id;";

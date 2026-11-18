@@ -35,7 +35,7 @@ internal sealed class TerrainCliFixture : IDisposable
         {
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(Database.DatabasePath);
         Catalog = new SqliteWorldCatalog(Schema);
     }
 
@@ -55,13 +55,13 @@ internal sealed class TerrainCliFixture : IDisposable
 
     public long Scalar(string sql)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(Database.DatabasePath);
         return ObjectIdTestSupport.Scalar(Database.DatabasePath, sql);
     }
 
     public void Exec(string sql)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(Database.DatabasePath);
         using SqliteConnection connection = ObjectIdTestSupport.Open(Database.DatabasePath, readOnly: false);
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = sql;
@@ -104,7 +104,7 @@ internal sealed class TerrainCliFixture : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(Database.DatabasePath);
         Database.Dispose();
     }
 }

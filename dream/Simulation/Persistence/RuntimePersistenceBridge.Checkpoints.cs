@@ -409,9 +409,15 @@ internal sealed partial class RuntimePersistenceBridge
         }
 
         GeometryCellRecord? geometryCell = map.TryGetGeometryCellAtCell(cell.X, cell.Y, cell.Z);
+        // The owner is stable identity, not live state: a record that lost its owner must not
+        // overwrite the persisted one with null. Same fallback as the immediate write path.
+        bool hasCached = _persistedCubes.TryGetValue(objectId, out PersistedPlacedCube cachedCube);
+        string? ownerPlayerName = string.IsNullOrWhiteSpace(record.OwnerPlayerName)
+            ? (hasCached ? cachedCube.OwnerPlayerName : null)
+            : record.OwnerPlayerName;
         PersistedPlacedCube captured = new(
             objectId,
-            string.IsNullOrWhiteSpace(record.OwnerPlayerName) ? null : record.OwnerPlayerName,
+            ownerPlayerName,
             new Vector3(cell.X, cell.Y, cell.Z),
             GeometryShapeKind.SolidCube,
             geometryCell?.Definition.MaterialId ?? GeometryMaterialId.Grass,
@@ -421,7 +427,7 @@ internal sealed partial class RuntimePersistenceBridge
             now,
             cube.Position);
         cubes.Add(captured);
-        if (_persistedCubes.ContainsKey(objectId))
+        if (hasCached)
         {
             _persistedCubes[objectId] = captured;
         }

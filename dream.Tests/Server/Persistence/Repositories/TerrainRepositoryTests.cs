@@ -260,7 +260,7 @@ public sealed class TerrainRepositoryTests
         Overrides(database, WorldId.Default).SaveTerrainCellOverride(Removed(12, new GeometryCellKey(2, 1, 2)));
         Overrides(database, WorldId.Default).SaveTerrainCellOverride(Removed(11, new GeometryCellKey(1, 1, 1)));
         Chunks(database, WorldId.Default).ReplaceTerrainChunks([Chunk(1, 0, 2), Chunk(0, 0, 1)]);
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
 
         string dump = ObjectIdTestSupport.DumpWorld(database.DatabasePath);
 

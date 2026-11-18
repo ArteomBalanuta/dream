@@ -69,7 +69,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
             Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM sqlite_master WHERE name = 'schema_version';"));
         }
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         string before = DumpAll(database);
         List<SlotRow> slotsBefore = BagGridMigrationAsserts.ReadSlots(database);
         string oldSeed = (string)database.Scalar("SELECT value FROM world_metadata WHERE key = 'simulation_seed';")!;
@@ -108,7 +108,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                 Assert.Equal(0L, (long)command.ExecuteScalar()!);
             }
 
-            MigrationTestDatabase.ReleasePooledConnections();
+            SqlitePools.Release(database.DatabasePath);
             Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
             using (SqliteConnection connection = database.Open())
             {
@@ -152,7 +152,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
             }
         }
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
 
         // Play: a new session places a lamp, which is saved and restored by the next start.
         OpenTK.Mathematics.Vector3 lampCell;
@@ -171,7 +171,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
             Assert.True(server.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
         }
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal("ok", database.Scalar("PRAGMA integrity_check;"));
         AssertObjectIdCounterAndTriggers(database);
         Assert.Equal(lampsBefore + 1, database.Scalar("SELECT COUNT(*) FROM placed_cube_instances WHERE material_id = 'Lamp' AND world_id = 1;"));
@@ -198,7 +198,7 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
             Assert.True(host.Runtime.WorldClock.WorldTicks >= oldTime);
         }
 
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Single(database.Backups());
     }
 
