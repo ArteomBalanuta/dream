@@ -69,10 +69,11 @@ public sealed class AdminAccountSanctionLoopbackTests
         WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(server.Port, session);
         ServerConnection connection = await accept.WaitAsync(WireLoopbackServer.Timeout);
         await client.HandshakeAsync();
-        LoopbackDeadline joining = new(server.Ticks);
+        ProgressCounter[] joinProgress = [server.ServerTicks, WireLoopbackServer.Observing(client)];
+        LoopbackDeadline joining = new(joinProgress);
         while (!server.Host.IsConnectionJoined(connection.ConnectionId))
         {
-            joining.AssertAlive(server.Ticks, $"{session} join");
+            joining.AssertAlive(joinProgress, () => $"{session} join");
             await Task.Delay(5);
             await server.TickAsync();
             Assert.True(await OutboundDrain.FlushAsync(connection, WireLoopbackServer.Timeout));

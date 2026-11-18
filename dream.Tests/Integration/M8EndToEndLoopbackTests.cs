@@ -65,10 +65,11 @@ public sealed class M8EndToEndLoopbackTests
         WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(server.Port, session);
         ServerConnection connection = await accept.WaitAsync(WireLoopbackServer.Timeout);
         await client.HandshakeAsync();
-        LoopbackDeadline joining = new(server.Ticks);
+        ProgressCounter[] joinProgress = [server.ServerTicks, WireLoopbackServer.Observing(client)];
+        LoopbackDeadline joining = new(joinProgress);
         while (!server.Host.IsConnectionJoined(connection.ConnectionId))
         {
-            joining.AssertAlive(server.Ticks, $"{session} join");
+            joining.AssertAlive(joinProgress, () => $"{session} join");
             await Task.Delay(5);
             await server.TickAsync();
             Assert.True(await OutboundDrain.FlushAsync(connection, WireLoopbackServer.Timeout));
@@ -87,13 +88,33 @@ public sealed class M8EndToEndLoopbackTests
     // cadence - this class never sets StandingRefreshIntervalTicks and never waits on it - and a
     // /mute or /ban with no minutes runs to PermanentUntilUtc, so no wait here is on the clock
     // either.
-    private static Task UntilAsync(WireLoopbackServer server, Func<bool> done, string what) =>
-        server.UntilAsync(done, what, LoopbackDeadline.WriteRoundTripTicks);
+    // `observed` is the client the condition is READ FROM, and passing it is the whole point: every
+    // wait in this class is satisfied by a frame reaching that client, so the budget has to be spent
+    // on its received-frame count as well as on the server's ticks. Budgeting ticks alone measured
+    // the side the test loop drives itself, which cannot starve, and failed this class under a full
+    // suite while its server side was provably healthy.
+    //
+    // budget defaults to the write round trip; a wait whose write has already landed (the test has
+    // seen the reply the barrier read sent) passes LoopbackDeadline.Applied instead.
+    private static Task UntilAsync(WireLoopbackServer server, WireLoopbackClient observed, Func<bool> done, string what, long? budget = null) =>
+        server.UntilAsync(done, () => what, budget ?? LoopbackDeadline.WriteRoundTrip, WireLoopbackServer.Observing(observed));
 
-    // maxTicks defaults to the write round trip; a wait whose write has already landed passes
-    // LoopbackDeadline.AppliedTicks instead.
-    private static Task UntilAsync(WireLoopbackServer server, Func<bool> done, Func<string> what, long? maxTicks = null) =>
-        server.UntilAsync(done, what, maxTicks ?? LoopbackDeadline.WriteRoundTripTicks);
+    private static Task UntilAsync(WireLoopbackServer server, WireLoopbackClient observed, Func<bool> done, Func<string> what, long? budget = null) =>
+        server.UntilAsync(done, what, budget ?? LoopbackDeadline.WriteRoundTrip, WireLoopbackServer.Observing(observed));
+
+    // A condition every one of several clients has to see: all of their frame counts are counters.
+    private static Task UntilAllAsync(WireLoopbackServer server, WireLoopbackClient[] observed, Func<bool> done, string what) =>
+        server.UntilAsync(
+            done,
+            () => what,
+            LoopbackDeadline.WriteRoundTrip,
+            [.. observed.Select(WireLoopbackServer.Observing)]);
+
+    // A condition read from the DATABASE: it is settled by the persistence worker, so that is the
+    // side it is budgeted on alongside the server's ticks. Budgeting ticks alone would again be
+    // measuring a side that cannot starve.
+    private static Task UntilRowAsync(WireLoopbackServer server, Func<bool> done, string what) =>
+        server.UntilAsync(done, () => what, LoopbackDeadline.WriteRoundTrip, server.PersistenceWrites);
 
     // What a stalled mute notice has to tell apart: whether the mute reached the player's own
     // connection standing - StepAccountStandings' job on the tick after the write's barrier read,
@@ -150,11 +171,11 @@ public sealed class M8EndToEndLoopbackTests
 
         // The line is a normal Command chat line; only the role the connection joined with decides.
         await CommandAsync(player, $"/kick \"{NameOf(Admin)}\" get out");
-        await UntilAsync(server, () => SystemLines(player).Count(line => line == DedicatedServerHost.PermissionDeniedText) >= 1, "the refusal of kick");
+        await UntilAsync(server, player, () => SystemLines(player).Count(line => line == DedicatedServerHost.PermissionDeniedText) >= 1, "the refusal of kick");
         await CommandAsync(player, "/announce I am in charge now");
         await CommandAsync(player, $"/ban \"{NameOf(Admin)}\" 999 nope");
         await CommandAsync(player, "/definitely-not-a-command");
-        await UntilAsync(server, () => SystemLines(player).Count(line => line == DedicatedServerHost.PermissionDeniedText) >= 4, "four refusals");
+        await UntilAsync(server, player, () => SystemLines(player).Count(line => line == DedicatedServerHost.PermissionDeniedText) >= 4, "four refusals");
 
         await TicksAsync(server, 12);
         Assert.True(server.Host.IsConnectionJoined(server.ConnectionFor(admin).ConnectionId), "the admin was kicked by a player");
@@ -179,7 +200,7 @@ public sealed class M8EndToEndLoopbackTests
         await FlushAsync(server);
         Assert.True(new SqliteAccountRepository(db.Schema).TrySetRole(NameOf(Bee), 1));
         await CommandAsync(player, "/announce still a player until I rejoin");
-        await UntilAsync(server, () => SystemLines(player).Contains(DedicatedServerHost.PermissionDeniedText), "the refusal");
+        await UntilAsync(server, player, () => SystemLines(player).Contains(DedicatedServerHost.PermissionDeniedText), "the refusal");
 
         await server.DisconnectAsync(player);
         await using WireLoopbackClient rejoined = await server.ConnectAndJoinAsync(Bee);
@@ -202,8 +223,9 @@ public sealed class M8EndToEndLoopbackTests
         await CommandAsync(admin, "/announce The server restarts in five minutes");
 
         const string Expected = "[Announcement] The server restarts in five minutes";
-        await UntilAsync(
+        await UntilAllAsync(
             server,
+            [admin, one, two],
             () => new[] { admin, one, two }.All(client => SystemLines(client).Contains(Expected)),
             "the announcement at all three");
         Assert.All(new[] { admin, one, two }, client => Assert.Single(SystemLines(client), line => line == Expected));
@@ -234,7 +256,7 @@ public sealed class M8EndToEndLoopbackTests
             WireLoopbackClient bee = await server.ConnectAndJoinAsync(Bee);
 
             await CommandAsync(admin, $"/mute \"{NameOf(Bee)}\"");
-            await UntilAsync(server, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the mute result");
+            await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the mute result");
 
             // Muted at once, on the live connection. The line is sent BEFORE this waits on anything,
             // which is the point: it proves a line sent the moment the admin's reply lands is already
@@ -243,10 +265,10 @@ public sealed class M8EndToEndLoopbackTests
             // of ticks, not a cadence and not a clock.
             await SayAsync(bee, ChatChannel.World, "hello anyone");
             await UntilAsync(
-                server,
+                server, bee,
                 () => SystemLines(bee).Contains(DedicatedServerHost.MutedText),
                 () => $"the muted notice ({MuteStateOf(server, bee)})",
-                LoopbackDeadline.AppliedTicks);
+                LoopbackDeadline.Applied);
             await TicksAsync(server, 8);
             Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello anyone");
 
@@ -267,23 +289,23 @@ public sealed class M8EndToEndLoopbackTests
             bee = await server.ConnectAndJoinAsync(Bee);
             await SayAsync(bee, ChatChannel.World, "hello again");
             await UntilAsync(
-                server,
+                server, bee,
                 () => SystemLines(bee).Contains(DedicatedServerHost.MutedText),
                 () => $"the muted notice after a rejoin ({MuteStateOf(server, bee)})",
-                LoopbackDeadline.AppliedTicks);
+                LoopbackDeadline.Applied);
             await TicksAsync(server, 8);
             Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello again");
 
             // Commands of the admin are never muted, and an unmute frees the player at once - and
             // clears the row.
             await CommandAsync(admin, $"/unmute \"{NameOf(Bee)}\"");
-            await UntilAsync(server, () => SystemLines(admin).Contains($"Unmuted {NameOf(Bee)}."), "the unmute result");
+            await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Unmuted {NameOf(Bee)}."), "the unmute result");
             await SayAsync(bee, ChatChannel.World, "i can talk");
             await UntilAsync(
-                server,
+                server, admin,
                 () => Chats(admin).Any(chat => chat.Channel == ChatChannel.World && chat.Text == "i can talk" && chat.From == NameOf(Bee)),
                 "the player's line reaching the admin");
-            await UntilAsync(
+            await UntilRowAsync(
                 server,
                 () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 0L,
                 "the unmute reaching the account row");
@@ -291,8 +313,8 @@ public sealed class M8EndToEndLoopbackTests
             // Muted again, so the restart below has a mute to carry. Flushed, so the row is on disk
             // before this host releases the world.
             await CommandAsync(admin, $"/mute \"{NameOf(Bee)}\"");
-            await UntilAsync(server, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the second mute result");
-            await UntilAsync(
+            await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the second mute result");
+            await UntilRowAsync(
                 server,
                 () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 1L,
                 "the second mute reaching the account row before the restart");
@@ -310,18 +332,18 @@ public sealed class M8EndToEndLoopbackTests
 
             await SayAsync(bee, ChatChannel.World, "hello after the restart");
             await UntilAsync(
-                restarted,
+                restarted, bee,
                 () => SystemLines(bee).Contains(DedicatedServerHost.MutedText),
                 () => $"the muted notice after a restart, which only accounts.muted_until_utc can produce ({MuteStateOf(restarted, bee)})",
-                LoopbackDeadline.AppliedTicks);
+                LoopbackDeadline.Applied);
             await TicksAsync(restarted, 8);
             Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello after the restart");
 
             // And the unmute reaches the row on this host too, so the mute does not come back on the
             // next restart.
             await CommandAsync(admin, $"/unmute \"{NameOf(Bee)}\"");
-            await UntilAsync(restarted, () => SystemLines(admin).Contains($"Unmuted {NameOf(Bee)}."), "the unmute result after the restart");
-            await UntilAsync(
+            await UntilAsync(restarted, admin, () => SystemLines(admin).Contains($"Unmuted {NameOf(Bee)}."), "the unmute result after the restart");
+            await UntilRowAsync(
                 restarted,
                 () => Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")) == 0L,
                 "the unmute reaching the account row after the restart");
@@ -340,18 +362,18 @@ public sealed class M8EndToEndLoopbackTests
         await using WireLoopbackClient bee = await JoinApartAsync(server, Bee);
 
         await CommandAsync(admin, "/kick \"No Such Player\"");
-        await UntilAsync(server, () => SystemLines(admin).Contains(DedicatedServerHost.PlayerNotOnlineText), "the not-online answer");
+        await UntilAsync(server, admin, () => SystemLines(admin).Contains(DedicatedServerHost.PlayerNotOnlineText), "the not-online answer");
         await CommandAsync(admin, $"/kick \"{NameOf(Admin)}\"");
-        await UntilAsync(server, () => SystemLines(admin).Contains("You cannot do that to yourself."), "the self-kick refusal");
+        await UntilAsync(server, admin, () => SystemLines(admin).Contains("You cannot do that to yourself."), "the self-kick refusal");
 
         await CommandAsync(admin, $"/kick \"{NameOf(Bee)}\" take a break");
-        await UntilAsync(server, () => RejectionOf(bee) != null, "the kick notice");
+        await UntilAsync(server, bee, () => RejectionOf(bee) != null, "the kick notice");
 
         JoinRejectedMessage notice = RejectionOf(bee)!;
         Assert.Contains("kicked", notice.Reason, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("take a break", notice.Reason, StringComparison.Ordinal);
         Assert.False(RemoteClientSession.IsRetryableEnd(notice.Reason), "a kick must not be retried by the client");
-        await UntilAsync(server, () => SystemLines(admin).Contains($"Kicked {NameOf(Bee)}."), "the kick result");
+        await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Kicked {NameOf(Bee)}."), "the kick result");
 
         // A kick is not a ban.
         await using WireLoopbackClient back = await server.ConnectAndJoinAsync(Bee);
@@ -371,10 +393,10 @@ public sealed class M8EndToEndLoopbackTests
             await using WireLoopbackClient bee = await JoinApartAsync(server, Bee);
 
             await CommandAsync(admin, $"/ban \"{NameOf(Bee)}\" 60 spamming links");
-            await UntilAsync(server, () => RejectionOf(bee) != null, "the ban notice");
+            await UntilAsync(server, bee, () => RejectionOf(bee) != null, "the ban notice");
             Assert.Contains("banned", RejectionOf(bee)!.Reason, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("spamming links", RejectionOf(bee)!.Reason, StringComparison.Ordinal);
-            await UntilAsync(server, () => SystemLines(admin).Contains($"Banned {NameOf(Bee)}."), "the ban result");
+            await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Banned {NameOf(Bee)}."), "the ban result");
             await FlushAsync(server);
 
             JoinRejectedMessage refused = await server.ConnectAndGetJoinRejectionAsync(Bee, NameOf(Bee), TokenOf(Bee));
@@ -416,9 +438,9 @@ public sealed class M8EndToEndLoopbackTests
         await FlushAsync(server);
 
         await CommandAsync(admin, $"/ban \"{NameOf("m8-sleeper")}\" griefing the castle");
-        await UntilAsync(server, () => SystemLines(admin).Contains($"Banned {NameOf("m8-sleeper")}."), "the ban result");
+        await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Banned {NameOf("m8-sleeper")}."), "the ban result");
         await CommandAsync(admin, "/ban \"Nobody At All\" 5");
-        await UntilAsync(server, () => SystemLines(admin).Contains("No account owns a character named 'Nobody At All'."), "the unknown-name answer");
+        await UntilAsync(server, admin, () => SystemLines(admin).Contains("No account owns a character named 'Nobody At All'."), "the unknown-name answer");
         await FlushAsync(server);
 
         JoinRejectedMessage refused = await server.ConnectAndGetJoinRejectionAsync("m8-sleeper", NameOf("m8-sleeper"), TokenOf("m8-sleeper"));
@@ -427,7 +449,7 @@ public sealed class M8EndToEndLoopbackTests
 
         // /unban from chat lifts it for an offline character too.
         await CommandAsync(admin, $"/unban \"{NameOf("m8-sleeper")}\"");
-        await UntilAsync(server, () => SystemLines(admin).Contains($"Unbanned {NameOf("m8-sleeper")}."), "the unban result");
+        await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Unbanned {NameOf("m8-sleeper")}."), "the unban result");
         await FlushAsync(server);
         await using WireLoopbackClient back = await server.ConnectAndJoinAsync("m8-sleeper");
         Assert.Null(RejectionOf(back));
@@ -459,7 +481,7 @@ public sealed class M8EndToEndLoopbackTests
         await using WireLoopbackServer server = await StartAsync(db, motd: "Welcome to the Gate, traveller.", maxPlayers: 1);
 
         WireLoopbackClient first = await server.ConnectAndJoinAsync("m8-one");
-        await UntilAsync(server, () => SystemLines(first).Contains("Welcome to the Gate, traveller."), "the message of the day");
+        await UntilAsync(server, first, () => SystemLines(first).Contains("Welcome to the Gate, traveller."), "the message of the day");
         IReadOnlyList<WireFrame> frames = first.Frames;
         int joinIndex = IndexOf(frames, frame => frame.Decoded.Message is JoinAcceptedMessage);
         int motdIndex = IndexOf(frames, frame => frame.Decoded.Message is ServerChatMessage { Channel: ChatChannel.System } chat && chat.Text == "Welcome to the Gate, traveller.");
@@ -475,7 +497,7 @@ public sealed class M8EndToEndLoopbackTests
         // A seat frees: the next player gets in and is greeted too.
         await server.DisconnectAsync(first);
         await using WireLoopbackClient second = await server.ConnectAndJoinAsync("m8-two");
-        await UntilAsync(server, () => SystemLines(second).Contains("Welcome to the Gate, traveller."), "the message of the day for the second player");
+        await UntilAsync(server, second, () => SystemLines(second).Contains("Welcome to the Gate, traveller."), "the message of the day for the second player");
         Assert.Null(RejectionOf(second));
     }
 
@@ -522,7 +544,8 @@ public sealed class M8EndToEndLoopbackTests
         // The stranger joins after, so the JoinAccepted actor list is tested too.
         await using WireLoopbackClient stranger = await server.ConnectAndJoinAsync("m8-stranger");
 
-        LoopbackDeadline deadline = new(server.Ticks);
+        ProgressCounter[] panelProgress = [server.ServerTicks, new($"messages applied by {owner.SessionId}", () => owner.Applied.Count)];
+        LoopbackDeadline deadline = new(panelProgress);
         while (true)
         {
             await server.TickAsync();
@@ -536,7 +559,7 @@ public sealed class M8EndToEndLoopbackTests
                 break;
             }
 
-            deadline.AssertAlive(server.Ticks, $"the owner's panel at level 4 (it shows level {panel.Level}, experience {panel.Experience}, strength {panel.BaseStrength})");
+            deadline.AssertAlive(panelProgress, () => $"the owner's panel at level 4 (it shows level {panel.Level}, experience {panel.Experience}, strength {panel.BaseStrength})");
             await Task.Delay(2);
         }
 
@@ -612,10 +635,11 @@ public sealed class M8EndToEndLoopbackTests
         await CommandAsync(admin, $"/kick \"{NameOf("m8-kicked")}\" cooling off");
         // The server is ticked in here, so the bound is LoopbackDeadline on its tick number: a
         // loaded machine makes this slower, not wrong.
-        LoopbackDeadline removal = new(server.Ticks);
+        ProgressCounter[] removalProgress = [server.ServerTicks, new($"messages applied by {kicked.SessionId}", () => kicked.Applied.Count)];
+        LoopbackDeadline removal = new(removalProgress);
         while (kicked.Session.DisconnectReason == null)
         {
-            removal.AssertAlive(server.Ticks, "the kicked client learning it was removed");
+            removal.AssertAlive(removalProgress, () => "the kicked client learning it was removed");
             await server.TickAsync();
             await server.FlushAllAsync();
             await dropped.FlushAsync();

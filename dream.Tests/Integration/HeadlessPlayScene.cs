@@ -87,10 +87,11 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
         ServerConnection connection = await accept.WaitAsync(WireLoopbackServer.Timeout);
         HeadlessPlayScene client = new(server, session, connection, CreateScene(session));
 
-        LoopbackDeadline joining = new(server.Ticks);
+        ProgressCounter[] joinProgress = [server.ServerTicks, new($"messages applied by {sessionId}", () => client.Applied.Count)];
+        LoopbackDeadline joining = new(joinProgress);
         while (!server.Host.IsConnectionJoined(connection.ConnectionId))
         {
-            joining.AssertAlive(server.Ticks, $"{sessionId} join");
+            joining.AssertAlive(joinProgress, () => $"{sessionId} join");
             await Task.Delay(2);
             await server.TickAsync();
             Assert.True(await client.FlushAsync());
@@ -172,7 +173,8 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
     // unchanged and still fails first when the session actually drops.
     public async Task PumpUntilAsync(Func<HeadlessPlayScene, bool> done, string what)
     {
-        LoopbackDeadline deadline = new(Applied.Count);
+        ProgressCounter[] applying = [new($"messages applied by {SessionId}", () => Applied.Count)];
+        LoopbackDeadline deadline = new(applying);
         while (true)
         {
             Pump();
@@ -182,7 +184,7 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
             }
 
             Assert.True(Session.IsConnected, $"{SessionId} lost its session: {Session.DisconnectReason}");
-            deadline.AssertAlive(Applied.Count, $"{what} on {SessionId}");
+            deadline.AssertAlive(applying, () => $"{what} on {SessionId}");
             await Task.Delay(1);
         }
     }
