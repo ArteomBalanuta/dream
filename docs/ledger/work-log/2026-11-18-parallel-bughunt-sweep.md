@@ -204,3 +204,110 @@ than fixing one field per wave. Severity calibration: `Microsoft.Data.Sqlite` ca
 REAL, so NaN reaches a row only via hand-edit, raw SQL or import - never the game's own writer.
 
 Suite after this wave: **8953 passed, 0 failed, 47 skipped** - a third consecutive clean full run.
+
+## Waves 9-13
+
+Suite after these: **9026 passed, 1 failed, 47 skipped** - the one failure is a load-sensitive
+loopback test that passes 3/3 in isolation and is under repair; see "Test reliability" below.
+
+### Trust boundary (wave 9) - mostly a positive result
+
+A systematic sweep of **31 client-reachable command/payload kinds** found **29 held, 2 holes**, with
+24 hypotheses disproved and the holding code cited for each. Every player command takes its acting
+identity from the connection's joined session, so there is no second instance of the player-cap
+display-name shape. Both holes were missing throttles, now fixed: `trade.request` had no cooldown
+(a request/cancel loop could flood a named victim; now a 2 s cooldown on an *unanswered* request,
+mirroring `PartyRegistry._lastInviteTick`), and a command frame alternating `RequestedMode` every
+tick queued one profile write per tick per client (now paced at one per second, last mode of a burst
+still written). Note: "only enqueue when the value changes" was already present and is NOT
+sufficient - an alternating client changes the value every tick by construction.
+
+### Deferred authorisation (wave 10)
+
+The command sweep missed a real authorisation hole because it lives in a **deferred** action: a party
+invite is authorised when SENT, and `PartyRegistry.Respond` never re-checked that the inviter was
+still the leader, so a non-leader could admit a member to someone else's party. Re-checked at the
+moment of effect now. **The general lesson: "the command checked identity at entry" and "the action
+is still legitimate when it lands" are different questions.** Anything created now and applied later
+needs the second check.
+
+Also fixed: a trade's only state message could be dropped client-side and was never re-sent, leaving
+a player stuck (server now re-sends live trade state on a 32-tick cadence); the detach hook purged a
+session's queued messages without decrementing their counts, so the per-session cap ratcheted down
+over reconnects; a pending invite survived its invitee joining a party; `trade.request` had no mute
+check while `party.invite` did.
+
+### Animation, audio, world mutation (waves 11-12)
+
+- **Every enemy's `die` clip was unreachable** - the renderer dropped the actor on the frame its
+  health hit zero. Fixed with a render-only `EnemyDeathLinger`: a frozen matrix plus the enemy's own
+  pooled instance, no actor, no visual state, no interpolation buffer, bounded by the clip length and
+  a 3 s cap, released immediately on a respawn under a reused id. The packet's suggested fix (keep
+  dead enemies in `SelectActiveEnemies`) was REJECTED because `PresentationFramePoolingIntegrationTests`
+  pins that a locally-killed enemy leaves `ActiveEnemies`.
+- An attack one-shot froze the legs mid-stride, because the attack clips animate no leg node and the
+  pose only writes the playing clip's nodes.
+- **Cube identity was keyed on the cell**, which is not a durable key: placing a cube in the cell a
+  *moved* cube was last persisted at inherited that cube's `ObjectId`, owner, health and actor id
+  (so build protection protected the wrong player), and a placement over a restore-skipped orphan row
+  inherited its owner and damaged health. **One guard fixed both**: the cell now only finds a candidate
+  row, and the row is adopted only if its `ObjectId`-to-actor binding says it describes *this* cube.
+  The lost-registry-link repair the lookup exists for still works, and `RepairCubeRecord` still runs
+  before `CanDamageCube`.
+- A join/resync destroyed a cube built over unmoved rubble, because the snapshot's fallback fracture
+  removed whatever cube was in the cell while the same snapshot listed a cube there. Snapshot path
+  fixed; the delta path deliberately still fractures, and the asymmetry is documented in the code.
+
+### Quests (wave 13)
+
+18 hypotheses disproved, including valuable negatives: the turn-in already re-validates every
+objective, a same-session double turn-in is guarded, the reward is all-or-nothing in one savepoint,
+kill counts cannot exceed/negate/double-count, and every `PersistedQuest` field is clamped.
+
+Fixed: **XP could be collected repeatedly** - it was a separate write queued after the turn-in
+closure, so a failed turn-in paid the XP durably and left the quest turn-in-able after a restart (the
+XP write now runs inside the same closure, asked for only after every guard passes). A dialogue
+re-open between press and release fired the action against a **different quest** - the button id now
+binds offer state + NPC + quest key, and a mid-press identity change drops the click. A giver with
+more than eight quests silently lost the rest **and the shipped content already has 7 of 8 on one
+NPC**, so the loader now fails at load. Quest rows the catalog no longer knows counted against the
+cap while being invisible and unabandonable. A reward item was resolved through `ContentCatalog.Shipped`
+while the quest came from `EnemyContent`.
+
+**Consequence to note:** with the per-giver cap enforced and two givers in `npcs.json`, the authorable
+total is 16. `MaxQuests` (32) remains the total bound; reaching it needs more givers or a scrolling
+dialogue window. `QuestContentTests` asserted that 32 quests load when all 32 name one giver - exactly
+the silently-broken state the validation prevents - so that assertion was replaced by two stronger
+ones (the per-giver cap is rejected when exceeded; quests spread across both givers load). The test's
+named intent, the total-cap rejection, is unchanged.
+
+**Residual, not fixed:** the repeated-XP-after-restart path is closed, but the XP is still applied to
+the in-memory combatant, so a later periodic checkpoint could persist it after a failed turn-in.
+Closing that needs the failed-write gate to roll the combatant back.
+
+### Test reliability - four flake root causes found and fixed
+
+This repo's "flakes under a loaded suite" reputation had four distinct causes, none of them a game bug:
+
+1. **239 process-wide `SqliteConnection.ClearAllPools()`** calls in 94 parallel-phase files, tearing
+   down connection pools belonging to concurrently running collections. Now `SqlitePools.Release(path)`,
+   with a guard test. Two call sites were releasing the wrong database.
+2. **Mid-test `PersistenceWriteQueue.Flush(30 s)`** blocks the calling thread and starves neighbouring
+   test classes (3/3 reproducible). 62 call sites became an awaited barrier with the same guarantee
+   Flush gives; teardown flushes deliberately left blocking.
+3. **The server's 10 s idle close** - the dominant loopback cause. A real client keepalives an empty
+   frame every second; `WireLoopbackClient` sends nothing while waiting, so any wait outlasting 10 s
+   had its own connection closed underneath it. Evidence: `M8.Reconnect_ADroppedConnectionIsRetryable_AKickIsNot`,
+   which had resisted every other fix and failed at gate 64 on the base too, is the same cause and now
+   passes - first clean gate-64 run of the 69-test loopback filter.
+4. **Exact-0-byte allocation gates measured a single window** against a JIT tier-up threshold of 30.
+   Fixed by warm-up plus steady-state re-measurement across ~94 sites; **the bound is still exactly
+   zero** - no tolerance, no skip, no retry. Isolation was evaluated and rejected on evidence:
+   `ClassicHudGemAllocationTests` was already alone in its own collection and still flaked, so
+   isolation does not make an invalid measurement valid. No product path was found to allocate.
+   Proof: a hostile short harness (CPU hogs + 64 collections) failed 4 of 6 reps before and 0 of 14 after.
+
+Six tests that asserted nothing were also repaired (one compared an enum constant to itself), and
+`Admin_Mute_...` was strengthened to assert the `muted_until_utc` row directly and prove the row does
+the silencing by restarting the server. All 47 skipped tests were confirmed as deliberate
+`DREAM_LOAD_TEST` opt-in gates - nothing is silently disabled.
