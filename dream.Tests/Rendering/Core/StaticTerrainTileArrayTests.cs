@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Dream.Rendering.Core;
 using Dream.Rendering.World;
 using Dream.Simulation.World.Geometry;
@@ -53,19 +54,38 @@ public class StaticTerrainTileArrayTests
         FakeBackend backend = new();
         using StaticTerrainTileArray array = backend.Create();
         array.GetOrLoad();
-        Assert.True(SpinWait.SpinUntil(() => backend.DecodeCount == 8, Timeout));
-        Thread.Sleep(50);
 
+        // DecodeCount is incremented when a decode STARTS, and a fixed 12 calls after a 50 ms
+        // sleep was not enough for the eight decode tasks to finish on a starved thread pool: it
+        // read 7 uploaded of 8 under load. The loop therefore runs until every layer is uploaded,
+        // within the same generous bound as the rest of the class, and keeps checking the
+        // one-layer-per-call rule on every call - more calls means more checks, not a weaker test.
         int previous = 0;
-        for (int call = 0; call < 12; call++)
+        int calls = 0;
+        Stopwatch elapsed = Stopwatch.StartNew();
+        while (previous < 8)
         {
+            Assert.True(elapsed.Elapsed < Timeout, $"only {previous} of 8 layers were uploaded in {calls} calls");
             array.GetOrLoad();
+            calls++;
             int now = backend.UploadedLayers.Count;
             Assert.InRange(now - previous, 0, 1);
+            if (now == previous)
+            {
+                Thread.Yield();
+            }
+
             previous = now;
         }
 
         Assert.Equal(8, previous);
+
+        // One layer per call means the eight layers cannot have been uploaded in fewer than eight.
+        Assert.True(calls >= 8, $"8 layers were uploaded in only {calls} calls");
+
+        // And no later call uploads a ninth.
+        array.GetOrLoad();
+        Assert.Equal(8, backend.UploadedLayers.Count);
     }
 
     [Fact]
@@ -84,6 +104,14 @@ public class StaticTerrainTileArrayTests
         Assert.Equal(StaticTerrainTileArray.FaultSource, backend.Faults[0]);
         Assert.False(array.IsReady);
         Assert.Equal(backend.AllocateCount, backend.Deleted.Count);
+
+        // All eight decodes are queued by the first GetOrLoad, and the bad layer can be observed
+        // while some of the other seven have not run yet (it read 7 of 8 under load). The decode
+        // count is therefore waited for, not sampled - and then asserted exactly, so a ninth
+        // decode or a decode the failure skipped still fails the test.
+        Assert.True(
+            SpinWait.SpinUntil(() => backend.DecodeCount >= 8, Timeout),
+            $"only {backend.DecodeCount} of 8 layers were decoded");
         Assert.Equal(8, backend.DecodeCount);
     }
 
@@ -149,13 +177,23 @@ public class StaticTerrainTileArrayTests
     {
         FakeBackend backend = new();
         StaticTerrainTileArray array = backend.Create();
+        // The same wait as GetOrLoad_Uploads_At_Most_One_Layer_Per_Call: a started decode is not a
+        // finished one, so the array is driven until it has really allocated and uploaded a layer.
+        // Stopping at the first upload keeps it short of ready, which is what this test is about.
         array.GetOrLoad();
-        Assert.True(SpinWait.SpinUntil(() => backend.DecodeCount == 8, Timeout));
-        Thread.Sleep(50);
-        array.GetOrLoad();
+        Assert.True(
+            SpinWait.SpinUntil(
+                () =>
+                {
+                    array.GetOrLoad();
+                    return backend.UploadedLayers.Count > 0;
+                },
+                Timeout),
+            "no layer was uploaded");
 
         array.Dispose();
         int uploaded = backend.UploadedLayers.Count;
+        Assert.InRange(uploaded, 1, 7);
 
         Assert.Equal(-1, array.GetOrLoad());
         Assert.Equal(uploaded, backend.UploadedLayers.Count);
