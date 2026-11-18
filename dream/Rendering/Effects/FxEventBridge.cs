@@ -12,6 +12,7 @@ public sealed class FxEventBridge : IDisposable
     private readonly FxFlashList _flashes;
     private readonly IDisposable _damageSubscription;
     private readonly IDisposable _deathSubscription;
+    private readonly IDisposable _castSubscription;
 
     public FxEventBridge(SceneEventHub events, FxSimulation simulation, FxFlashList flashes)
     {
@@ -20,12 +21,14 @@ public sealed class FxEventBridge : IDisposable
         _flashes = flashes ?? throw new ArgumentNullException(nameof(flashes));
         _damageSubscription = events.Subscribe<DamageAppliedEvent>(OnDamageApplied);
         _deathSubscription = events.Subscribe<ActorDiedEvent>(OnActorDied);
+        _castSubscription = events.Subscribe<SkillCastEvent>(OnSkillCast);
     }
 
     public void Dispose()
     {
         _damageSubscription.Dispose();
         _deathSubscription.Dispose();
+        _castSubscription.Dispose();
     }
 
     private void OnDamageApplied(DamageAppliedEvent evt)
@@ -44,6 +47,12 @@ public sealed class FxEventBridge : IDisposable
             _ => FxFlashKind.Hit
         };
         _flashes.Trigger(anchor, flash);
+    }
+
+    // No flash light for a cast: the flash list's four slots are tuned for hits and deaths.
+    private void OnSkillCast(SkillCastEvent evt)
+    {
+        _simulation.SpawnSkillCast(evt.Kind, evt.Origin, evt.Direction, evt.Range);
     }
 
     private void OnActorDied(ActorDiedEvent evt)

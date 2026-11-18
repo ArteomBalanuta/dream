@@ -77,6 +77,9 @@ public class FxAllocationTests
             simulation.SpawnHit(anchor, FloatingCombatTextKind.Critical);
             simulation.SpawnHit(anchor, FloatingCombatTextKind.Incoming);
             simulation.SpawnDeath(anchor);
+            simulation.SpawnSkillCast(SkillFxKind.Arc, anchor, Vector3.UnitX, 3.5f);
+            simulation.SpawnSkillCast(SkillFxKind.Bolt, anchor, Vector3.UnitX, 18f);
+            simulation.SpawnSkillCast(SkillFxKind.Mend, anchor, Vector3.Zero, 0f);
             simulation.Advance(in inputs, []);
             if (simulation.WriteInstances(destination) < 0)
             {

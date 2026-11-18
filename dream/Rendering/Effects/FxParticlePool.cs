@@ -8,7 +8,10 @@ public enum FxParticleKind : byte
     Ember,
     Dust,
     Ash,
-    Flash
+    Flash,
+    Arc,
+    Bolt,
+    Ring
 }
 
 // One live particle. Color is premultiplied RGBA at full strength; the fade over its life scales
@@ -31,6 +34,8 @@ public struct FxParticle
     public float Phase;
     // Scales the sideways curl of a plume ember; 0 for every other particle.
     public float Sway;
+    // A spark or ember that carries its own colour: skips the orange heat ramp.
+    public bool Plain;
     public Vector4 Color;
 }
 
@@ -64,6 +69,15 @@ public sealed class FxParticlePool
 
         _items[Count++] = particle;
         return true;
+    }
+
+    // Books spawns that a caller declined to attempt because the pool was near full.
+    public void CountDropped(int count)
+    {
+        if (count > 0)
+        {
+            DroppedSpawns += count;
+        }
     }
 
     // Like TryAdd, but a refusal is not counted: for the steady top-up of ambient particles,

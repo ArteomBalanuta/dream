@@ -14,7 +14,11 @@ public enum FxFrame : byte
     Halo = 16,
     HaloCore = 17,
     Flame0 = 18,
-    Blob = 22
+    Blob = 22,
+    // Skill casts: one flat crescent, two bolt variants (add 0..1), one flat annulus.
+    Arc = 23,
+    Bolt0 = 24,
+    Ring = 26
 }
 
 public static class FxAtlas
