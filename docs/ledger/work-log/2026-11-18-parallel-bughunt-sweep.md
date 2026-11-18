@@ -311,3 +311,71 @@ Six tests that asserted nothing were also repaired (one compared an enum constan
 `Admin_Mute_...` was strengthened to assert the `muted_until_utc` row directly and prove the row does
 the silencing by restarting the server. All 47 skipped tests were confirmed as deliberate
 `DREAM_LOAD_TEST` opt-in gates - nothing is silently disabled.
+
+## Wave 14 and the remaining flake work
+
+Suite: **9031 passed, 0 failed, 47 skipped**.
+
+### Two more flake causes, both real
+
+5. **A fixture flag missed on one test.** `TerrainLockstepRestartTests` constructed
+   `PersistentScriptedServer` without `allowOccupiedBuildCell`, so an occupied cell in a later phase
+   fired `Assert.Null` from the fixture's constructor and read as a determinism divergence on the
+   repo's determinism guarantee test. The script builds a cube at tick 3 and can only hit it on ticks
+   130/158/186/214 (28-tick cooldown), so at most 3 hits of 25-50 damage land on a 100 hp cube inside
+   a 200-tick phase - for some seeds it survives into the next phase. **The product is deterministic:
+   phases 1 and 2 produced identical hit sequences from the same seed.** The identical twin test
+   `WaveCTesterLockstepTwoRestartsTests` was given this flag in 2de0a96c; this one was missed. The
+   guard now says "fixture:" so a setup failure can never again be read as a divergence.
+   Method note: 20 reps could not catch it. The real rate was measured at 1 occupied phase start in
+   75, and **seed** discriminates, not load - forcing the bad seed reproduced it on every run.
+6. **Two genuine races, found by the deadline diagnostic rather than by any load harness.**
+   - The unmute line was sent as soon as the ADMIN saw "Unmuted Bee", while whether it is routed or
+     swallowed depends on BEE's standing; the reply and the `AccountUpdate` are enqueued by the same
+     barrier read but travel different paths. Lose the race and the line reaches nobody.
+   - The mute case is the same shape: `/mute`'s barrier read runs on the persistence worker,
+     `_pendingAccountUpdates` drains at the START of a tick (`DedicatedServerHost.cs:1315`) while
+     `_pendingConnectionReplies` drains AFTER `AdvanceTime` (`DedicatedServerService.cs:611`), and
+     chat is routed on the receive path. A read landing between them sends the admin's reply on tick
+     T and applies the standing on T+1. The test asserted an ordering the product does not promise;
+     it now waits for the mute to be in force on the muted player's own connection, which is an ADDED
+     assertion rather than a relaxed one.
+
+Along the way the deadline harness itself was rebuilt: `UntilAsync` now spends a budget only once
+EVERY side it depends on has done the work (server ticks plus the client frames / applied messages /
+settled writes that the condition actually reads from), so a starved side holds the wait open while a
+healthy-but-stuck one fails fast. The diagnostic names every side and its progress; the earlier
+message could claim "not a loaded machine" without having measured the side that starves, and that
+claim cost a round of investigation. Budget values were not raised (1024 write-round-trip, 512
+applied); only the counters they are spent on changed. Worst-case failure cost for the worst
+offender: 180 s -> 8 s.
+
+**Where the load harnesses could not discriminate, semantics were pinned directly:**
+`LoopbackDeadlineTests` asserts the budget is not spent while any side has made no progress, is spent
+once every side has, and that the message names every side. Flipping back to one-counter semantics
+fails exactly 2 of those 4 - catching a bug three separate load harnesses could not.
+
+### Presence lease (wave 14)
+
+The packet corrected the premise: `WorldTransferProtocol` is the chunked world-STATE stream to a
+client; there is no player-between-worlds flow. The real cross-world handover is the character
+presence lease. **Items cannot cross worlds** - every inventory table is keyed `(world_id, ...)` and
+every statement binds `$worldId` - but **`player_profiles` is global**, which is what makes the lease
+findings durable-value findings. 15 hypotheses disproved.
+
+Findings taken: the lease is renewed on a tick counter but expires on wall-clock, and the renewal's
+result is discarded, so a stalled server silently loses its lease and one character can be played in
+two worlds, both writing the one global profile row; a join whose connection drops before the tick
+applies it leaves the lease claimed, locking the character out of every world for 45 s; a join
+refused for a ban set after its prefetch started leaks the same lease; a prefetch-timeout rejection
+discards the prefetch while its load is still in flight, so the lease it later claims is unreachable
+by any release path.
+
+### Product detail reported, not papered over
+
+The admin's "Muted X." reply can precede enforcement by up to one tick (~15-31 ms at 32-64 Hz), and a
+message sent inside that window is still published. Nothing is lost - the row is written, the standing
+applies on the next tick, the mute survives rejoin and restart - so the test was the thing that was
+wrong. But for a moderation feature the confirmation is the product: an admin told "muted" expects the
+next message to be refused. Making the reply follow enforcement is a change in
+`QueueSanction`/`StepAccountStandings`.
