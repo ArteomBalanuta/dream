@@ -83,7 +83,14 @@ public sealed class PlayerAnimationClipTracker
 
                 break;
             case PlayerClipMode.OneShot:
-                if (!(tracked && last.Mode == PlayerClipMode.OneShot && last.Serial == frame.OneShotSerial))
+                // The instance-liveness check the Loop and Hold branches both have. A far release
+                // (RemotePlayerRenderer.ReleaseFarModels) disposes the handle and deliberately
+                // keeps the actor's clip record, so the next TryGet hands over a brand-new,
+                // Stopped instance under the same recorded serial; without this the record
+                // suppresses the swing on an instance that is not playing it and the returning
+                // player stands in the bind pose until the next serial.
+                if (!(tracked && last.Mode == PlayerClipMode.OneShot && last.Serial == frame.OneShotSerial &&
+                    instance.Playback.IsPlaying))
                 {
                     if (!instance.Playback.IsPlaying)
                     {
