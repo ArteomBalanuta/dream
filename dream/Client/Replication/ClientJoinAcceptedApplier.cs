@@ -77,11 +77,13 @@ public static class ClientJoinAcceptedApplier
             throw new UnsupportedWorldException($"The server's world is not supported by this client: {ex.Message}", ex);
         }
 
-        if (initialWorld is { } world && (world.Width != descriptor.Width || world.Depth != descriptor.Depth))
+        if (initialWorld is { } world &&
+            (world.Width != descriptor.Width || world.Depth != descriptor.Depth || world.Height != descriptor.Height))
         {
             throw new InvalidDataException(
                 $"Protocol error: the join-accepted world is {descriptor.Width}x{descriptor.Depth} " +
-                $"but its initial world is {world.Width}x{world.Depth}.");
+                $"(height {descriptor.Height}) but its initial world is {world.Width}x{world.Depth} " +
+                $"(height {world.Height}).");
         }
 
         if (descriptor.MapSource == WorldMapSource.Stored)
