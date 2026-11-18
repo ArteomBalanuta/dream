@@ -90,7 +90,7 @@ public class PresentationCameraScratchTests(ITestOutputHelper output)
 
         Assert.Throws<ArgumentException>(() => ThirdPersonCameraRig.ResolveInto(
             firstPerson, Vector3.Zero, CameraViewMode.ThirdPerson, firstPerson));
-        Assert.Equal(0, AllocationAssert.MeasureBytesPerIteration(() => ThirdPersonCameraRig.ResolveInto(
+        Assert.Equal(0, AllocationAssert.AtMost(0, () => ThirdPersonCameraRig.ResolveInto(
             firstPerson, new Vector3(5f, 1.5f, 5f), CameraViewMode.ThirdPerson, target)));
     }
 

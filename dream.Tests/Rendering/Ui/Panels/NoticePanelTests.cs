@@ -195,7 +195,7 @@ public class NoticePanelTests
             NoticePanel.Build(c, v, l);
         }
 
-        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = Dream.Tests.Utilities.AllocationAssert.AtMost(0, () =>
         {
             NoticePanel.Build(c, v, l);
         });

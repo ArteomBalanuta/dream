@@ -344,7 +344,7 @@ public class HudViewBuilderTests
         HudStatusSnapshot status = Status();
         builder.Refresh(status, inv);
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() => builder.Refresh(status, inv));
+        long bytes = AllocationAssert.AtMost(0, () => builder.Refresh(status, inv));
 
         Assert.Equal(0, bytes);
     }

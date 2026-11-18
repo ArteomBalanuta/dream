@@ -107,7 +107,7 @@ public class StaticWorldChunkRendererUploadPipelineTests
         DrawUntilApplied(renderer, export);
         Assert.NotEmpty(store.LiveKeys);
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() => renderer.Draw(UnusedRender, TestCamera, export));
+        long bytes = AllocationAssert.AtMost(0, () => renderer.Draw(UnusedRender, TestCamera, export));
 
         Assert.Equal(0, bytes);
         StaticWorldChunkRenderStats stats = renderer.Draw(UnusedRender, TestCamera, export);

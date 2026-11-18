@@ -235,7 +235,7 @@ public class CombatTextPanelTests
         NullCanvas canvas = new();
         CombatTextPanel.Build(canvas, view, Layout1080, table);
 
-        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = Dream.Tests.Utilities.AllocationAssert.AtMost(0, () =>
         {
             CombatTextPanel.Build(canvas, view, Layout1080, table);
         });

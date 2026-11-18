@@ -78,7 +78,7 @@ public class TimeOfDayOverrideTests
         TimeOfDayOverride timeOfDay = new() { Enabled = true, TimeOfDay01 = 0.1f };
         float sink = 0f;
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             timeOfDay.Enabled = !timeOfDay.Enabled;
             sink += timeOfDay.Resolve(0.4f);

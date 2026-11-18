@@ -292,7 +292,8 @@ public class WaveT2PointLightTests
         LightList viewModel = default;
         float sink = 0f;
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(
+        long bytes = AllocationAssert.AtMost(
+            0,
             () =>
             {
                 collector.Clear();

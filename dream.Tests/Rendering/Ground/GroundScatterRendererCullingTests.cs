@@ -7,6 +7,7 @@ using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Rendering.Ground;
 
@@ -165,12 +166,10 @@ public class GroundScatterRendererCullingTests
         GroundScatterIndex index = new();
         index.Update(props, set);
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 100; i++)
-        {
-            index.Update(props, set);
-        }
-
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        // One warm-up call is far short of the runtime's tier-up threshold, and a single window
+        // charges any tiering transition that lands inside it to the measurement. AllocationAssert
+        // warms past the threshold and keeps the cleanest of several rounds, so the figure is the
+        // steady state the gate is about.
+        AllocationAssert.AtMost(0, () => index.Update(props, set));
     }
 }

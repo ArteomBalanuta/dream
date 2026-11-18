@@ -271,7 +271,7 @@ public class UiInputRouterTests
         UiInputRouter router = new();
         UiPointer p = At(20, 20, left: true);
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             router.BeginFrame(p);
             router.Button(1, Box);

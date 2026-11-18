@@ -554,7 +554,8 @@ public sealed class ClassicHudAdversarialTests : IDisposable
         loot.AddNotices([new LootNotice("Iron blade", ItemRarity.Rare, false)]);
         Vector2 at = hovering ? Centre(Slot(0)) : new Vector2(5f, 5f);
 
-        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(
+        long bytes = Dream.Tests.Utilities.AllocationAssert.AtMost(
+            0,
             () => Frame(at, loot: loot, rejection: "Inventory move rejected."),
             iterations: 50);
 

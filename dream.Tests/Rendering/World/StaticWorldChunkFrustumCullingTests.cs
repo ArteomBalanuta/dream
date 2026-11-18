@@ -140,7 +140,7 @@ public class StaticWorldChunkFrustumCullingTests
         GeometryRenderExport export = CaptureStartupExport();
         DrawUntilApplied(renderer, render, camera, export);
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() => renderer.Draw(render, camera, export));
+        long bytes = AllocationAssert.AtMost(0, () => renderer.Draw(render, camera, export));
 
         Assert.Equal(0, bytes);
         StaticWorldChunkRenderStats stats = renderer.Draw(render, camera, export);

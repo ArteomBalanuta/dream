@@ -145,7 +145,7 @@ public class WorldLabelsPanelTests
             WorldLabelsPanel.Build(c, v, l);
         }
 
-        long bytes = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = Dream.Tests.Utilities.AllocationAssert.AtMost(0, () =>
         {
             WorldLabelsPanel.Build(c, v, l);
         });

@@ -2,6 +2,7 @@ using Dream.Rendering.World;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Rendering.World;
 
@@ -148,22 +149,16 @@ public class TerrainMaterialMapTests
 
         StaticVoxelRenderCell[] small = [Cell(0, 0, 0, GeometryMaterialId.Grass), Cell(5, 2, 5, GeometryMaterialId.Stone)];
         TerrainMaterialMap map = new();
-        // Warm up past tiered JIT so only the steady state is measured.
-        for (int i = 0; i < 300; i++)
+
+        // A hand-rolled warm-up plus one window still charges a tiering transition to the
+        // measurement whenever one lands inside that window, which a loaded suite makes likely
+        // however long the warm-up ran. AllocationAssert warms past the tier-up threshold and
+        // keeps the cleanest of several rounds spread over time, which is the steady state.
+        AllocationAssert.AtMost(0, () =>
         {
             map.Rebuild(big);
             map.Rebuild(small);
-        }
-
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 20; i++)
-        {
-            map.Rebuild(big);
-            map.Rebuild(small);
-        }
-
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        Assert.Equal(0, allocated);
+        });
     }
 
     [Fact]

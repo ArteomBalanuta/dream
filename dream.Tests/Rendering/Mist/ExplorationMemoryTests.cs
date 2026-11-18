@@ -1,5 +1,6 @@
 using Dream.Rendering.Mist;
 using Xunit;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Rendering.Mist;
 
@@ -152,13 +153,17 @@ public class ExplorationMemoryTests
     {
         ExplorationMemory memory = new(100, 100);
         memory.Reveal(0f, 0f);
-        long before = GC.GetAllocatedBytesForCurrentThread();
 
-        for (int i = 1; i < 400; i++)
+        // One warm-up call is far short of the runtime's tier-up threshold, and a single window
+        // charges any tiering transition that lands inside it to the measurement. AllocationAssert
+        // warms past the threshold and keeps the cleanest of several rounds, so the figure is the
+        // steady state the gate is about. The walk over the grid is kept so the reveals still
+        // land on different cells rather than repeating one.
+        int step = 0;
+        AllocationAssert.AtMost(0, () =>
         {
-            memory.Reveal(i * 0.25f % 100f, i * 0.6f % 100f);
-        }
-
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+            step++;
+            memory.Reveal(step * 0.25f % 100f, step * 0.6f % 100f);
+        });
     }
 }

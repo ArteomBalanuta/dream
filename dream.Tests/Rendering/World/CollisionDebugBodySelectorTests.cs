@@ -68,14 +68,14 @@ public class CollisionDebugBodySelectorTests(ITestOutputHelper output)
             () => GC.KeepAlive(selector.Select(bodies, camera, 64)),
             warmupIterations: 1);
 
-        // The helper warms the code well past one call to keep tiering out of the window. With the
-        // code now warm, a fresh selector must already allocate nothing on its second call.
+        // A fresh selector allocates its buffers on the first call and nothing after it. Measuring
+        // the second call on its own was a single one-call window, which charges any tiering
+        // transition that lands inside it to the measurement; it read 0 B alone and non-zero under
+        // a loaded suite. Measuring every call after the first through the helper instead gates
+        // the same property over many calls, and is a stronger statement than one call was.
         CollisionDebugBodySelector fresh = new();
         GC.KeepAlive(fresh.Select(bodies, camera, 64));
-        long secondCallBytes = GC.GetAllocatedBytesForCurrentThread();
-        GC.KeepAlive(fresh.Select(bodies, camera, 64));
-        secondCallBytes = GC.GetAllocatedBytesForCurrentThread() - secondCallBytes;
-        Assert.Equal(0, secondCallBytes);
+        AllocationAssert.AtMost(0, () => GC.KeepAlive(fresh.Select(bodies, camera, 64)));
 
         output.WriteLine($"Collision debug selection (200 bodies, max 64): LINQ {before} B/frame, selector {after} B/frame");
     }

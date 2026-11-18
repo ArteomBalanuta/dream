@@ -288,7 +288,8 @@ public class StatSheetTests
         // replacement charged to the test thread. AllocationAssert warms past the tier-up
         // threshold and keeps the cleanest of several rounds, so a real allocation (present in
         // every round) still fails while a one-off JIT charge does not.
-        long bytesPerCycle = AllocationAssert.MeasureBytesPerIteration(
+        long bytesPerCycle = AllocationAssert.AtMost(
+            0,
             () =>
             {
                 int slot = cycle++ & (StatSheet.SourceCapacity - 1);
