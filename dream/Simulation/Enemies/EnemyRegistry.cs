@@ -115,7 +115,10 @@ public sealed class EnemyRegistry
         }
     }
 
-    public EnemyActor? TryResolveHit(Vector3 origin, Vector3 direction, float maxHitDistance, float hitRadius = 0.9f)
+    // The radius around an enemy's anchor a ray counts as hitting it, unless the caller passes one.
+    public const float DefaultHitRadiusMetres = 0.9f;
+
+    public EnemyActor? TryResolveHit(Vector3 origin, Vector3 direction, float maxHitDistance, float hitRadius = DefaultHitRadiusMetres)
     {
         if (direction.LengthSquared <= 0.0001f || maxHitDistance <= 0f)
         {

@@ -485,8 +485,6 @@ internal sealed class AuthoritativeCombatResolver
 
     // Horizontal (XZ) distance from the ray origin, which sits directly above the attacker's body centre, to
     // the target's combat anchor.
-    private const float EnemyRayHitRadiusMetres = 0.9f; // EnemyRegistry.TryResolveHit's default hitRadius
-
     internal static bool IsWithinReach(Vector3 origin, Vector3 anchor, float reach)
     {
         float dx = anchor.X - origin.X;
@@ -523,7 +521,7 @@ internal sealed class AuthoritativeCombatResolver
                 continue;
             }
 
-            if ((anchor - (origin + (unit * projected))).Length > EnemyRayHitRadiusMetres
+            if ((anchor - (origin + (unit * projected))).Length > EnemyRegistry.DefaultHitRadiusMetres
                 || !IsWithinReach(origin, anchor, acceptedReach))
             {
                 continue;

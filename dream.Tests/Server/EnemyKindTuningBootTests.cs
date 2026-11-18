@@ -112,12 +112,13 @@ public sealed class EnemyKindTuningBootTests
     {
         List<string> log = [];
         EnemyTemplate wolf = ContentCatalog.Shipped.Wolf;
-        EnemyKindTuning inBand = new(wolf.Key, EnemyVisualCatalog.GaitThresholdSpeed, 0.5f, wolf.AttackIntervalSeconds!.Value, wolf.AttackRange, wolf.AggroRange);
+        float deadband = EnemyVisualCatalog.GaitThresholdSpeed - (EnemyVisualCatalog.GaitHysteresisSpeed / 2f);
+        EnemyKindTuning inBand = new(wolf.Key, deadband, 0.5f, wolf.AttackIntervalSeconds!.Value, wolf.AttackRange, wolf.AggroRange);
 
         ContentCatalog tuned = ServerBootstrap.ApplyEnemyKindTuning([inBand], log.Add);
 
-        Assert.Equal(EnemyVisualCatalog.GaitThresholdSpeed, tuned.Wolf.MoveSpeed);
-        Assert.Contains(log, line => line.StartsWith("server.content.enemy-tuning-warning", StringComparison.Ordinal) && line.Contains("chase_speed=2"));
+        Assert.Equal(deadband, tuned.Wolf.MoveSpeed);
+        Assert.Contains(log, line => line.StartsWith("server.content.enemy-tuning-warning", StringComparison.Ordinal) && line.Contains("chase_speed=1.8"));
         Assert.Contains(log, line => line.StartsWith("server.content.enemy-tuning rows=1 skipped=0", StringComparison.Ordinal));
     }
 
@@ -125,7 +126,7 @@ public sealed class EnemyKindTuningBootTests
     public void APatrolInsideTheGaitBand_AndAChaseBeyondTheTeleportDistance_Warn()
     {
         EnemyTemplate wolf = ContentCatalog.Shipped.Wolf;
-        float band = EnemyVisualCatalog.GaitThresholdSpeed;
+        float band = EnemyVisualCatalog.GaitThresholdSpeed - (EnemyVisualCatalog.GaitHysteresisSpeed / 2f);
 
         List<string> patrol = [];
         ServerBootstrap.WarnWhenOutsideTheClientBand(
@@ -137,6 +138,30 @@ public sealed class EnemyKindTuningBootTests
         ServerBootstrap.WarnWhenOutsideTheClientBand(
             new EnemyKindTuning(wolf.Key, fast, 1f, 1f, wolf.AttackRange, wolf.AggroRange), teleport.Add);
         Assert.Contains(teleport, line => line.Contains("teleport distance"));
+    }
+
+    // ResolveSprinting starts the gallop at the threshold and drops it below threshold - hysteresis, so only
+    // the speeds strictly between the two are ambiguous; at or above the threshold is a plain gallop.
+    [Theory]
+    [InlineData(2.2f, false)]
+    [InlineData(2.4f, false)]
+    [InlineData(2.0f, false)]
+    [InlineData(1.6f, false)]
+    [InlineData(1.5f, false)]
+    [InlineData(1.8f, true)]
+    [InlineData(1.95f, true)]
+    public void AChaseSpeed_WarnsOnlyInsideTheRealGaitDeadband(float chase, bool warns)
+    {
+        EnemyTemplate wolf = ContentCatalog.Shipped.Wolf;
+        List<string> log = [];
+
+        ServerBootstrap.WarnWhenOutsideTheClientBand(
+            new EnemyKindTuning(wolf.Key, chase, 0.5f, 1f, wolf.AttackRange, wolf.AggroRange), log.Add);
+
+        Assert.Equal(warns, log.Any(line => line.Contains("chase_speed=")));
+        // The same speed against the real resolver: inside the deadband the clip depends on history.
+        EnemyClipSet clips = EnemyVisualCatalog.WolfClips;
+        Assert.Equal(warns, clips.ResolveSprinting(chase, false) != clips.ResolveSprinting(chase, true));
     }
 
     [Fact]

@@ -95,7 +95,7 @@ public sealed class EnemyVisualCatalogTests
     }
 
     // The gait threshold sits in the empty middle between every shipped patrol walk and every shipped chase,
-    // clear of both by the hysteresis, so no real enemy dithers across it.
+    // clear of both: a patrol at or below the walk-keeping edge and a chase at or above the gallop-starting threshold.
     [Fact]
     public void TheGaitThreshold_SeparatesEveryShippedPatrolFromEveryShippedChase_ByTheHysteresis()
     {
@@ -108,13 +108,13 @@ public sealed class EnemyVisualCatalogTests
         }
 
         // Synthetic negatives: a chase inside the band, and a patrol inside it, both fail the check.
-        Assert.False(ClearsTheGaitBand(1.0f, EnemyVisualCatalog.GaitThresholdSpeed + 0.2f));
+        Assert.False(ClearsTheGaitBand(1.0f, EnemyVisualCatalog.GaitThresholdSpeed - 0.2f));
         Assert.False(ClearsTheGaitBand(EnemyVisualCatalog.GaitThresholdSpeed - 0.2f, 3.0f));
     }
 
     private static bool ClearsTheGaitBand(float patrolSpeed, float chaseSpeed) =>
-        patrolSpeed < EnemyVisualCatalog.GaitThresholdSpeed - EnemyVisualCatalog.GaitHysteresisSpeed
-        && chaseSpeed > EnemyVisualCatalog.GaitThresholdSpeed + EnemyVisualCatalog.GaitHysteresisSpeed;
+        patrolSpeed <= EnemyVisualCatalog.GaitThresholdSpeed - EnemyVisualCatalog.GaitHysteresisSpeed
+        && chaseSpeed >= EnemyVisualCatalog.GaitThresholdSpeed;
 
     // The behaviour-only overload is the one WolfAnimationResolver and every pre-gait caller use; it
     // must stay exactly the zero-speed case, or an enemy with no measured pose would gallop on the spot.

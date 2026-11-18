@@ -724,7 +724,8 @@ public static class ServerBootstrap
     }
 
     // A valid row can still leave the band the client's presentation assumes: a speed inside the
-    // enemy gait hysteresis band around the gait threshold flickers the walk and gallop clips, and a
+    // enemy gait deadband just below the gait threshold (EnemyClipSet.ResolveSprinting starts the gallop at
+    // the threshold and drops it only below threshold minus hysteresis) flickers the walk and gallop clips, and a
     // chase faster than the client's teleport distance per second looks like a teleport. This warns and
     // never rejects: the row is the designer's to keep.
     internal static void WarnWhenOutsideTheClientBand(EnemyKindTuning row, Action<string>? log)
@@ -735,13 +736,13 @@ public static class ServerBootstrap
         }
 
         float low = EnemyPresentationBand.GaitThresholdSpeed - EnemyPresentationBand.GaitHysteresisSpeed;
-        float high = EnemyPresentationBand.GaitThresholdSpeed + EnemyPresentationBand.GaitHysteresisSpeed;
+        float high = EnemyPresentationBand.GaitThresholdSpeed;
         foreach ((string name, float speed) in new[] { ("chase_speed", row.ChaseSpeed), ("patrol_speed", row.PatrolSpeed) })
         {
             if (speed > low && speed < high)
             {
                 log($"server.content.enemy-tuning-warning kind={row.EnemyKind} {name}={Num(speed)} " +
-                    $"reason=inside the client gait band ({Num(low)}, {Num(high)}); the walk and gallop clips will flicker");
+                    $"reason=inside the client gait deadband ({Num(low)}, {Num(high)}) where the gait keeps whichever clip it was on; the walk and gallop clips will flicker");
             }
         }
 

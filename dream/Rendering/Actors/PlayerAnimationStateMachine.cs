@@ -114,8 +114,9 @@ public sealed class PlayerAnimationStateMachine
     // far less time than a stride, so the damping costs nothing visible.
     public const float GaitHysteresisSpeed = 0.4f;
 
-    // The playback floor is the walk floor's own rate on the walk clip, so the slowest speed the
-    // simulation can produce plays the legs at the body's pace instead of being clamped up past it.
+    // The playback floor is the walk floor's own rate on the walk clip, so a body moving at the
+    // walk floor plays the legs at its own pace; slower speeds (ramps) clamp up to it rather than
+    // playing the stride slower than a walk.
     public const float MinPlaybackSpeed = PlayerSimulationTuning.DefaultWalkSpeed / ReferenceWalkSpeed;
     public const float MaxPlaybackSpeed = 1.6f;
 

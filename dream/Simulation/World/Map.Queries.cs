@@ -55,7 +55,7 @@ public partial class Map
         // Test the ray against each nearby cube's actual box. Sampling by integer cell missed the
         // visible part of a pushed, off-center cube and hit empty space in its cell instead.
         Vector3 midpoint = origin + (normalizedDirection * (maxDistance * 0.5f));
-        foreach (Cube cube in _placedCubeSpatialIndex.GetNearby(midpoint, (maxDistance * 0.5f) + 1f))
+        foreach (Cube cube in _placedCubeSpatialIndex.EnumerateNearby(midpoint, (maxDistance * 0.5f) + 1f))
         {
             if (!_cubeCells.TryGetValue(cube, out GeometryCellKey key) ||
                 (_geometryCells.TryGetValue(key, out GeometryCellRecord? record) && record.SubdivisionState != null))
