@@ -19,6 +19,7 @@ from synth import (add_at, bandpass, brown, fir_convolve, highpass, jitter, lowp
                    resonator_tv, rng_for, room_ir, soft_clip, write_wav)
 
 AMB_SR = 22050
+WIND_RMS = 0.05   # average level of the wind loop (its peaks stay well under full scale)
 WIND_SECONDS = 16.0
 NIGHT_SECONDS = 16.0
 
@@ -68,17 +69,21 @@ def wind_loop() -> np.ndarray:
     # Restrained rumble.
     rumble = lowpass(brown(n, rng), 140.0, 2, AMB_SR)
     out += 0.22 * rumble * (0.35 + 0.65 * g)
-    # Dry grass and leaf rustle: sparse clicks (granular), more of them in a gust, 2-6 kHz.
-    rate = 40.0 + 520.0 * g ** 1.5
-    hits = (rng.random(n) < rate / AMB_SR) * rng.exponential(1.0, n)
-    rustle = bandpass(hits, 2000.0, 6000.0, 2, AMB_SR)
+    # Dry grass and leaf rustle: smooth band noise whose level flutters quickly with the gust.
+    # The flutter is low-passed noise, so it never steps: single-sample impulses here played as a
+    # crackle that came and went with every gust. Everything is circular, so the loop stays seamless.
+    flutter = lowpass(rng.standard_normal(n), 18.0, 2, AMB_SR)
+    flutter = np.clip(flutter / (np.std(flutter) or 1.0) * 0.5 + 0.6, 0.0, None) ** 1.5
+    rustle = bandpass(rng.standard_normal(n), 1600.0, 4200.0, 2, AMB_SR)
+    rustle = lowpass(rustle, 5000.0, 4, AMB_SR)
     rustle = rustle / (np.sqrt(np.mean(rustle ** 2)) or 1.0)
-    out += 0.17 * rustle * (0.2 + g)
+    out += 0.12 * rustle * flutter * (0.15 + g ** 1.3)
     # A trace of air so the silence between gusts is not dead.
     out += 0.02 * highpass(pink(n, rng), 800.0, 1, AMB_SR)
     out = soft_clip(out / np.max(np.abs(out)) * 0.9, 1.3)
     y = out - np.mean(out)
-    return y / np.max(np.abs(y)) * 0.6
+    # Level by loudness, not by peak: the mix was balanced against a wind of this RMS.
+    return y / (np.sqrt(np.mean(y ** 2)) or 1.0) * WIND_RMS
 
 
 def _cricket(n: int, rng: np.random.Generator, seconds: float, carrier: float, chirp_rate: float,

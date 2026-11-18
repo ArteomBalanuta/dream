@@ -56,6 +56,21 @@ def fizz_db(mono: np.ndarray, sr: int) -> float:
     return 10.0 * np.log10(float(power[freqs >= FIZZ_HZ].sum()) / body + 1e-18)
 
 
+# Crackle guard for loops: above 2 kHz a loop must be smooth noise or tones, not a stream of clicks.
+# Spikiness is the kurtosis of that band normalised by its own 5 ms envelope: smooth noise is ~3,
+# the old click-built wind rustle was 28.5.
+CRACKLE_MAX = 6.0
+
+
+def spikiness(mono: np.ndarray, sr: int) -> float:
+    spectrum = np.fft.rfft(mono)
+    spectrum[np.fft.rfftfreq(len(mono), 1.0 / sr) < 2000] = 0
+    high = np.fft.irfft(spectrum, len(mono))
+    k = max(1, int(sr * 0.005))
+    env = np.sqrt(np.convolve(high ** 2, np.ones(k) / k, "same")) + 1e-7
+    return float(np.mean((high / env) ** 4))
+
+
 def generate(out_root: Path) -> list[Path]:
     """Run every family build(), then delete any wav in out_root/{sfx,ambience,music} that no build() returned."""
     import importlib
@@ -105,6 +120,10 @@ def check(root: Path) -> list[str]:
             edge = seam / step
             if edge > 4.0:
                 problems.append(f"{rel}: loop seam jump {edge:.1f}x the typical step")
+            spiky = spikiness(mono, sr)
+            if spiky > CRACKLE_MAX:
+                problems.append(f"{rel}: spikiness {spiky:.1f} above 2 kHz (max {CRACKLE_MAX:.0f}; "
+                                f"it plays as crackle)")
             if not 4.0 <= seconds <= 40.0:
                 problems.append(f"{rel}: loop length {seconds:.1f}s outside 4..40 s")
         else:
