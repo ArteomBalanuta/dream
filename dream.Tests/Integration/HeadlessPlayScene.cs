@@ -80,14 +80,17 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
         Task<ServerConnection> accept = server.Service.AcceptOnThreadPoolAsync();
         string name = $"Name {sessionId}";
         RemoteClientSession session = await RemoteClientSession.ConnectAsync(
-            new RemoteClientOptions("127.0.0.1", server.Port, sessionId, name, "headless-scene", TestAccountTokens.For(name)));
+            new RemoteClientOptions("127.0.0.1", server.Port, sessionId, name, "headless-scene", TestAccountTokens.For(name)),
+            // The test is this server's tick source, so the session's silence watchdog would be
+            // measuring how fast the test thread runs. See SlowedTestClock.
+            timeProvider: SlowedTestClock.Instance);
         ServerConnection connection = await accept.WaitAsync(WireLoopbackServer.Timeout);
         HeadlessPlayScene client = new(server, session, connection, CreateScene(session));
 
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        LoopbackDeadline joining = new(server.Ticks);
         while (!server.Host.IsConnectionJoined(connection.ConnectionId))
         {
-            Assert.True(DateTime.UtcNow < deadline, $"{sessionId} never joined");
+            joining.AssertAlive(server.Ticks, $"{sessionId} join");
             await Task.Delay(2);
             await server.TickAsync();
             Assert.True(await client.FlushAsync());

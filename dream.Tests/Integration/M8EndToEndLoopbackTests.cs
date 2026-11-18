@@ -483,7 +483,7 @@ public sealed class M8EndToEndLoopbackTests
         // The stranger joins after, so the JoinAccepted actor list is tested too.
         await using WireLoopbackClient stranger = await server.ConnectAndJoinAsync("m8-stranger");
 
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        LoopbackDeadline deadline = new(server.Ticks);
         while (true)
         {
             await server.TickAsync();
@@ -497,7 +497,7 @@ public sealed class M8EndToEndLoopbackTests
                 break;
             }
 
-            Assert.True(DateTime.UtcNow < deadline, $"the owner's panel shows level {panel.Level}, experience {panel.Experience}, strength {panel.BaseStrength}");
+            deadline.AssertAlive(server.Ticks, $"the owner's panel at level 4 (it shows level {panel.Level}, experience {panel.Experience}, strength {panel.BaseStrength})");
             await Task.Delay(2);
         }
 
@@ -571,10 +571,12 @@ public sealed class M8EndToEndLoopbackTests
         await using HeadlessPlayScene dropped = await HeadlessPlayScene.JoinAsync(server, "m8-dropped");
 
         await CommandAsync(admin, $"/kick \"{NameOf("m8-kicked")}\" cooling off");
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        // The server is ticked in here, so the bound is LoopbackDeadline on its tick number: a
+        // loaded machine makes this slower, not wrong.
+        LoopbackDeadline removal = new(server.Ticks);
         while (kicked.Session.DisconnectReason == null)
         {
-            Assert.True(DateTime.UtcNow < deadline, "the kicked client never learned it was removed");
+            removal.AssertAlive(server.Ticks, "the kicked client learning it was removed");
             await server.TickAsync();
             await server.FlushAllAsync();
             await dropped.FlushAsync();
@@ -588,10 +590,13 @@ public sealed class M8EndToEndLoopbackTests
 
         // The server vanishes under the other client: no notice, the socket just closes.
         await server.DisposeAsync();
-        deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        // Nothing advances while this waits - the server is gone and the client is waiting for its
+        // socket read to come back closed - so there is no progress counter to bound it by, and the
+        // flat 30 s stays. A closed socket is reported by the read itself, with no clock involved.
+        DateTime noticed = DateTime.UtcNow + WireLoopbackServer.Timeout;
         while (dropped.Session.DisconnectReason == null)
         {
-            Assert.True(DateTime.UtcNow < deadline, "the dropped client never noticed");
+            Assert.True(DateTime.UtcNow < noticed, "the dropped client never noticed");
             dropped.Pump();
             await Task.Delay(5);
         }

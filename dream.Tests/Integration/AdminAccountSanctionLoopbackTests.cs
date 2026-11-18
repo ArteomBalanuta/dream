@@ -284,10 +284,29 @@ public sealed class AdminAccountSanctionLoopbackTests
         using (SqliteTransaction writeLock = holder.BeginTransaction(deferred: false))
         {
             await CommandAsync(admin, $"/ban \"{NameOf(Alt)}\" 5");
-            // Past the 5 s busy timeout the group cannot start. The admin hears nothing yet.
-            await Task.Delay(TimeSpan.FromSeconds(7));
+            // The group cannot start while the lock is held, so the write waits out its 5 s busy
+            // timeout and is retried, and the admin hears nothing meanwhile.
+            //
+            // This used to wait a fixed 7 s and then assert the retry had happened. That is a wall
+            // clock measurement, and it is wrong under load: on a busy machine the worker can take
+            // longer than 7 s just to get its first attempt in, and the assertion then fired on a
+            // retry that had not happened YET - a false failure, reproduced by opening the
+            // collection gate to 64 on 16 cores. Polling for the retry instead removes the clock
+            // from the claim without removing the claim, and the admin's silence is now checked on
+            // every pass, so it is proved for the whole time the lock is held rather than once at
+            // the 7 s mark. The cap is generous but finite: a retry that never happens still fails
+            // the test instead of hanging it.
+            DateTime retryDeadline = DateTime.UtcNow + LoopbackDeadline.HardTimeout;
+            while (server.Runtime.PersistenceWrites!.LockRetries < 1)
+            {
+                Assert.DoesNotContain($"Banned {NameOf(Alt)}.", SystemLines(admin));
+                Assert.True(
+                    DateTime.UtcNow < retryDeadline,
+                    "the ban write was never retried against the held lock");
+                await Task.Delay(25);
+            }
+
             Assert.DoesNotContain($"Banned {NameOf(Alt)}.", SystemLines(admin));
-            Assert.True(server.Runtime.PersistenceWrites!.LockRetries >= 1);
             writeLock.Rollback();
         }
 
