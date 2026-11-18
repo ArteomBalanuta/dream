@@ -108,7 +108,15 @@ public static class WorldLabelsPanel
                 if (live)
                 {
                     UiRect hit = new(box.X - (2f * hair), box.Y - hair, box.W + (4f * hair), box.H + (2f * hair));
-                    int id = IdLabel + placedCount;
+                    // BH-INPUT-1: the label's id is what it picks up or talks to, not its place in the
+                    // list. The list is rebuilt every projection (players, then enemies, then economy)
+                    // and holds only the labels that project on screen, so the index of a standing
+                    // ground item changes whenever an unrelated actor appears or leaves — several
+                    // times a second in a fight. With a position id that silently dropped the click,
+                    // and, where the de-overlap pass moves a second label up into the first's place
+                    // under the pointer, picked up the wrong item or talked to the wrong NPC. The id
+                    // carries the click target, so a renumber now always drops the click.
+                    int id = HudWidgetId.Of(IdLabel + (int)label.Click.Kind, label.Click.Id);
                     if (i!.Hovered(id, hit))
                     {
                         c.Solid(hit, HoverFill);
