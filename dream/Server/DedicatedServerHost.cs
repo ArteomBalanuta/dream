@@ -1313,6 +1313,7 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
     private void RunTick(ulong tick, float fixedDeltaSeconds)
     {
         StepAccountStandings(Runtime, tick);
+        StepLostPresence(Runtime);
         ApplyPendingJoins();
         RefreshJoinedSessionIds();
         _commandInbox.DrainInto(_joinedSessionIds, _tickCommands);

@@ -16,8 +16,15 @@ public sealed partial class WorldSessionRuntime
     // Experience marks a projected progression: the client keeps what it knows when it sees it.
     public const int HiddenExperience = -1;
 
-    // How often (in ticks) the leases of the players here are renewed: 15 s at the 64 Hz tick.
-    public const ulong PresenceRenewIntervalTicks = 960;
+    // How often (in ticks) the lease renewal is *looked at*: 1 s at the 64 Hz tick. Whether a renewal is
+    // actually due is decided on the wall clock (RuntimePersistenceBridge.PresenceRenewInterval), the unit
+    // the lease expiry uses; this cadence only has to be well inside it even on a host whose ticks are
+    // falling behind real time (BH-XFER-4).
+    public const ulong PresencePumpIntervalTicks = 64;
+
+    // How often (in ticks) the connected accounts' standing is read again by default: 15 s at 64 Hz. It
+    // used to be the presence cadence too; the lease is now renewed on the wall clock instead.
+    public const ulong StandingRefreshDefaultIntervalTicks = 960;
 
     private readonly record struct ProgressSent(
         int Level,
@@ -114,10 +121,11 @@ public sealed partial class WorldSessionRuntime
         _lastSentProgress.Remove(session);
     }
 
-    // Every 960 ticks, renews the lease of the characters in this world.
+    // Looks at the lease renewal every second of simulated time; the renewal itself is due on the wall
+    // clock, so a host whose ticks fall behind real time cannot stretch it past the lease (BH-XFER-4).
     private void StepPresence(ulong tick)
     {
-        if (tick % PresenceRenewIntervalTicks != 0 || !HasAccounts)
+        if (tick % PresencePumpIntervalTicks != 0 || !HasAccounts || !_persistence.IsPresenceRenewalDue())
         {
             return;
         }
@@ -150,6 +158,20 @@ public sealed partial class WorldSessionRuntime
         {
             _persistence.ClaimPresenceAfterJoin(characterKey);
         }
+    }
+
+    // BH-XFER-4. The next character whose renewal found this world no longer holding its lease (it ran out
+    // while this host was stalled, or another world took it over). The host closes that connection: a seat
+    // that is not the lease's owner must not keep playing, because the profile row it writes is global.
+    internal bool TryTakeLostPresence(out string characterKey)
+    {
+        if (!HasAccounts)
+        {
+            characterKey = string.Empty;
+            return false;
+        }
+
+        return _persistence.TryTakeLostPresence(out characterKey);
     }
 
     // A join the host refused after its prefetch took the lease.

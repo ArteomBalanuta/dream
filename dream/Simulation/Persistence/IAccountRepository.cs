@@ -43,6 +43,13 @@ public interface IAccountRepository
     {
     }
 
+    // BH-XFER-4. The same renewal, reporting into lost the keys whose row it changed nothing for: this
+    // world does not hold their lease any more (it ran out while the host was stalled, or another world
+    // took it over). The caller has to act on those, because a renewal that fails silently is what lets
+    // one character be played in two worlds. The default keeps the plain behaviour and reports nothing.
+    void RenewPresence(IReadOnlyList<string> characterKeys, WorldId world, DateTime expiresUtc, List<string> lost)
+        => RenewPresence(characterKeys, world, expiresUtc);
+
     // M8. Drops the lease, only while this world holds it.
     void ReleasePresence(string characterKey, WorldId world)
     {

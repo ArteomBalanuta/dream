@@ -12,6 +12,22 @@ internal sealed partial class RuntimePersistenceBridge
     // A lease that is not renewed (a crash) frees itself after this; the same world reclaims at once.
     public static readonly TimeSpan PresenceTimeToLive = TimeSpan.FromSeconds(45);
 
+    // BH-XFER-4. How often the lease is renewed, measured on the wall clock -- the unit the expiry itself
+    // uses. A cadence counted in ticks promises nothing about a wall-clock expiry, because a host that
+    // cannot keep up advances its tick counter slower than real time (SimulationClock drops the time past
+    // MaxTicksPerAdvance): 960 ticks were 15 s of *simulated* time against a 45 s wall-clock lease, so a
+    // sustained third-of-real-time stall let the lease run out under a player who was still here. A third
+    // of the life leaves room for two lost renewals and for the write queue's own latency.
+    public static readonly TimeSpan PresenceRenewInterval = TimeSpan.FromSeconds(15);
+
+    // When the last renewal was queued. Wall clock, read from the tick: no simulation state depends on it
+    // (it only decides when a database write is queued), so the tick stays deterministic.
+    private DateTime _lastPresenceRenewUtc = DateTime.MinValue;
+
+    // Characters this world turned out not to hold the lease of any more. Filled by the renewal on the
+    // persistence worker, drained by the host on the tick.
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _lostPresence = new();
+
     // The account repository, for the server commands; null on a runtime without accounts.
     public IAccountRepository? Accounts => _accounts;
 
@@ -56,6 +72,10 @@ internal sealed partial class RuntimePersistenceBridge
         return lookup;
     }
 
+    // Whether a renewal is due, on the wall clock. The tick only decides how often this is asked.
+    public bool IsPresenceRenewalDue() =>
+        _accounts != null && _writes != null && DateTime.UtcNow - _lastPresenceRenewUtc >= PresenceRenewInterval;
+
     // Queues a renewal of the leases of these characters (the players now in this world).
     public void RenewPresence(IReadOnlyList<string> characterKeys)
     {
@@ -64,9 +84,31 @@ internal sealed partial class RuntimePersistenceBridge
             return;
         }
 
+        _lastPresenceRenewUtc = DateTime.UtcNow;
         WorldId world = PresenceWorld;
         string[] keys = [.. characterKeys];
-        _writes.Enqueue(() => accounts.RenewPresence(keys, world, DateTime.UtcNow + PresenceTimeToLive));
+        System.Collections.Concurrent.ConcurrentQueue<string> lostPresence = _lostPresence;
+        _writes.Enqueue(() =>
+        {
+            List<string> lost = [];
+            accounts.RenewPresence(keys, world, DateTime.UtcNow + PresenceTimeToLive, lost);
+            for (int i = 0; i < lost.Count; i++)
+            {
+                // BH-XFER-4: the renewal changed no row, so this world is not the owner any more. Said
+                // out loud instead of discarded, or the seat plays on and writes the global profile row
+                // against the world that now holds the character.
+                lostPresence.Enqueue(lost[i]);
+            }
+        });
+    }
+
+    // The next character whose renewal found this world no longer holding the lease; false when there is
+    // none. Drained on the tick by the host, which closes that connection.
+    public bool TryTakeLostPresence(out string characterKey)
+    {
+        bool took = _lostPresence.TryDequeue(out string? key);
+        characterKey = key ?? string.Empty;
+        return took;
     }
 
     // Queues taking (or retaking) the lease of a character that just joined, behind any release a
