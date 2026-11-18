@@ -46,7 +46,7 @@ public sealed partial class WorldSessionRuntime
         {
             outcome = RunInventoryAction(
                 player,
-                static (service, key, definition) => service.TryAcceptQuest(key, definition),
+                (service, key, definition) => service.TryAcceptQuest(key, definition, EnemyContent),
                 quest!);
         }
 

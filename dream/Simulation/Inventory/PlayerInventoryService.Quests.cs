@@ -17,8 +17,17 @@ internal sealed partial class PlayerInventoryService
     internal const int QuestActive = 1;
     internal const int QuestCompleted = 2;
 
-    // The most quest rows one player keeps (the log message holds as many).
-    internal const int MaxQuestRecords = 32;
+    // The most quest rows one player keeps, live and stale together: the hostile-input bound on the rows
+    // a load will take. Deliberately above MaxLiveQuestRecords (BH-QUEST-4): a row whose key the running
+    // content no longer has is kept inert, and it needs room of its own so it cannot crowd out a quest
+    // the content does have.
+    internal const int MaxQuestRecords = ContentCatalog.MaxQuests * 2;
+
+    // The most rows of quests the running content still has - what the accept gate counts. Equal to
+    // ContentCatalog.MaxQuests, so a character can hold every quest the content offers, and to
+    // ServerQuestLog.MaxEntries, so the log message can carry all of them (BuildQuestLog emits the live
+    // quests only, so the log can never overflow however many stale rows there are).
+    internal const int MaxLiveQuestRecords = ContentCatalog.MaxQuests;
 
     private const int MaxStoredKillCount = ContentCatalog.MaxQuestCount;
 
@@ -107,7 +116,10 @@ internal sealed partial class PlayerInventoryService
     // Takes the quest. QuestUnavailable when the player already has a row for it (active or completed: a
     // quest is done once) or the log is full; WriteFailed after an earlier failed write, because the rows may
     // then lack the quest and a later completion would throw.
-    internal InventoryEquipOutcome TryAcceptQuest(string playerName, QuestDefinition quest)
+    //
+    // "Full" counts the rows of quests content still has (BH-QUEST-4); pass that content to get it. See
+    // LiveQuestRecordCount for why a stale row must not take a live one's place.
+    internal InventoryEquipOutcome TryAcceptQuest(string playerName, QuestDefinition quest, ContentCatalog? content = null)
     {
         if (!Ensure(playerName))
         {
@@ -125,7 +137,9 @@ internal sealed partial class PlayerInventoryService
             _questsByPlayer[playerName] = records;
         }
 
-        if (records.ContainsKey(quest.Key) || records.Count >= MaxQuestRecords)
+        if (records.ContainsKey(quest.Key)
+            || LiveQuestRecordCount(records, content) >= MaxLiveQuestRecords
+            || records.Count >= MaxQuestRecords)
         {
             return InventoryEquipOutcome.QuestUnavailable;
         }
@@ -443,6 +457,37 @@ internal sealed partial class PlayerInventoryService
         }
 
         return needed == 0;
+    }
+
+    // How many of the player's rows are quests the content still has. BH-QUEST-4: a row for a key the
+    // running content no longer knows (a quest renamed or removed in quests.json, a world moved between
+    // content versions) is kept inert and is unreachable from the client - BuildQuestLog and
+    // BuildNpcDialogue both filter to catalog quests, so the client is never told the key and can never
+    // send an abandon for it, and a completed row cannot be abandoned at all. Such rows must therefore
+    // not take the place of a quest the content does have, or a few of them would leave a character
+    // permanently unable to accept anything. Making them visible instead would mean inventing a title and
+    // objectives the content no longer has, on both sides of the protocol; keeping them inert is what the
+    // surrounding code (and QuestServiceTests's "kept inert") already does.
+    //
+    // Order-independent: it only counts, so a dictionary's iteration order cannot change the answer.
+    // Without a catalog every row counts, which is the old behaviour.
+    private static int LiveQuestRecordCount(Dictionary<string, QuestRecord> records, ContentCatalog? content)
+    {
+        if (content == null)
+        {
+            return records.Count;
+        }
+
+        int live = 0;
+        foreach (QuestRecord record in records.Values)
+        {
+            if (content.TryGetQuest(record.Key, out _))
+            {
+                live++;
+            }
+        }
+
+        return live;
     }
 
     private void BumpQuestRevision(string playerName)
