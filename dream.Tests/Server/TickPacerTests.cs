@@ -21,44 +21,70 @@ public class TickPacerTests
         Assert.Equal(0d, TickPacer.SecondsUntilNextTick(0.020, 0.015));
     }
 
-    // TimingSensitive only serialises tests inside this process; another process can still starve
-    // the CPU. Each test measures up to MaxAttempts times and asserts the unchanged bound on the
-    // best run, so one starved run does not fail it but a pacer that is really slow still does.
-    private const int MaxAttempts = 3;
+    // Every wait is sampled, and the statistic is the SMALLEST overshoot of the batch.
+    //
+    // Nothing softer survives a loaded machine. TimingSensitive only serialises tests inside this
+    // process; the rest of a loaded suite, or another process, can still take the CPU away in the
+    // middle of a wait, and a stolen slice is worth 10-15 ms. Measured here, a batch of waits loses
+    // between 3% and 90% of its samples to that depending on what else the box is doing, so every
+    // statistic that reads a share of the samples - the mean, the median, a percentile, a count of
+    // good waits, the longest unbroken run of them - moves with the load and not with the pacer.
+    // The median is what this test used to assert, and a full-suite run duly read 9.1 ms from it
+    // against a 4 ms bound while the same test, run alone, read 1.5 MICROseconds.
+    //
+    // The minimum is the one statistic load cannot fake, because being descheduled only ever ADDS
+    // time to a wait. Across every run measured - idle, and with the cores oversubscribed four
+    // times over - the smallest overshoot in a batch stayed between 0.1 and 0.8 microseconds, with
+    // no reading in between: either a wait is interrupted and loses milliseconds, or it lands on
+    // the deadline. So the batch minimum is the pacer's own floor, and the bound belongs just above
+    // it.
+    //
+    // That is what pays for the bound being TIGHTENED from 4 ms to 10 microseconds rather than
+    // loosened. The pacer this test exists to prevent - the Task.Delay(1) loop, which wakes on the
+    // next 15.6 ms timer edge instead of on the deadline it was given - scatters its overshoots
+    // across the whole 15.6 ms period, so it can only sneak under a 10 us bound by landing one wait
+    // in roughly 1500 on the edge by luck. It cannot do what this test now demands at all: land on
+    // the deadline itself.
+    private const int MeasuredWaits = 128;
+
+    // Above the ~0.8 us floor measured under four-times CPU oversubscription, and 1500x below the
+    // 15.6 ms timer period a regressed pacer would round up to.
+    private const double DeadlineToleranceSeconds = 0.00001;
 
     [Fact]
     public void WaitFor_OvershootsDeadlineByOnlyAFewMilliseconds()
     {
         using TickPacer pacer = new();
-        const int waits = 21;
-        // The statistic is the MEDIAN overshoot, not the mean: a mean lets one descheduled wait
-        // (a 40 ms pause from another process) move 20 samples by 2 ms, which failed the 4 ms
-        // bound at 4.1 to 4.4 ms on a busy machine. A pacer that really rounds up to the 15.6 ms
-        // timer period (the old Task.Delay(1) loop) overshoots on nearly every wait, so its
-        // median stays far above the bound. An early wake (negative overshoot) is a pacer bug,
-        // not CPU starvation, so any negative sample fails outright.
-        double bestMedianOvershoot = double.PositiveInfinity;
-        for (int attempt = 0; attempt < MaxAttempts; attempt++)
+        double[] overshoots = new double[MeasuredWaits];
+        for (int index = 0; index < MeasuredWaits; index++)
         {
-            double[] overshoots = new double[waits];
-            for (int index = 0; index < waits; index++)
-            {
-                Stopwatch stopwatch = Stopwatch.StartNew();
-                pacer.WaitFor(SimulationClock.FixedDeltaSeconds, CancellationToken.None);
-                overshoots[index] = stopwatch.Elapsed.TotalSeconds - SimulationClock.FixedDeltaSeconds;
-            }
-
-            Assert.True(overshoots.Min() >= 0d, $"WaitFor returned {-overshoots.Min() * 1000d:F3} ms early.");
-            Array.Sort(overshoots);
-            bestMedianOvershoot = Math.Min(bestMedianOvershoot, overshoots[waits / 2]);
-            if (bestMedianOvershoot <= 0.004)
-            {
-                break;
-            }
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            pacer.WaitFor(SimulationClock.FixedDeltaSeconds, CancellationToken.None);
+            overshoots[index] = stopwatch.Elapsed.TotalSeconds - SimulationClock.FixedDeltaSeconds;
         }
 
-        Assert.InRange(bestMedianOvershoot, 0d, 0.004);
+        Array.Sort(overshoots);
+        double best = overshoots[0];
+
+        // Waking EARLY is a pacer bug rather than CPU starvation - load can only delay a wait - so
+        // a negative sample fails on its own terms, with its own message.
+        Assert.True(best >= 0d, $"WaitFor returned {-best * 1000d:F4} ms before its deadline.");
+        Assert.True(
+            best <= DeadlineToleranceSeconds,
+            $"The closest of {MeasuredWaits} waits still overshot its deadline by {best * 1000d:F4} ms; "
+            + $"the bound is {DeadlineToleranceSeconds * 1000d:F3} ms. "
+            + $"(median {overshoots[MeasuredWaits / 2] * 1000d:F4} ms, worst {overshoots[MeasuredWaits - 1] * 1000d:F4} ms - "
+            + "those two move with the machine's load, the minimum does not.)");
     }
+
+    // Left measuring a share of the samples, unlike the test above, because here that share does
+    // not move with the load: the pacer is asked for the time remaining in the current tick, so a
+    // stolen slice is absorbed by the clock's accumulator and only costs an iteration when it runs
+    // past a SECOND tick, 31.25 ms away. Measured under the same four-times oversubscription that
+    // drops 90% of the fixed-deadline waits above, every round of this loop still ran 64/64
+    // iterations at exactly one tick. The best of MaxAttempts rounds is kept so that one round
+    // losing the CPU outright does not fail it.
+    private const int MaxAttempts = 3;
 
     [Fact]
     public void PacedLoop_RunsOneTickPerIterationAlmostAlways()
