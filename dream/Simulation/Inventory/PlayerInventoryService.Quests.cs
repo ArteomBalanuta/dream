@@ -371,6 +371,15 @@ internal sealed partial class PlayerInventoryService
             newSlots.Add(new PersistedInventorySlot(playerName, slotIndex, itemInstanceId, now));
         }
 
+        // BH-QUEST-6: the consumed collect items vacated anchors, so this is a path that frees room, and
+        // "held-back rows wait for room and drain, in order, after every accepted move, destroy, equip or
+        // unequip" (PlayerInventoryService's own rule). The drain runs after the reward placements, on the
+        // bag as it now is, and its slot writes are appended to the one closure below - the turn-in must
+        // stay one closure, so they cannot be queued on their own.
+        SlotChanges drained = new();
+        DrainHeldBack(slots, drained);
+        Action<IWorldPersistenceRepository>? drainWrite = drained.IsEmpty ? null : drained.ToWrite(playerName, null);
+
         // ---- the one closure ----
         string questKey = quest.Key;
         long credit = rewards.Gold;
@@ -399,6 +408,8 @@ internal sealed partial class PlayerInventoryService
             {
                 world.SaveInventorySlot(slot);
             }
+
+            drainWrite?.Invoke(world);
 
             // Last, and inside this savepoint: the XP cannot land without everything above it.
             paidReward?.Invoke();
