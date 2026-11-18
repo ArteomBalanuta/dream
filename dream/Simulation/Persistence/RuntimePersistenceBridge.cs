@@ -973,6 +973,35 @@ internal sealed partial class RuntimePersistenceBridge
         return stamped;
     }
 
+    // Takes a quest turn-in's XP back out of the cached profile (and off to the row) when the turn-in's
+    // closure did not commit, for a character whose seat has already gone: the cache is what the next
+    // save would write durably, which is how XP for a still-active quest became permanent and let a
+    // rejoin pay it a second time (BH-REV2-3). Only when the cached profile still holds exactly what the
+    // grant put there, so progression earned since is never erased; false otherwise, and false when the
+    // profile is not cached here at all. Never reads the database: it runs on the tick thread.
+    public bool TryRollBackProfileExperience(
+        string characterKey,
+        int grantedLevel,
+        int grantedExperience,
+        int beforeLevel,
+        int beforeExperience)
+    {
+        if (_playerProfiles == null
+            || !_profileCache.TryGetValue(characterKey, out PersistedPlayerProfile cached)
+            || cached.Stats.Level != grantedLevel
+            || cached.Stats.Experience != grantedExperience)
+        {
+            return false;
+        }
+
+        Action write = PrepareProfileWrite(
+            characterKey,
+            cached with { Stats = cached.Stats with { Level = beforeLevel, Experience = beforeExperience } },
+            out _);
+        _writes?.Enqueue(write);
+        return true;
+    }
+
     // Stamps and caches the profile and returns its repository call, without queueing it.
     private Action PrepareProfileWrite(string playerName, PersistedPlayerProfile profile, out PersistedPlayerProfile stamped)
     {

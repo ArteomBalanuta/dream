@@ -44,8 +44,12 @@ public sealed partial class DedicatedServerHost
     // One System chat line sent after each accepted join (already cleaned); null for none.
     public string? Motd { get; set; }
 
+    // Counts the sanctions this host remembered, so a standing read can tell which of them it already
+    // saw in the rows (the clock cannot: two events can share one DateTime.UtcNow).
+    private long _sanctionSequence;
+
     // A sanction as the host last set it: Set says whether it was set or cleared (a cleared one still
-    // overrides a stale prefetch that read the old value).
+    // overrides a stale prefetch that read the old value). Sequence is its position in _sanctionSequence.
     private readonly record struct SanctionMemory(
         AccountKey Key,
         bool BanSet,
@@ -53,7 +57,8 @@ public sealed partial class DedicatedServerHost
         string? BanReason,
         bool MuteSet,
         DateTime? MuteUntilUtc,
-        DateTime StampUtc);
+        DateTime StampUtc,
+        long Sequence);
 
     // One /command line a client sent as ChatChannel.Command. Replies go to the sender.
     private void HandleAdminCommand(
@@ -338,11 +343,15 @@ public sealed partial class DedicatedServerHost
     // on the next tick. Read null: re-apply the recent sanctions on top of the connection's standing;
     // otherwise the standing was just read from the database (role included). Reply, when set, is the
     // administrator's confirmation of the sanction that produced this update: it is queued as the update
-    // is applied, so the confirmation never runs ahead of the enforcement it reports.
+    // is applied, so the confirmation never runs ahead of the enforcement it reports. ReadSequence is the
+    // sanction sequence the read saw when it STARTED (0 for an update that read nothing): a recent-sanction
+    // memory newer than it was written after the read looked at the row, so the read's standing is stale
+    // for it and the memory must survive (see ApplyAccountUpdate).
     private readonly record struct AccountUpdate(
         AccountKey Account,
         AccountStanding? Read,
-        PendingConnectionReply? Reply = null);
+        PendingConnectionReply? Reply = null,
+        long ReadSequence = 0);
 
     private readonly ConcurrentQueue<AccountUpdate> _pendingAccountUpdates = new();
     private int _standingRefreshInFlight;
@@ -407,13 +416,17 @@ public sealed partial class DedicatedServerHost
         AccountKey[] keys = [.. connected.Values];
         bool queued = writes.EnqueueRead(() =>
         {
+            // Taken where the read runs, not where it was queued: every sanction this host wrote before
+            // this point is in the rows the read is about to see, and a sanction remembered after it is
+            // not. A monotonic counter, not the clock: two events inside one clock tick must still order.
+            long sequence = Interlocked.Read(ref _sanctionSequence);
             try
             {
                 foreach (AccountKey key in keys)
                 {
                     if (accounts.ReadStanding(key) is { } read)
                     {
-                        _pendingAccountUpdates.Enqueue(new AccountUpdate(key, read));
+                        _pendingAccountUpdates.Enqueue(new AccountUpdate(key, read, null, sequence));
                     }
                 }
             }
@@ -436,14 +449,22 @@ public sealed partial class DedicatedServerHost
     private void ApplyAccountUpdate(in AccountUpdate update)
     {
         DateTime now = DateTime.UtcNow;
-        if (update.Read != null)
+        if (update.Read != null
+            && _sanctionMemory.TryGetValue(update.Account.HashHex, out SanctionMemory seen)
+            && seen.Sequence <= update.ReadSequence)
         {
-            // The row was just read, and the read was queued behind every write this host made, so it is
-            // newer than the recent-sanction memory: the memory's job (covering a read that started before
-            // the write) is done. Dropping it here is what lets a change another process wrote -- an
-            // `--accounts unban` while the window is open -- decide, instead of being overridden for two
-            // minutes by what this host last set.
-            _sanctionMemory.TryRemove(update.Account.HashHex, out _);
+            // The row was read AFTER this memory was written (the sequence it took at its start already
+            // counted it), so the read is the newer of the two and the memory's job -- covering a read
+            // that started before the write -- is done. Dropping it here is what lets a change another
+            // process wrote -- an `--accounts unban` while the window is open -- decide, instead of being
+            // overridden for two minutes by what this host last set.
+            //
+            // A memory with a HIGHER sequence was written after the read started, so the read's standing
+            // predates it: dropping it would put the stale, unsanctioned standing on the live connection
+            // and throw away the join-refusal memory, while the administrator's confirmation (which rides
+            // with the sanction's own update) still claimed the ban or mute was in force. The compare
+            // removes only the entry it just checked, so a sanction landing beside this tick is kept too.
+            _sanctionMemory.TryRemove(new KeyValuePair<string, SanctionMemory>(update.Account.HashHex, seen));
         }
 
         foreach (KeyValuePair<string, ServerRoutingContext> connection in _connections)
@@ -589,12 +610,23 @@ public sealed partial class DedicatedServerHost
             }
         }
 
+        // Taken before the entry is written, so a standing read that starts after this call sees a
+        // sequence at least this high and may drop the memory, while one that started earlier cannot.
+        long sequence = Interlocked.Increment(ref _sanctionSequence);
         _sanctionMemory.AddOrUpdate(
             key.HashHex,
             _ => new SanctionMemory(
-                key, ban != null || clearBan, ban?.Until, ban?.Reason, mute != null || clearMute, mute, DateTime.UtcNow),
+                key,
+                ban != null || clearBan,
+                ban?.Until,
+                ban?.Reason,
+                mute != null || clearMute,
+                mute,
+                DateTime.UtcNow,
+                sequence),
             (_, old) => old with
             {
+                Sequence = sequence,
                 BanSet = ban != null || clearBan || old.BanSet,
                 BanUntilUtc = ban != null ? ban.Value.Until : clearBan ? null : old.BanUntilUtc,
                 BanReason = ban != null ? ban.Value.Reason : clearBan ? null : old.BanReason,
