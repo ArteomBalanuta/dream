@@ -81,8 +81,9 @@ public sealed class EnemyActor
 
     public float AttackRange { get; }
 
-    // THE CHASE SPEED: what this enemy runs at while it is closing on a player. Persistence maps it
-    // from and to PersistedCreatureStats.MovementSpeed, so its name and meaning are load-bearing.
+    // THE CHASE SPEED: what this enemy runs at while it is closing on a player. Persistence writes it to
+    // PersistedCreatureStats.MovementSpeed, but a restore takes it from the enemy kind's template, not
+    // from that stored value.
     public float MoveSpeed { get; }
 
     // The walk it returns home at, at most MoveSpeed. Not persisted: it comes from the template.

@@ -36,8 +36,12 @@ public sealed partial class ContentCatalog
                     AttackIntervalSeconds = row.AttackIntervalSeconds,
                     AttackRange = row.AttackRange,
                     AggroRange = row.AggroRange,
-                    // The sheet stat follows the interval so the row a spawn writes agrees with it.
-                    AttackSpeed = Math.Clamp(1f / row.AttackIntervalSeconds, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed),
+                    // The sheet stat follows the interval so the row a spawn writes agrees with it, but only
+                    // when the row changes the interval: a row equal to the authored one keeps the
+                    // authored (rounded) AttackSpeed, so the template stays record-equal.
+                    AttackSpeed = template.AttackIntervalSeconds == row.AttackIntervalSeconds
+                        ? template.AttackSpeed
+                        : Math.Clamp(1f / row.AttackIntervalSeconds, PlayerCombatStats.MinAttackSpeed, PlayerCombatStats.MaxAttackSpeed),
                 }
                 : template;
             enemies[tuned.Key] = tuned;
