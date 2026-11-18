@@ -143,6 +143,7 @@ public static class UiSpriteNames
         WinScrollRod, WinLineBox,
         CellEmpty, CellOccupied, CellHover, CellInvalid, CellOverlayHover, CellOverlayInvalid,
         Well2x2, Well2x3, SilWeaponLeft, SilWeaponRight, SilHelm, SilArmor, TipPanel, TipBand,
+        ShopCellEmpty, ShopCellOccupied, ShopFrameEmber, ShopFrameCold, CellOverlayEmber,
         ButtonNormal, ButtonHover, ButtonPressed, Plate44Normal, Plate44Hover, Plate44Pressed, GlyphCloseNormal, GlyphCloseHover,
         CursorPointer, CursorPressed, CursorGrab, CursorForbid, CursorAttack,
         .. DigitNames,

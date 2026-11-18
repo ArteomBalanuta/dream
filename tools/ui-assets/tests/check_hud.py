@@ -175,8 +175,11 @@ def check_gems(errs, S):
             errs.append(f"gem.{kind}.full: p99 channel {np.percentile(fl.max(axis=2)[ins], 99):.3f} over the 0.80 ceiling")
         # the glass alone (HSV S > 0.45; the near-neutral iron cage drags a whole-sprite mean down): lit through, still oxidised
         glass = ins & (sat > 0.45)
+        # MAX CHANNEL, not luma: for a blood-red stone the red channel is about 2.7x the luma, so this
+        # number is NOT comparable with check_art.py's glass_p95, which is luma (0.236 / 0.244 for the
+        # same pixels). Keep the two apart or a bound from one will be read against the other.
         gv = fl.max(axis=2)[glass]
-        if np.percentile(gv, 95) < 0.40:   # measured glass p95 0.651 / 0.616; the C# ClassicHudGemTests counts the pixels that differ between fill 0 and 1
+        if np.percentile(gv, 95) < 0.40:   # measured max-channel glass p95 0.651 / 0.616; the C# ClassicHudGemTests counts the pixels that differ between fill 0 and 1
             errs.append(f"gem.{kind}.full: glass p95 {np.percentile(gv, 95):.3f} under 0.40: the fluid is not lit")
         if sat[glass].mean() < 0.70:   # measured 0.784 / 0.742
             errs.append(f"gem.{kind}.full: glass saturation {sat[glass].mean():.3f} under 0.70")

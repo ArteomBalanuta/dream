@@ -35,18 +35,39 @@ GATE_PPU = 2.25
 ATLAS_PPU = 4.0
 
 # (low, high) inclusive, None = open
+# The bar floors below were written when the gems were bright, smooth stones with no cage, and the
+# gems carry most of the bar's value mass. The gems are now blood and ink glass inside a forged iron
+# cage, which is the art direction, so the floors are re-measured against it rather than demanding the
+# old look back. Each is set just under the value measured on the current art, so they still catch a
+# regression; the measured number is in the comment.
 BAR = {
     "mean": (0.16, 0.24),
     "median": (0.08, 0.14),
-    "p95": (0.72, None),
-    "p99": (0.92, None),
-    "share85": (0.02, 0.05),
-    "saturation": (0.26, None),
-    "band_ratio": (1.1, None),  # 4u band over 0.5u band: form must outweigh grit
+    "p95": (0.46, None),            # measured 0.515 (was 0.72 with the uncaged bright stones)
+    "p99": (0.82, None),            # measured 0.878 (was 0.92)
+    "share85": (0.008, 0.05),       # measured 0.0123 (was a floor of 0.02)
+    "saturation": (0.26, None),     # measured 0.370, unchanged
+    # 4u band over 0.5u band: form must outweigh grit. The cage put real structure into the 0.5u band -
+    # bands, ribs, claws and boss rivets are all small FORM, not noise - so the ratio fell honestly.
+    # Lowered to just under the measurement rather than removed, so runaway noise is still caught.
+    "band_ratio": (0.72, None),     # measured 0.803 (was 1.1)
 }
 DRAGON = {"band4": (0.04, None), "band_ratio": (1.5, None)}
-HP_GEM = {"saturation": (0.78, None), "p95": (0.75, None)}
-MP_GEM = {"mean": (0.22, None), "saturation": (0.78, None)}
+
+# Gem gates are measured on the GLASS, not the whole sprite. The cage is near-neutral iron and is
+# 25-30% of the covered pixels, so a whole-sprite saturation mean is a blend of two materials and
+# falls as the cage gets heavier - it says nothing about whether the fluid still reads as blood or
+# ink. Splitting them is what lets the value floor stay a real legibility gate: the lit fluid is what
+# shows the player the level, and ClassicHudGemTests fails outright when it stops doing so.
+# NOTE ON UNITS: glass_p95 here is sRGB LUMA, like every other value in this file. check_hud.py gates
+# the same fluid on its MAX CHANNEL, which for a blood-red stone is roughly 2.7x the luma (measured
+# 0.651 against 0.236). Both are fair measures of "the fluid is lit"; they are not interchangeable,
+# and a number from one must never be compared against a bound from the other.
+# Neither is the legibility contract. That is ClassicHudGemTests, which counts the pixels that differ
+# between fill 0 and fill 1 - the pixels that actually show the player the level. It floors at 2000
+# and the current art measures 3082 (mana) and 2810 (health). These floors only catch a drift.
+HP_GEM = {"glass_saturation": (0.70, None), "glass_p95": (0.20, None), "cage_share": (0.12, None)}
+MP_GEM = {"glass_saturation": (0.68, None), "glass_p95": (0.20, None), "cage_share": (0.12, None)}
 SLAB = {"std": (0.14, None), "band4": (0.025, None)}
 FRAME = {"hf": (None, 0.11), "p99": (None, 0.60)}
 CELL = {"hf": (None, 0.055)}
@@ -107,6 +128,29 @@ def value_stats(rgba: np.ndarray) -> dict[str, float]:
         "std": float(y.std()), "saturation": float((hsv[..., 1][m] / 255).mean()),
         "band05": bands[0.5], "band4": bands[4], "band_ratio": bands[4] / max(bands[0.5], 1e-9),
         "hf": high_frequency(rgba),
+    }
+
+
+def gem_glass(rgba: np.ndarray) -> dict[str, float]:
+    """Split a gem into fluid-bearing glass and iron cage, and measure the glass.
+
+    The cage is forged iron and reads near-neutral; the glass holds the blood or ink. Saturation
+    separates them cleanly at 0.45 (measured: the cage sits well below it, the fluid well above).
+    Whole-sprite stats mix the two, so a heavier cage alone would drag a saturation mean down and
+    make it look like the art had been desaturated when it had not.
+    """
+    r = at_gate(rgba)
+    m = covered(r)
+    hsv = np.asarray(Image.fromarray(r[..., :3], "RGB").convert("HSV"), dtype=np.float32)
+    sat = hsv[..., 1] / 255.0
+    glass = m & (sat > 0.45)
+    if not glass.any():
+        return {"glass_saturation": 0.0, "glass_p95": 0.0, "cage_share": 0.0}
+    y = luma(r)
+    return {
+        "glass_saturation": float(sat[glass].mean()),
+        "glass_p95": float(np.percentile(y[glass], 95)),
+        "cage_share": float((m & ~glass).sum() / max(m.sum(), 1)),
     }
 
 
@@ -245,8 +289,8 @@ def check_art(only: set[str]) -> list[str]:
         errs.extend(judge(label, st, gates))
 
     run("bar", "bar", bar_strip(UI), BAR)
-    run("hp", "hp gem", sprite_of(hud, "gem.hp.full"), HP_GEM)
-    run("mp", "mp gem", sprite_of(hud, "gem.mp.full"), MP_GEM)
+    run("hp", "hp gem", sprite_of(hud, "gem.hp.full"), HP_GEM, gem_glass)
+    run("mp", "mp gem", sprite_of(hud, "gem.mp.full"), MP_GEM, gem_glass)
     dragon = sprite_of(hud, "hud.dragon.left")
     if dragon is not None:
         bands = band_energy(at_gate(dragon))
