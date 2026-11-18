@@ -46,17 +46,25 @@ public sealed class WorldSizeMismatchLoopbackTests(ITestOutputHelper output)
         Assert.Equal(8, client.Map.Height);
 
         // The world transfer that follows (a full resync) leaves the size alone.
+        //
+        // The wait has to keep TICKING the server, which is why it is UntilAsync and not the client's
+        // own WaitForAsync. A resync is not served on the receive thread: WorldResyncRequestHandler
+        // only marks the connection, and DedicatedServerHost.ServePendingWorldResyncs exports the
+        // world at the end of the NEXT tick. WireLoopbackServer.TickAsync does not wait for this
+        // message either - it only syncs on the last command and action sequence, and this test sends
+        // neither - so a fixed run of ticks can finish before the server's receive loop has even read
+        // the request. Nothing then ticks the server again, no further frame can arrive, and a
+        // frames-only wait sits out its whole no-progress window: that is the 30 s timeout this test
+        // was seen taking under load, where alone it passes in ~300 ms. Bounding on the server's ticks
+        // AND on this client's received frames, with the loop driving both, makes the wait outlive a
+        // late read and still fail cheaply (~9 s) if the transfer genuinely never comes.
         await wire.SendAsync(new ClientWorldResyncRequestMessage(0));
-        for (int i = 0; i < 4; i++)
-        {
-            await server.TickAsync();
-            Assert.True(await server.FlushAllAsync());
-        }
-
-        await wire.WaitForAsync(
-            frames => WorldTransferReassembler.Reassemble(frames.Select(frame => frame.Decoded.Message))
+        await server.UntilAsync(
+            () => WorldTransferReassembler.Reassemble(wire.Frames.Select(frame => frame.Decoded.Message))
                 .Any(message => message is ServerSnapshotMessage { Snapshot.World: not null }),
-            "world transfer");
+            "the world transfer arrive at the client",
+            LoopbackDeadline.Applied,
+            WireLoopbackServer.Observing(wire));
         foreach (ServerSnapshotMessage snapshot in WorldTransferReassembler.Reassemble(wire.Frames.Select(frame => frame.Decoded.Message))
             .OfType<ServerSnapshotMessage>().Where(message => message.Snapshot.World is not null))
         {
