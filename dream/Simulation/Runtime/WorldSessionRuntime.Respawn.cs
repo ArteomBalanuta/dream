@@ -265,12 +265,6 @@ public sealed partial class WorldSessionRuntime
         float x = Math.Clamp(spawn.X, 0.5f, map.Width - 0.5f);
         float z = Math.Clamp(spawn.Z, 0.5f, map.Depth - 0.5f);
         float y = Math.Clamp(spawn.Y, 0.5f, map.Height - 0.5f);
-        const float halfBody = 0.5f;
-        const float epsilon = 0.001f;
-        int minX = (int)MathF.Floor(x - halfBody + epsilon);
-        int maxX = (int)MathF.Floor(x + halfBody - epsilon);
-        int minZ = (int)MathF.Floor(z - halfBody + epsilon);
-        int maxZ = (int)MathF.Floor(z + halfBody - epsilon);
         // A fractured cube leaves no Cube in its cell: its rubble pieces are separate bodies that can lie
         // anywhere (they move), so they are tested by their own boxes, not by cell.
         List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble = scratch ?? [];
@@ -278,10 +272,7 @@ public sealed partial class WorldSessionRuntime
         map.CaptureFracturePiecesInto(rubble);
         while (y < map.Height - 0.5f)
         {
-            int cellY = (int)MathF.Floor(y);
-            if (!AnySolidCell(map, minX, maxX, cellY, minZ, maxZ)
-                && !AnySolidCell(map, minX, maxX, cellY + 1, minZ, maxZ)
-                && !AnyPieceInBody(rubble, x, z, cellY, halfBody - epsilon))
+            if (BodyFits(map, rubble, x, z, (int)MathF.Floor(y)))
             {
                 break;
             }
@@ -289,7 +280,144 @@ public sealed partial class WorldSessionRuntime
             y += 1f;
         }
 
-        return new Vector3(x, Math.Min(y, map.Height - 0.5f), z);
+        y = Math.Min(y, map.Height - 0.5f);
+        int bodyCell = (int)MathF.Floor(y);
+        // BH-PVP-2: the lift only escapes upwards and stops the moment the spawn's own cells are clear, so a
+        // ring of cubes around the spawn cell with a roof over it left every respawning player sealed in --
+        // and the cubes are their builder's (CanDamageCube), so the victim could never break out and a relog
+        // put them back in the same box. If the body cannot reach the edge of the search area from here, step
+        // to the nearest free cell that the sealed region does not contain. Columns are tried in a fixed ring
+        // and ordinal order and nothing but the Map is read, so every lockstep peer picks the same cell. If
+        // the lift hit the map's cap, or nothing free is in reach, this is the position the lift gave.
+        if (BodyFits(map, rubble, x, z, bodyCell))
+        {
+            return ResolveRespawnEscape(map, rubble, x, y, z, bodyCell);
+        }
+
+        return new Vector3(x, y, z);
+    }
+
+    // How far around the spawn a sealed-in player is searched for a way out, in cells, and how many cells of
+    // climb or drop the search may use on the way (a step or a short jump, so natural ground counts as open).
+    private const int RespawnEscapeRadius = 8;
+    private const int RespawnEscapeClimb = 3;
+    private const int RespawnEscapeSide = (2 * RespawnEscapeRadius) + 1;
+    private const int RespawnEscapeLevels = (2 * RespawnEscapeClimb) + 1;
+
+    private static Vector3 ResolveRespawnEscape(
+        Map map,
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble,
+        float x,
+        float y,
+        float z,
+        int bodyCell)
+    {
+        bool[] visited = new bool[RespawnEscapeSide * RespawnEscapeSide * RespawnEscapeLevels];
+        bool[] sealedColumn = new bool[RespawnEscapeSide * RespawnEscapeSide];
+        int[] queue = new int[RespawnEscapeSide * RespawnEscapeSide * RespawnEscapeLevels];
+        int head = 0;
+        int tail = 0;
+        int start = NodeIndex(0, 0, 0);
+        visited[start] = true;
+        queue[tail++] = start;
+        sealedColumn[ColumnIndex(0, 0)] = true;
+        while (head < tail)
+        {
+            int node = queue[head++];
+            int level = (node % RespawnEscapeLevels) - RespawnEscapeClimb;
+            int column = node / RespawnEscapeLevels;
+            int dx = (column / RespawnEscapeSide) - RespawnEscapeRadius;
+            int dz = (column % RespawnEscapeSide) - RespawnEscapeRadius;
+            if (Math.Abs(dx) == RespawnEscapeRadius || Math.Abs(dz) == RespawnEscapeRadius)
+            {
+                // Reached the edge of the search area: the player is not sealed in.
+                return new Vector3(x, y, z);
+            }
+
+            for (int step = 0; step < 4; step++)
+            {
+                int ndx = dx + (step == 0 ? 1 : step == 1 ? -1 : 0);
+                int ndz = dz + (step == 2 ? 1 : step == 3 ? -1 : 0);
+                float nx = x + ndx;
+                float nz = z + ndz;
+                if (nx < 0.5f || nx > map.Width - 0.5f || nz < 0.5f || nz > map.Depth - 0.5f)
+                {
+                    // The open edge of the map is a way out too.
+                    return new Vector3(x, y, z);
+                }
+
+                for (int nlevel = level - 1; nlevel <= level + 1; nlevel++)
+                {
+                    if (nlevel < -RespawnEscapeClimb || nlevel > RespawnEscapeClimb)
+                    {
+                        continue;
+                    }
+
+                    int next = NodeIndex(ndx, ndz, nlevel);
+                    if (visited[next] || !BodyFits(map, rubble, nx, nz, bodyCell + nlevel))
+                    {
+                        continue;
+                    }
+
+                    visited[next] = true;
+                    queue[tail++] = next;
+                    sealedColumn[ColumnIndex(ndx, ndz)] = true;
+                }
+            }
+        }
+
+        // Sealed in. The nearest cell outside the sealed region that the body fits in at the spawn's own
+        // level, by ring then ordinal order.
+        for (int ring = 1; ring <= RespawnEscapeRadius; ring++)
+        {
+            for (int dx = -ring; dx <= ring; dx++)
+            {
+                for (int dz = -ring; dz <= ring; dz++)
+                {
+                    if (Math.Max(Math.Abs(dx), Math.Abs(dz)) != ring || sealedColumn[ColumnIndex(dx, dz)])
+                    {
+                        continue;
+                    }
+
+                    float nx = x + dx;
+                    float nz = z + dz;
+                    if (nx < 0.5f || nx > map.Width - 0.5f || nz < 0.5f || nz > map.Depth - 0.5f
+                        || !BodyFits(map, rubble, nx, nz, bodyCell))
+                    {
+                        continue;
+                    }
+
+                    return new Vector3(nx, y, nz);
+                }
+            }
+        }
+
+        return new Vector3(x, y, z);
+
+        static int ColumnIndex(int dx, int dz)
+            => ((dx + RespawnEscapeRadius) * RespawnEscapeSide) + dz + RespawnEscapeRadius;
+
+        static int NodeIndex(int dx, int dz, int level)
+            => (ColumnIndex(dx, dz) * RespawnEscapeLevels) + level + RespawnEscapeClimb;
+    }
+
+    // The one-cell-wide, two-cell-tall body standing on cellY, against cubes and against rubble.
+    private static bool BodyFits(
+        Map map,
+        List<(GeometryCellKey Cell, int PieceIndex, GeometryFracturePiece Piece, GeometryMaterialId MaterialId)> rubble,
+        float x,
+        float z,
+        int cellY)
+    {
+        const float halfBody = 0.5f;
+        const float epsilon = 0.001f;
+        int minX = (int)MathF.Floor(x - halfBody + epsilon);
+        int maxX = (int)MathF.Floor(x + halfBody - epsilon);
+        int minZ = (int)MathF.Floor(z - halfBody + epsilon);
+        int maxZ = (int)MathF.Floor(z + halfBody - epsilon);
+        return !AnySolidCell(map, minX, maxX, cellY, minZ, maxZ)
+            && !AnySolidCell(map, minX, maxX, cellY + 1, minZ, maxZ)
+            && !AnyPieceInBody(rubble, x, z, cellY, halfBody - epsilon);
     }
 
     // The session's live player target (the primary seat's or a secondary's); tests drive health and position through it.
