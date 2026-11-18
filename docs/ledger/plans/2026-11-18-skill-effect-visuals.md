@@ -327,3 +327,486 @@ master.
    own ray (`WorldSessionRuntime.Skills.cs:33`; the aim is a direction only and the client currently sends `null`).
    They can differ by a frame of turning. Acceptable, or should `ResolveSkillAim()` start sending the same direction
    the effect draws?
+
+---
+
+# Wave 2 (2026-11-18): remote cast visibility (protocol v22)
+
+- **Purpose**: make a peer's `skill.cleave` / `skill.bolt` / `skill.mend` cast visible on every other
+  client, by replicating the cast as a presentation-only snapshot delta.
+- **Status**: execution-ready plan. Not started. Base: `master` at `2b34af6f`, suite 9276/0.
+- **Scope**: one new wire delta, one protocol version bump (21 -> 22), one server queue, one client
+  applier. **No new effect, no FX change, no simulation change.** Wave 1's `SkillCastEvent` ->
+  `FxEventBridge` -> `SpawnSkillCast` chain is reused unchanged; this wave only adds a second
+  publisher of the same event. Nothing under `dream/Rendering/Effects/` is touched.
+
+## Decisions, with evidence
+
+### 1. Coalescing: cast events accumulate, capped in the buffer, and `DropDeltas` clears them
+
+`ServerSnapshotCoalesceBuffer` appends mutations and damage events from every merged tick
+(`ServerSnapshotCoalesceBuffer.cs:40-41`, `:61-62`) and `ToEnvelope` hands both lists back (`:88-93`).
+Cast events **accumulate the same way**. Dropping them would mean a client that lags by even two
+ticks silently misses peers' casts - exactly the client that most needs to see what is being thrown at
+it, and an invisible failure no test would catch.
+
+The cap is **not** `MaxCoalescedWorldMutations`-shaped. That cap raises an overflow flag in
+`ServerConnection.AppendCoalesced` (`ServerConnection.cs:585-595`) which drops every delta and asks for a
+**full world resync** (`DedicatedServerService.ExceedsDeltaCaps`, `:717-721`). Forcing a world resync
+because too many sparkles queued up would be a cosmetic feature spending the most expensive operation the
+server has. So:
+
+- Add `public const int MaxCoalescedCastEvents = 1024;` **inside `ServerSnapshotCoalesceBuffer`**, and
+  truncate on append: once the list holds that many, further cast events are dropped silently. No
+  overflow flag, no resync.
+- **Do not** add a cast term to `ServerConnection.AppendCoalesced`'s overflow expression
+  (`:587-589`) and **do not** add one to `DedicatedServerService.ExceedsDeltaCaps` (`:719-720`). A
+  cast event never triggers a resync.
+- **Do not** add a `MaxCoalescedCastEvents` option to `ServerConnectionOptions`; a buffer const avoids
+  touching the options-plumbing tests for a value no operator needs to tune.
+
+`DropDeltas()` (`ServerSnapshotCoalesceBuffer.cs:69-79`) **must clear the cast list too**, alongside
+the mutations and damage events. Reason: `DropDeltas` means "this connection's backlog is being
+abandoned and replaced by a full world". The queued casts are by then seconds stale and their actors may
+not even exist in the world the client is about to receive. Unlike `WorldChecksum`, nothing needs
+invalidating - cast events carry no sequence and are not covered by `WorldStateChecksum` - so the clear is
+the whole change. `Reset()` must clear them as well (`:98-105`).
+
+Three sibling sites must stay in step:
+
+- `ServerSnapshotEnvelope.TryCoalesce` (`ServerSnapshotEnvelope.cs:59-64`) concatenates the cast lists,
+  because the buffer's contract is "returns exactly what chaining `TryCoalesce` returns" (`:3-8`) and
+  `Net2CoalesceChecksumTests.MergedDrop_AgreesWithTheUnmergedWithoutDeltasPath` pins it. The spread
+  `[.. a, .. b]` throws on a null operand, so use a null-tolerant concat helper that returns **null**
+  when both sides are null or empty.
+- `ServerConnection.WithoutDeltas` (`ServerConnection.cs:319-331`) sets `CastEvents = null` (not
+  `Array.Empty`, see the empty-is-absent rule below), for the same reason `DropDeltas` clears them.
+- `ServerConnection.HasDeltas` (`:334-339`) **does not** gain a cast term. It answers "is a resync owed
+  for what `WithoutDeltas` would drop", and a dropped cast owes no resync; adding casts would make a
+  cast-only snapshot with a large actor frame trip the oversized-strip path at `:1041`. Note the
+  asymmetry deliberately in a comment: `WithoutDeltas` clears casts, `HasDeltas` ignores them.
+
+### 2. The null guard: `CastEvents` does **not** join `RejectMalformedSnapshot`
+
+`RemoteClientSession.RejectMalformedSnapshot` (`dream/Client/Networking/RemoteClientSession.cs:624-630`,
+called at `:673`) ends the session as a protocol error when `LastAcceptedCommandSequences`,
+`WorldMutations` or `DamageEvents` decoded to null. **`CastEvents` must not be added to that list, and
+`RemoteClientSession.cs` must not be edited by this wave at all.**
+
+Why: those three are load-bearing. A missing sequence map stalls command acknowledgement, missing
+mutations leave a divergent world, missing damage events leave wrong health - each would otherwise throw a
+`NullReferenceException` on the frame thread, and the guard exists to convert that into a clean protocol
+error (`:669-672`). A missing cast list costs exactly one sparkle. Turning a cosmetic omission into a
+disconnect is a strictly worse failure than the feature it protects.
+
+**Absent and empty mean the same thing: "no casts in this interval."** That is a frozen part of the
+contract, not an implementation detail:
+
+- `ClientSnapshotCastApplier` reads `snapshot.CastEvents` through an `is { } casts` pattern and returns
+  without doing anything when it is null.
+- The **server writes null (the property is omitted) whenever there are no casts** - see the wire
+  contract. This is deliberately the common case, so the null path is exercised on essentially every
+  tick in production and can never become a surprise, and so every existing snapshot golden fixture
+  changes only in its version digit.
+
+### 3. Decoder parity: a trailing optional positional parameter, and the parity test only grows
+
+`ServerSnapshotConverterTests.AssertDecodesLikeReference` (`ServerSnapshotConverterTests.cs:550-563`)
+re-serializes both the reference decode and the hand-written decode with `ProtocolWireOptions.V3` and
+compares the strings, then asserts null-parity per collection.
+`HandWrittenPayloads_ReorderedExtraMissingAndDuplicated_Decode` feeds it the empty object, a snapshot
+with an empty body, and an all-null payload. **Do not change either test's intent.** The field is added
+so that they pass untouched:
+
+- Declare it as the **last** positional parameter of `ServerSnapshotEnvelope`, after
+  `WorldChecksumSequence`, **with a default of null**:
+  `IReadOnlyList<CastEventDelta>? CastEvents = null`. Trailing plus defaulted means every existing
+  positional `new ServerSnapshotEnvelope(...)` in `dream/` and `dream.Tests/` still compiles unchanged.
+- The reflection reference writes properties in declaration order, so `castEvents` lands last, after
+  `worldChecksumSequence`. `ServerSnapshotEnvelopeJsonConverter.WriteEnvelope` must write it in exactly
+  that position - after the `WorldChecksumSequence` number at `ServerSnapshotJsonConverters.cs:279`,
+  before `WriteEndObject`. Byte identity with the reference
+  (`RandomSnapshots_AreByteIdenticalToReference`) then holds.
+- `ProtocolWireOptions.V2` sets `DefaultIgnoreCondition = WhenWritingNull`
+  (`ProtocolWireOptions.cs:110`), so a null list is omitted by the reference and must be omitted by the
+  converter: guard with `if (value.CastEvents is IReadOnlyList<CastEventDelta> casts)`, exactly like
+  `DamageEvents` at `:262`.
+- Read side: a `castEvents` property whose token is Null decodes to null, anything else to a sized
+  array - the shape of `:168-172` - and the value is passed as `castEvents` to the constructor. An absent
+  property leaves it null, which is what the reference produces, so the three degenerate payloads keep
+  decoding.
+- `AssertDecodesLikeReference` gains **one added line**,
+  `Assert.Equal(expected.Snapshot.CastEvents is null, actual.Snapshot.CastEvents is null);`, which
+  strengthens it. Nothing existing is relaxed.
+- `ProtocolWireOptions.AddActorFrames` (`:58-93`) needs no change: it only reorders actors/actorFrame.
+
+### 4. Own-cast duplication is suppressed on the **client**, by actor id
+
+The caster already draws its own effect from the unicast `AbilityUsedResult`
+(`PlayScene.Replication.cs:290-300`). The server cannot omit the cast from the caster's own snapshot:
+snapshot payloads are a **shared broadcast body encoded once for all connections**
+(`ServerSnapshotMessage.SharedBody` / `SharedSnapshotEncodeScope.Applies`,
+`ServerSnapshotJsonConverters.cs:65-80`; the per-connection part is only the envelope header ack,
+`TransportEnvelope.cs:79-82`). Per-recipient filtering of the body would force a per-connection encode of
+every snapshot - the exact cost SCALE-2 was built to remove.
+
+So the client skips cast events whose `ActorId` equals its own server actor id. `PlayScene` already
+tracks it: `_serverLocalActorId`, set from the snapshot in `ObserveLocalDeath`
+(`PlayScene.Replication.cs:317`, field at `PlayScene.Economy.cs:29`). Pass **`_serverLocalActorId`
+directly, not the `LocalActorId` property** (`PlayScene.Economy.cs:31`): that property falls back to the
+*local* `_runtime.Player.Combatant.Actor.Id`, which could collide with a real server actor id before the
+first snapshot names the local player and wrongly swallow a peer's cast. Zero means "unknown - suppress
+nothing".
+
+Call the applier **immediately after `ObserveLocalDeath(...)`** in the snapshot branch
+(`PlayScene.Replication.cs:244`) so it sees this snapshot's id.
+
+Residual risk, accepted: the server reuses a player actor id once its session leaves, so a reused id could
+suppress one peer cast. `ClientSnapshotDamageApplier.IsAttributable` guards against this for damage
+(`ClientSnapshotDamageApplier.cs:97-123`) because a misattributed number appears on the wrong player.
+A missed cast effect has no wrong place to appear - the local effect is always drawn at the local player
+from the unicast path - so the full session-history machinery is not worth its cost here. Do not copy it.
+
+### 5. Hit effects: out of scope, and a real gap was found - route to the user
+
+Checked, not assumed:
+
+- Enemy hits **already replicate**. `DamageEventDelta` goes in every snapshot
+  (`WorldSessionRuntime.Replication.cs:325-346`), `ClientSnapshotDamageApplier` publishes
+  `DamageAppliedEvent` / `ActorDiedEvent` (`ClientSnapshotDamageApplier.cs:51`, `:61`), and
+  `FxEventBridge` turns those into `SpawnHit` / `SpawnDeath` (`FxEventBridge.cs:22-23`, `:34-50`,
+  `:58-63`). Every client sees hits on every enemy. **This wave needs no hit work.**
+- **But hits on remote *players* are invisible today.** The applier can only draw a hit it can anchor,
+  and `ClientWorldSession.TryResolveCombatActor` resolves exactly two things: the local player and the
+  enemy registry (`dream/Client/World/ClientWorldSession.cs:92-101`). `RemoteEnemyStateApplier` only
+  admits `CreatureKind.Enemy` actors (`RemoteEnemyStateApplier.cs:111`), so a remote *player* is never in
+  that registry and every damage event naming one is silently dropped at
+  `ClientSnapshotDamageApplier.cs:44-47`. Peers take damage with no splat and no number.
+
+  This is a pre-existing gap, not one this wave creates, and fixing it means giving the client a position
+  source for remote player actors - a different change from cast replication. **Open question 1 below;
+  not built here.** It is also why this wave puts the cast origin on the wire (next section): there is
+  demonstrably no client-side way to resolve a remote player's position today.
+
+### 6. Determinism and cost
+
+- **Nothing added feeds the authoritative simulation.** The pending cast list is an export-only list
+  beside `_pendingDamageEvents` (`WorldSessionRuntime.Replication.cs:15-16`), drained and cleared on the
+  same export (`:55`, `:62-63`). No simulation code reads it, no cast event is sequenced
+  (`QueueWorldMutation`'s `LastWorldMutationSequence` is untouched, `:292-296`) and none is covered by
+  `WorldStateChecksum`. Tick goldens and lockstep determinism dumps are unaffected because the
+  simulation's own state is unchanged.
+- **Per-tick bound on the server list**: one event per accepted `skill.use` action per tick, so at most
+  one per connected session per tick (cooldowns are >= 64 ticks, `dream/config/content/skills.json`).
+  Make the bound unconditional anyway: `private const int MaxPendingCastEvents = 256;` in
+  `WorldSessionRuntime.Replication.cs`; past it, `QueueCastEvent` returns without adding. The list is
+  cleared every export, so this is a per-tick cap.
+- **Per-snapshot bound on the client**: `ClientSnapshotCastApplier` applies at most
+  `MaxCastEventsPerSnapshot = 64` events and ignores the rest, so neither a merged backlog nor a hostile
+  server can flood the FX pool from one frame.
+- **Zero allocations per frame is unaffected.** This wave adds nothing to `FxSimulation`, `Advance` or
+  `WriteInstances`, which `FxAllocationTests` pins at exactly 0 bytes. The new applier runs on the
+  snapshot-apply path, not the render loop - the same path as `ClientSnapshotDamageApplier`, which
+  `dream.Tests/Client/Replication/ApplierAllocationTests.cs` already bounds; write it in that style
+  (plain `for`, no LINQ, no closures, `in`/`ref` for structs) and add it to that test.
+- Wire cost: **zero bytes on a tick with no cast**, because an empty list is written as absent.
+
+## The frozen wire contract
+
+Frozen before implementation; all three workstreams code against it and none may change it.
+
+### The delta type
+
+New file `dream/Simulation/World/CastEventDelta.cs`, namespace `Dream.Simulation.World`, beside
+`DamageEventDelta.cs`:
+
+    public readonly record struct CastEventDelta(
+        int ActorId,
+        SkillKind Kind,
+        Vector3 Origin,
+        Vector3 Direction,
+        float Range);
+
+`SkillKind` is `Dream.Simulation.Content.SkillKind` (`MeleeArc`, `RangedBolt`, `SelfHeal`) - the
+simulation's own enum, serialized as a number exactly like `CreatureKind` in `DamageEventDelta`. The
+server must **not** reference `Dream.Rendering.Effects.SkillFxKind`; the client maps.
+
+**`Origin` is on the wire** and is the server's cast origin (`context.CombatRayOrigin`). It is not
+resolved client-side, because there is no client-side way to resolve a remote player's position
+(decision 5). `Direction` is the server's resolved cast direction, unnormalised; the client normalises
+horizontally through the existing helper. `Range` is `skill.Range` as the definition gives it.
+
+No `PrintMembers` override is needed (unlike `DamageEventDelta`): no golden hashes a cast event's
+`ToString`.
+
+### The envelope field
+
+`ServerSnapshotEnvelope` gains, as the **last** positional parameter:
+`IReadOnlyList<CastEventDelta>? CastEvents = null`.
+
+### JSON
+
+Property name `"castEvents"`, written **last**, after `"worldChecksumSequence"`, omitted entirely when
+null. Each entry: actorId, kind, origin, direction, range - camelCase, `Vector3` through the existing
+`Vector3JsonConverter`, which `ProtocolWireOptions.V2` already registers (`ProtocolWireOptions.cs:137`)
+so the reflection reference agrees byte for byte. Model the hand-written `CastEventDeltaJsonConverter`
+on `DamageEventDeltaJsonConverter` in the same file.
+
+### Empty is absent (one rule, everywhere)
+
+A snapshot with no casts carries **no `castEvents` property**. Enforced at four sites, all of which use
+null, never `Array.Empty<CastEventDelta>()`:
+
+1. `WorldSessionRuntime` export: null when the pending list is empty, otherwise its copy. (Note this
+   differs from the damage-event line at `WorldSessionRuntime.Replication.cs:55`, which emits
+   `Array.Empty`; that line stays as it is.)
+2. `ServerSnapshotCoalesceBuffer.ToEnvelope`: null when the list is empty.
+3. `ServerSnapshotEnvelope.TryCoalesce`: null when both sides are null or empty.
+4. `ServerConnection.WithoutDeltas` and `ServerSnapshotCoalesceBuffer.DropDeltas`: null.
+
+Consequence to rely on: **every existing snapshot golden stays byte-identical except its version digit.**
+
+### The client mapping, in one place
+
+`ClientSkillCastPublisher` gains a shared mapper used by both the own-cast and the remote path, so a
+fourth skill never drifts between them:
+
+    public static bool TryMap(SkillKind kind, float definitionRange, out SkillFxKind fxKind, out float range);
+    public static bool PublishRemote(SceneEventHub events, in CastEventDelta delta);
+
+`TryMap` is the exact switch already in `Publish` (MeleeArc -> Arc with `skill.Range`,
+RangedBolt -> Bolt with `skill.Range`, SelfHeal -> Mend with range 0, anything else false). `Publish`
+is refactored to call it; its observable behaviour does not change and `ClientSkillCastPublisherTests`
+must keep passing untouched.
+
+`PublishRemote` treats the wire as hostile: it returns false (publishing nothing) for a non-finite
+Origin, Direction or Range, for an unmapped Kind, and clamps Range into 0..64. A zero direction stays
+legal and means "radial burst", as wave 1 defined.
+
+## The v22 bump: all five spellings, with the actual call sites
+
+Current: `TransportEnvelope.CurrentProtocolVersion = 21` (`TransportEnvelope.cs:77`). New value **22**.
+Before claiming it, run the check the file itself prescribes (`:74-75`): list the unmerged branches and
+`git show <branch>:dream/Multiplayer/Protocol/TransportEnvelope.cs | grep CurrentProtocolVersion` for
+each. 20 and 21 collided once; do not let 22 collide.
+
+1. **The constant and its version-history comment.** `TransportEnvelope.cs:77`, plus a new paragraph
+   after the v21 block (`:64-70`) in the same voice: v22 adds the optional trailing `"castEvents"` of a
+   server snapshot (`CastEventDelta`: caster actor id, skill kind, origin, direction and range), written
+   only when a cast happened in the interval, so a tick without a cast is byte-identical to v21 apart
+   from the version digit; a v21 client would skip the unknown property and never show a peer's cast, so
+   both sides refuse the other.
+2. **Raw `"protocolVersion":NN` fixtures** (4 files):
+   `dream.Tests/Multiplayer/Protocol/ProtocolV2SlimmingTests.cs` (`:148`, `:199`, `:207`, `:226`),
+   `dream.Tests/Multiplayer/Protocol/TransportJsonCodecDecodeTests.cs`
+   (`:101`, `:114`, `:131`, `:158`, `:167`, `:173`, `:174`, `:204`, `:213`, `:221`-`:224`),
+   `dream.Tests/Multiplayer/Protocol/WorldClockAnchorProtocolTests.cs:22`,
+   `dream.Tests/Integration/StoredWorldJoinLoopbackTests.cs` (`:55` comment, `:216`).
+3. **Escaped fixtures** - the same key written with backslash-escaped quotes inside a C# string. A
+   pattern anchored on an unescaped quote does **not** match these. 8 files:
+   `dream.Tests/Integration/ProtocolV2SharedSnapshotLoopbackIntegrationTests.cs:216`,
+   `dream.Tests/Integration/StoredWorldJoinLoopbackTests.cs:216`,
+   `dream.Tests/Integration/WaveBTesterWorldsLoopbackTests.cs:337`,
+   `dream.Tests/Multiplayer/Protocol/ClientJoinRequestCodecTests.cs:28,65`,
+   `dream.Tests/Multiplayer/Protocol/DamageEventHitWireTests.cs:35,58`,
+   `dream.Tests/Multiplayer/Protocol/JoinAcceptedWorldDescriptorCodecTests.cs:29,71,101,102`,
+   `dream.Tests/Multiplayer/Protocol/M4ContractCodecTests.cs:117`,
+   `dream.Tests/Multiplayer/Protocol/ProtocolV2SlimmingTests.cs:134`.
+4. **The message strings.** Producers are interpolated from the constant and need no edit:
+   `dream/Multiplayer/Protocol/ProtocolVersionMismatchException.cs:28,38` ("this client uses vNN." /
+   "this server uses vNN.") and `dream/Multiplayer/Protocol/TransportJsonCodec.cs:175,378`
+   ("Supported version: NN."). The **literals that must change**:
+   `dream.Tests/Integration/ProtocolVersionMismatchClientTests.cs:34,51,68,87,90,107,110,127,130,139,174,196`,
+   `dream.Tests/Integration/ProtocolV2VersionRejectionLoopbackIntegrationTests.cs:53,101`,
+   `dream.Tests/Integration/WaveBTesterWorldsLoopbackTests.cs:340`,
+   `dream.Tests/Multiplayer/Protocol/JoinAcceptedWorldDescriptorCodecTests.cs:74,78,81`,
+   `dream.Tests/Multiplayer/Protocol/ProtocolV2SlimmingTests.cs:253,264`,
+   `dream.Tests/Multiplayer/Protocol/TransportJsonCodecDecodeTests.cs:142,151,189`,
+   `dream.Tests/Multiplayer/Protocol/TransportJsonCodecEncodeTests.cs:239,247`,
+   `dream.Tests/Multiplayer/Protocol/PlayerInventorySnapshotConverterTests.cs:422`,
+   `dream.Tests/BugHunt/RaceConcurrencyTests.cs:139` ("Server uses protocol v20; this client uses v21."
+   - **both** digits move, to v21 and v22, because it is a one-below/current pair).
+5. **`ProtocolVersionMismatchClientTests`' fake newer server must stay exactly one above the current
+   version**: `dream.Tests/Integration/ProtocolVersionMismatchClientTests.cs:51` reads "Server uses
+   protocol v22; this client uses v21." and becomes "Server uses protocol v23; this client uses v22.";
+   the fake server's version number in that test moves 22 -> 23 with it.
+
+**The silent trap.** Four sites derive a downgraded frame with a `.Replace` whose search string pins the
+*current* version. If the constant moves and these are left at 21 the replace no-ops, the frame is never
+downgraded, and the test passes while verifying nothing:
+
+- `dream.Tests/Integration/StoredWorldJoinLoopbackTests.cs:216` (and its comment at `:55`, which already
+  warns about exactly this)
+- `dream.Tests/Integration/WaveBTesterWorldsLoopbackTests.cs:337`
+- `dream.Tests/Multiplayer/Protocol/JoinAcceptedWorldDescriptorCodecTests.cs:71`
+- `dream.Tests/Multiplayer/Protocol/JoinAcceptedWorldDescriptorCodecTests.cs:102` - **reversed**: it
+  replaces 6 *with* the current version, so the replacement target moves 21 -> 22.
+
+After the bump, run both of these and fix every hit. Exclude `.claude/worktrees` from any grep: it holds
+stale copies of every one of these files.
+
+    grep -rn 'Replace("' --include=*.cs dream dream.Tests | grep protocolVersion
+    grep -rn 'protocolVersion.\{0,3\}:21\|uses v21\|version: 21\|version 21' --include=*.cs dream dream.Tests
+
+Both must come back empty of stale 21s (deliberate historical values such as the v1..v12 legacy cases
+stay). A green suite is **not** evidence that step 5 or the trap was handled; the grep output is.
+
+## Workstreams
+
+Three, with disjoint owned files. The wire contract above is frozen, so all three can be written in
+parallel; only compilation ordering forces the merge order.
+
+### W1 - Wire: the delta, the envelope field, the converters and the v22 bump
+
+Owned files:
+
+- `dream/Simulation/World/CastEventDelta.cs` (new)
+- `dream/Simulation/World/ServerSnapshotEnvelope.cs`
+- `dream/Multiplayer/Protocol/ServerSnapshotJsonConverters.cs`
+- `dream/Multiplayer/Protocol/TransportEnvelope.cs`
+- `dream.Tests/Multiplayer/Protocol/ServerSnapshotConverterTests.cs`
+- `dream.Tests/Multiplayer/Protocol/ServerSnapshotSamples.cs`
+- `dream.Tests/Multiplayer/Protocol/CastEventWireTests.cs` (new)
+- every bump fixture listed in spellings 2-5 above, namely in
+  `dream.Tests/Multiplayer/Protocol/`: ProtocolV2SlimmingTests, TransportJsonCodecDecodeTests,
+  TransportJsonCodecEncodeTests, WorldClockAnchorProtocolTests, ClientJoinRequestCodecTests,
+  DamageEventHitWireTests, JoinAcceptedWorldDescriptorCodecTests, M4ContractCodecTests,
+  PlayerInventorySnapshotConverterTests; in `dream.Tests/Integration/`:
+  ProtocolVersionMismatchClientTests, ProtocolV2VersionRejectionLoopbackIntegrationTests,
+  ProtocolV2SharedSnapshotLoopbackIntegrationTests, StoredWorldJoinLoopbackTests,
+  WaveBTesterWorldsLoopbackTests; and `dream.Tests/BugHunt/RaceConcurrencyTests.cs`.
+
+Steps:
+
+1. Add `CastEventDelta.cs` exactly as frozen.
+2. Add the trailing defaulted `CastEvents` parameter to `ServerSnapshotEnvelope`, and the null-tolerant
+   concat in `TryCoalesce` (returning null when both sides are empty).
+3. Add `CastEventDeltaJsonConverter` beside `DamageEventDeltaJsonConverter`, the `castEvents`
+   `JsonEncodedText`, the read arm and the write block (last, guarded on non-null), and extend the wire
+   shape doc comment at `ServerSnapshotJsonConverters.cs:18-32`.
+4. Bump to 22 and chase all five spellings plus the four `.Replace` sites; run both greps above.
+5. Tests: extend `ServerSnapshotSamples.SnapshotWith` with a casts parameter; add the one null-parity
+   line to `AssertDecodesLikeReference`; new `CastEventWireTests` covering byte identity against the
+   reference for null / empty / one / many / edge-value cast lists, round-trip, a cast-free snapshot
+   containing no `castEvents` substring, and property reordering and duplication.
+
+**Do not touch** `dream/Client/Networking/RemoteClientSession.cs` (decision 2),
+`dream/Server/ServerConnection.cs` (W2 owns it), or anything under `dream/Rendering/`.
+
+### W2 - Server: queue the cast, export it, coalesce it
+
+Owned files:
+
+- `dream/Simulation/Runtime/WorldSessionRuntime.Replication.cs`
+- `dream/Simulation/Runtime/WorldSessionRuntime.Skills.cs`
+- `dream/Simulation/World/ServerSnapshotCoalesceBuffer.cs`
+- `dream/Server/ServerConnection.cs` (`WithoutDeltas` only; `HasDeltas` and `AppendCoalesced` stay as
+  they are)
+- `dream.Tests/BugHunt/Net2CoalesceChecksumTests.cs`
+- `dream.Tests/Simulation/Runtime/CastEventExportTests.cs` (new)
+
+Steps:
+
+1. `WorldSessionRuntime.Replication.cs`: add the pending cast list beside `_pendingDamageEvents`
+   (`:15-16`), `MaxPendingCastEvents = 256`, an internal `QueueCastEvent(in CastEventDelta)` that
+   returns early at the cap, the export line (null when empty) in the snapshot build beside `:55`, and
+   the Clear beside `:62-63`.
+2. `WorldSessionRuntime.Skills.cs`: after `_combatResolver.ProcessSkillUse(...)` returns (`:78-84`),
+   queue one event when the result is accepted - `context.Combatant.Actor.Id`, `skill.Kind`,
+   `context.CombatRayOrigin`, the resolved direction, `skill.Range`. Nothing is queued for a
+   rejection: mana and cooldown have already been spent by this point, so queue strictly on acceptance,
+   which matches the own-cast rule (a rejected cast plays nothing).
+3. `ServerSnapshotCoalesceBuffer.cs`: the cast list, `public const int MaxCoalescedCastEvents = 1024`,
+   a `CastEventCount` property, truncating append in Begin and Append, inclusion in `ToEnvelope` (null
+   when empty), clearing in `DropDeltas` and `Reset`.
+4. `ServerConnection.WithoutDeltas`: set `CastEvents` to null. Leave `HasDeltas` alone and comment why.
+5. Tests: a cast on a tick appears once in the export and the list is empty on the next tick; a rejected
+   cast queues nothing; the per-tick cap holds; a merged pair keeps both ticks' casts in order; the
+   truncation cap holds and raises no overflow and no resync; `DropDeltas` clears casts and
+   `MergedDrop_AgreesWithTheUnmergedWithoutDeltasPath` still passes (extend it with a cast assertion);
+   buffer `ToEnvelope` still equals chained `TryCoalesce` including casts.
+
+### W3 - Client: apply remote casts, suppress the local one
+
+Owned files:
+
+- `dream/Client/Replication/ClientSnapshotCastApplier.cs` (new)
+- `dream/Client/Replication/ClientSkillCastPublisher.cs`
+- `dream/Client/Scenes/PlayScene.Replication.cs`
+- `dream.Tests/Client/Replication/ClientSnapshotCastApplierTests.cs` (new)
+- `dream.Tests/Client/Replication/ClientSkillCastPublisherTests.cs`
+- `dream.Tests/Client/Replication/ApplierAllocationTests.cs`
+
+Steps:
+
+1. `ClientSkillCastPublisher`: extract `TryMap`, add `PublishRemote` as frozen. `Publish` keeps its
+   behaviour exactly; its existing tests must not need edits.
+2. New `ClientSnapshotCastApplier` with a single static
+   `ApplyToRuntime(SceneEventHub events, in ServerSnapshotEnvelope snapshot, int localActorId)`: it
+   returns on a null `CastEvents`, iterates with a plain for loop up to
+   `MaxCastEventsPerSnapshot = 64`, skips entries whose `ActorId` equals a non-zero `localActorId`, and
+   calls `ClientSkillCastPublisher.PublishRemote`. No LINQ, no closures, no allocation.
+3. `PlayScene.Replication.cs`: one call immediately after `ObserveLocalDeath(...)` (`:244`), passing
+   `_serverLocalActorId`.
+4. Tests: a remote cast publishes exactly one `SkillCastEvent` of the right kind, origin, direction and
+   range on a real `SceneEventHub`; the local actor's own cast publishes nothing; a zero `localActorId`
+   suppresses nothing; a null and an empty list both publish nothing; non-finite origin or direction, an
+   out-of-range Range and an unmapped `SkillKind` publish nothing; 100 events publish at most 64; and an
+   `AllocationAssert.AtMost(0, ...)` case in `ApplierAllocationTests`.
+
+**Do not touch** `dream/Client/Networking/RemoteClientSession.cs` or anything under
+`dream/Rendering/Effects/`.
+
+## Merge order
+
+**W1 (Wire) -> W2 (Server) -> W3 (Client).**
+
+- W1 first: `CastEventDelta` and `ServerSnapshotEnvelope.CastEvents` are the types the other two compile
+  against, and the v22 bump touches around twenty test files that nobody else owns - landing it alone
+  keeps the bump's blast radius readable in one diff.
+- W2 second: it fills the field W1 declared, and its coalescing tests only mean something once the field
+  exists.
+- W3 last: it consumes what W2 produces, and its one `PlayScene` line is the smallest, least
+  merge-prone edit. The feature is only observable after W3, so verify end to end on the integration
+  branch, not on W3's branch alone.
+
+No file is owned twice. `ServerConnection.cs` is W2's alone; `RemoteClientSession.cs` is nobody's.
+
+## How this is tested
+
+Per workstream, before handing back (build `dream\dream.csproj` once first so the test project can copy
+the native Bullet files; keep `BaseOutputPath` an absolute path inside the worktree that runs the tests -
+never redirected into another worktree):
+
+- W1: filter `FullyQualifiedName~Dream.Tests.Multiplayer.Protocol`, then
+  `FullyQualifiedName~Dream.Tests.Integration.Protocol`. Then re-run the two greps from the bump section
+  and paste the output into the hand-back.
+- W2: filters `FullyQualifiedName~Dream.Tests.BugHunt.Net2Coalesce`,
+  `FullyQualifiedName~Dream.Tests.Simulation.Runtime` and `FullyQualifiedName~Dream.Tests.Server`.
+- W3: filter `FullyQualifiedName~Dream.Tests.Client.Replication`.
+
+On the integration branch: the full suite, at most two consecutive full runs; isolate any flake rather
+than running a third time. Expect the one dependency test that is red on master itself. The exact-zero-byte
+allocation tests flake under a loaded suite - re-run them alone and tee suite output to a file. Arm a
+stall watchdog beside every run; never run two suites at once. No `git stash` in any worktree: the stash
+stack is shared across all of them.
+
+End-to-end check, which no unit test covers: run two clients against one host, cast each of the three
+skills on client A, and confirm client B draws the effect at A's figure and that A draws it exactly once.
+A v21 client against a v22 server must show the version-mismatch message, not a decode error.
+
+## Open questions
+
+1. **Hits on remote players are invisible today** (decision 5): `TryResolveCombatActor` cannot resolve a
+   remote player, so every damage event naming one is dropped at `ClientSnapshotDamageApplier.cs:44-47`.
+   Peers take damage with no splat and no number. Pre-existing, not caused by this wave, and a separate
+   change (it needs a position source for remote player actors). Schedule it as its own wave?
+2. **Origin on the wire vs. the drawn figure.** The replicated origin is the server's `CombatRayOrigin`
+   at the cast tick, while the peer's figure is drawn at an interpolated client position a few frames
+   behind. At isometric distance the offset should be under a figure's width; accept, or anchor the
+   effect to the rendered actor once a position source exists (same prerequisite as question 1)?
+3. **Aim source**, carried over from wave 1: the local effect uses the client camera's horizontal forward
+   while the replicated one uses the server's resolved direction, so the caster and a peer can see
+   slightly different arcs. Acceptable, or should the client start sending its aim direction
+   (`ResolveSkillAim()` currently sends null, `WorldSessionRuntime.Skills.cs:33-43`) so both draw the
+   same thing?
