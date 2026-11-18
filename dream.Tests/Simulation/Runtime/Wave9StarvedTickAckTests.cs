@@ -233,6 +233,9 @@ public class Wave9StarvedTickAckTests
         return (atAck, starved);
     }
 
+    // The walk sprints: one starved tick has to move the player further than the reconciler's
+    // 0.05 m deadband for the measurement to show, which the default cruise covers in no fewer
+    // than two ticks.
     // Walks walkTicks ticks with one command per tick (sequence == tick), recording the position
     // after each, then runs one tick with no command and exports the snapshot a 32 Hz server would
     // send after that second tick of its interval.
@@ -250,7 +253,7 @@ public class Wave9StarvedTickAckTests
             host.AdvanceTick(
                 tick,
                 SimulationClock.FixedDeltaSeconds,
-                [new PlayerCommandFrame(id, tick, PlayerModeSwitchIntent.None, new PlayerMoveIntent(1f, 0f), new PlayerLookIntent(0f, 0f, facing), PrimaryUsePressed: false)],
+                [new PlayerCommandFrame(id, tick, PlayerModeSwitchIntent.None, new PlayerMoveIntent(1f, 0f, SprintHeld: true), new PlayerLookIntent(0f, 0f, facing), PrimaryUsePressed: false)],
                 PlayerSimulationTuning.AuthoritativeDefault,
                 allowGameplaySimulation: false);
             path.Add(Position(runtime));
@@ -277,19 +280,14 @@ public class Wave9StarvedTickAckTests
 
     // Ticks the probe walks, and the distance an unblocked walk must cover in them.
     //
-    // Character-gaits wave: the motor ramps instead of snapping to the cruise speed, so the probe
-    // no longer covers its old burst distance and this helper threw "No open walk from the spawn."
-    // before the tests under it ran. Derivation at 64 Hz, GroundAcceleration 18 m/s^2, run cruise
-    // MoveSpeed 4.3 m/s:
-    //   ramp time       4.3 / 18          = 0.2389 s (15.3 ticks)
-    //   ramp distance   4.3^2 / (2 * 18)  = 0.5136 m
-    // The old 40 ticks (0.625 s) now cover 0.5136 + (0.625 - 0.2389) * 4.3 = 2.17 m, under the
-    // 2.5 m the probe asks for. 56 ticks (0.875 s) cover
-    // 0.5136 + (0.875 - 0.2389) * 4.3 = 3.25 m, the same comfortable margin over 2.5 m that the
-    // old instant motor had at 40 ticks (0.625 * 6 = 3.75 m). The probe only has to prove the
-    // facing is open and level; the tests themselves walk 32 ticks, a shorter distance than this.
+    // The motor ramps to the default cruise, so the distance an unblocked probe covers is derived
+    // from the cruise speed: half of what the probe's ticks cover at the cruise, which leaves the
+    // ramp-up and a wide margin, while a wall or a hole covers almost nothing. The probe only has
+    // to prove the facing is open and level; the tests themselves walk 32 ticks, a shorter
+    // distance than this.
     private const int ProbeWalkTicks = 56;
-    private const float ProbeOpenDistance = 2.5f;
+    private const float ProbeOpenDistance =
+        0.5f * ProbeWalkTicks * SimulationClock.FixedDeltaSeconds * PlayerSimulationTuning.DefaultRunSpeed;
 
     private static Vector3 ProbeOpenFacing(int floorSize)
     {

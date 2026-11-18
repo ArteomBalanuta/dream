@@ -79,8 +79,8 @@ public readonly record struct ClientReconciliationResult(
 // The motor ramps horizontal velocity (PlayerMotor.RampGroundVelocity), so neither half of the
 // extrapolation can use a fixed step: within the repeat window the server is still accelerating
 // toward its tier speed when the ack tick was mid-ramp, and past the window it brakes at
-// GroundDeceleration rather than stopping at once, coasting v^2/2a (0.35 m from the 4.3 m/s
-// cruise, 0.70 m from the 6.0 m/s sprint). The step's length over the tick is the body's
+// GroundDeceleration rather than stopping at once, coasting v^2/2a (further from the sprint
+// than from the cruise). The step's length over the tick is the body's
 // velocity, so the extrapolation ramps that speed per tick the way the motor does -- toward the
 // ack command's tier speed inside the window, toward zero past it. Bullet's floor friction brakes
 // about 0.06 m/s per tick harder than the motor alone, which no model built from tuning constants

@@ -1,3 +1,5 @@
+using Dream.Simulation.Players;
+
 namespace Dream.Rendering.Actors;
 
 public enum PlayerClipMode
@@ -12,9 +14,10 @@ public enum PlayerClipMode
     Hold
 }
 
-// The ground gait the body is running, in speed order. The simulation has three ground speeds
-// (walk 1.6, run 4.3, sprint 6.0 m/s) and each one has its own authored cycle; the tier is picked
-// from the speed the player is ACTUALLY moving at, with hysteresis on both boundaries.
+// The ground gait the body is running, in speed order. Each tier has its own authored cycle, which
+// is NOT tied to a simulation speed: the tier is picked from the speed the player is ACTUALLY
+// moving at, with hysteresis on both boundaries, and the clip's playback rate absorbs the
+// difference from the speed it was authored for.
 public enum PlayerGaitTier
 {
     Walk,
@@ -84,11 +87,12 @@ public sealed class PlayerAnimationStateMachine
     public const float ShootSeconds = 0.20f;
     public const float HitSeconds = 0.32f;
 
-    // The speed each gait's cycle is authored for: at exactly this speed the clip plays at its
-    // authored rate (playback 1.0). They are the simulation's three ground speeds, which
-    // PlayerAnimationStateMachineTests pins against PlayerSimulationTuning - a tier authored for a
-    // speed the player cannot reach is a clip that never plays, which is what the single 6 m/s
-    // reference did to the sprint before this wave.
+    // The speed each gait's cycle was AUTHORED for: at exactly this speed the clip plays at its
+    // authored rate (playback 1.0). These describe the clips, not the simulation: the shipped
+    // player speeds sit within the playback clamp of them (the default cruise plays the walk clip a
+    // little fast, the Shift sprint plays the run clip a little slow), which
+    // PlayerAnimationStateMachineTests pins so the feet never skate. The sprint clip is only
+    // reachable above the shipped speeds.
     public const float ReferenceWalkSpeed = 1.6f;
     public const float ReferenceRunSpeed = 4.3f;
     public const float ReferenceSprintSpeed = 6.0f;
@@ -96,9 +100,12 @@ public sealed class PlayerAnimationStateMachine
     public const float MovingSpeedThreshold = 0.35f;
 
     // The tier boundaries, between the speeds they separate rather than on top of one of them, so a
-    // player cruising at exactly one tier's speed never sits on a boundary.
-    public const float RunSpeedThreshold = 2.6f;
-    public const float SprintSpeedThreshold = 5.2f;
+    // player cruising at exactly one tier's speed never sits on a boundary. The run clip takes over
+    // midway between the default cruise and the Shift sprint; the sprint clip midway between the
+    // run and sprint clips' authored speeds.
+    public const float RunSpeedThreshold =
+        (PlayerSimulationTuning.DefaultRunSpeed + PlayerSimulationTuning.DefaultSprintSpeed) / 2f;
+    public const float SprintSpeedThreshold = (ReferenceRunSpeed + ReferenceSprintSpeed) / 2f;
 
     // Deadband on BOTH tier boundaries, in favour of the tier already playing, for the same reason
     // SectorHysteresisRadians exists: AnimationPlaybackState.Play resets the clip time to 0 when the
@@ -381,9 +388,8 @@ public sealed class PlayerAnimationStateMachine
                 // The forward sector swaps in the tier's own cycle; the other three reuse the
                 // directional walk clips. Those three are walk-AUTHORED and unchanged by this
                 // wave, so their playback divides by the WALK reference and not by the tier's: at
-                // the run cruise the tier's own reference gives 4.3 / 4.3 = 1.0 and the feet skate
-                // about 2.7x, while the walk reference clamps at MaxPlaybackSpeed and gets the
-                // legs 1.6x faster. A sprint that fell through to here lands on the same clamp.
+                // the shipped sprint the tier's own reference plays the clip near its authored rate
+                // and the feet skate, while the walk reference clamps at MaxPlaybackSpeed. A sprint that fell through to here lands on the same clamp.
                 clip = forwardSector && _gait == PlayerGaitTier.Run ? RunClip : sector;
                 reference = forwardSector ? ReferenceSpeed(_gait) : ReferenceWalkSpeed;
                 // A directional clip carries its sector, so the pose layers get only the RESIDUAL

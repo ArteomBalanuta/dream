@@ -82,7 +82,7 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
             + $"{legacyMax:F4} m without ({legacyCorrections.Count}: {Describe(legacyCorrections)}); "
             + $"starved-snapshot comparison fixed [{Describe(Starved(fixedDivergences))}] legacy [{Describe(Starved(legacyDivergences))}]");
 
-        Assert.True(walked > 1f, $"only walked {walked} m");
+        Assert.True(walked > 0.25f, $"only walked {walked} m");
         Assert.True(fixedMax <= ClientPredictionReconciler.DefaultDeadbandDistance, $"max error {fixedMax} m: {Describe(fixedCorrections)}");
         Assert.Empty(fixedCorrections);
         if (snapshotIntervalTicks == 2)
@@ -189,13 +189,17 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
 
         Assert.Equal(predicted[^1].Position, server[^1].Position);
         Assert.Equal(predicted[^1].Ack, server[^1].Ack);
-        List<Correction> corrections = Reconcile(predicted, server, Forward, snapshotIntervalTicks, recordMovement: true, out float max);
-        List<Correction> uncounted = Reconcile(predicted, WithoutCarriedDebt(server), Forward, snapshotIntervalTicks, recordMovement: true, out float uncountedMax);
+        // One tick of the default cruise is under the reconciler's own deadband, so the gate runs
+        // with a deadband of half a cruise tick: tight enough that the extra tick this test is
+        // about is a correction when the debt is left out, and the control below can fail.
+        float tightDeadband = 0.5f * PlayerSimulationTuning.DefaultRunSpeed / SimulationClock.AuthoritativeTicksPerSecond;
+        List<Correction> corrections = Reconcile(predicted, server, Forward, snapshotIntervalTicks, recordMovement: true, out float max, null, tightDeadband);
+        List<Correction> uncounted = Reconcile(predicted, WithoutCarriedDebt(server), Forward, snapshotIntervalTicks, recordMovement: true, out float uncountedMax, null, tightDeadband);
         output.WriteLine(
             $"walker {(walkerIsPrimary ? "primary" : "secondary")} @{64 / snapshotIntervalTicks} Hz, debt spent by a catch-up: "
             + $"max error {max:F4} m ({Describe(corrections)}); without the debt counted {uncountedMax:F4} m ({Describe(uncounted)})");
 
-        Assert.True(max <= ClientPredictionReconciler.DefaultDeadbandDistance, Describe(corrections));
+        Assert.True(max <= tightDeadband, Describe(corrections));
         Assert.Empty(corrections);
         Assert.True(HasBackAndForthPair(uncounted), Describe(uncounted));
     }
@@ -395,9 +399,10 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
         int snapshotIntervalTicks,
         bool recordMovement,
         out float maxError,
-        List<Correction>? divergences = null)
+        List<Correction>? divergences = null,
+        float deadbandDistance = ClientPredictionReconciler.DefaultDeadbandDistance)
     {
-        ClientPredictionReconciler reconciler = new();
+        ClientPredictionReconciler reconciler = new(deadbandDistance);
         List<Correction> corrections = [];
         maxError = 0f;
         for (int i = 0; i < server.Count; i++)
@@ -469,7 +474,10 @@ public class Wave9StarveInputChangeTests(ITestOutputHelper output)
         {
             IReadOnlyList<ServerSample> probe = SharedRun(walkerIsPrimary, facing, Input.Walk, stalled: false, Arrival.WithNewest);
             Vector3 moved = probe[^1].Position - probe[0].Position;
-            if (Horizontal(moved) > 2.5f && MathF.Abs(moved.Y) < 0.1f)
+            // Half of what an unblocked walk covers at the default cruise: a wall or a hole covers
+            // almost nothing, so the margin is wide.
+            float openDistance = 0.5f * RunTicks * SimulationClock.FixedDeltaSeconds * PlayerSimulationTuning.DefaultRunSpeed;
+            if (Horizontal(moved) > openDistance && MathF.Abs(moved.Y) < 0.1f)
             {
                 return facing;
             }

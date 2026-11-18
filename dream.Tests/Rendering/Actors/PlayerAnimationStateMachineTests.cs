@@ -470,26 +470,50 @@ public class PlayerAnimationStateMachineTests
         }
     }
 
-    // The contract guard between the animation tiers and the authoritative movement tuning: a tier
-    // authored for a speed the simulation cannot produce is a clip that never plays, which is what
-    // SprintSpeedThreshold = 9 against a flat MoveSpeed of 6 did to the sprint clip. Whoever
-    // retunes the movement speeds has to retune the gaits with them, and this test is what says so.
-    [Fact]
-    public void TheAnimationTiersMatchTheAuthoritativeTuning()
+    // The contract between the animation clips and the authoritative movement tuning. The clips keep
+    // the speeds they were authored for, so the shipped speeds do not equal them; what must hold is
+    // that every shipped speed picks the clip that matches its gait and plays it within a small
+    // factor of its authored rate, so the feet do not skate. Whoever retunes the movement speeds
+    // has to retune the clips or the playback clamp with them, and this test is what says so.
+    [Theory]
+    [InlineData(PlayerSimulationTuning.DefaultWalkSpeed, "walk")]
+    [InlineData(PlayerSimulationTuning.DefaultRunSpeed, "walk")]
+    [InlineData(PlayerSimulationTuning.DefaultSprintSpeed, "run")]
+    public void TheShippedSpeeds_PickTheMatchingClip_WithoutSkating(float speed, string expectedClip)
     {
-        Assert.Equal(PlayerSimulationTuning.DefaultWalkSpeed, PlayerAnimationStateMachine.ReferenceWalkSpeed, 4);
-        Assert.Equal(PlayerSimulationTuning.DefaultRunSpeed, PlayerAnimationStateMachine.ReferenceRunSpeed, 4);
-        Assert.Equal(PlayerSimulationTuning.DefaultSprintSpeed, PlayerAnimationStateMachine.ReferenceSprintSpeed, 4);
+        PlayerAnimationFrame frame = new PlayerAnimationStateMachine().Update(Inputs(speed: speed), Dt);
 
-        // Each threshold lies strictly between the two tiers it separates.
-        Assert.InRange(
+        Assert.Equal(expectedClip, frame.Clip);
+        if (speed >= PlayerSimulationTuning.DefaultRunSpeed)
+        {
+            // The analog floor is clamped up to MinPlaybackSpeed; cruise and sprint are the speeds
+            // the legs have to match.
+            Assert.InRange(MathF.Abs(frame.PlaybackSpeed - 1f), 0f, 0.15f);
+        }
+    }
+
+    // The thresholds are derived from the speeds they separate, and lie strictly between the tiers.
+    [Fact]
+    public void TheTierThresholds_AreDerivedAndSeparateTheShippedSpeeds()
+    {
+        Assert.Equal(
+            (PlayerSimulationTuning.DefaultRunSpeed + PlayerSimulationTuning.DefaultSprintSpeed) / 2f,
             PlayerAnimationStateMachine.RunSpeedThreshold,
-            PlayerAnimationStateMachine.ReferenceWalkSpeed + 1e-4f,
-            PlayerAnimationStateMachine.ReferenceRunSpeed - 1e-4f);
+            4);
+        Assert.Equal(
+            (PlayerAnimationStateMachine.ReferenceRunSpeed + PlayerAnimationStateMachine.ReferenceSprintSpeed) / 2f,
+            PlayerAnimationStateMachine.SprintSpeedThreshold,
+            4);
+
+        float hysteresis = PlayerAnimationStateMachine.GaitHysteresisSpeed;
+        Assert.True(PlayerSimulationTuning.DefaultRunSpeed < PlayerAnimationStateMachine.RunSpeedThreshold - hysteresis);
+        Assert.True(PlayerSimulationTuning.DefaultSprintSpeed > PlayerAnimationStateMachine.RunSpeedThreshold + hysteresis);
         Assert.InRange(
             PlayerAnimationStateMachine.SprintSpeedThreshold,
             PlayerAnimationStateMachine.ReferenceRunSpeed + 1e-4f,
             PlayerAnimationStateMachine.ReferenceSprintSpeed - 1e-4f);
+        // The sprint clip is only reachable above the shipped sprint speed.
+        Assert.True(PlayerSimulationTuning.DefaultSprintSpeed < PlayerAnimationStateMachine.SprintSpeedThreshold - hysteresis);
     }
 
     // Accelerating from a stop to the sprint and back: the gait climbs through every tier and comes

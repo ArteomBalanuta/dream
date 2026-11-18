@@ -1,3 +1,4 @@
+using Dream.Rendering.Actors;
 using OpenTK.Mathematics;
 
 namespace Dream.Client.Audio;
@@ -10,7 +11,8 @@ public sealed class FootstepCadence
     // The strides of the three ground gaits, DERIVED from the authored clips rather than from a
     // guess at real cadence: each gait is a five-key cycle with two footfalls, so at the tier's
     // reference speed the body covers referenceSpeed * cycle / 2 metres between footfalls and that
-    // distance IS the stride. walk 1.6 * 0.80 / 2, run 4.3 * 0.62 / 2, sprint 6.0 * 0.44 / 2.
+    // distance IS the stride: the clip's authored speed times its cycle length, over two. The
+    // authored speeds are PlayerAnimationStateMachine's Reference*Speed.
     //
     // The first pass of this class picked the strides from a cadence figure instead and every tier
     // came out slower than its legs - the sprint by 52% - because nothing tied the numbers to the
@@ -20,8 +22,8 @@ public sealed class FootstepCadence
     //
     // Walk and sprint landing within a centimetre of each other is the arithmetic, not a mistake:
     // the sprint clip is 1.8x faster per cycle but the sprint speed is 3.75x the walk's, so the
-    // ground covered per footfall is nearly the same and only the rate differs (1.6 / 0.64 = 2.5
-    // steps/s walking against 6.0 / 1.32 = 4.5 sprinting).
+    // ground covered per footfall is nearly the same and only the rate differs (2.5 steps/s
+    // walking against 4.5 sprinting, at the authored speeds).
     public const float WalkStride = 0.64f;
     public const float RunStride = 1.333f;
     public const float SprintStride = 1.32f;
@@ -32,8 +34,8 @@ public sealed class FootstepCadence
 
     // The gait boundaries, the same two speeds PlayerAnimationStateMachine picks its clips on, so
     // the footfalls change cadence on the frame the stride changes.
-    public const float RunSpeedThreshold = 2.6f;
-    public const float SprintSpeedThreshold = 5.2f;
+    public const float RunSpeedThreshold = PlayerAnimationStateMachine.RunSpeedThreshold;
+    public const float SprintSpeedThreshold = PlayerAnimationStateMachine.SprintSpeedThreshold;
 
     // A jump in position this big in one update is a teleport or a snap, not a walk.
     public const float MaxStepDistance = 3f;

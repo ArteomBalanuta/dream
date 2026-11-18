@@ -18,11 +18,9 @@ namespace Dream.Tests.Client.Replication;
 // motor: the tick after the snap set the commanded speed outright. PlayerMotor now ramps from the
 // body's own horizontal velocity, so a zeroed body spends v / GroundAcceleration getting back to
 // speed while the server never stopped, and falls behind by
-//   v^2 / (2a) = 4.3^2 / 36 = 0.51 m at the run cruise
-//              = 6.0^2 / 36 = 1.00 m at the sprint tier
-// on every snap -- bigger than the ~0.31 m pre-snap replay gap, and it also drops
-// HorizontalSpeed to 0 for ~0.24 s, which replays the figure's idle -> walk -> run stride on
-// every correction.
+//   v^2 / (2a) at the cruise, and more at the sprint tier
+// on every snap, and it also drops HorizontalSpeed to 0 for the length of the ramp, which replays
+// the figure's idle -> walk -> run stride on every correction.
 //
 // The replayed snap position already carries the unacknowledged travel, so the pre-snap
 // horizontal velocity is the state that belongs with it. These measure that it survives.
@@ -31,11 +29,19 @@ public class SnapVelocityHandoffTests(ITestOutputHelper output)
     private const float Cruise = PlayerSimulationTuning.DefaultRunSpeed;
     private static readonly PlayerSimulationTuning Tuning = PlayerSimulationTuning.AuthoritativeDefault;
 
-    // Ticks measured after the snap. The ramp needs v / a = 4.3 / 18 = 0.239 s = 15.3 ticks, so
-    // 15 ticks is the window in which a zeroed body is still recovering and the difference is at
-    // its widest: a body held at cruise covers 15 / 64 x 4.3 = 1.008 m over them, one restarting
-    // from rest covers 0.5 x 18 x (15 / 64)^2 = 0.494 m, less than half as far.
-    private const int MeasuredTicks = 15;
+    // Ticks measured after the snap: the whole ticks the ramp needs, v / a, so this is the window
+    // in which a zeroed body is still recovering and the difference is at its widest: a body held
+    // at cruise covers ticks x v / 64 over them, one restarting from rest covers
+    // 0.5 x a x (ticks / 64)^2, less than half as far.
+    private const int MeasuredTicks =
+        (int)(Cruise / PlayerSimulationTuning.DefaultGroundAcceleration * SimulationClock.AuthoritativeTicksPerSecond);
+
+    private const float HeldDistance =
+        (float)MeasuredTicks / SimulationClock.AuthoritativeTicksPerSecond * Cruise;
+
+    private static readonly float RestartedDistance =
+        0.5f * PlayerSimulationTuning.DefaultGroundAcceleration
+        * MathF.Pow((float)MeasuredTicks / SimulationClock.AuthoritativeTicksPerSecond, 2f);
 
     [Fact]
     public void Snap_KeepsTheHorizontalVelocity_SoTheRampDoesNotRestart()
@@ -69,16 +75,17 @@ public class SnapVelocityHandoffTests(ITestOutputHelper output)
         output.WriteLine(
             $"speed right after the snap {speedAfterSnap:F3} m/s (cruise {Cruise}); "
             + $"travelled {travelled:F3} m over the next {MeasuredTicks} ticks "
-            + $"(held at cruise {MeasuredTicks / 64f * Cruise:F3} m, restarting from rest {0.5f * 18f * MathF.Pow(MeasuredTicks / 64f, 2f):F3} m)");
+            + $"(held at cruise {HeldDistance:F3} m, restarting from rest {RestartedDistance:F3} m)");
 
         // The snap keeps the horizontal velocity and still clears the vertical one.
         Assert.Equal(Cruise, speedAfterSnap, 3);
         Assert.Equal(0f, afterSnap.Y);
 
-        // Over the ramp window the body stays on the cruising side of the two curves above. The
-        // midpoint of 1.008 m and 0.494 m is 0.751 m: anything above it cannot be a body that
-        // restarted from rest.
-        Assert.True(travelled > 0.751f, $"only travelled {travelled} m: the ramp restarted");
+        // Over the ramp window the body stays on the cruising side of the two curves above. Anything
+        // above their midpoint cannot be a body that restarted from rest.
+        float midpoint = (HeldDistance + RestartedDistance) / 2f;
+        Assert.True(HeldDistance > RestartedDistance);
+        Assert.True(travelled > midpoint, $"only travelled {travelled} m: the ramp restarted");
     }
 
     // A snap whose replay was discarded is a teleport (or a path that ran into a solid cell): it
