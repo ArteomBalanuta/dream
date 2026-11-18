@@ -21,8 +21,9 @@ public partial class PlayScene
     internal bool SuppressCursorAim { get; set; }
 
     // Z toggles walking. Client-side only: it scales the analog axes the tick emits, and the motor
-    // reads the magnitude that already replicates, so no wire field is needed. 0.35 of the run
-    // cruise lands under the 1.6 m/s walk floor, which is what the motor then holds.
+    // reads the magnitude that already replicates, so no wire field is needed. The scaled run
+    // cruise lands under the walk floor (PlayerSimulationTuning.DefaultWalkSpeed), which is what
+    // the motor then holds.
     private const float WalkAxisScale = 0.35f;
     private bool _walkToggleEnabled;
     private bool _wasWalkTogglePressed;
@@ -231,9 +232,9 @@ public partial class PlayScene
     // "not walking / send stalled" mark that ProjectKeyboardAxes and ClickMoveController test.
     //
     // Click-move is exempt. The throttle runs after _clickMove.SteerTick, so it used to scale the
-    // follower's axes too, which put the body at 1.6 m/s = 0.025 m/tick against
-    // PathFollower.PinnedStepMetres 0.02: a 25% margin, so any mild slowdown while walk-toggled
-    // read as pinned and fired the nudge - the exact fight the earlier step recalibration ended.
+    // follower's axes too, which held the body at the walk floor: one tick of travel there has
+    // little or no margin over PathFollower.PinnedStepMetres, so a walk-toggled click-move read as
+    // pinned and fired the nudge - the exact fight the earlier step recalibration ended.
     // The walk toggle is a keyboard-movement affordance and a click goal carries its own speed
     // intent, so while a goal is active the toggle simply does not apply.
     private PlayerCommandFrame ApplyWalkThrottle(PlayerCommandFrame command)

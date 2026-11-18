@@ -1,3 +1,4 @@
+using Dream.Simulation.Content;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.World;
 
@@ -19,8 +20,10 @@ public sealed class ServerPersistenceBundle : IDisposable
         IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null,
         Dream.Multiplayer.Protocol.TerrainTransferPayload? terrainPayload = null,
         IDisposable? hostLease = null,
-        IAccountRepository? accounts = null)
+        IAccountRepository? accounts = null,
+        ContentCatalog? enemyContent = null)
     {
+        EnemyContent = enemyContent;
         Accounts = accounts;
         HostLease = hostLease;
         TerrainPayload = terrainPayload;
@@ -61,6 +64,10 @@ public sealed class ServerPersistenceBundle : IDisposable
     // The transfer form of StoredTerrain, built once at bootstrap (it validated the chunks) and handed to
     // the host so a join does not rebuild it; null for a generated world or a bundle built without it.
     public Dream.Multiplayer.Protocol.TerrainTransferPayload? TerrainPayload { get; }
+
+    // The content with the database's enemy_kinds tuning applied (ServerBootstrap.OpenWorldBundle);
+    // null for a bundle built without it, and the host then spawns from the default content.
+    public ContentCatalog? EnemyContent { get; }
 
     public ICombatFormulaRepository CombatFormulas { get; }
 

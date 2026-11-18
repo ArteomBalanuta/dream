@@ -238,7 +238,7 @@ public sealed class M6EndToEndLoopbackTests
                 e.IsActive && e.Combatant.Health.IsAlive && string.Equals(e.EnemyKind, kind, StringComparison.Ordinal));
             if (enemy != null)
             {
-                enemy.SetPosition(target.EyePosition + (target.Facing * 2f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+                enemy.SetPosition(target.EyePosition + (target.Facing * 1f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
                 enemy.Combatant.Health.SetAuthoritativeState(1, enemy.Combatant.Health.MaxHealth);
             }
 

@@ -30,6 +30,8 @@ public sealed record ItemRollTable(
 // the gold a vendor pays for a common copy (the optional "sellPrice"; 0, the default, means the item
 // cannot be sold); VendorRules.SellPrice applies the rarity multiplier. Use is set for a consumable
 // (the optional "use" object); such an item may list no equipment slots (mask 0, never equippable).
+// AttackRange is the optional "attackRange" in metres of a main-hand weapon (null: the wielder attacks
+// with the unarmed reach, see WeaponReach).
 public sealed record ItemDefinition(
     string Key,
     string DisplayName,
@@ -43,4 +45,5 @@ public sealed record ItemDefinition(
     ItemRollTable? Rolls,
     ItemFootprint Footprint,
     int SellPrice = 0,
-    ItemUseDefinition? Use = null);
+    ItemUseDefinition? Use = null,
+    float? AttackRange = null);

@@ -68,7 +68,7 @@ public sealed class CombatTextLoopbackTests(ITestOutputHelper output)
         {
             // Full health, in front of the player: one press lands one hit.
             IAuthoritativePlayerTarget target = WaveIRuntimeKitTarget(server);
-            enemy.SetPosition(target.EyePosition + (target.Facing * 2f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+            enemy.SetPosition(target.EyePosition + (target.Facing * 1f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
             enemy.Combatant.Health.SetAuthoritativeState(enemy.Combatant.Health.MaxHealth, enemy.Combatant.Health.MaxHealth);
             int healthBefore = enemy.Combatant.Health.CurrentHealth;
             int seenBefore = seen.Count;
@@ -141,7 +141,7 @@ public sealed class CombatTextLoopbackTests(ITestOutputHelper output)
         int enemyId = enemy.Combatant.Actor.Id;
 
         IAuthoritativePlayerTarget target = WaveIRuntimeKitTarget(server);
-        enemy.SetPosition(target.EyePosition + (target.Facing * 2f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+        enemy.SetPosition(target.EyePosition + (target.Facing * 1f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
         enemy.Combatant.Health.SetAuthoritativeState(1, enemy.Combatant.Health.MaxHealth);
 
         await StepAsync(server, client, enemy, attack: true);

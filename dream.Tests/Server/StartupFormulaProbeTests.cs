@@ -53,7 +53,7 @@ public sealed class StartupFormulaProbeTests
             WithExpression("enemy.attack_interval_seconds", "1 / (strength - 10)"));
         string dir = ContentCatalog.ShippedDirectory;
         string enemies = File.ReadAllText(Path.Combine(dir, ContentCatalog.EnemiesFileName))
-            .Replace("\"level\": 1,", "\"level\": 1,\n      \"attackIntervalSeconds\": 1.5,", StringComparison.Ordinal);
+            .Replace("\"attackIntervalSeconds\": 1.8,", "\"attackIntervalSeconds\": 1.5,", StringComparison.Ordinal);
         Assert.Contains("attackIntervalSeconds", enemies, StringComparison.Ordinal);
         ContentCatalog content = ContentCatalog.Load(
             File.ReadAllText(Path.Combine(dir, ContentCatalog.ItemsFileName)),

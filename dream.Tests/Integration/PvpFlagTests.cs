@@ -1,7 +1,10 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Multiplayer.Protocol;
+using Dream.Multiplayer.Sessions;
 using Dream.Server;
+using Dream.Simulation.Combat;
+using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Tests.Server.Persistence.Migrations;
@@ -16,16 +19,45 @@ namespace Dream.Tests.Integration;
 [Collection(TimingSensitiveCollection.Name)]
 public sealed class PvpFlagTests
 {
-    private static readonly Vector3 Victim = new(20.5f, 1.5f, 22f);
-
-    // A at (20.5, 20) looking down +Z at B two metres ahead, both past join protection.
+    // A at (20.5, 20) looking down +Z at B, both past join protection.
     private static async Task<M4BRig> FaceOffAsync(MigrationTestDatabase db, bool pvp)
     {
         M4BRig rig = await M4BRig.StartAsync(db, pvp);
-        await rig.PlaceAsync(rig.B, Victim);
+        await StandInReachAsync(rig);
         rig.Player(rig.A).ProtectedThroughTick = 0;
         rig.Player(rig.B).ProtectedThroughTick = 0;
         return rig;
+    }
+
+    // B stands where a click-to-attack would stop: the client's approach fraction of A's main-hand reach,
+    // measured from where A's body is now. Both bodies drift a little on this ground while idle, so a test that
+    // waits out the attack interval stands B in reach again before the next strike.
+    private static async Task StandInReachAsync(M4BRig rig)
+    {
+        float distance = ReachOf(rig, rig.A) * WeaponReach.ClientApproachFraction;
+        Vector3 attacker = rig.Target(rig.A).Position;
+        await rig.PlaceAsync(rig.B, new Vector3(attacker.X, 1.5f, attacker.Z + distance));
+    }
+
+    private static float ReachOf(M4BRig rig, HeadlessPlayScene who) =>
+        rig.Runtime.InventoryService.ResolveEquippedAttackReach(M4BRig.KeyOf(who.SessionId));
+
+    // Grants the item to the player's bag on the server and equips it in the main hand.
+    private static void ArmWith(M4BRig rig, HeadlessPlayScene who, string kind)
+    {
+        string key = M4BRig.KeyOf(who.SessionId);
+        PlayerSessionId session = new(who.SessionId);
+        Assert.Equal(
+            InventoryEquipOutcome.Equipped,
+            rig.Runtime.InventoryService.TryGrantRolled(key, kind, ItemRarity.Common, new ItemRollSeed(1, 1, 1, 1, 1)));
+        PlayerInventorySnapshot inventory = rig.Runtime.TryCaptureInventorySnapshot(session)!.Value;
+        if (inventory.EquippedSlot?.Item?.ItemKind != kind)
+        {
+            long id = inventory.AllItems().Where(item => item.ItemKind == kind).Max(item => item.ItemInstanceId);
+            Assert.Equal(InventoryEquipOutcome.Equipped, rig.Runtime.InventoryService.TryEquip(key, inventory.AnchorOfId(id)));
+        }
+
+        Assert.Equal(WeaponReach.ForItemKind(kind), ReachOf(rig, who));
     }
 
     private static Task<AuthoritativeActionResult> StrikeAsync(M4BRig rig) =>
@@ -96,6 +128,7 @@ public sealed class PvpFlagTests
         // Unprotected: the primary attack, then Bolt, then Cleave, each lowering the victim's health.
         rig.Player(rig.B).ProtectedThroughTick = 0;
         await rig.StepAsync(100);
+        await StandInReachAsync(rig);
         AuthoritativeActionResult strike = await StrikeAsync(rig);
         CombatResolutionResult struck = Assert.IsType<CombatResolutionResult>(strike.Payload);
         Assert.True(struck.DamageApplied > 0);
@@ -123,16 +156,27 @@ public sealed class PvpFlagTests
         int full = victim.Health.CurrentHealth;
         int y = (int)MathF.Floor(rig.Target(rig.A).EyePosition.Y);
 
-        // Control: with nothing in between, the victim two metres ahead is hit.
+        // Control: with nothing in between, the victim within reach ahead is hit.
         Assert.Equal(victim.Actor.Id, Assert.IsType<CombatResolutionResult>((await StrikeAsync(rig)).Payload).TargetActorId);
         int afterControl = victim.Health.CurrentHealth;
         Assert.True(afterControl < full);
 
-        // The victim steps back to 3.4 m; a static wall, three cells high, stands on the ray 2.5 m ahead of A.
-        // The ray runs from the eye (about 1.85) to the body centre (about 2.7), so it crosses the wall at
-        // the cell above eye height; the cells at and below it keep the test independent of the exact heights.
+        // A whole wall cell and both bodies do not fit inside a melee reach, so A takes up a long bow, and a
+        // second control proves the victim behind the wall's cell is hit with no wall: only the wall can stop
+        // the next hit.
+        ArmWith(rig, rig.A, "gear.long-bow");
         await rig.PlaceAsync(rig.B, new Vector3(20.5f, 1.5f, 23.4f));
         rig.Player(rig.B).ProtectedThroughTick = 0;
+        Vector3 offset = rig.Target(rig.B).Position - rig.Target(rig.A).Position;
+        Assert.True(new Vector2(offset.X, offset.Z).Length < ReachOf(rig, rig.A), "the victim must stand within the bow's reach");
+        await rig.StepAsync(100);
+        Assert.Equal(victim.Actor.Id, Assert.IsType<CombatResolutionResult>((await StrikeAsync(rig)).Payload).TargetActorId);
+        Assert.True(victim.Health.CurrentHealth < afterControl);
+        afterControl = victim.Health.CurrentHealth;
+
+        // The victim stands about 3.4 m ahead; a static wall, three cells high, stands on the ray 2.5 m ahead of A.
+        // The ray runs from the eye (about 1.85) to the body centre (about 2.7), so it crosses the wall at
+        // the cell above eye height; the cells at and below it keep the test independent of the exact heights.
         for (int dy = -1; dy <= 1; dy++)
         {
             // A cell below the eye may already be solid terrain, so only the eye-height cell must be added.

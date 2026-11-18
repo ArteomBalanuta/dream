@@ -106,7 +106,7 @@ public sealed class AttributeOriginMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         // Prove the migration ran (and spared the row), not that it never ran.
-        Assert.Equal(16, result.ToVersion);
+        Assert.Equal(17, result.ToVersion);
         Assert.Equal("1000/12/1000/10", Stats(database, "legacy"));
     }
 
@@ -160,7 +160,7 @@ public sealed class AttributeOriginMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(16, result.ToVersion);
+        Assert.Equal(17, result.ToVersion);
         Assert.Equal("1000/12/1000/10", Stats(database, "before"));
     }
 
@@ -176,7 +176,7 @@ public sealed class AttributeOriginMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(16, result.ToVersion);
+        Assert.Equal(17, result.ToVersion);
         Assert.Equal("1000/1000/1000/1000", Stats(database, "old"));
         Assert.Equal("10/10/10/10", Stats(database, "new"));
     }
@@ -220,6 +220,6 @@ public sealed class AttributeOriginMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, result.ToVersion);
-        Assert.Equal(16, result.ToVersion);
+        Assert.Equal(17, result.ToVersion);
     }
 }

@@ -7,6 +7,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
@@ -27,11 +28,11 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
     //
     // It is a DERIVED number, not a taste one: it has to exceed what the fastest enemy can legally
     // cover across the longest span the buffer interpolates, or an ordinary chase reads as a
-    // teleport and pops. The fastest shipped chase speed is the Grave Howler's 6.0 m/s and the span
-    // is TickInterpolationBuffer.DefaultMaxTickSpan (64 ticks = 1 s), so 6.0 m of travel is legal
-    // and this sits just above it. It was 4 m while every enemy moved under 3 m/s;
-    // EnemyInterpolationReplicationIntegrationTests measures the relation rather than the number.
-    public const float EnemyTeleportDistance = 6.5f;
+    // teleport and pops. The span is TickInterpolationBuffer.DefaultMaxTickSpan (one second of ticks),
+    // so the fastest shipped chase speed in metres is the legal travel and this sits above it with
+    // headroom for a faster tuned row. EnemyInterpolationReplicationIntegrationTests measures the
+    // relation rather than the number.
+    public const float EnemyTeleportDistance = EnemyPresentationBand.TeleportDistance;
 
     // Wire levels are hostile; a level shown beside health is clamped to 1..9999.
     public const int MaxDisplayLevel = 9999;

@@ -15,7 +15,7 @@ public sealed class PathFollower
     public const float LineGain = 9f;
     // A body starting from rest, or turning, genuinely covers almost nothing for the first few
     // ticks now that the motor ramps instead of snapping to full speed. One tick only clears
-    // PinnedStepMetres once the body passes PinnedStepMetres x tick rate = 1.28 m/s, which takes
+    // PinnedStepMetres once the body passes PinnedStepMetres x tick rate, which takes
     // RampTicksToClearPinnedStep ticks at GroundAcceleration. The old flat 3-tick window was
     // calibrated to the instant-velocity motor, so with a ramp every single start looked pinned
     // and fired the nudge; the soak lost a fifth of its clicks to the resulting fight.
@@ -24,7 +24,12 @@ public sealed class PathFollower
         / (PlayerSimulationTuning.DefaultGroundAcceleration / SimulationClock.AuthoritativeTicksPerSecond)) + 1;
     public const int PinnedTicksBeforeNudge = RampTicksToClearPinnedStep + 3;
     public const float MinNudgeCorrection = 0.02f;
-    public const float PinnedStepMetres = 0.02f;
+    // A step counts as pinned when it covers under this fraction of one cruise tick: 2.5x of
+    // margin below a body genuinely cruising, so a retuned cruise speed cannot push a free body
+    // under the line. A walk-floor tick is no larger than this, but click-move is exempt from the
+    // walk throttle (PlayScene), so a click goal never travels at the floor.
+    public const float PinnedStepCruiseFraction = 0.4f;
+    public const float PinnedStepMetres = PinnedStepCruiseFraction * CruiseTickMetres;
     public const float MaxLineCorrection = 1f;
     public const int JumpCooldownTicks = 8;
     public const int StuckWindowTicks = 32;

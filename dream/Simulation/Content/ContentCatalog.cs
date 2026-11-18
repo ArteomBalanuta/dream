@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
@@ -412,7 +413,7 @@ public sealed partial class ContentCatalog
             path,
             element,
             ["key", "displayName", "description", "visualId", "detailLines", "heldLight", "modifiers", "equipSlots"],
-            optional: ["rolls", "footprint", "sellPrice", "use"]);
+            optional: ["rolls", "footprint", "sellPrice", "use", "attackRange"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
         string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxPanelDescriptionLength);
@@ -457,6 +458,17 @@ public sealed partial class ContentCatalog
             ? ReadInt(ItemsFileName, $"{path}.sellPrice", sellElement, 0, MaxGoldAmount)
             : 0;
 
+        float? attackRange = null;
+        if (properties.TryGetValue("attackRange", out JsonElement reachElement))
+        {
+            if ((equipSlotMask & EquipmentSlots.MaskOf(EquipmentSlot.MainHand)) == 0)
+            {
+                throw Fail(ItemsFileName, $"{path}.attackRange", "is only allowed on an item that equips to the main hand");
+            }
+
+            attackRange = ReadFloat(ItemsFileName, $"{path}.attackRange", reachElement, WeaponReach.MinMetres, WeaponReach.MaxMetres);
+        }
+
         return new ItemDefinition(
             key,
             displayName,
@@ -470,7 +482,8 @@ public sealed partial class ContentCatalog
             rolls,
             footprint,
             sellPrice,
-            use);
+            use,
+            attackRange);
     }
 
     // { "restoreHealth": n, "restoreMana": n, "cooldownTicks": n }; at least one restore above 0.
@@ -1339,6 +1352,11 @@ public sealed partial class ContentCatalog
             if (item.SellPrice > 0)
             {
                 text.Append("sell|").Append(item.SellPrice.ToString(c)).Append('\n');
+            }
+
+            if (item.AttackRange.HasValue)
+            {
+                text.Append("reach|").Append(item.AttackRange.Value.ToString("R", c)).Append('\n');
             }
 
             if (item.Use != null)

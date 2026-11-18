@@ -434,7 +434,8 @@ public sealed class RuntimeAuthoritativeSessionHost : ITickDrivenAuthoritativeSe
             persistenceWrites: persistence?.PersistenceWrites,
             simulationSeed: persistence?.SimulationSeed ?? WorldSessionRuntime.DefaultSimulationSeed,
             storedTerrain: persistence?.StoredTerrain,
-            accounts: persistence?.Accounts);
+            accounts: persistence?.Accounts,
+            enemyContent: persistence?.EnemyContent);
         return new RuntimeAuthoritativeSessionHost(runtime, persistence?.Owner, persistence?.TerrainPayload);
     }
 

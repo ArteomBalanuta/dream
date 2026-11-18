@@ -122,7 +122,7 @@ public sealed class KillBurstFightOnlyBaselineTests(ITestOutputHelper output)
                     IAuthoritativePlayerTarget target = Target(runtime, killer);
                     target.Combatant.Health.SetAuthoritativeState(target.Combatant.Health.MaxHealth, target.Combatant.Health.MaxHealth);
                     EnemyActor wolf = runtime.Enemies.ActiveActors.First();
-                    wolf.SetPosition(target.EyePosition + target.Facing * 2f - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+                    wolf.SetPosition(target.EyePosition + target.Facing * 1f - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
                     wolf.Combatant.Health.SetAuthoritativeState(1, wolf.Combatant.Health.MaxHealth);
                     AuthoritativeActionResult result = runtime.ProcessAuthoritativeAction(
                         new PlayerActionMessage(killer, ++sequence, new CombatUseIntent(target.EyePosition, target.Facing)));

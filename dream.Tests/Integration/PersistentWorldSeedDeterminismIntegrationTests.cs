@@ -49,7 +49,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
     // DedicatedServerHost captures a persistence checkpoint every 5 s of server time.
     internal const int CheckpointTicks = 5 * SimulationClock.AuthoritativeTicksPerSecond;
 
-    internal static readonly Vector3 EnemyPosition = new(7.5f, 1f, 11f);
+    internal static readonly Vector3 EnemyPosition = new(7.5f, 1f, 9.2f);
 
     [Fact]
     public void Restart_FromTheSameDatabase_KeepsTheStoredSeed_AndTheScriptReplaysEveryTickChecksum()

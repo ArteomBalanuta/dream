@@ -2,6 +2,7 @@ using BulletSharp;
 using BulletSharp.Math;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
+using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Tests.Utilities;
 using Xunit;
@@ -68,6 +69,10 @@ public class CubeRestFreezerTests
         Assert.Equal(0, scene.Physics.CubeRest.FrozenCount);
     }
 
+    // Ticks to cover a bit over 5 m at the default cruise, including the ramp-up.
+    private static readonly int WalkTicks =
+        (int)(6f / PlayerSimulationTuning.DefaultRunSpeed * SimulationClock.AuthoritativeTicksPerSecond);
+
     [Fact]
     public void PlayerWalkingAcrossCarpet_WakesNothingUnderfoot()
     {
@@ -80,9 +85,9 @@ public class CubeRestFreezerTests
         int maxActive = 0;
         TkVector3 before = player.GetWorldPosition();
         TkVector3 diagonal = new TkVector3(1f, 0f, 0.35f).Normalized();
-        for (int tick = 0; tick < 128; tick++)
+        for (int tick = 0; tick < WalkTicks; tick++)
         {
-            scene.Run(player, 1, tick < 64 ? TkVector3.UnitX : diagonal);
+            scene.Run(player, 1, tick < WalkTicks / 2 ? TkVector3.UnitX : diagonal);
             maxActive = Math.Max(maxActive, scene.CountActiveCarpetBodies());
         }
 
@@ -99,14 +104,10 @@ public class CubeRestFreezerTests
     // cube's side; dynamic cubes yielded, a static one would hold the player forever. The flush
     // seam rule wakes that row, and the walk matches the all-dynamic run.
     //
-    // Character-gaits wave: 96 walk ticks, not 64. The walk has to cover more than 5 m for the
-    // seam crossings to be what is measured, and a ramping body no longer does that in a second:
-    // at 64 Hz with GroundAcceleration 18 m/s^2 and MoveSpeed 4.3 m/s the ramp takes 4.3 / 18 =
-    // 0.239 s and covers 4.3^2 / 36 = 0.514 m, so 64 ticks give
-    // 0.514 + (1.0 - 0.239) * 4.3 = 3.78 m (measured 3.57 m with floor friction) against the old
-    // instant motor's 64 / 64 x 6 = 6 m. 96 ticks (1.5 s) give
-    // 0.514 + (1.5 - 0.239) * 4.3 = 5.93 m, measured 5.69 m. The frozen/dynamic comparison that
-    // this test exists for is untouched: both runs ramp the same way.
+    // The walk has to cover more than 5 m for the seam crossings to be what is measured, so the
+    // tick count is derived from the cruise speed (WalkTicks) rather than a fixed second count: a
+    // ramping body at the default cruise needs WalkTicks to get there. The frozen/dynamic
+    // comparison that this test exists for is untouched: both runs ramp the same way.
     [Fact]
     public void PlayerStartingCellAligned_WalksAcrossTheSeamsLikeWithDynamicCubes()
     {
@@ -117,7 +118,7 @@ public class CubeRestFreezerTests
             Player player = scene.AddPlayer(scene.CarpetTop(2, 10));
             scene.Run(player, SettleTicks, TkVector3.Zero);
             float startX = player.GetWorldPosition().X;
-            scene.Run(player, 96, TkVector3.UnitX);
+            scene.Run(player, WalkTicks, TkVector3.UnitX);
             walked[freeze ? 0 : 1] = player.GetWorldPosition().X - startX;
         }
 
@@ -137,12 +138,9 @@ public class CubeRestFreezerTests
     // the distance is set by the arrival energy, not by how long the key is held).
     //
     // So the walk-up is given the distance to arrive at full speed, which is what the test always
-    // measured. The old flat 6 m/s is now exactly the sprint tier (DefaultSprintSpeed 6.0), so the
-    // run-up sprints and the 0.5 m the push was measured against still stands. Sprinting takes
-    // 6 / 18 = 0.333 s and 6^2 / 36 = 1.0 m to reach, so a 3 m run-up needs
-    // (3 - 1.0) / 6 + 0.333 = 0.667 s = 43 ticks, leaving 53 of the 96 for the push. Measured:
-    // the row end moves 0.719 m (0.396 m if the run-up only reaches the run cruise, which is the
-    // (4.3 / 6.0)^2 = 0.51 energy ratio).
+    // measured. The run-up sprints, so the push arrives at the sprint tier's energy, which scales
+    // with the square of the speed; the floor below is the movement the row shows at the shipped
+    // sprint speed, a fraction of what the faster sprint it replaced gave.
     [Fact]
     public void PlayerPushingACube_MovesItAndWakesOnlyWhatItTouches()
     {
@@ -177,7 +175,13 @@ public class CubeRestFreezerTests
         _output.WriteLine(
             $"row end moved {moved:0.000} m; active {scene.CountActive()}; "
             + $"player at {player.GetWorldPosition().X:0.000} doing {new TkVector2(player.PhysicsBody.LinearVelocity.X, player.PhysicsBody.LinearVelocity.Z).Length:0.000} m/s");
-        Assert.True(moved > 0.5f, $"the pushed row moved {moved} m");
+        // The floor was 0.5 m at the old 6 m/s sprint (measured 0.719 m); the arrival energy, and so the movement,
+        // scales with the square of the sprint speed.
+        const float OldSprintSpeed = 6f;
+        const float OldRowFloorMetres = 0.5f;
+        float sprintRatio = PlayerSimulationTuning.DefaultSprintSpeed / OldSprintSpeed;
+        float rowFloor = OldRowFloorMetres * sprintRatio * sprintRatio;
+        Assert.True(moved > rowFloor, $"the pushed row moved {moved} m, floor {rowFloor} m");
         Assert.All(row, body => Assert.True(body.IsActive));
         Assert.False(carpetWoke);
         Assert.False(sideWoke);

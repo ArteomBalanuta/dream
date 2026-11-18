@@ -107,6 +107,94 @@ public class WorldSpatialIndex
         }
     }
 
+    // The same cubes as GetNearby, in the same order, through a struct enumerator: a per-tick caller
+    // (the click-to-attack wall test) pays no iterator or enumerator allocation. Like GetNearby, the
+    // index must not be changed while the result is being enumerated.
+    public NearbyCubes EnumerateNearby(Vector3 position, float radius)
+    {
+        int sectorRadius = (int)MathF.Ceiling(radius / SectorSize);
+        (int centerX, int centerZ) = GetSectorKey(position);
+        return new NearbyCubes(_sectors, centerX, centerZ, sectorRadius);
+    }
+
+    public readonly struct NearbyCubes
+    {
+        private readonly Dictionary<(int X, int Z), List<Cube>> _sectors;
+        private readonly int _centerX;
+        private readonly int _centerZ;
+        private readonly int _radius;
+
+        internal NearbyCubes(Dictionary<(int X, int Z), List<Cube>> sectors, int centerX, int centerZ, int radius)
+        {
+            _sectors = sectors;
+            _centerX = centerX;
+            _centerZ = centerZ;
+            _radius = radius;
+        }
+
+        public Enumerator GetEnumerator() => new(_sectors, _centerX, _centerZ, _radius);
+
+        public struct Enumerator
+        {
+            private readonly Dictionary<(int X, int Z), List<Cube>> _sectors;
+            private readonly int _centerX;
+            private readonly int _centerZ;
+            private readonly int _radius;
+            private int _sectorX;
+            private int _sectorZ;
+            private List<Cube>.Enumerator _cubes;
+            private bool _inSector;
+
+            internal Enumerator(Dictionary<(int X, int Z), List<Cube>> sectors, int centerX, int centerZ, int radius)
+            {
+                _sectors = sectors;
+                _centerX = centerX;
+                _centerZ = centerZ;
+                _radius = radius;
+                _sectorX = centerX - radius;
+                _sectorZ = centerZ - radius - 1;
+                _cubes = default;
+                _inSector = false;
+            }
+
+            public Cube Current => _cubes.Current;
+
+            public bool MoveNext()
+            {
+                while (true)
+                {
+                    if (_inSector)
+                    {
+                        if (_cubes.MoveNext())
+                        {
+                            return true;
+                        }
+
+                        _inSector = false;
+                    }
+
+                    _sectorZ++;
+                    if (_sectorZ > _centerZ + _radius)
+                    {
+                        _sectorZ = _centerZ - _radius;
+                        _sectorX++;
+                    }
+
+                    if (_sectorX > _centerX + _radius)
+                    {
+                        return false;
+                    }
+
+                    if (_sectors.TryGetValue((_sectorX, _sectorZ), out List<Cube>? cubes))
+                    {
+                        _cubes = cubes.GetEnumerator();
+                        _inSector = true;
+                    }
+                }
+            }
+        }
+    }
+
     private List<Cube> RentSectorList()
     {
         return _spareSectorLists.TryPop(out List<Cube>? cubes) ? cubes : new List<Cube>();

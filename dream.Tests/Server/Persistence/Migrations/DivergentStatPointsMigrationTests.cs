@@ -50,15 +50,15 @@ public sealed class DivergentStatPointsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema(log.Add);
 
-        Assert.Equal(new SchemaMigrationResult(11, 16, result.BackupPath), result);
+        Assert.Equal(new SchemaMigrationResult(11, 17, result.BackupPath), result);
         string backup = Assert.Single(database.Backups());
-        Assert.Contains("v0011-to-v0016", backup, StringComparison.Ordinal);
+        Assert.Contains("v0011-to-v0017", backup, StringComparison.Ordinal);
         Assert.Contains(log, line => line.Contains("character_stat_points", StringComparison.Ordinal));
         Assert.Equal(1L, database.Scalar("SELECT COUNT(*) FROM pragma_table_info('enemy_instances') WHERE name = 'camp_key';"));
         Assert.Equal(0L, database.Scalar("SELECT COUNT(*) FROM pragma_table_info('player_profiles') WHERE name = 'stat_points';"));
-        Assert.Equal(16L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(17L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal("spawn_camps", database.Scalar("SELECT name FROM schema_version WHERE version = 11;"));
-        Assert.Equal(16L, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
+        Assert.Equal(17L, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
         // The profile row kept its values; the points are derived from the level now.
         Assert.Equal(4L, database.Scalar("SELECT level FROM player_profiles WHERE player_name = 'hero';"));
         Assert.Equal(14L, database.Scalar("SELECT strength FROM player_profiles WHERE player_name = 'hero';"));
@@ -89,8 +89,8 @@ public sealed class DivergentStatPointsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(new SchemaMigrationResult(11, 16, result.BackupPath), result);
+        Assert.Equal(new SchemaMigrationResult(11, 17, result.BackupPath), result);
         Assert.Equal("spawn_camps", database.Scalar("SELECT name FROM schema_version WHERE version = 11;"));
-        Assert.Equal(16L, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
+        Assert.Equal(17L, database.Scalar("SELECT COUNT(*) FROM schema_version;"));
     }
 }

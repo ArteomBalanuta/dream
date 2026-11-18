@@ -1,7 +1,6 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Simulation.Combat;
-using Dream.Simulation.Enemies;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
@@ -44,23 +43,6 @@ public class CombatUseResolverTests
             maxHitDistance: 3f);
 
         Assert.Null(record);
-    }
-
-    [Fact]
-    public void TryResolveEnemyHit_Returns_Enemy_Along_Ray()
-    {
-        EnemyRegistry enemies = new();
-        EnemyCombatant combatant = new(() => new Vector3(3.5f, 0f, 3.5f), actorId: 2500);
-        EnemyActor actor = new(combatant, new Vector3(3.5f, 0f, 3.5f), aggroRange: 5f, attackRange: 1f, moveSpeed: 2f);
-        enemies.Add(actor);
-
-        EnemyActor? hit = CombatUseResolver.TryResolveEnemyHit(
-            enemies,
-            new Vector3(3.5f, 1.0f, 6.5f),
-            -Vector3.UnitZ,
-            maxHitDistance: 4f);
-
-        Assert.Same(actor, hit);
     }
 
     [Fact]

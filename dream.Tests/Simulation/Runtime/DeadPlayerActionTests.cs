@@ -80,7 +80,9 @@ public sealed class DeadPlayerActionTests
         Vector3 living = WalkFor(dead: false, secondary);
         Vector3 dead = WalkFor(dead: true, secondary);
 
-        Assert.True(living.Length > 2f, $"the control moved only {living}: the input in this test is not valid");
+        // Three quarters of what the 60 walked ticks cover at the cruise: the ramp-up costs the rest.
+        float expectedMinimum = 0.75f * PlayerSimulationTuning.DefaultRunSpeed * 60f / SimulationClock.AuthoritativeTicksPerSecond;
+        Assert.True(living.Length > expectedMinimum, $"the control moved only {living}: the input in this test is not valid");
         Assert.True(dead.Length < 0.3f, $"a dead player moved {dead}");
     }
 

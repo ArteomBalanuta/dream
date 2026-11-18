@@ -307,7 +307,8 @@ public sealed class WaveT2NightSpawnTests(ITestOutputHelper output)
         Assert.Equal(200, dire.Combatant.Health.MaxHealth);
         Assert.Equal(200, dire.Combatant.Health.CurrentHealth);
         Assert.Equal(18, dire.Combatant.AttackDamage);
-        Assert.Equal(1f, dire.Combatant.AttackIntervalSeconds);
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("DireWolf", out EnemyTemplate direTemplate));
+        Assert.Equal(direTemplate.AttackIntervalSeconds, dire.Combatant.AttackIntervalSeconds);
         Assert.Equal(3, dire.Level);
         Assert.Equal(12f, dire.AggroRange);
         Assert.Equal("enemy.dire-wolf", dire.VisualKey);

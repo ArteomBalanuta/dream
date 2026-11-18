@@ -42,7 +42,7 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         }
 
         string backup = Assert.Single(database.Backups());
-        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0016\.\d{8}T\d{6}Z\.bak$", backup);
+        Assert.Matches(@"persistence\.sqlite\.v0000-to-v0017\.\d{8}T\d{6}Z\.bak$", backup);
         Assert.Equal((long)MigrationTestDatabase.ShippedLatestVersion, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal(4242UL, bundle.SimulationSeed);
         Assert.Equal(1234L, bundle.WorldTimeTicks);
@@ -114,8 +114,11 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         output.WriteLine(error.Message);
         Assert.Equal(99, error.StoredVersion);
         Assert.Contains("99", error.Message, StringComparison.Ordinal);
-        // The content digest comes before the database is touched; nothing else may be logged.
-        Assert.Empty(log.Where(line => !line.StartsWith("server.content.digest ", StringComparison.Ordinal)));
+        // The content lines (the digest, and the no-camps warning for the suite's camp-less default
+        // enemy content) come before the database is touched; nothing else may be logged.
+        Assert.Empty(log.Where(line =>
+            !line.StartsWith("server.content.digest ", StringComparison.Ordinal)
+            && !line.StartsWith("server.content.no-camps ", StringComparison.Ordinal)));
         Assert.Equal(bytesBefore, File.ReadAllBytes(database.DatabasePath));
         Assert.Equal(filesBefore, Directory.GetFiles(database.RootDirectory).Where(f => !f.EndsWith(".lock", StringComparison.Ordinal)).Order().ToArray());
     }

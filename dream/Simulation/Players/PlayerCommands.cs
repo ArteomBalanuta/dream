@@ -32,8 +32,8 @@ public readonly record struct PlayerSimulationInput(
 public readonly record struct PlayerSimulationTuning(
     float EyeHeightOffset,
     float MouseSensitivity,
-    // MoveSpeed is the run cruise: the speed you move at by default. Walking and sprinting are
-    // the tiers either side of it.
+    // MoveSpeed is the default cruise: the speed you move at with no modifier key. The analog
+    // walk floor and the Shift sprint are the tiers either side of it.
     float MoveSpeed,
     float NoclipSpeed,
     float JumpVelocity,
@@ -42,9 +42,12 @@ public readonly record struct PlayerSimulationTuning(
     float GroundAcceleration = PlayerSimulationTuning.DefaultGroundAcceleration,
     float GroundDeceleration = PlayerSimulationTuning.DefaultGroundDeceleration)
 {
-    public const float DefaultWalkSpeed = 1.6f;
-    public const float DefaultRunSpeed = 4.3f;
-    public const float DefaultSprintSpeed = 6.0f;
+    // The analog walk floor, the default cruise and the Shift sprint. The names are the
+    // simulation's historical tiers. PlayerSpeedRatioTests pins them against the speeds they
+    // replaced.
+    public const float DefaultWalkSpeed = 0.64f;
+    public const float DefaultRunSpeed = 1.72f;
+    public const float DefaultSprintSpeed = 4.0f;
     public const float DefaultGroundAcceleration = 18f;
     public const float DefaultGroundDeceleration = 24f;
 

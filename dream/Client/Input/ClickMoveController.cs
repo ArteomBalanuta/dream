@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Dream.Client.Navigation;
 using Dream.Rendering.Core;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 
 namespace Dream.Client.Input;
@@ -59,6 +60,13 @@ public interface IClickMoveHost
     bool AimOwnsFacing { get; }
 }
 
+// A world that can say whether a straight line is free of walls. Optional: a world without it is
+// treated as open, so only the real map gates attacks on line of sight.
+public interface ISightWorld
+{
+    bool HasClearLine(Vector3 origin, Vector3 anchor);
+}
+
 // The path search and follower behind one seam.
 public interface IClickPathing
 {
@@ -112,7 +120,6 @@ public sealed class NavPathing : IClickPathing
 // 64 Hz prediction tick. OnFrame runs once per Update, SteerTick once per tick.
 public sealed class ClickMoveController
 {
-    public const float AttackRangeMetres = 3.2f;
     public const float BuildStartWalkMetres = 2.5f;
     public const float BuildStopMetres = 2.4f;
     public const float EnemyRepathMetres = 1f;
@@ -505,8 +512,30 @@ public sealed class ClickMoveController
         return _pathing.Plan(world, NavCell.FromBody(_host.BodyCentre), goal, viaStartCentre, out _);
     }
 
-    private bool InAttackRange() =>
-        _goal == ClickGoalKind.Attack && _target is { IsAlive: true } t && (t.Anchor - _host.Eye).Length <= AttackRangeMetres;
+    // The weapon's reach in metres (WeaponReach of the equipped main hand), set when the inventory changes.
+    // The swing starts at a fraction of it, so the server's reach check still passes after the last step.
+    public float AttackReachMetres { get; set; } = WeaponReach.UnarmedMetres;
+
+    // Horizontal body centre to anchor, the measure the server's reach gate uses, plus the server's
+    // wall test from the eye to the anchor.
+    private bool InAttackRange()
+    {
+        if (_goal != ClickGoalKind.Attack || _target is not { IsAlive: true } t)
+        {
+            return false;
+        }
+
+        float dx = t.Anchor.X - _host.BodyCentre.X;
+        float dz = t.Anchor.Z - _host.BodyCentre.Z;
+        float reach = AttackReachMetres * WeaponReach.ClientApproachFraction;
+        if (dx * dx + dz * dz > reach * reach)
+        {
+            return false;
+        }
+
+        // Reach alone is not enough for a long weapon: it would stop behind a wall and swing into it.
+        return _host.World is not ISightWorld sight || sight.HasClearLine(_host.Eye, t.Anchor);
+    }
 
     private bool InBuildRange() =>
         _goal == ClickGoalKind.Build && (_goalCell.Centre - _host.Eye).Length <= (_buildWalking ? BuildStopMetres : BuildStartWalkMetres);

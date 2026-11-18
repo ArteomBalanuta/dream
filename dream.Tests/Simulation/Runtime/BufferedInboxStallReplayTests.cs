@@ -22,13 +22,11 @@ public class BufferedInboxStallReplayTests(ITestOutputHelper output)
     private const string Walker = "session-b";
     private const int WalkTicks = 8;
 
-    // 80 ticks (1.25 s), not 64. The latest-only inbox has to diverge past
-    // ClientPredictionReconciler.DefaultSnapDistance for this test to contrast a snap with a
-    // replay, and that threshold is a DISTANCE: at the character-gaits wave's run cruise of 4.3 m/s
-    // (measured 4.239 m/s = 0.0662 m/tick once floor friction is in) a one-second stall reaches
-    // only 2.886 m, just under the 3 m snap, where the old 6 m/s instant motor cleared it easily.
-    // The seat is at rest for every stall tick past its braking window, so each extra stall tick
-    // adds one cruise tick to the gap: 2.886 + 16 * 0.0662 = 3.95 m, clear of the snap.
+    // The stall is long enough that the latest-only inbox loses most of it (the seat idles after
+    // MaxCommandRepeatTicks) and short enough for the buffered inbox's ring to replay it without its
+    // elastic shed folding the backlog. At the default cruise the latest-only gap stays under the
+    // reconciler's snap DISTANCE for any stall the ring can still replay, so the contrast is made in
+    // units of the replay's own deficit (ReplayRampDeficit) rather than against that distance.
     private const int StallTicks = 80;
 
     // What a command replay cannot recover (character-gaits wave). The buffered inbox replays the
@@ -36,16 +34,17 @@ public class BufferedInboxStallReplayTests(ITestOutputHelper output)
     // commands, not velocity, and the server resumes from rest (it idled and braked during the
     // stall) while the client's prediction for the same frame was already at cruise. The server
     // therefore stays one ramp deficit behind the prediction for that frame:
-    //   ramp deficit = cruise * ramp time - ramp distance = 4.3^2 / (2 * 18) = 0.514 m
-    // Part of it is paid for in advance by the 0.385 m the server coasted while braking, which
-    // leaves it 0.318 m ahead at the resume tick, so the motor-only residual is 0.514 - 0.318 =
-    // 0.196 m; measured it is 0.316 m, the difference being floor friction, which costs a ramping
-    // body more than a cruising one. 0.514 m is used as the bound because it is the structural
-    // quantity: the whole velocity gap, with no credit for the coast. The residual is positional
+    //   ramp deficit = cruise * ramp time - ramp distance = cruise^2 / (2 * acceleration)
+    // Part of it is paid for in advance by the distance the server coasted while braking, and floor
+    // friction costs a ramping body more than a cruising one. The deficit is used as the bound
+    // because it is the structural quantity: the whole velocity gap, with no credit for the coast.
+    // The residual is positional
     // and permanent in this harness (nothing applies the correction); in production the reconciler
     // smooths it away, which is why the assert below also requires it to stay a Smooth correction
     // and nowhere near the 3 m snap the latest-only inbox takes.
-    private const float ReplayRampDeficit = 0.514f;
+    private const float ReplayRampDeficit =
+        PlayerSimulationTuning.DefaultRunSpeed * PlayerSimulationTuning.DefaultRunSpeed
+        / (2f * PlayerSimulationTuning.DefaultGroundAcceleration);
 
     private static readonly PlayerSimulationTuning Tuning = PlayerSimulationTuning.AuthoritativeDefault;
 
@@ -80,8 +79,14 @@ public class BufferedInboxStallReplayTests(ITestOutputHelper output)
             + $"max correction latest {latestError:F3} m ({latestKind}), buffered {bufferedError:F3} m ({bufferedKind}); "
             + $"final position error latest {latestFinal:F3} m, buffered {bufferedFinal:F3} m");
 
-        Assert.True(walked > 5f, $"the walker only walked {walked} m");
-        Assert.True(latestError >= ClientPredictionReconciler.DefaultSnapDistance, $"latest error {latestError} m");
+        float minimumWalk = 0.5f * sentFrames * SimulationClock.FixedDeltaSeconds * PlayerSimulationTuning.DefaultRunSpeed;
+        Assert.True(walked > minimumWalk, $"the walker only walked {walked} m");
+        // The latest-only inbox idles the seat after MaxCommandRepeatTicks of the stall, so it loses that many
+        // fewer than StallTicks of cruise; it has to show at least half of that loss (the old bound, the 3 m snap
+        // distance, was half of the 6 m the stall cost at the old speed).
+        float stallLoss = (StallTicks - WorldSessionRuntime.MaxCommandRepeatTicks)
+            * SimulationClock.FixedDeltaSeconds * PlayerSimulationTuning.DefaultRunSpeed;
+        Assert.True(latestError >= 0.5f * stallLoss, $"latest error {latestError} m, stall loss {stallLoss} m");
 
         // The replay keeps the seat within one ramp deficit (ReplayRampDeficit) of the prediction
         // and never snaps, against the latest-only inbox's full-stall snap above. The premise

@@ -109,7 +109,7 @@ public class PlayerMotorTests
             motor.Update(body, GetBodyPosition(body), command, tuning, TickSeconds);
         }
 
-        Assert.InRange(HorizontalSpeed(body), 4.0f, 4.3f);
+        Assert.InRange(HorizontalSpeed(body), tuning.MoveSpeed - 0.3f, tuning.MoveSpeed + 0.01f);
     }
 
     [Fact]
@@ -129,8 +129,8 @@ public class PlayerMotorTests
         }
 
         Assert.True(
-            HorizontalSpeed(body) >= 5.7f,
-            $"Expected a held sprint to pass 5.7 m/s, but the speed was {HorizontalSpeed(body)}.");
+            HorizontalSpeed(body) >= tuning.SprintSpeed - 0.3f,
+            $"Expected a held sprint to near {tuning.SprintSpeed} m/s, but the speed was {HorizontalSpeed(body)}.");
     }
 
     [Fact]
@@ -150,7 +150,8 @@ public class PlayerMotorTests
             motor.Update(body, GetBodyPosition(body), command, tuning, TickSeconds);
         }
 
-        Assert.InRange(HorizontalSpeed(body), 1.4f, 1.8f);
+        // 0.35 of the cruise is below the walk floor, so the floor is what the body settles at.
+        Assert.InRange(HorizontalSpeed(body), tuning.WalkSpeed - 0.05f, tuning.WalkSpeed + 0.05f);
     }
 
     [Fact]
@@ -171,7 +172,7 @@ public class PlayerMotorTests
 
         // Braking at 24 m/s^2 takes a tick off the cruise, not all of it.
         float afterOneTick = HorizontalSpeed(body);
-        Assert.InRange(afterOneTick, 3.5f, 4.3f);
+        Assert.InRange(afterOneTick, tuning.MoveSpeed - (2f * tuning.GroundDeceleration * TickSeconds), tuning.MoveSpeed - 0.1f);
 
         for (int tick = 0; tick < 16; tick++)
         {
@@ -190,7 +191,7 @@ public class PlayerMotorTests
     public void RampGroundVelocity_WithAZeroLengthTick_LeavesTheVelocityAlone()
     {
         PlayerSimulationTuning tuning = PlayerSimulationTuning.AuthoritativeDefault;
-        TkVector3 cruising = new(1.5f, 0f, 0f);
+        TkVector3 cruising = new(0.5f, 0f, 0f);
 
         Assert.Equal(
             cruising,
@@ -199,14 +200,14 @@ public class PlayerMotorTests
             cruising,
             PlayerMotor.RampGroundVelocity(cruising, TkVector3.Zero, new MovementCommand(TkVector3.Zero), tuning, 0f));
 
-        // A normal tick still ramps: one tick of 18 m/s^2 is 0.28 m/s on top of the 1.5 m/s.
+        // A normal tick still ramps: one tick of 18 m/s^2 is 0.28 m/s on top of the 0.5 m/s.
         TkVector3 stepped = PlayerMotor.RampGroundVelocity(
             cruising,
             TkVector3.UnitX,
             new MovementCommand(TkVector3.UnitX),
             tuning,
             TickSeconds);
-        Assert.Equal(1.5f + (tuning.GroundAcceleration * TickSeconds), stepped.X, 4);
+        Assert.Equal(0.5f + (tuning.GroundAcceleration * TickSeconds), stepped.X, 4);
     }
 
     [Fact]

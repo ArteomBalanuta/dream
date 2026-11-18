@@ -37,7 +37,9 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     private const int CubeAttackFrom = 120;
     // session-c walks into the wolf's reach in this window so the wolf lands hits.
     private const int ApproachFrom = 30;
-    private const int ApproachUntil = 100;
+    // The approach lasts into the fight: at the slower cruise session-c needs most of the window to get through
+    // the cube and inside the wolf's reach, and a kill needs the secondaries in reach (see the golden notes).
+    private const int ApproachUntil = 130;
 
     private static readonly Vector3 CubeCell = new(7f, 1f, 5f);
 
@@ -93,10 +95,29 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // The previous values were 0x47C9098CA55E6A2A, 0x75C725B66AC87974, 0xC5C7582BCA65AB27,
     // 0xFA8959A59E2744C9, 0xB1D85FAD2772C596, 0xD2EF1B9E1AE71866, 0xBF218B5A237681DA,
     // 0x589E0C5D08B17BC1, 0xA1F2C1A7DCC7D338, 0xC3A8C27C48C84BA2.
+    // Re-pinned once for the speed-and-range change, which moved the run itself: the player's cruise,
+    // sprint and walk floor were slowed, the wolf family was slowed and given its own bite interval
+    // (chase, patrol and interval now come from enemies.json), and a primary attack only lands within
+    // the main hand's authored reach. Every walking tick puts the seats somewhere new, so all ten
+    // checkpoints moved. The script's shape now: the build is accepted, the wolf hits players 2 times
+    // (one bite interval apart), players hit the wolf 2 times (the secondaries stand still and the wolf only
+    // comes within the unarmed reach of the primary), no wolf dies, 20 queued actions are processed and the
+    // wolf chases for 27 ticks before it settles into its bite range. Exports rise to 31 mutations: besides
+    // the placement and the fracture, session-c's approach shoves the cube 29 times on its way to the wolf.
+    // The previous values were
+    // 0x1A1BAA6E45BBACD3, 0x040DC65A79CDD59F, 0xBC1CC1AC529E604A, 0xF1E4FE4528377000, 0xB709A19E46CCC057,
+    // 0x015F2B430951B84B, 0xEAF32C18E2FF7370, 0x6013610680906590, 0x7EC02EE1E4B36B83, 0x18F2DDA4A60C2E40.
+    // Re-pinned again in the speed-range fix loop, which restored the wolf kill: with the slower cruise the
+    // run above had no death, so the kill, fair-XP, loot and respawn paths were unguarded. The script's
+    // session-c approach now lasts until tick 130 (it was 100), long enough to get through the cube and inside
+    // the wolf's reach while the secondaries fight. Checkpoints 1-5 are unchanged, 6-10 moved. Outcome: the
+    // wolf hits players 1 time, players hit the wolf 4 times, 1 wolf dies, 31 mutations, 20 queued results,
+    // 91 chasing ticks; the run asserts a death. The previous values were
+    // 0x5B0445647894FF24, 0x356EFCDB6998B2D9, 0xBB4BCFD79C0C0C96, 0x75B730C485ADA7F4, 0xD24A7823F1DB9E6C.
     private static readonly ulong[] GoldenCheckpoints =
     [
-        0x1A1BAA6E45BBACD3UL, 0x040DC65A79CDD59FUL, 0xBC1CC1AC529E604AUL, 0xF1E4FE4528377000UL, 0xB709A19E46CCC057UL,
-        0x015F2B430951B84BUL, 0xEAF32C18E2FF7370UL, 0x6013610680906590UL, 0x7EC02EE1E4B36B83UL, 0x18F2DDA4A60C2E40UL
+        0xE507449644B7F8A7UL, 0xB31C38D66AD188FCUL, 0xB32CF3382DE54FD8UL, 0x68D0D3E2216E246AUL, 0xCE838FBEEA4FA8C9UL,
+        0x07F83D3ED090299EUL, 0x9F3E4FE9C325642EUL, 0x55A1B094F03525C8UL, 0x3974F57840CEEED0UL, 0xE815450BDDB2597CUL
     ];
 
     [Fact]
@@ -117,6 +138,7 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
             Assert.True(outcome.BuildAccepted, "The scripted build was rejected.");
             Assert.True(outcome.PlayerDamageEvents > 0, "The wolf never hit a player.");
             Assert.True(outcome.EnemyDamageEvents > 0, "No player hit an enemy.");
+            Assert.True(outcome.EnemyDeaths > 0, "No wolf died, so the kill, fair-XP, loot and respawn paths are unguarded.");
             Assert.True(outcome.Mutations > 0, "No world mutation was exported.");
             Assert.True(outcome.QueuedResults > 0, "No queued action was processed.");
             Assert.True(outcome.ChasingTicks > 0, "The wolf never chased.");

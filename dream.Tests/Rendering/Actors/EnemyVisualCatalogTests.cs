@@ -2,6 +2,7 @@ using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Models;
+using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 
 namespace Dream.Tests.Rendering.Actors;
@@ -89,9 +90,31 @@ public sealed class EnemyVisualCatalogTests
 
         Assert.Equal(clips.Move, clips.Resolve(EnemyBehaviorState.Chasing, 1.5f));
         Assert.Equal(clips.Sprint, clips.Resolve(EnemyBehaviorState.Chasing, 5.0f));
-        Assert.Equal(3.0f, clips.SprintSpeedThreshold);
+        Assert.Equal(EnemyVisualCatalog.GaitThresholdSpeed, clips.SprintSpeedThreshold);
         Assert.Equal(0.4f, clips.GaitHysteresisSpeed);
     }
+
+    // The gait threshold sits in the empty middle between every shipped patrol walk and every shipped chase,
+    // clear of both: a patrol at or below the walk-keeping edge and a chase at or above the gallop-starting threshold.
+    [Fact]
+    public void TheGaitThreshold_SeparatesEveryShippedPatrolFromEveryShippedChase_ByTheHysteresis()
+    {
+        Assert.NotEmpty(ContentCatalog.Shipped.Enemies);
+        foreach (EnemyTemplate template in ContentCatalog.Shipped.Enemies)
+        {
+            Assert.True(
+                ClearsTheGaitBand(template.PatrolSpeed, template.MoveSpeed),
+                $"{template.Key} patrols at {template.PatrolSpeed} and chases at {template.MoveSpeed}");
+        }
+
+        // Synthetic negatives: a chase inside the band, and a patrol inside it, both fail the check.
+        Assert.False(ClearsTheGaitBand(1.0f, EnemyVisualCatalog.GaitThresholdSpeed - 0.2f));
+        Assert.False(ClearsTheGaitBand(EnemyVisualCatalog.GaitThresholdSpeed - 0.2f, 3.0f));
+    }
+
+    private static bool ClearsTheGaitBand(float patrolSpeed, float chaseSpeed) =>
+        patrolSpeed <= EnemyVisualCatalog.GaitThresholdSpeed - EnemyVisualCatalog.GaitHysteresisSpeed
+        && chaseSpeed >= EnemyVisualCatalog.GaitThresholdSpeed;
 
     // The behaviour-only overload is the one WolfAnimationResolver and every pre-gait caller use; it
     // must stay exactly the zero-speed case, or an enemy with no measured pose would gallop on the spot.
@@ -123,7 +146,8 @@ public sealed class EnemyVisualCatalogTests
         // to measure (and the frame an enemy is first drawn) does not animate in slow motion.
         Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 0f), 4);
         Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, -3f), 4);
-        Assert.Equal(EnemyClipSet.MaxPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 2.9f), 4);
+        // A chase just above the gait threshold is far below the gallop's authored speed: the floor, not a skate.
+        Assert.Equal(EnemyClipSet.MinPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 2.9f), 4);
         Assert.Equal(EnemyClipSet.MaxPlaybackSpeed, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 40f), 4);
         Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, float.NaN), 4);
         // Only a moving enemy scales its stride.

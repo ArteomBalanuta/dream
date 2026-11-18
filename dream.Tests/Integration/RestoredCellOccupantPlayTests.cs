@@ -3,6 +3,7 @@ using Xunit;
 using Xunit.Abstractions;
 using OpenTK.Mathematics;
 using Dream.Simulation.Players;
+using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 using Dream.Tests.Server.Worlds;
@@ -95,7 +96,10 @@ public sealed class RestoredCellOccupantPlayTests(ITestOutputHelper output)
 
         ActorSnapshot end = server.Runtime.CaptureActorSnapshots().First(a => a.SessionId == "bob");
         output.WriteLine($"control player walked forward for 3 s: {Describe(server, start.Position)} -> {Describe(server, end.Position)}");
-        Assert.True(Vector3.Distance(start.Position, end.Position) > 5f, "the control player never moved: the walking input in this test is not valid");
+        // Three quarters of the 3 s the loop covers at the default cruise: the ramp-up and the
+        // floor friction cost the rest.
+        float minimumTravel = 0.75f * 192f / SimulationClock.AuthoritativeTicksPerSecond * PlayerSimulationTuning.DefaultRunSpeed;
+        Assert.True(Vector3.Distance(start.Position, end.Position) > minimumTravel, "the control player never moved: the walking input in this test is not valid");
         Assert.Empty(server.Runtime.Map.FindInvariantViolations());
     }
 

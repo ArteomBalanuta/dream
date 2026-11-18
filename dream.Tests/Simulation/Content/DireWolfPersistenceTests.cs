@@ -40,9 +40,10 @@ public sealed class DireWolfPersistenceTests
 
         IReadOnlyList<PersistedEnemyInstance> rows = world.LoadActiveEnemies();
         PersistedEnemyInstance dire = Assert.Single(rows, row => row.EnemyKind == "DireWolf");
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("DireWolf", out EnemyTemplate direTemplate));
         Assert.Equal(16, dire.Stats.Strength);
         Assert.Equal(30, dire.Stats.Vitality);
-        Assert.Equal(1.0f, dire.Stats.AttackSpeed);
+        Assert.Equal(direTemplate.AttackSpeed, dire.Stats.AttackSpeed);
         Assert.Equal(3, dire.Stats.Level);
         Assert.Equal(200, dire.Stats.MaxHealth);
         Assert.Equal(200, dire.Stats.CurrentHealth);
@@ -56,7 +57,7 @@ public sealed class DireWolfPersistenceTests
         EnemyActor restoredDire = restored.Enemies.ActiveActors[1];
         Assert.Equal(18, restoredDire.Combatant.AttackDamage);
         Assert.Equal(200, restoredDire.Combatant.Health.MaxHealth);
-        Assert.Equal(1f, restoredDire.Combatant.AttackIntervalSeconds);
+        Assert.Equal(direTemplate.AttackIntervalSeconds, restoredDire.Combatant.AttackIntervalSeconds);
         Assert.Equal(3, restoredDire.Level);
         Assert.Equal("enemy.dire-wolf", restoredDire.VisualKey);
     }

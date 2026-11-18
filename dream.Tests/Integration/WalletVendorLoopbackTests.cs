@@ -138,7 +138,7 @@ public sealed class WalletVendorLoopbackTests
             {
                 EnemyActor enemy = server.Runtime.Enemies.ActiveActors.First(e => e.IsActive);
                 killed = enemy.EnemyKind;
-                enemy.SetPosition(target.EyePosition + (target.Facing * 2f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
+                enemy.SetPosition(target.EyePosition + (target.Facing * 1f) - new Vector3(0f, WolfDefinition.CombatAnchorHeight, 0f));
                 enemy.Combatant.Health.SetAuthoritativeState(1, enemy.Combatant.Health.MaxHealth);
                 await StepAsync(server, client, attack: true, except: enemy);
             }

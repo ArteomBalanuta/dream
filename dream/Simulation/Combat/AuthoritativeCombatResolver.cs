@@ -69,6 +69,10 @@ internal interface IAuthoritativeCombatHost
     // The combatant behind a PvP candidate's actor id. A player's actor handle holds only its health, so
     // damage must go through the combatant to be mitigated by armor and to publish the death event.
     PlayerCombatant? ResolvePvpVictim(int actorId) => null;
+
+    // The reach in metres of the attacker's primary attack (WeaponReach of the equipped main-hand item). The
+    // default is the unarmed reach, so a host that does not model equipment attacks bare-handed.
+    float ResolveAttackReach(PlayerSessionId attacker) => WeaponReach.UnarmedMetres;
 }
 
 // Resolves an authoritative combat use: the seeded attack roll, the enemy or destructible cube it
@@ -180,11 +184,17 @@ internal sealed class AuthoritativeCombatResolver
             return CreateRejectedResult(message, tick, "Combat action rejected because attack is on cooldown.");
         }
 
-        EnemyActor? enemy = CombatUseResolver.TryResolveEnemyHit(
-            _enemies,
+        // A swing reaches only as far as the equipped weapon (the server's own gate: the client's approach
+        // distance is not trusted). An out-of-reach swing is accepted and spends the cooldown but hits nothing
+        // in reach, like any other miss.
+        float reach = _host.ResolveAttackReach(message.SessionId);
+        float acceptedReach = reach + WeaponReach.ServerToleranceMetres;
+        EnemyActor? enemy = TryResolveEnemyInReach(
             intent.RayOrigin,
             intent.RayDirection,
-            CombatUseResolver.DefaultHitRange);
+            reach + CombatUseResolver.RayHeadroomMetres,
+            acceptedReach);
+
         // A wall between the ray origin and the enemy's combat anchor blocks the hit, as for bolts, the
         // melee arc and PvP - and as the enemy's own bite line does in the other direction. When it is
         // blocked, fall through to the PvP and cube branches rather than resolving the enemy.
@@ -200,9 +210,11 @@ internal sealed class AuthoritativeCombatResolver
                 message.SessionId,
                 intent.RayOrigin,
                 intent.RayDirection,
-                CombatUseResolver.DefaultHitRange);
+                reach + CombatUseResolver.RayHeadroomMetres);
             // A wall between the ray origin and the player's body centre blocks the hit, as for bolts.
-            if (player.HasValue && !IsBlockedByWall(_map(), intent.RayOrigin, player.Value.GetWorldAnchor()))
+            if (player.HasValue
+                && IsWithinReach(intent.RayOrigin, player.Value.GetWorldAnchor(), acceptedReach)
+                && !IsBlockedByWall(_map(), intent.RayOrigin, player.Value.GetWorldAnchor()))
             {
                 return ResolvePlayerHit(message, combatant, tick, player.Value, 100);
             }
@@ -471,6 +483,57 @@ internal sealed class AuthoritativeCombatResolver
         return receipt;
     }
 
+    // Horizontal (XZ) distance from the ray origin, which sits directly above the attacker's body centre, to
+    // the target's combat anchor.
+    internal static bool IsWithinReach(Vector3 origin, Vector3 anchor, float reach)
+    {
+        float dx = anchor.X - origin.X;
+        float dz = anchor.Z - origin.Z;
+        return dx * dx + dz * dz <= reach * reach;
+    }
+
+    // The nearest enemy on the ray whose anchor is also inside the horizontal reach. The reach gate is part of
+    // the selection, so an enemy nearer along a steep ray but out of reach does not shadow one that is in reach.
+    // The ray test is EnemyRegistry.TryResolveHit's (same hit radius); an allocation-free index loop.
+    private EnemyActor? TryResolveEnemyInReach(Vector3 origin, Vector3 direction, float maxRayDistance, float acceptedReach)
+    {
+        if (direction.LengthSquared <= 0.0001f || maxRayDistance <= 0f)
+        {
+            return null;
+        }
+
+        Vector3 unit = direction.Normalized();
+        IReadOnlyList<EnemyActor> actors = _enemies.ActiveActors;
+        EnemyActor? best = null;
+        float bestDistance = maxRayDistance;
+        for (int i = 0; i < actors.Count; i++)
+        {
+            EnemyActor actor = actors[i];
+            if (!actor.IsActive)
+            {
+                continue;
+            }
+
+            Vector3 anchor = actor.Combatant.GetCombatAnchorWorldPosition();
+            float projected = Vector3.Dot(anchor - origin, unit);
+            if (projected < 0f || projected > bestDistance)
+            {
+                continue;
+            }
+
+            if ((anchor - (origin + (unit * projected))).Length > EnemyRegistry.DefaultHitRadiusMetres
+                || !IsWithinReach(origin, anchor, acceptedReach))
+            {
+                continue;
+            }
+
+            best = actor;
+            bestDistance = projected;
+        }
+
+        return best;
+    }
+
     // PvP: the first player on the ray, within maxDistance, among the host's candidates.
     private CombatActorHandle? TryResolvePvpTarget(
         PlayerSessionId attacker,
@@ -574,7 +637,7 @@ internal sealed class AuthoritativeCombatResolver
 
     // True when a solid cube lies between the origin and the anchor (the last half cell excluded, so a
     // target standing against a wall is not hidden by it).
-    private static bool IsBlockedByWall(Map map, Vector3 origin, Vector3 anchor)
+    public static bool IsBlockedByWall(Map map, Vector3 origin, Vector3 anchor)
     {
         Vector3 toTarget = anchor - origin;
         float distance = toTarget.Length;

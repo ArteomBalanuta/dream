@@ -1,4 +1,5 @@
 using System.Globalization;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 using Dream.Simulation.Stats;
 
@@ -42,13 +43,20 @@ public static class CharacterSheetModel
             Attribute(StatId.Agility, "Agility", s.BaseAgility, s.Agility, CharacterPanelModel.CanSpend(s, StatId.Agility)),
             Derived("Defense", Int(s.Defense + s.Armor)),
             Derived("Attack Speed", s.AttackSpeed.ToString("0.00", CultureInfo.InvariantCulture) + "/s"),
+            Derived("Attack Range", Metres(s.AttackRange > 0f ? s.AttackRange : WeaponReach.UnarmedMetres)),
             Attribute(StatId.Vitality, "Vitality", s.BaseVitality, s.Vitality, CharacterPanelModel.CanSpend(s, StatId.Vitality)),
             Derived("Health", $"{Int(s.CurrentHealth)}/{Int(s.MaxHealth)}"),
             Attribute(StatId.Energy, "Energy", s.BaseEnergy, s.Energy, CharacterPanelModel.CanSpend(s, StatId.Energy)),
             Derived("Mana", $"{Int(s.CurrentMana)}/{Int(s.MaxMana)}"),
-            Derived("Magic Damage", $"{Int(s.MagicMinDamage)}-{Int(s.MagicMaxDamage)}")
+            Derived("Magic Damage", $"{Int(s.MagicMinDamage)}-{Int(s.MagicMaxDamage)}"),
+            Derived("Move Speed", MetresPerSecond(PlayerSimulationTuning.AuthoritativeDefault.MoveSpeed)),
+            Derived("Run Speed", MetresPerSecond(PlayerSimulationTuning.AuthoritativeDefault.SprintSpeed))
         ];
     }
+
+    private static string Metres(float value) => value.ToString("0.0#", CultureInfo.InvariantCulture) + " m";
+
+    private static string MetresPerSecond(float value) => value.ToString("0.00", CultureInfo.InvariantCulture) + " m/s";
 
     private static string Int(int value) => value.ToString(CultureInfo.InvariantCulture);
 

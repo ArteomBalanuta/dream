@@ -122,6 +122,9 @@ public sealed partial class WorldSessionRuntime
 
         public PlayerCombatant? ResolvePvpVictim(int actorId)
             => runtime.TryFindListedPlayerTarget(actorId, out IAuthoritativePlayerTarget? target) ? target!.Combatant : null;
+
+        public float ResolveAttackReach(PlayerSessionId attacker)
+            => runtime._inventory.ResolveEquippedAttackReach(runtime.TryResolveCharacterKey(attacker));
     }
 
     // Build protection (M4). A cube with no owner (terrain, unowned) can be damaged by anyone; an owned

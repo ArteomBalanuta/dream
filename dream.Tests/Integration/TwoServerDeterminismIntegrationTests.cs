@@ -43,7 +43,7 @@ public class TwoServerDeterminismIntegrationTests(ITestOutputHelper output)
     private const int CubeAttackFrom = 150;
 
     private static readonly Vector3 CubeCell = new(7f, 1f, 5f);
-    private static readonly Vector3 EnemyPosition = new(7.5f, 1f, 11f);
+    private static readonly Vector3 EnemyPosition = new(7.5f, 1f, 9.2f);
 
     [Fact]
     public void SameSeed_SameScript_TwoServers_StayIdenticalEveryTick_ThroughCombatAndFracture()

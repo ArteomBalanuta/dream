@@ -27,6 +27,13 @@ public class MultiClientLoopbackSmokeTests
     // 0.6 s of walking at 60 ticks per second.
     private const ulong WalkTicks = 36;
 
+    // What a session must have moved: half of the cruise travel of ONE command's repeat window. A
+    // loaded run can land a single walking command before the walk window closes, and the server
+    // repeats it for MaxCommandRepeatTicks, so that is the least movement a healthy run shows.
+    private const float MinimumMoved =
+        0.5f * WorldSessionRuntime.MaxCommandRepeatTicks * SimulationClock.FixedDeltaSeconds
+        * PlayerSimulationTuning.DefaultRunSpeed;
+
     // Consecutive replicated positions (one per server tick) that must agree before a player
     // counts as at rest.
     private const int RestSamples = 15;
@@ -101,8 +108,8 @@ public class MultiClientLoopbackSmokeTests
         Assert.True(a.JoinAccepted && b.JoinAccepted, "Both clients should be accepted.");
         Assert.True(a.Snapshots > 60, $"session-a received only {a.Snapshots} snapshots.");
         Assert.True(b.Snapshots > 60, $"session-b received only {b.Snapshots} snapshots.");
-        Assert.True(a.Moved("session-a") > 0.5f, $"session-a moved {a.Moved("session-a")}.");
-        Assert.True(a.Moved("session-b") > 0.5f, $"session-b moved {a.Moved("session-b")}.");
+        Assert.True(a.Moved("session-a") > MinimumMoved, $"session-a moved {a.Moved("session-a")}.");
+        Assert.True(a.Moved("session-b") > MinimumMoved, $"session-b moved {a.Moved("session-b")}.");
         Assert.True(a.MaxY("session-b") > a.FirstY("session-b") + 0.3f, $"session-b never left the ground (max y {a.MaxY("session-b")}).");
         Assert.InRange(a.LastY("session-b"), a.FirstY("session-b") - 0.3f, a.FirstY("session-b") + 0.3f);
         Assert.True(a.ChecksumsVerified > 0 && b.ChecksumsVerified > 0, "No world checksum was verified.");
