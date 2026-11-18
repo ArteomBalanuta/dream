@@ -1,9 +1,10 @@
-"""Particle atlas for dream/ui/particles/: sparks, embers, dust motes, ash, two halos, flame tongues and a contact blob.
+"""Particle atlas for dream/ui/particles/: sparks, embers, dust motes, ash, two halos, flame tongues, a contact blob,
+a sweep crescent, two bolt lances and a ground ring.
 
 512x256 RGBA8, 8 columns by 4 rows of 64 px cells, frame 0 top-left, rows downward, loaded with no flip.
 Every cell keeps a 4 px margin that is fully zero. RGB is premultiplied emission and stays meaningful
-where A=0 (A=0 draws purely additive); A is coverage (ash, blob, flame; the flame's is scaled by the
-instance alpha, so it is additive at night and occludes the sky by day). Frames 23-31 are reserved and empty.
+where A=0 (A=0 draws purely additive); A is coverage (ash, blob, flame, arc, ring; the flame's is scaled by the
+instance alpha, so it is additive at night and occludes the sky by day). Frames 27-31 are reserved and empty.
 """
 from __future__ import annotations
 
@@ -32,6 +33,9 @@ GROUPS = (
     ("halo.core", 17, 1, "zero"),
     ("flame", 18, 4, "coverage"),
     ("blob", 22, 1, "coverage"),
+    ("arc", 23, 1, "coverage"),
+    ("bolt", 24, 2, "zero"),
+    ("ring", 26, 1, "coverage"),
 )
 
 
@@ -205,6 +209,65 @@ def blob_frame() -> np.ndarray:
     return np.dstack((np.zeros((HI, HI, 3), dtype=np.float32), a))
 
 
+# arc, bolt, ring ----------------------------------------------------------------------------------
+
+def box_fade(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Per-axis fade that is exactly 0 at 25 px from the centre, inside the dark outer ring."""
+    return smoothstep(25.0, 22.0, np.abs(x)) * smoothstep(25.0, 22.0, np.abs(y))
+
+
+def arc_frame() -> np.ndarray:
+    """A swept crescent drawn flat, leading edge at +X: bright and sharp in front, fading inward, tapering
+    to nothing at both tips. Coverage alpha, like the flame: additive at night, occluding by day."""
+    x, y = grid()
+    outer = 24.0 - np.hypot(x + 6.0, y)  # > 0 inside the outer disc
+    inner = np.hypot(x + 14.0, y) - 21.5  # > 0 outside the inner disc
+    wob = 1.0
+    body = smoothstep(0.0, 1.6, outer) * smoothstep(0.0, 6.0, inner * wob)
+    streak = 0.9 + 0.1 * np.cos(np.arctan2(y, x + 14.0) * 5.0)
+    e = np.clip(body * streak, 0.0, 1.0) * box_fade(x, y)
+    e = e / max(float(e.max()), 1e-6)
+    steel = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return np.dstack((e[..., None] * steel * 0.8, 0.8 * e))
+
+
+def bolt_frame(i: int) -> np.ndarray:
+    """A lance along +X: a pointed head, a hot narrow core inside a soft sheath, and a long tapered tail."""
+    r = uiart.rng(f"particles.bolt.{i}")
+    x, y = grid()
+    head, tail = 22.0, 25.0
+    t = np.where(x >= 0, x / head, x / tail)  # 1 at the head, -1 at the tail
+    kink = r.uniform(0.6, 1.4) * np.sin(x * r.uniform(0.10, 0.16) + r.uniform(0, 6.283))
+    taper = np.clip(1.0 - np.maximum(-t, 0.0), 0.0, 1.0) ** 0.7
+    point = np.clip(1.0 - np.maximum(t, 0.0), 0.0, 1.0) ** 0.6  # narrows to a point at the head
+    w = np.maximum(6.5 * taper * (0.35 + 0.65 * point), 0.6)
+    d = (y - kink) / w
+    sheath = 0.55 * np.exp(-d * d)
+    core = np.exp(-((y - kink) / np.maximum(0.38 * w, 0.5)) ** 2)
+    along = (0.55 + 0.45 * smoothstep(-0.9, 0.6, t)) * smoothstep(1.0, 0.9, t) * smoothstep(-1.0, -0.55, t)
+    out = np.clip((sheath + 0.55 * core) * along, 0.0, 1.0)
+    for _ in range(2 + i):  # a few side flecks, different per variant
+        px, py = -r.uniform(0.2, 0.8) * tail, r.uniform(-6.0, 6.0)
+        out = np.maximum(out, r.uniform(0.25, 0.45) * np.exp(-((x - px) ** 2 + (y - py) ** 2) / 2.2))
+    out = out / max(float(out.max()), 1e-6) * 0.95 * box_fade(x, y)
+    tint = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return np.dstack((out[..., None] * tint, np.zeros_like(out)))
+
+
+def ring_frame() -> np.ndarray:
+    """A thin soft annulus drawn flat with a dark centre. Coverage alpha, like the arc."""
+    x, y = grid()
+    rad = np.hypot(x, y)
+    ang = np.arctan2(y, x)
+    d = (rad - 16.0) / 4.2
+    band = np.exp(-d * d)
+    uneven = 0.86 + 0.14 * np.sin(2.0 * ang + 0.7)
+    e = np.clip(band * uneven, 0.0, 1.0) * smoothstep(25.0, 22.0, rad)
+    e = e / max(float(e.max()), 1e-6)
+    bone = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return np.dstack((e[..., None] * bone * 0.8, 0.8 * e))
+
+
 # atlas --------------------------------------------------------------------------------------------
 
 def frames() -> list[np.ndarray]:
@@ -215,6 +278,9 @@ def frames() -> list[np.ndarray]:
     out += [halo_frame(False), halo_frame(True)]
     out += [flame_frame(i) for i in range(4)]
     out.append(blob_frame())
+    out.append(arc_frame())
+    out += [bolt_frame(i) for i in range(2)]
+    out.append(ring_frame())
     return out
 
 
@@ -238,7 +304,7 @@ def main(out_root: Path) -> None:
     doc = {
         "version": 1, "image": "particles.png", "size": [COLUMNS * CELL, ROWS * CELL],
         "origin": "top-left", "yDown": True, "alpha": "premultiplied",
-        "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "reserved": [23, 31],
+        "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "reserved": [27, 31],
         "frames": frame_table,
     }
     (out / "particles.json").write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
