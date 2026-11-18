@@ -41,7 +41,8 @@ public static class ClientSnapshotDamageApplier
                 continue;
             }
 
-            if (!runtime.TryResolveCombatActor(damageEvent.ActorId, out CombatActorHandle actor))
+            if (!runtime.TryResolveCombatActor(damageEvent.ActorId, out CombatActorHandle actor) &&
+                !TryResolveRemotePlayer(runtime, snapshot, damageEvent, out actor))
             {
                 continue;
             }
@@ -61,6 +62,35 @@ public static class ClientSnapshotDamageApplier
                 events.Publish(new ActorDiedEvent(actor));
             }
         }
+    }
+
+    // A hit on another player draws where that player is in THIS snapshot. IsAttributable has already
+    // required the victim to be a player actor in snapshot.Actors, so a peer that is absent (despawned,
+    // not yet spawned, or out of view) has no position here and is dropped rather than drawn at a
+    // stale or default one.
+    private static bool TryResolveRemotePlayer(
+        IClientWorldState runtime,
+        ServerSnapshotEnvelope snapshot,
+        DamageEventDelta damageEvent,
+        out CombatActorHandle actor)
+    {
+        actor = default;
+        if (damageEvent.Kind != CreatureKind.Player)
+        {
+            return false;
+        }
+
+        IReadOnlyList<ActorSnapshot> actors = snapshot.Actors;
+        for (int i = 0; i < actors.Count; i++)
+        {
+            ActorSnapshot candidate = actors[i];
+            if (candidate.ActorId == damageEvent.ActorId && candidate.Kind == CreatureKind.Player)
+            {
+                return runtime.TryResolveRemotePlayerActor(candidate.ActorId, candidate.Position, out actor);
+            }
+        }
+
+        return false;
     }
 
     private static bool DiedEarlierInSnapshot(IReadOnlyList<DamageEventDelta> damageEvents, int index, int actorId)
