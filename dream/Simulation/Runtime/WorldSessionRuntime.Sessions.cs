@@ -568,6 +568,20 @@ public sealed partial class WorldSessionRuntime
             : sessionId.Value;
     }
 
+    // BH-CLOCK-4. The character behind a live session, for host state that has to survive a
+    // reconnect (the chat token bucket). False for a session the runtime does not know.
+    public bool TryGetCharacterKey(PlayerSessionId sessionId, out string characterKey)
+    {
+        if (_sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null)
+        {
+            characterKey = player.CharacterKey.Value;
+            return true;
+        }
+
+        characterKey = string.Empty;
+        return false;
+    }
+
     // The persistence key of the session's character (the session id for an unknown session).
     private string TryResolveCharacterKey(PlayerSessionId sessionId)
     {

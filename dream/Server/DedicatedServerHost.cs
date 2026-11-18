@@ -518,6 +518,18 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
                 continue;
             }
 
+            // BH-CLOCK-4. The connection's own bucket is keyed by account, or, with no account, by the
+            // session id the client itself mints afresh on every connect, so a reconnect refills it.
+            // The character behind the connection is the only identity that survives a reconnect on an
+            // accountless host, and swapping it means playing as someone else, so the host charges a
+            // second bucket keyed on the character key - the same keying spawn protection and ability
+            // cooldowns use. Burst and refill are the limiter's own, so a normal chatter, reconnecting
+            // or not, is never held back by it.
+            if (!TryConsumeCharacterChatToken(context, runtime, senderSession))
+            {
+                continue;
+            }
+
             // M5: the party chat goes to the sender's party members only.
             List<ChatParticipant>? party = lines[i].Channel == ChatChannel.Party
                 ? BuildPartyParticipants(runtime, senderSession, participants)
@@ -529,6 +541,20 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
         {
             _pendingConnectionReplies.Enqueue(replies[i]);
         }
+    }
+
+    // BH-CLOCK-4. The character-keyed half of the chat token bucket, charged only for a connection
+    // that joined without an account (with one, the account key already survives the reconnect).
+    // True when the line may be routed.
+    private bool TryConsumeCharacterChatToken(ServerRoutingContext context, WorldSessionRuntime runtime, string senderSession)
+    {
+        if (context.JoinedIdentity != null
+            || !runtime.TryGetCharacterKey(new PlayerSessionId(senderSession), out string characterKey))
+        {
+            return true;
+        }
+
+        return _chatLimiter.TryConsume("c:" + characterKey, TimeProvider.GetTimestamp(), TimeProvider.TimestampFrequency);
     }
 
     // The chat participants that share the sender's party (the sender included); null when the sender is
