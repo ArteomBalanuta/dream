@@ -39,6 +39,8 @@ public sealed partial class WorldSessionRuntime
     // example none with the NightExtra role, or with other camps).
     internal ContentCatalog EnemyContent { get; set; } = DefaultEnemyContent;
 
+    ContentCatalog IRuntimePersistenceHost.EnemyContent => EnemyContent;
+
     // The first wolf of a world (restore with no persisted enemy), at the day spawn.
     private void SpawnInitialWolf()
     {

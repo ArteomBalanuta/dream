@@ -49,14 +49,15 @@ public sealed class EnemyFactoryTests
     }
 
     [Fact]
-    public void AnExplicitTemplateInterval_ReplacesTheFormula_OnSpawnOnly()
+    public void AnExplicitTemplateInterval_ReplacesTheFormula_OnSpawnAndOnRestore()
     {
         EnemyActor spawned = EnemyFactory.Spawn(Dire(interval: 2.5f), Vector3.Zero, 2100, Events, CombatFormulaService.Default);
         PersistedEnemyInstance row = WolfIntervalBitsTest.Row(16, 30, 1.0f, 200, 200, "DireWolf", 3);
         EnemyActor restored = EnemyFactory.Restore(row, Dire(interval: 2.5f), 2101, Events, CombatFormulaService.Default);
 
+        // The interval is a kind stat: the row's attack speed (1.0 here, which would derive 1.0 s) does not set it.
         Assert.Equal(2.5f, spawned.Combatant.AttackIntervalSeconds);
-        Assert.Equal(1.0f, restored.Combatant.AttackIntervalSeconds);
+        Assert.Equal(2.5f, restored.Combatant.AttackIntervalSeconds);
     }
 
     [Fact]
@@ -174,7 +175,8 @@ public sealed class EnemyFactoryTests
         Assert.Equal(1f, restored.Combatant.StatSheet.Base[StatId.Vitality]);
         Assert.Equal(0.5f, restored.Combatant.StatSheet.Base[StatId.AttackSpeed]);
         Assert.Equal(52, restored.Combatant.AttackDamage);
-        Assert.Equal(2.0f, restored.Combatant.AttackIntervalSeconds);
+        // The interval is the kind's, not derived from the hostile row's attack speed.
+        Assert.Equal(ContentCatalog.Shipped.Wolf.AttackIntervalSeconds, restored.Combatant.AttackIntervalSeconds);
         Assert.Equal(10, restored.Combatant.Health.MaxHealth);
     }
 
@@ -223,12 +225,12 @@ public sealed class EnemyFactoryTests
     {
         const float dt = 1f / 60f;
         EnemyTemplate template = ContentCatalog.Shipped.Wolf;
-        Assert.Equal(5.0f, template.MoveSpeed);
-        Assert.Equal(1.4f, template.PatrolSpeed);
+        Assert.Equal(3.0f, template.MoveSpeed);
+        Assert.Equal(1.0f, template.PatrolSpeed);
 
         EnemyActor wolf = EnemyFactory.Spawn(template, Vector3.Zero, 2400, Events, CombatFormulaService.Default);
-        Assert.Equal(5.0f, wolf.MoveSpeed);
-        Assert.Equal(1.4f, wolf.PatrolSpeed);
+        Assert.Equal(3.0f, wolf.MoveSpeed);
+        Assert.Equal(1.0f, wolf.PatrolSpeed);
 
         // A player well inside the aggro range but far outside the attack range: a full-speed chase.
         Vector3 player = new(0f, 0f, 8f);
@@ -238,7 +240,7 @@ public sealed class EnemyFactoryTests
         }
 
         Assert.Equal(EnemyBehaviorState.Chasing, wolf.BehaviorState);
-        Assert.InRange(wolf.CurrentSpeed, 5.0f * 0.95f, 5.0f * 1.05f);
+        Assert.InRange(wolf.CurrentSpeed, 3.0f * 0.95f, 3.0f * 1.05f);
 
         // The player leaves. The wolf walks back to its home point at the patrol speed.
         for (int i = 0; i < 6; i++)
@@ -246,7 +248,7 @@ public sealed class EnemyFactoryTests
             wolf.Update(dt, playerPosition: null, map: null);
         }
 
-        Assert.InRange(wolf.CurrentSpeed, 1.4f * 0.95f, 1.4f * 1.05f);
+        Assert.InRange(wolf.CurrentSpeed, 1.0f * 0.95f, 1.0f * 1.05f);
         Assert.True(wolf.CurrentSpeed < wolf.MoveSpeed);
 
         // Standing on its home point it reports no speed at all.

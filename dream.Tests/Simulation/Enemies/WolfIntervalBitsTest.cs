@@ -10,14 +10,15 @@ using Dream.Simulation.World;
 
 namespace Dream.Tests.Simulation.Enemies;
 
-// Wave I C0b gate: the wolf's attack interval stays today's 1.05f bit for bit, now that it comes from
-// the stored attack speed through enemy.attack_interval_seconds instead of the template's number.
-// The shipped wolf pins no explicit interval (I-D5), so these bits are the only thing keeping wolves
-// attacking on exactly the old cadence, on this runtime.
+// The wolf's attack interval is an explicit, authored number (enemies.json attackIntervalSeconds, tunable
+// per kind in enemy_kinds), so a spawn and a restore bite on exactly the same cadence bit for bit: the
+// restore no longer derives it from the row's attack_speed. These bits pin that, and the damage and
+// health the wolf's stats still derive.
 public sealed class WolfIntervalBitsTest
 {
-    private const uint WolfIntervalBits = 0x3F866666u; // 1.05f
-    private const uint WolfAttackSpeedBits = 0x3F73CF3Eu; // 1f / 1.05f, what every stored wolf row holds
+    private static readonly uint WolfIntervalBits = BitConverter.SingleToUInt32Bits(1.8f);
+    private static readonly uint WolfAttackSpeedBits = BitConverter.SingleToUInt32Bits(0.555556f); // 1 / 1.8, what a wolf row holds
+    private const uint LegacyFormulaIntervalBits = 0x3F866666u; // 1.05f, the old derived interval
 
     private static readonly SceneEventHub Events = new();
 
@@ -29,12 +30,12 @@ public sealed class WolfIntervalBitsTest
     public void TheShippedWolfAttackSpeed_IsTodaysStoredBits()
     {
         Assert.Equal(WolfAttackSpeedBits, Bits(Wolf.AttackSpeed));
-        Assert.Equal(WolfAttackSpeedBits, Bits(1f / 1.05f));
-        Assert.Null(Wolf.AttackIntervalSeconds);
+        Assert.Equal(1.8f, Wolf.AttackIntervalSeconds);
+        Assert.Equal(1.8f, 1f / Wolf.AttackSpeed, 4);
     }
 
     [Fact]
-    public void AFreshlySpawnedWolf_HasTheOldIntervalDamageAndHealth()
+    public void AFreshlySpawnedWolf_HasItsAuthoredIntervalAndTheDerivedDamageAndHealth()
     {
         EnemyActor wolf = EnemyFactory.Spawn(Wolf, new Vector3(5.5f, 1f, 2.5f), 2000, Events, CombatFormulaService.Default);
 
@@ -44,17 +45,15 @@ public sealed class WolfIntervalBitsTest
         Assert.Equal(100, wolf.Combatant.Health.CurrentHealth);
         Assert.Equal(1, wolf.Level);
         Assert.Null(wolf.VisualKey);
-        // The chase speed was re-based from 2.8 to 5.0 this wave (the player runs at 4.3 and sprints
-        // at 6.0, so at 2.8 no wolf could ever close). The interval, damage and health bits above are
-        // what this test exists to pin, and none of them moved with it.
-        Assert.Equal(5.0f, wolf.MoveSpeed);
-        Assert.Equal(1.4f, wolf.PatrolSpeed);
+        Assert.Equal(Wolf.MoveSpeed, wolf.MoveSpeed);
+        Assert.Equal(Wolf.PatrolSpeed, wolf.PatrolSpeed);
     }
 
     [Fact]
-    public void ARestoredWolfRow_HasTheOldIntervalDamageAndHealth()
+    public void ARestoredWolfRow_BitesAtItsKindsInterval_WhateverItsRowSays_AndKeepsDamageAndHealth()
     {
-        // The row a wolf has always been written with: attack speed 1f / 1.05f, stored as a REAL.
+        // A legacy row: attack speed 1f / 1.05f, stored as a REAL. The interval is a kind stat, so the row's
+        // attack speed no longer sets it.
         double stored = 1f / 1.05f;
         PersistedEnemyInstance row = Row(strength: 10, vitality: 10, attackSpeed: (float)stored, currentHealth: 37, maxHealth: 100);
 
@@ -75,7 +74,7 @@ public sealed class WolfIntervalBitsTest
         EnemyCombatDerivedStats derived = CombatFormulaService.Default.EvaluateEnemyDerivedStats(10, speed, 10, 1, null);
 
         Assert.Equal(Bits(old), Bits(derived.AttackIntervalSeconds));
-        Assert.Equal(WolfIntervalBits, Bits(old));
+        Assert.Equal(LegacyFormulaIntervalBits, Bits(old));
     }
 
     // A real repository: the spawned wolf's row is written, read back and restored by a second runtime.

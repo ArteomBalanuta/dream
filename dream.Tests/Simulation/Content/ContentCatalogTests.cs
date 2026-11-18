@@ -170,18 +170,17 @@ public sealed class ContentCatalogTests
         Assert.Equal(1, wolf.Level);
         Assert.Equal(10, wolf.Strength);
         Assert.Equal(10, wolf.Vitality);
-        Assert.Equal(0.952381f, wolf.AttackSpeed);
-        Assert.Null(wolf.AttackIntervalSeconds);
+        Assert.Equal(0.555556f, wolf.AttackSpeed);
+        Assert.Equal(1.8f, wolf.AttackIntervalSeconds);
         Assert.Equal("enemy.wolf", wolf.VisualKey);
         Assert.Equal("wolf", wolf.LootTable);
         Assert.Equal(EnemySpawnRole.Primary, wolf.SpawnRole);
         Assert.Equal(10f, wolf.AggroRange);
         Assert.Equal(1.35f, wolf.AttackRange);
-        // The chase speed, re-based this wave: the old 2.8 was below the player's own speed, so no
-        // enemy could ever close. The patrol walk is the new authored field beside it.
-        Assert.Equal(5.0f, wolf.MoveSpeed);
-        Assert.Equal(1.4f, wolf.PatrolSpeed);
-        Assert.Equal(1.4f, wolf.AuthoredPatrolSpeed);
+        // The chase speed, the patrol walk and the bite interval the wolf is authored with.
+        Assert.Equal(3.0f, wolf.MoveSpeed);
+        Assert.Equal(1.0f, wolf.PatrolSpeed);
+        Assert.Equal(1.0f, wolf.AuthoredPatrolSpeed);
         Assert.Same(wolf, ContentCatalog.Shipped.Wolf);
         Assert.Equal(["Wolf", "DireWolf", "AshenProwler", "GraveHowler"], ContentCatalog.Shipped.Enemies.Select(template => template.Key).ToArray());
     }
@@ -361,9 +360,9 @@ public sealed class ContentCatalogTests
     // under either bound and so cannot catch that.
     [InlineData("\"strength\": 10", "\"strength\": 51", "outside the range")]
     [InlineData("\"vitality\": 10", "\"vitality\": 51", "outside the range")]
-    [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 0.49", "outside the range")]
-    [InlineData("\"attackSpeed\": 0.952381", "\"attackSpeed\": 5.1", "outside the range")]
-    [InlineData("\"moveSpeed\": 5.0,", "\"moveSpeed\": 5.0, \"attackIntervalSeconds\": 0,", "outside the range")]
+    [InlineData("\"attackSpeed\": 0.555556", "\"attackSpeed\": 0.49", "outside the range")]
+    [InlineData("\"attackSpeed\": 0.555556", "\"attackSpeed\": 5.1", "outside the range")]
+    [InlineData("\"attackIntervalSeconds\": 1.8", "\"attackIntervalSeconds\": 0", "outside the range")]
     [InlineData("\"level\": 1,", "\"level\": 0,", "outside the range")]
     [InlineData("\"level\": 1,", "\"level\": 1, \"maxHp\": 100,", "unknown property")]
     [InlineData("\"visualKey\": \"enemy.wolf\"", "\"visualKey\": \"Enemy Wolf\"", "is not a visual id")]
@@ -371,9 +370,9 @@ public sealed class ContentCatalogTests
     [InlineData("\"spawnRole\": \"Primary\"", "\"spawnRole\": \"NightExtra\"", "needs at least one enemy with spawnRole 'Primary'")]
     [InlineData("\"lootTable\": \"wolf\"", "\"lootTable\": \"missing\"", "references missing loot table")]
     [InlineData("\"version\": 2", "\"version\": 1", "outside the range")]
-    [InlineData("\"moveSpeed\": 5.0", "\"moveSpeed\": -1", "outside the range")]
-    [InlineData("\"moveSpeed\": 5.0", "\"moveSpeed\": \"fast\"", "expected a finite number")]
-    [InlineData("\"moveSpeed\": 5.0", "\"moveSpeed\": 5.0, \"speed\": 3", "unknown property")]
+    [InlineData("\"moveSpeed\": 3.0", "\"moveSpeed\": -1", "outside the range")]
+    [InlineData("\"moveSpeed\": 3.0", "\"moveSpeed\": \"fast\"", "expected a finite number")]
+    [InlineData("\"moveSpeed\": 3.0", "\"moveSpeed\": 3.0, \"speed\": 3", "unknown property")]
     [InlineData("\"level\": 1,", "", "missing required property")]
     [InlineData("\"key\": \"Wolf\"", "\"key\": \"Boar\"", "required enemy 'Wolf' is missing")]
     public void Load_RejectsInvalidEnemies_WithAClearMessage(string find, string replace, string expectedFragment)
@@ -568,17 +567,16 @@ public sealed class ContentCatalogTests
     [Fact]
     public void AnEnemyPatrolSpeed_IsOptional_Validated_AndInTheDigestOnlyWhenSet()
     {
-        Assert.Equal(1.4f, ContentCatalog.Shipped.Wolf.PatrolSpeed);
+        Assert.Equal(1.0f, ContentCatalog.Shipped.Wolf.PatrolSpeed);
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("DireWolf", out EnemyTemplate? dire));
-        Assert.Equal(1.6f, dire.PatrolSpeed);
+        Assert.Equal(1.1f, dire.PatrolSpeed);
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("AshenProwler", out EnemyTemplate? prowler));
-        Assert.Equal(1.7f, prowler.PatrolSpeed);
+        Assert.Equal(1.2f, prowler.PatrolSpeed);
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("GraveHowler", out EnemyTemplate? howler));
-        Assert.Equal(1.8f, howler.PatrolSpeed);
-        // Every shipped enemy chases faster than it patrols, and the top tier matches the player's
-        // sprint (6.0) rather than beating it: see the table in EnemyTemplate.cs.
+        Assert.Equal(1.3f, howler.PatrolSpeed);
+        // Every shipped enemy chases faster than it patrols: see the table in EnemyTemplate.cs.
         Assert.All(ContentCatalog.Shipped.Enemies, enemy => Assert.True(enemy.PatrolSpeed < enemy.MoveSpeed));
-        Assert.Equal(6.0f, howler.MoveSpeed);
+        Assert.Equal(3.8f, howler.MoveSpeed);
 
         string plain = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, @",?\s*""patrolSpeed"":\s*[\d.]+", string.Empty);
         Assert.DoesNotContain("patrolSpeed", plain, StringComparison.Ordinal);
@@ -589,14 +587,14 @@ public sealed class ContentCatalogTests
         // Absent, the template reports half the chase speed.
         Assert.True(without.TryGetEnemy("Wolf", out EnemyTemplate? unauthored));
         Assert.Null(unauthored.AuthoredPatrolSpeed);
-        Assert.Equal(2.5f, unauthored.PatrolSpeed);
-        Assert.Equal(5.0f, unauthored.MoveSpeed);
+        Assert.Equal(1.5f, unauthored.PatrolSpeed);
+        Assert.Equal(3.0f, unauthored.MoveSpeed);
 
         // Non-finite, out of range, not a number, and - the one that is not just a bound - above the
         // chase speed, which would mean an enemy patrolling faster than it hunts.
-        foreach (string bad in new[] { "0", "-1", "1e-300", "101", "\"1.4\"", "5.1", "6" })
+        foreach (string bad in new[] { "0", "-1", "1e-300", "101", "\"1.0\"", "3.1", "6" })
         {
-            string changed = ShippedEnemiesJson.Replace("\"patrolSpeed\": 1.4", $"\"patrolSpeed\": {bad}");
+            string changed = ShippedEnemiesJson.Replace("\"patrolSpeed\": 1.0", $"\"patrolSpeed\": {bad}");
             Assert.NotEqual(ShippedEnemiesJson, changed);
             ContentValidationException ex = Assert.Throws<ContentValidationException>(
                 () => ContentCatalog.Load(ShippedItemsJson, changed, ShippedLootJson));
@@ -606,7 +604,7 @@ public sealed class ContentCatalogTests
         // And exactly the chase speed is allowed: the bound is "above", not "equal".
         Assert.NotNull(ContentCatalog.Load(
             ShippedItemsJson,
-            ShippedEnemiesJson.Replace("\"patrolSpeed\": 1.4", "\"patrolSpeed\": 5.0"),
+            ShippedEnemiesJson.Replace("\"patrolSpeed\": 1.0", "\"patrolSpeed\": 3.0"),
             ShippedLootJson));
     }
 }

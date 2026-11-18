@@ -252,6 +252,13 @@ public sealed class RealLegacyDatabaseWaveBTests(ITestOutputHelper output)
                         continue;
                     }
 
+                    // Migration 0017 rewrites the chase speed and attack speed of every enemy row of a known
+                    // kind (EnemyKindsMigrationTests pins it); the rest of the row must not change.
+                    if (table == "enemy_instances" && name is "movement_speed" or "attack_speed")
+                    {
+                        continue;
+                    }
+
                     // Migration 0005 renumbers the ids of cubes, rubble and enemies, so they are not compared.
                     if (name != "world_id" && name != "account_id" && name != "rolled_modifiers" && name != "camp_key" && !RenumberedColumns.Contains(name))
                     {

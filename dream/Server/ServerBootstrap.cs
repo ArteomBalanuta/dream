@@ -175,6 +175,7 @@ public static class ServerBootstrap
             StoredTerrain = persistence.StoredTerrain,
             TerrainPayload = persistence.TerrainPayload,
             Accounts = persistence.Accounts,
+            EnemyContent = persistence.EnemyContent,
         };
     }
 
@@ -656,7 +657,8 @@ public static class ServerBootstrap
         ulong simulationSeed = ResolveSimulationSeed(storedSeed, simulationSeedOverride, log);
         SqliteCombatFormulaRepository formulas = new(schema);
         CombatFormulaService formulaService = CombatFormulaService.Create(formulas);
-        ProbeFormulas(formulaService, content);
+        ContentCatalog enemyContent = ApplyEnemyKindTuning(new SqliteEnemyKindRepository(schema).LoadAll(), log);
+        ProbeFormulas(formulaService, enemyContent);
         return new ServerPersistenceBundle(
             schema,
             new SqlitePlayerProfileRepository(schema),
@@ -670,7 +672,40 @@ public static class ServerBootstrap
             storedTerrain: storedTerrain,
             terrainPayload: terrainPayload,
             hostLease: lease,
-            accounts: new SqliteAccountRepository(schema));
+            accounts: new SqliteAccountRepository(schema),
+            enemyContent: enemyContent);
+    }
+
+    // The content the runtime spawns and restores enemies from: the default enemy content (the shipped
+    // catalog; tests swap it) with every valid enemy_kinds row laid over its kind. A row that fails the content rules (EnemyKindTuning.IsValid)
+    // or names a kind the content does not have is skipped with a log line and that kind keeps its
+    // authored numbers; the table is edited by hand, so nothing in it may stop the start.
+    internal static ContentCatalog ApplyEnemyKindTuning(IReadOnlyList<EnemyKindTuning> rows, Action<string>? log)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        ContentCatalog baseContent = WorldSessionRuntime.DefaultEnemyContent;
+        List<EnemyKindTuning> accepted = [];
+        int skipped = 0;
+        foreach (EnemyKindTuning row in rows)
+        {
+            if (!baseContent.TryGetEnemy(row.EnemyKind, out _))
+            {
+                skipped++;
+                log?.Invoke($"server.content.enemy-tuning-skipped kind={row.EnemyKind} reason=unknown-enemy-kind");
+            }
+            else if (!row.IsValid(out string reason))
+            {
+                skipped++;
+                log?.Invoke($"server.content.enemy-tuning-skipped kind={row.EnemyKind} reason={reason}");
+            }
+            else
+            {
+                accepted.Add(row);
+            }
+        }
+
+        log?.Invoke($"server.content.enemy-tuning rows={accepted.Count} skipped={skipped}");
+        return baseContent.WithEnemyTuning(accepted);
     }
 
     // The world ticks to start the clock at: storedTicks moved forward to the next tick showing the

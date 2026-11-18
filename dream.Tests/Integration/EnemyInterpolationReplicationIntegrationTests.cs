@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Xunit.Abstractions;
+using Dream.Simulation.Content;
 using Dream.Client.Presentation;
 using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
@@ -108,14 +109,14 @@ public class EnemyInterpolationReplicationIntegrationTests(ITestOutputHelper out
         Assert.True(reach < ClientScenePresenter.EnemyTeleportDistance);
         Assert.True(ticksToThreshold > TickInterpolationBuffer.DefaultMaxTickSpan);
 
-        // The runtime's persisted-enemy path uses the persisted MovementSpeed; the shipped wolf
-        // persists its own chase speed, re-based from 2.8 to 5.0 this wave. The threshold above is
-        // derived from the FASTEST shipped chase speed (the Grave Howler's 6.0), so it has to clear
-        // that too - this test runs the wolf, which is not the worst case.
-        Assert.Equal(5.0f, wolfSpeed);
+        // The runtime's persisted-enemy path takes the chase speed from the kind. The threshold above is
+        // checked against the FASTEST shipped chase speed too - this test runs the wolf, which is not
+        // the worst case.
+        Assert.Equal(ContentCatalog.Shipped.Wolf.MoveSpeed, wolfSpeed);
+        float fastest = ContentCatalog.Shipped.Enemies.Max(template => template.MoveSpeed);
         Assert.True(
-            6.0f * maxGapSeconds < ClientScenePresenter.EnemyTeleportDistance,
-            $"The fastest shipped chase speed covers {6.0f * maxGapSeconds:F2} m across the interpolation span, " +
+            fastest * maxGapSeconds < ClientScenePresenter.EnemyTeleportDistance,
+            $"The fastest shipped chase speed covers {fastest * maxGapSeconds:F2} m across the interpolation span, " +
             $"which the {ClientScenePresenter.EnemyTeleportDistance} m teleport threshold must exceed.");
     }
 

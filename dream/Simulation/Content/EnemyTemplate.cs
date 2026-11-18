@@ -25,22 +25,21 @@ public enum EnemySpawnRole : byte
 // value is kept nullable so content without it keeps its digest, exactly as "maxHealth" does.
 //
 // The shipped speeds are set by one relative constraint, not by real animal figures (a real wolf gallops
-// 10-16 m/s, which is unreadable in an isometric camera): a chasing enemy outruns a RUNNING player
-// (4.3 m/s) so sprint (6.0) is the escape tool, except the top tier, which sprint can only hold level
-// with. enemies.json carries no comment of its own because the loader rejects JSON comments, so the
-// table lives here:
+// 10-16 m/s, which is unreadable in an isometric camera): every chase is faster than the player's walk
+// and slower than the player's sprint, so a walking player is caught and holding Shift always escapes.
+// The wolf's attack interval and the per-kind numbers are authored here and tunable per kind in the
+// enemy_kinds table (migration 0017), which overrides them at server start. enemies.json carries no
+// comment of its own because the loader rejects JSON comments, so the table lives here:
 //
-//   enemy          patrolSpeed  moveSpeed (chase)  was
-//   Wolf           1.4          5.0                2.8
-//   DireWolf       1.6          5.6                3.2
-//   AshenProwler   1.7          5.8                3.4
-//   GraveHowler    1.8          6.0                3.6
+//   enemy          patrolSpeed  moveSpeed (chase)  attackIntervalSeconds
+//   Wolf           1.0          3.0                1.8
+//   DireWolf       1.1          3.3                1.6
+//   AshenProwler   1.2          3.5                1.5
+//   GraveHowler    1.3          3.8                1.4
 //
-// GraveHowler is 6.0 and deliberately not higher: with no stamina system an enemy that strictly outruns
-// sprint on open ground is an unescapable trap, while one that exactly matches sprint holds its distance
-// forever without ever closing - the same dread, still beatable with terrain and cubes. The old 2.8-3.6
-// band was the actual unrealism: every enemy was slower than the player's single speed, so none of them
-// could ever close.
+// The chase speeds rise with the tier so a higher tier closes faster, but none reaches the sprint speed:
+// with no stamina system an enemy that outruns sprint on open ground is an unescapable trap. The
+// relation to the player's speeds is pinned by a test, not restated here.
 public sealed record EnemyTemplate(
     string Key,
     string DisplayName,
