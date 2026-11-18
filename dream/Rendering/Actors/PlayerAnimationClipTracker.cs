@@ -90,6 +90,14 @@ public sealed class PlayerAnimationClipTracker
                         instance.PlayLoop(PlayerAnimationStateMachine.IdleClip);
                     }
 
+                    // The other direction of the Hold compensation above, for the same reason:
+                    // the attack clips animate the torso, head and arms and no leg or root node
+                    // at all, so Pose.Apply would leave the legs frozen wherever the gait last
+                    // sampled them - up to 42 degrees off neutral on the sprint cycle - for the
+                    // whole swing, while the body keeps sliding. Back to the authored rest stance
+                    // first; the nodes the one-shot DOES animate are written by the Update that
+                    // follows, so a clip with a full channel set is unaffected.
+                    instance.Pose.ResetToRest();
                     instance.PlayOneShot(clip);
                 }
 
