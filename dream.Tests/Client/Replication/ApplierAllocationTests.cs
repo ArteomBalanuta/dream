@@ -160,6 +160,57 @@ public class ApplierAllocationTests
         _output.WriteLine($"ApplySnapshotToRuntime (world): {bytes} B per call; Map updates alone: {mapBytes} B");
     }
 
+    [Fact]
+    public void ClientSnapshotCastApplier_PeerCasts_AllocatesNoMoreThanTheHubPublishes()
+    {
+        SceneEventHub hub = new();
+        int seen = 0;
+        hub.Subscribe<Dream.Rendering.Effects.SkillCastEvent>(_ => seen++);
+        CastEventDelta[] casts =
+        [
+            new(9, Dream.Simulation.Content.SkillKind.MeleeArc, new Vector3(4f, 1f, 2f), new Vector3(3f, 0f, 4f), 3.5f),
+            new(7, Dream.Simulation.Content.SkillKind.RangedBolt, new Vector3(4f, 1f, 2f), Vector3.UnitX, 18f),
+            new(10, Dream.Simulation.Content.SkillKind.SelfHeal, new Vector3(4f, 1f, 2f), Vector3.Zero, 0f),
+            new(10, (Dream.Simulation.Content.SkillKind)99, new Vector3(4f, 1f, 2f), Vector3.Zero, 0f)
+        ];
+        ServerSnapshotEnvelope snapshot = new(
+            5,
+            new Dictionary<string, ulong>(),
+            Array.Empty<ActorSnapshot>(),
+            PlayerInteractionMode.Building,
+            null,
+            Array.Empty<WorldMutationDelta>(),
+            Array.Empty<DamageEventDelta>(),
+            CastEvents: casts);
+
+        // SceneEventHub.Publish (Simulation, not owned here) copies its handler list on every publish, so
+        // the two events that draw cost the hub's own 32 B each. Measure exactly those two publishes
+        // directly so the applier is held to adding nothing on top of them, as the damage path is.
+        Dream.Rendering.Effects.SkillCastEvent sample = new(Dream.Rendering.Effects.SkillFxKind.Arc, Vector3.One, Vector3.UnitX, 3.5f);
+        long hubBytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        {
+            hub.Publish(sample);
+            hub.Publish(sample);
+        });
+
+        long bytes = AllocationAssert.AtMost(hubBytes, () => ClientSnapshotCastApplier.Apply(hub, snapshot, 7));
+
+        // The paths that publish nothing are held to exactly 0: absent list, the caster's own cast, a bad event.
+        ServerSnapshotEnvelope absent = snapshot with { CastEvents = null };
+        ServerSnapshotEnvelope ownAndMalformed = snapshot with
+        {
+            CastEvents = [casts[1], casts[3]]
+        };
+        long nothing = AllocationAssert.AtMost(0, () =>
+        {
+            ClientSnapshotCastApplier.Apply(hub, absent, 7);
+            ClientSnapshotCastApplier.Apply(hub, ownAndMalformed, 7);
+        });
+
+        _output.WriteLine($"ClientSnapshotCastApplier.Apply: {bytes} B per call; hub publishes alone: {hubBytes} B; no-publish paths: {nothing} B");
+        Assert.True(seen > 0);
+    }
+
     private static WorldMutationDelta[] CreateMoves(float offset)
     {
         return
