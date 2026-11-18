@@ -39,15 +39,16 @@ public sealed class PersistModerationTests
         return await WireLoopbackServer.StartAsync(host);
     }
 
-    private static void Flush(WireLoopbackServer server) =>
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    private static Task FlushAsync(WireLoopbackServer server) =>
+        PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
 
     // The operator's step: the account exists once its character has joined, then the role is set.
     private static async Task GrantAdminAsync(WireLoopbackServer server, MigrationTestDatabase db, string session)
     {
         WireLoopbackClient first = await server.ConnectAndJoinAsync(session);
         await server.DisconnectAsync(first);
-        Flush(server);
+        await FlushAsync(server);
         Assert.True(new SqliteAccountRepository(db.Schema).TrySetRole(NameOf(session), 1));
     }
 
@@ -119,7 +120,7 @@ public sealed class PersistModerationTests
         await using WireLoopbackClient bystander = await server.ConnectAndJoinAsync(Bystander);
         Assert.True(server.Host.TryGetConnectionContext(server.ConnectionFor(admin).ConnectionId, out ServerRoutingContext? adminContext));
         Assert.True(adminContext!.IsAdmin);
-        Flush(server);
+        await FlushAsync(server);
 
         // The admin's own account is muted on the row; the standing re-read brings it to the connection.
         Assert.True(new SqliteAccountRepository(db.Schema).TrySetMute(NameOf(Admin), DateTime.UtcNow.AddMinutes(30)));
@@ -144,7 +145,7 @@ public sealed class PersistModerationTests
         await GrantAdminAsync(server, db, Admin);
         await using WireLoopbackClient admin = await server.ConnectAndJoinAsync(Admin);
         await using WireLoopbackClient bystander = await server.ConnectAndJoinAsync(Bystander);
-        Flush(server);
+        await FlushAsync(server);
 
         const string Expected = "[Announcement] the gate is clear";
         await CommandAsync(admin, "/announce the gate is clear");
@@ -171,7 +172,7 @@ public sealed class PersistModerationTests
         await UntilAsync(server, () => RejectionOf(bee) != null, "the ban closing the connection");
         await UntilAsync(server, () => SystemLines(admin).Contains($"Banned {NameOf(Bee)}."), "the ban result");
         await bee.DisposeAsync();
-        Flush(server);
+        await FlushAsync(server);
 
         // The operator's way out, from another process, while the server runs.
         StringWriter output = new();
@@ -181,7 +182,7 @@ public sealed class PersistModerationTests
         // One standing re-read is enough: it is queued behind every write this host made, so the row it
         // reads is newer than the recent-sanction memory, which is dropped.
         await SettleAsync(server, 8);
-        Flush(server);
+        await FlushAsync(server);
         await SettleAsync(server, 8);
 
         await using WireLoopbackClient back = await server.ConnectAndJoinAsync(Bee);
@@ -197,7 +198,7 @@ public sealed class PersistModerationTests
         await using WireLoopbackServer server = await StartAsync(db);
         WireLoopbackClient sleeper = await server.ConnectAndJoinAsync(Bee);
         await server.DisconnectAsync(sleeper);
-        Flush(server);
+        await FlushAsync(server);
 
         Assert.True(new SqliteAccountRepository(db.Schema)
             .TrySetBan(NameOf(Bee), DateTime.UtcNow.AddMinutes(30), "banned elsewhere"));

@@ -145,10 +145,11 @@ internal static class M4AKit
 
     public static long Count(MigrationTestDatabase db, string sql) => Convert.ToInt64(db.Scalar(sql));
 
-    public static void Flush(WireLoopbackServer server)
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    public static async Task FlushAsync(WireLoopbackServer server)
     {
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
-        Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
+        await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
+        Assert.Equal(0, server.Runtime.PersistenceWrites!.FailedWrites);
     }
 }
 
@@ -227,7 +228,7 @@ public sealed class ConsumableLoopbackTests
         HashSet<long> starter = M4AKit.StarterIds(a);
         await M4AKit.BuyAsync(server, a, HealthPotion, a);
         InventorySlotSnapshot potion = M4AKit.BagKind(a, HealthPotion, starter).Single();
-        M4AKit.Flush(server);
+        await M4AKit.FlushAsync(server);
 
         PlayerCombatant combatant = M4AKit.Combatant(server, SessionA);
         int max = combatant.Health.MaxHealth;
@@ -237,7 +238,7 @@ public sealed class ConsumableLoopbackTests
         db.ExecuteScript("CREATE TRIGGER fail_wallet BEFORE UPDATE ON player_wallets BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
         long failedBefore = server.Runtime.PersistenceWrites!.FailedWrites;
         Assert.True(server.Runtime.InventoryService.TryAddGold(M4AKit.KeyOf(SessionA), 5));
-        Assert.True(server.Runtime.PersistenceWrites.Flush(TimeSpan.FromSeconds(30)));
+        await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
         Assert.Equal(failedBefore + 1, server.Runtime.PersistenceWrites.FailedWrites);
 
         ServerActionMessage used = await M4AKit.ActAsync(server, a, new ItemUseIntent(potion.SlotIndex, potion.Item!.Value.ItemInstanceId), a);

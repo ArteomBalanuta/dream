@@ -175,7 +175,7 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
             // No legacy camp exists on this world: not in the content for 100 m, and no enemy near an old home.
             Assert.DoesNotContain(CampsNow(runtime), camp => HomelandCampKeys.Contains(camp.Key));
             Assert.Contains(runtime.Enemies.ActiveActors, enemy => enemy.EnemyKind == "GraveHowler");
-            M6EndToEndLoopbackTests.Flush(server);
+            await M6EndToEndLoopbackTests.FlushAsync(server);
             Assert.Equal(0, Convert.ToInt64(db.Scalar($"SELECT COUNT(*) FROM enemy_instances WHERE camp_key IN ({HomelandCampKeySql})")));
             Assert.True(Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM enemy_instances WHERE camp_key LIKE 'frontier-%'")) >= enemiesBefore);
 
@@ -220,10 +220,10 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
             Assert.Equal(goldBefore + killGold + quest.Rewards.Gold, runtime.InventoryService.GoldOf(key));
             Assert.True(combatant.Level > before.Level || combatant.Experience > before.Experience);
 
-            M6EndToEndLoopbackTests.Flush(server);
+            await M6EndToEndLoopbackTests.FlushAsync(server);
             Assert.Equal(1, Convert.ToInt64(db.Scalar($"SELECT COUNT(*) FROM player_quests WHERE player_name = '{key}' AND quest_key = '{TierQuest}' AND state = 2")));
             await a.LeaveAsync();
-            M6EndToEndLoopbackTests.Flush(server);
+            await M6EndToEndLoopbackTests.FlushAsync(server);
         }
 
         // A restart opens the stored 100 m world and puts every camp member back at its camp's absolute home.
@@ -251,7 +251,7 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
         await using (WireLoopbackServer first = await StartAsync(db, new ServerStartOptions(null)))
         {
             Assert.Equal(56, first.Runtime.Map.Width);
-            M6EndToEndLoopbackTests.Flush(first);
+            await M6EndToEndLoopbackTests.FlushAsync(first);
         }
 
         SqlitePools.Release(db.Schema);
@@ -268,7 +268,7 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
         Assert.Equal(expected.Sum(camp => camp.Count), server.Runtime.Enemies.ActiveActors.Count(enemy => enemy.IsActive));
         Assert.DoesNotContain(server.Runtime.Enemies.ActiveActors, enemy => enemy.EnemyKind is Prowler or "GraveHowler");
 
-        M6EndToEndLoopbackTests.Flush(server);
+        await M6EndToEndLoopbackTests.FlushAsync(server);
         Assert.Equal(0, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM enemy_instances WHERE camp_key LIKE 'frontier-%'")));
 
         await M6EndToEndLoopbackTests.PlaceAsync(server, [a], a, M6EndToEndLoopbackTests.BesideTheWarden(a));
@@ -281,7 +281,7 @@ public sealed class FrontierWorldLoopbackTests(ITestOutputHelper output)
             server, clients, a, M6EndToEndLoopbackTests.Click(a, new QuestAcceptIntent(M6EndToEndLoopbackTests.WardenActorId, TierQuest))), "quest is not available");
         M6EndToEndLoopbackTests.AssertRejected(await M6EndToEndLoopbackTests.ResultAsync(
             server, clients, a, M6EndToEndLoopbackTests.Click(a, new QuestTurnInIntent(M6EndToEndLoopbackTests.WardenActorId, TierQuest))), "quest is not available");
-        M6EndToEndLoopbackTests.Flush(server);
+        await M6EndToEndLoopbackTests.FlushAsync(server);
         Assert.Equal(0, Convert.ToInt64(db.Scalar($"SELECT COUNT(*) FROM player_quests WHERE quest_key = '{TierQuest}'")));
         await a.LeaveAsync();
     }

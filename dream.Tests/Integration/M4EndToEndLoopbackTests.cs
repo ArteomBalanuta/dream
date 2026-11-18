@@ -236,10 +236,11 @@ public sealed class M4EndToEndLoopbackTests
         Assert.True(who.Applied.OfType<ServerPlayerVitals>().Count() >= minimumCount, $"{who.SessionId} never got vitals");
     }
 
-    private static void Flush(WireLoopbackServer server)
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    private static async Task FlushAsync(WireLoopbackServer server)
     {
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
-        Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
+        await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
+        Assert.Equal(0, server.Runtime.PersistenceWrites!.FailedWrites);
     }
 
     // =====================================================================================
@@ -543,9 +544,9 @@ public sealed class M4EndToEndLoopbackTests
             manaAtTheEnd = Target(server, SessionA).Combatant.CurrentMana;
             Assert.True(manaAtTheEnd < Target(server, SessionA).Combatant.MaxMana);
 
-            Flush(server);
+            await FlushAsync(server);
             await a.LeaveAsync();
-            Flush(server);
+            await FlushAsync(server);
         }
 
         SqlitePools.Release(db.Schema);

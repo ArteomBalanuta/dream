@@ -209,8 +209,8 @@ public sealed class WalletVendorLoopbackTests
             // A worn or invented item cannot be sold either.
             AssertRejected(await ActAsync(server, client, new VendorSellIntent(npcId, 100, 1)), "slot index");
 
-            Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
-            Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
+            await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
+            Assert.Equal(0, server.Runtime.PersistenceWrites!.FailedWrites);
             goldAtTheEnd = afterSell;
             Assert.Equal(goldAtTheEnd, WalletRow(db));
             await client.LeaveAsync();
@@ -236,18 +236,18 @@ public sealed class WalletVendorLoopbackTests
             await using HeadlessPlayScene client = await HeadlessPlayScene.JoinAsync(server, Session);
             await StepAsync(server, client);
             Assert.True(server.Runtime.InventoryService.TryAddGold(CharacterKey, 100));
-            Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
+            await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
             Assert.Equal(100L, WalletRow(db));
             goldInRows = WalletRow(db);
             torchRows = (int)ItemRows(db, Torch);
-            long failedBefore = server.Runtime.PersistenceWrites.FailedWrites;
+            long failedBefore = server.Runtime.PersistenceWrites!.FailedWrites;
 
             // Every wallet update now aborts, so the buy's one closure rolls back as a whole.
             db.ExecuteScript("CREATE TRIGGER fail_wallet BEFORE UPDATE ON player_wallets BEGIN SELECT RAISE(ABORT, 'simulated'); END;");
             int torches = Count(client.Inventory!.Value, Torch);
             ServerActionMessage bought = await ActAsync(server, client, new VendorBuyIntent(ReplicatedActorIdRanges.FirstNpcId, Torch));
             Assert.True(bought.Result.Accepted, bought.Result.Rejection?.Reason);
-            Assert.True(server.Runtime.PersistenceWrites.Flush(TimeSpan.FromSeconds(30)));
+            await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
             Assert.Equal(failedBefore + 1, server.Runtime.PersistenceWrites.FailedWrites);
 
             // The scene saw the item and the debit together (the session keeps its inventory) ...

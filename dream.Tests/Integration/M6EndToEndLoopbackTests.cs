@@ -252,10 +252,11 @@ public sealed class M6EndToEndLoopbackTests
         throw new Xunit.Sdk.XunitException($"no {kind} could be killed");
     }
 
-    internal static void Flush(WireLoopbackServer server)
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    internal static async Task FlushAsync(WireLoopbackServer server)
     {
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
-        Assert.Equal(0, server.Runtime.PersistenceWrites.FailedWrites);
+        await PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
+        Assert.Equal(0, server.Runtime.PersistenceWrites!.FailedWrites);
     }
 
     private static long Count(MigrationTestDatabase db, string sql) => Convert.ToInt64(db.Scalar(sql));
@@ -412,7 +413,7 @@ public sealed class M6EndToEndLoopbackTests
             Assert.Equal(after, (combatantA.Level, combatantA.Experience));
 
             // ---- what the server holds ----
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal(1, Count(db, $"SELECT COUNT(*) FROM player_quests WHERE player_name = '{keyA}' AND quest_key = '{MixedQuest}' AND state = 2"));
             Assert.Equal(1, Count(db, $"SELECT COUNT(*) FROM player_quests WHERE player_name = '{keyB}' AND quest_key = '{WolfQuest}' AND state = 1"));
             Assert.Equal(2, Count(db, "SELECT COUNT(*) FROM player_quests"));
@@ -423,7 +424,7 @@ public sealed class M6EndToEndLoopbackTests
 
             await a.LeaveAsync();
             await b.LeaveAsync();
-            Flush(server);
+            await FlushAsync(server);
         }
 
         SqlitePools.Release(db.Schema);
@@ -459,7 +460,7 @@ public sealed class M6EndToEndLoopbackTests
             AssertRejected(await ResultAsync(again, both, a, Click(a, new QuestAcceptIntent(WardenActorId, MixedQuest))), "quest is not available");
             Assert.Equal(goldAtTheEnd, runtime.InventoryService.GoldOf(keyA));
             Assert.Equal(manaAtTheEnd, runtime.InventoryService.CountBagItems(keyA, ManaPotion));
-            Flush(again);
+            await FlushAsync(again);
             Assert.Equal(2, Count(db, "SELECT COUNT(*) FROM player_quests"));
 
             await a.LeaveAsync();

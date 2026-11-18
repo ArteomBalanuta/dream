@@ -42,14 +42,15 @@ public sealed class AdminAccountSanctionLoopbackTests
         return await WireLoopbackServer.StartAsync(host);
     }
 
-    private static void Flush(WireLoopbackServer server) =>
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    private static Task FlushAsync(WireLoopbackServer server) =>
+        PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
 
     private static async Task GrantAdminAsync(WireLoopbackServer server, MigrationTestDatabase db, string session)
     {
         WireLoopbackClient first = await server.ConnectAndJoinAsync(session);
         await server.DisconnectAsync(first);
-        Flush(server);
+        await FlushAsync(server);
         Assert.True(new SqliteAccountRepository(db.Schema).TrySetRole(NameOf(session), 1));
     }
 
@@ -58,7 +59,7 @@ public sealed class AdminAccountSanctionLoopbackTests
     {
         WireLoopbackClient client = await server.ConnectAndJoinAsync(alt, asName: NameOf(alt), withTokenOf: NameOf(ofMain));
         await server.DisconnectAsync(client);
-        Flush(server);
+        await FlushAsync(server);
     }
 
     // A client the harness does not track, for a player the server is going to close.
@@ -205,7 +206,7 @@ public sealed class AdminAccountSanctionLoopbackTests
         await CommandAsync(other, $"/ban \"{NameOf("m8a-adm2")}\" 5");
         await UntilAsync(server, () => SystemLines(other).Contains("You cannot do that to yourself."), "the self refusal");
 
-        Flush(server);
+        await FlushAsync(server);
         Assert.Equal(0L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE banned_until_utc IS NOT NULL OR muted_until_utc IS NOT NULL;")));
     }
 
@@ -224,7 +225,7 @@ public sealed class AdminAccountSanctionLoopbackTests
         Assert.True(adminContext!.IsAdmin);
 
         // The joined accounts' rows are written by the persistence queue; wait for them to exist.
-        Flush(server);
+        await FlushAsync(server);
         // Another process changes the database: the admin is demoted, one player banned, another muted.
         Assert.True(accounts.TrySetRole(NameOf(Admin), 0));
         Assert.True(accounts.TrySetBan(NameOf("m8a-bee"), DateTime.UtcNow.AddMinutes(30), "banned elsewhere"));

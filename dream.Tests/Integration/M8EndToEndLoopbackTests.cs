@@ -44,15 +44,16 @@ public sealed class M8EndToEndLoopbackTests
         return await WireLoopbackServer.StartAsync(host);
     }
 
-    private static void Flush(WireLoopbackServer server) =>
-        Assert.True(server.Runtime.PersistenceWrites!.Flush(TimeSpan.FromSeconds(30)));
+    // Awaited, not blocked: see Dream.Tests.Support.PersistenceFlush.
+    private static Task FlushAsync(WireLoopbackServer server) =>
+        PersistenceFlush.AwaitAsync(server.Runtime.PersistenceWrites);
 
     // The operator's step: the account exists once its character has joined, then the role is set.
     private static async Task GrantAdminAsync(WireLoopbackServer server, MigrationTestDatabase db, string session)
     {
         WireLoopbackClient first = await server.ConnectAndJoinAsync(session);
         await server.DisconnectAsync(first);
-        Flush(server);
+        await FlushAsync(server);
         Assert.True(new SqliteAccountRepository(db.Schema).TrySetRole(NameOf(session), 1));
     }
 
@@ -157,7 +158,7 @@ public sealed class M8EndToEndLoopbackTests
         Assert.Equal(0, context.Standing.Role);
 
         // The account row is written by the persistence queue after the join; wait for it as GrantAdminAsync does.
-        Flush(server);
+        await FlushAsync(server);
         Assert.True(new SqliteAccountRepository(db.Schema).TrySetRole(NameOf(Bee), 1));
         await CommandAsync(player, "/announce still a player until I rejoin");
         await UntilAsync(server, () => SystemLines(player).Contains(DedicatedServerHost.PermissionDeniedText), "the refusal");
@@ -226,7 +227,7 @@ public sealed class M8EndToEndLoopbackTests
             // The mute reached the account row, and it is Bee's account that carries it - not the
             // admin's, and not some second row. The persistence queue writes that row
             // asynchronously, so wait for the write, as the sibling admin tests do.
-            Flush(server);
+            await FlushAsync(server);
             Assert.Equal(1L, Convert.ToInt64(db.Scalar("SELECT COUNT(*) FROM accounts WHERE muted_until_utc IS NOT NULL;")));
             Assert.Equal(
                 1L,
@@ -343,7 +344,7 @@ public sealed class M8EndToEndLoopbackTests
             Assert.Contains("banned", RejectionOf(bee)!.Reason, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("spamming links", RejectionOf(bee)!.Reason, StringComparison.Ordinal);
             await UntilAsync(server, () => SystemLines(admin).Contains($"Banned {NameOf(Bee)}."), "the ban result");
-            Flush(server);
+            await FlushAsync(server);
 
             JoinRejectedMessage refused = await server.ConnectAndGetJoinRejectionAsync(Bee, NameOf(Bee), TokenOf(Bee));
             Assert.StartsWith(JoinRejectionReasons.Banned, refused.Reason, StringComparison.Ordinal);
@@ -381,13 +382,13 @@ public sealed class M8EndToEndLoopbackTests
         await using WireLoopbackClient admin = await server.ConnectAndJoinAsync(Admin);
         WireLoopbackClient sleeper = await server.ConnectAndJoinAsync("m8-sleeper");
         await server.DisconnectAsync(sleeper);
-        Flush(server);
+        await FlushAsync(server);
 
         await CommandAsync(admin, $"/ban \"{NameOf("m8-sleeper")}\" griefing the castle");
         await UntilAsync(server, () => SystemLines(admin).Contains($"Banned {NameOf("m8-sleeper")}."), "the ban result");
         await CommandAsync(admin, "/ban \"Nobody At All\" 5");
         await UntilAsync(server, () => SystemLines(admin).Contains("No account owns a character named 'Nobody At All'."), "the unknown-name answer");
-        Flush(server);
+        await FlushAsync(server);
 
         JoinRejectedMessage refused = await server.ConnectAndGetJoinRejectionAsync("m8-sleeper", NameOf("m8-sleeper"), TokenOf("m8-sleeper"));
         Assert.Contains("griefing the castle", refused.Reason, StringComparison.Ordinal);
@@ -396,7 +397,7 @@ public sealed class M8EndToEndLoopbackTests
         // /unban from chat lifts it for an offline character too.
         await CommandAsync(admin, $"/unban \"{NameOf("m8-sleeper")}\"");
         await UntilAsync(server, () => SystemLines(admin).Contains($"Unbanned {NameOf("m8-sleeper")}."), "the unban result");
-        Flush(server);
+        await FlushAsync(server);
         await using WireLoopbackClient back = await server.ConnectAndJoinAsync("m8-sleeper");
         Assert.Null(RejectionOf(back));
     }
@@ -409,7 +410,7 @@ public sealed class M8EndToEndLoopbackTests
         await GrantAdminAsync(server, db, Admin);
         WireLoopbackClient first = await server.ConnectAndJoinAsync(Bee);
         await server.DisconnectAsync(first);
-        Flush(server);
+        await FlushAsync(server);
 
         SqliteAccountRepository accounts = new(db.Schema);
         Assert.True(accounts.TrySetBan(NameOf(Bee), DateTime.UtcNow.AddMinutes(-1), "yesterday's news"));

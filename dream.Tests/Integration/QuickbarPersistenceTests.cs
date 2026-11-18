@@ -59,7 +59,7 @@ public sealed class QuickbarPersistenceTests
 
             await a.LeaveAsync();
             await b.LeaveAsync();
-            M4AKit.Flush(server);
+            await M4AKit.FlushAsync(server);
             Assert.Equal(6, M4AKit.Count(db, $"SELECT COUNT(*) FROM player_quickbar_slots WHERE player_name = '{keyA}'"));
             Assert.Equal(0, M4AKit.Count(db, $"SELECT COUNT(*) FROM player_quickbar_slots WHERE player_name = '{M4AKit.KeyOf(SessionB)}'"));
         }
@@ -104,7 +104,7 @@ public sealed class QuickbarPersistenceTests
         }
 
         Assert.Null(a.Inventory!.Value.Quickbar);
-        M4AKit.Flush(server);
+        await M4AKit.FlushAsync(server);
         Assert.Equal(0, M4AKit.Count(db, "SELECT COUNT(*) FROM player_quickbar_slots"));
 
         // Clear every slot: the all-empty bar is stored and is not replaced by the default.
