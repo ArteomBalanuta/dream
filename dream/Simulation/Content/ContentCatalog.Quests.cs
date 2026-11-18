@@ -150,7 +150,7 @@ public sealed partial class ContentCatalog
             List<QuestObjective> objectives = ParseQuestObjectives($"{path}.objectives", quest["objectives"], items, enemies);
             QuestRewards rewards = ParseQuestRewards($"{path}.rewards", quest["rewards"], items);
             string title = ReadName(QuestsFileName, $"{path}.title", quest["title"]);
-            string description = ReadText(QuestsFileName, $"{path}.description", quest["description"], MaxDescriptionLength);
+            string description = ReadText(QuestsFileName, $"{path}.description", quest["description"], MaxPanelDescriptionLength);
             int minWorldSize = 0;
             if (quest.TryGetValue("minWorldSize", out JsonElement minElement))
             {

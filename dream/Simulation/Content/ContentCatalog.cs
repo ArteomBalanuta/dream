@@ -415,7 +415,7 @@ public sealed partial class ContentCatalog
             optional: ["rolls", "footprint", "sellPrice", "use"]);
         string key = ReadKey(ItemsFileName, $"{path}.key", properties["key"]);
         string displayName = ReadName(ItemsFileName, $"{path}.displayName", properties["displayName"]);
-        string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxDescriptionLength);
+        string description = ReadText(ItemsFileName, $"{path}.description", properties["description"], MaxPanelDescriptionLength);
         string visualId = ReadVisualId(ItemsFileName, $"{path}.visualId", properties["visualId"]);
 
         List<string> detailLines = [];
@@ -1564,8 +1564,18 @@ public sealed partial class ContentCatalog
     public const int MaxDisplayNameLength = 64;
     public const int MaxVisualIdLength = 64;
     public const int MaxDescriptionLength = 512;
+
+    // A description the panels actually draw (an item tooltip, a quest's dialogue box) is cut to this
+    // many characters by the client, so authoring more is text no player ever sees and nothing says so
+    // at load (BH-CONTENT-5). It matches ItemOverlays' and QuestHudState's text cap, which
+    // ContentPanelTextCapTests pins; the NPC greeting cap is already the same number. A skill
+    // description is never drawn, so it keeps MaxDescriptionLength.
+    public const int MaxPanelDescriptionLength = 400;
     public const int MaxDetailLineLength = 256;
-    public const int MaxDetailLines = 16;
+
+    // The item tooltip draws this many detail lines and then stops (ItemOverlays.MaxDetailLines), so a
+    // ninth authored line is unreachable (BH-CONTENT-5). ContentPanelTextCapTests pins the two.
+    public const int MaxDetailLines = 8;
 
     // An enemy that cannot move at all (0, -0.0) or moves a hair per second is a content mistake.
     public const float MinMoveSpeed = 0.01f;
