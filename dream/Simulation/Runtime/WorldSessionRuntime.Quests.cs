@@ -200,11 +200,25 @@ public sealed partial class WorldSessionRuntime
             }
         }
 
+        // BH-DEATH-1: the list above dedupes by SESSION, but the credit below is by CHARACTER key - the
+        // key RecordKill's own records are held under (PlayerInventoryService._questsByPlayer, ordinal).
+        // Two live seats of one character (a returning session can be seated beside a second session that
+        // took its name while it was away) therefore counted one death twice. Dedupe on the key that is
+        // actually credited, so one character takes at most one kill from one death however many seats it
+        // holds. Ordinal and in contributor order, so the credit stays deterministic.
+        List<string> creditedKeys = [];
         foreach (PlayerSessionId session in credited)
         {
             if (TryResolveAuthoritativePlayerTarget(session, out ConnectedPlayer? who, out _) && who != null)
             {
-                _inventory.RecordKill(who.CharacterKey.Value, EnemyContent, enemyKind);
+                string key = who.CharacterKey.Value;
+                if (creditedKeys.Contains(key, StringComparer.Ordinal))
+                {
+                    continue;
+                }
+
+                creditedKeys.Add(key);
+                _inventory.RecordKill(key, EnemyContent, enemyKind);
             }
         }
     }
