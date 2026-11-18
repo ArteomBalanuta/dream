@@ -29,9 +29,15 @@ public sealed class SkillCooldownRejoinTests
         return player!;
     }
 
+    // A mend cast. The caster is nicked first because a SelfHeal that would restore nothing is refused
+    // (BH-SKILL-1) and these tests are about the cooldown, not about the heal. The cooldown gate runs
+    // before the heal gate, so a cast refused for being on cooldown is still refused for that reason.
     private static AuthoritativeActionResult Cast(WorldSessionRuntime runtime, PlayerSessionId session, ulong sequence)
-        => runtime.ProcessAuthoritativeAction(
+    {
+        WaveIRuntimeKit.Target(runtime, session.Value).Combatant.Health.ApplyDamage(1);
+        return runtime.ProcessAuthoritativeAction(
             new PlayerActionMessage(session, sequence, new SkillUseIntent(Mend)));
+    }
 
     private static bool MendReady(WorldSessionRuntime runtime, PlayerSessionId session)
         => Seat(runtime, session).Cooldowns.IsReady(Mend, runtime.CurrentServerTick);

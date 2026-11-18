@@ -49,6 +49,17 @@ public sealed partial class WorldSessionRuntime
             return CreateRejectedActionResult(message, "Skill rejected: on cooldown.");
         }
 
+        // BH-SKILL-1: a cast that cannot do anything its kind promises must not take the mana or the
+        // cooldown. A SelfHeal at full health restored 0 and still charged both, so a misclick on the
+        // Mend tile cost 15 mana and locked the only heal for five seconds -- exactly when the player
+        // then took a hit. The item path already encodes this invariant ("nothing to restore",
+        // Consumables.cs), and the boundary is the same one it uses: only a cast that would restore
+        // strictly nothing is refused, so a partial overheal is still a real heal and still spends.
+        if (isHeal && context.Combatant.Health.CurrentHealth >= context.Combatant.Health.MaxHealth)
+        {
+            return CreateRejectedActionResult(message, "Skill rejected: already at full health.");
+        }
+
         if (!context.Combatant.TrySpendMana(skill.ManaCost))
         {
             return CreateRejectedActionResult(message, "Skill rejected: not enough mana.");
