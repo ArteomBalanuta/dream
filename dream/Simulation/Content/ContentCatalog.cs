@@ -1272,7 +1272,7 @@ public sealed partial class ContentCatalog
         StringBuilder text = new();
         // Every free-text field is length-prefixed ("5:Stone"), so a '|' or a newline inside a value
         // cannot shift into the next field and make two different catalogs hash alike.
-        text.Append("items.v5;kit=").Append(items.StarterKitVersion.ToString(c))
+        text.Append("items.v6;kit=").Append(items.StarterKitVersion.ToString(c))
             .Append(";unrecorded=").Append(items.UnrecordedStarterKitVersion.ToString(c)).Append('\n');
         foreach (StarterKitEntry entry in items.StarterKit)
         {
@@ -1318,8 +1318,12 @@ public sealed partial class ContentCatalog
 
             if (item.Use != null)
             {
+                // The cooldown group is simulation-visible - it decides whether a use is accepted
+                // (Consumables.IsReady) - so two catalogs whose items.json differ only in the cooldown
+                // pool must not hash alike (BH-CONTENT-3).
                 text.Append("use|").Append(item.Use.RestoreHealth.ToString(c)).Append('|')
-                    .Append(item.Use.RestoreMana.ToString(c)).Append('|').Append(item.Use.CooldownTicks.ToString(c)).Append('\n');
+                    .Append(item.Use.RestoreMana.ToString(c)).Append('|').Append(item.Use.CooldownTicks.ToString(c)).Append('|');
+                AppendField(text, item.Use.CooldownGroup ?? "-").Append('\n');
             }
 
             if (item.Rolls != null)
