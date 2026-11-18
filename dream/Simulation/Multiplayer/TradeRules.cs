@@ -26,6 +26,12 @@ public static class TradeRules
     // so the simulation stays deterministic.
     public const int RequestCooldownTicks = 2 * SimulationClock.AuthoritativeTicksPerSecond;
 
+    // The refresh cadence of ServerTradeState while a trade is live, in ticks (the party's shape and its
+    // number, PartyRules.RefreshIntervalTicks). A trade's state is otherwise pushed once per change and
+    // never repeated, so a client that drops one push - its settings overlay is up - keeps a stale view of
+    // a live trade, or never learns a request arrived at all. Half a second is the worst staleness now.
+    public const int RefreshIntervalTicks = 32;
+
     public static bool InRange(Vector3 a, Vector3 b)
     {
         float dx = a.X - b.X;

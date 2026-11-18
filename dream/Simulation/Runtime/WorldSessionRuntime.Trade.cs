@@ -13,7 +13,8 @@ namespace Dream.Simulation.Runtime;
 // budget. Any change cancels: a difference in either inventory's fingerprint (an item moved, gold looted,
 // anything that touched the bag or the wallet), an offer edit after a lock, walking out of range, death,
 // a detach, a target that is gone, 120 s. The state goes to both sides as ServerTradeState through the
-// session queue, once per tick while it changes and at once when the trade ends.
+// session queue, once per tick while it changes, every TradeRules.RefreshIntervalTicks ticks while it
+// lives (so a dropped push self-corrects) and at once when the trade ends.
 public sealed partial class WorldSessionRuntime
 {
     private readonly Dictionary<string, TradeSession> _tradeOf = new(CharacterNames.Comparer);
@@ -405,7 +406,7 @@ public sealed partial class WorldSessionRuntime
 
     // Cancels trades that went out of range, timed out, lost a partner or saw an inventory change, and
     // sends the state of the ones that changed. A steady tick with no trade reads a count.
-    private void StepTrades(ulong tick)
+    internal void StepTrades(ulong tick)
     {
         for (int i = _trades.Count - 1; i >= 0; i--)
         {
@@ -457,7 +458,11 @@ public sealed partial class WorldSessionRuntime
                 continue;
             }
 
-            if (session.Dirty)
+            // On change, and every TradeRules.RefreshIntervalTicks ticks while the trade lives. The cadence
+            // is what makes the state eventually consistent on both screens: one push can be dropped by a
+            // client that cannot take it yet (its settings overlay is up), and the authoritative side must
+            // not leave a player in a trade they cannot see. Ticks, so this stays deterministic.
+            if (session.Dirty || tick % (ulong)TradeRules.RefreshIntervalTicks == 0)
             {
                 session.Dirty = false;
                 SendTradeState(session, first, second);
