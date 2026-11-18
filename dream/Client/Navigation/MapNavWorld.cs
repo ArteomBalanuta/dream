@@ -1,10 +1,12 @@
+using Dream.Client.Input;
+using Dream.Simulation.Combat;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
 namespace Dream.Client.Navigation;
 
 // Live view of the map: every query reads the geometry records, nothing is cached.
-public sealed class MapNavWorld(Map map) : INavWorld
+public sealed class MapNavWorld(Map map) : INavWorld, ISightWorld
 {
     private readonly Map _map = map;
 
@@ -32,6 +34,11 @@ public sealed class MapNavWorld(Map map) : INavWorld
             && record.SubdivisionState == null
             && record.Definition.ShapeKind == GeometryShapeKind.SolidCube;
     }
+
+    // The server's own wall test, so the client stops walking exactly where the server would let a
+    // swing through.
+    public bool HasClearLine(OpenTK.Mathematics.Vector3 origin, OpenTK.Mathematics.Vector3 anchor)
+        => !AuthoritativeCombatResolver.IsBlockedByWall(_map, origin, anchor);
 
     private bool InBounds(int x, int y, int z)
         => x >= 0 && y >= 0 && z >= 0 && x < Width && y < Height && z < Depth;

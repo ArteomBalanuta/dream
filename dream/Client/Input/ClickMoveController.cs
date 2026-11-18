@@ -60,6 +60,13 @@ public interface IClickMoveHost
     bool AimOwnsFacing { get; }
 }
 
+// A world that can say whether a straight line is free of walls. Optional: a world without it is
+// treated as open, so only the real map gates attacks on line of sight.
+public interface ISightWorld
+{
+    bool HasClearLine(Vector3 origin, Vector3 anchor);
+}
+
 // The path search and follower behind one seam.
 public interface IClickPathing
 {
@@ -509,7 +516,8 @@ public sealed class ClickMoveController
     // The swing starts at a fraction of it, so the server's reach check still passes after the last step.
     public float AttackReachMetres { get; set; } = WeaponReach.UnarmedMetres;
 
-    // Horizontal body centre to anchor, the measure the server's reach gate uses.
+    // Horizontal body centre to anchor, the measure the server's reach gate uses, plus the server's
+    // wall test from the eye to the anchor.
     private bool InAttackRange()
     {
         if (_goal != ClickGoalKind.Attack || _target is not { IsAlive: true } t)
@@ -520,7 +528,13 @@ public sealed class ClickMoveController
         float dx = t.Anchor.X - _host.BodyCentre.X;
         float dz = t.Anchor.Z - _host.BodyCentre.Z;
         float reach = AttackReachMetres * WeaponReach.ClientApproachFraction;
-        return dx * dx + dz * dz <= reach * reach;
+        if (dx * dx + dz * dz > reach * reach)
+        {
+            return false;
+        }
+
+        // Reach alone is not enough for a long weapon: it would stop behind a wall and swing into it.
+        return _host.World is not ISightWorld sight || sight.HasClearLine(_host.Eye, t.Anchor);
     }
 
     private bool InBuildRange() =>
