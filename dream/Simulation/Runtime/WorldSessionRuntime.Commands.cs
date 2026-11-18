@@ -230,7 +230,8 @@ public sealed partial class WorldSessionRuntime
         // Attacking ends spawn protection, so it cannot be used to fight safely.
         if (message.Payload is CombatUseIntent && context.InteractionMode == PlayerInteractionMode.Combat)
         {
-            context.Player.ProtectedThroughTick = 0;
+            // BH-PVP-1: spent on the character too, so a reconnect cannot hand the window back mid-fight.
+            SpendSpawnProtection(context.Player);
         }
 
         return message.Payload switch

@@ -38,8 +38,9 @@ public sealed partial class WorldSessionRuntime
         // Every join, first or returning, is protected for the same window as a respawn and it ends on the
         // player's first attack. Without it a new player who stands still where they joined was bitten within
         // 9 ticks and killed in about 8.6 s, then looped through respawns (a wolf spawned near the world
-        // spawn). The window is per seat and counted in server ticks; a rejoin gets its own, not the old one.
-        // A repeated join of a seat that is already attached does not start a new window.
+        // spawn). The window is counted in server ticks and belongs to the character, not the seat: a rejoin
+        // resumes what is left of the one it already had and earns a new one only after the reattach
+        // cooldown. A repeated join of a seat that is already attached does not start a new window.
         // The join's opt-in hold is honoured only on a fresh attach that is not a quick re-seat of the same
         // session (a takeover detaches, then attaches fresh): see ConnectedPlayer.LastFreshAttachTick.
         attached.FreshlyAttached = !alreadyAttached
@@ -48,7 +49,10 @@ public sealed partial class WorldSessionRuntime
         if (!alreadyAttached)
         {
             attached.LastFreshAttachTick = Math.Max(1UL, CurrentServerTick);
-            attached.ProtectedThroughTick = CurrentServerTick + PlayerRespawnRules.SpawnProtectionTicks;
+            // BH-PVP-1: the window is the character's, not the seat's. A rejoin resumes what is left of it
+            // (nothing, once an attack spent it) and starts a new one only after the reattach cooldown, so
+            // dropping the connection mid-fight can no longer buy fresh immunity. See ApplyJoinSpawnProtection.
+            ApplyJoinSpawnProtection(attached);
             // M4: cooldowns live on the session and a join starts clean; the owner gets its vitals again.
             attached.Cooldowns.Clear();
             attached.VitalsDirty = true;

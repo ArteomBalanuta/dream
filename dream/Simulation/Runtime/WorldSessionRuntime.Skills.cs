@@ -59,7 +59,8 @@ public sealed partial class WorldSessionRuntime
         if (!isHeal)
         {
             // Attacking ends spawn protection (the CombatUseIntent line in ProcessAction covers only that intent).
-            player.ProtectedThroughTick = 0;
+            // BH-PVP-1: spent on the character too, so a reconnect cannot hand the window back mid-fight.
+            SpendSpawnProtection(player);
         }
 
         return _combatResolver.ProcessSkillUse(
