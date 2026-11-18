@@ -19,6 +19,69 @@ namespace Dream.Tests.Integration;
 
 internal sealed record WireFrame(byte[] Payload, DecodedProtocolMessage Decoded, byte[] PayloadJson);
 
+// The bound on a "wait until the server shows X" loop in the loopback tests.
+//
+// Wall clock on its own is the wrong measure here. The suite runs many of these classes at once,
+// each with its own real server, its own sockets and its own SQLite file, and under that load the
+// process can lose most of its CPU: a loop that IS getting somewhere - the server keeps ticking,
+// frames keep arriving - can still run out of its 30 seconds and fail a test for a bug that is not
+// there. That is measured, not hypothetical: standing up ~10 neighbouring WorldSessionRuntime
+// instances in a neighbouring class failed this family 3 runs out of 3, where 4 runtimes was green.
+// The suite was passing on the margin, not on the correctness.
+//
+// So the bound is in two parts, and neither of them is "be generous and hope":
+//
+//  - A no-progress window (WireLoopbackServer.Timeout, 30 s). The loop fails as soon as the thing
+//    it is watching has not advanced for that long: the server stopped ticking, or no frame
+//    arrived. That is the failure the deadline was written to catch - a wedged host, a tick that
+//    deadlocks, a socket that stops delivering - and CPU starvation cannot fake it, because a
+//    starved server still ticks and a starved socket still delivers, only slower. Every bit of
+//    progress the loop observes pushes this window out again.
+//  - A hard cap on the whole loop (HardTimeout). That catches the other real failure, a condition
+//    that never becomes true while the server ticks on quite happily, and it is what keeps this
+//    from being an unbounded wait: a stuck test still FAILS instead of hanging the suite. It is
+//    reported up to six times slower than a flat 30 s would have reported it; nothing that used to
+//    be caught escapes it.
+internal struct LoopbackDeadline
+{
+    // Six times the no-progress window: far more than any CPU contention this suite has produced,
+    // and still short enough that a genuinely stuck test reports inside a normal run.
+    public static readonly TimeSpan HardTimeout = TimeSpan.FromSeconds(180);
+
+    private readonly DateTime _hardDeadline;
+    private readonly TimeSpan _noProgressWindow;
+    private DateTime _quietSince;
+    private long _lastProgress;
+
+    // progress is any counter that advances while the loop is getting somewhere: the server's tick
+    // number, the client's received-frame count.
+    public LoopbackDeadline(long progress)
+    {
+        _noProgressWindow = WireLoopbackServer.Timeout;
+        DateTime now = DateTime.UtcNow;
+        _hardDeadline = now + HardTimeout;
+        _quietSince = now;
+        _lastProgress = progress;
+    }
+
+    // Fails the test when the loop has stopped getting anywhere: nothing advanced for the
+    // no-progress window, or the hard cap is up. Call it once per iteration, before doing the work.
+    public void AssertAlive(long progress, string what)
+    {
+        DateTime now = DateTime.UtcNow;
+        if (progress != _lastProgress)
+        {
+            _lastProgress = progress;
+            _quietSince = now;
+        }
+
+        Assert.True(
+            now - _quietSince < _noProgressWindow,
+            $"never saw {what}: nothing advanced for {_noProgressWindow.TotalSeconds:0} s, so the server is stuck, not slow.");
+        Assert.True(now < _hardDeadline, $"never saw {what} within {HardTimeout.TotalSeconds:0} s.");
+    }
+}
+
 // The real DedicatedServerService and a given host over loopback TCP, ticked by the test one fixed
 // step at a time instead of by the service's own tick loop. Works with deferred joins (the
 // production authoritative host): a join is applied by the next tick.
@@ -86,9 +149,10 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
             }
         }
 
+        LoopbackDeadline joining = new(Ticks);
         while (!Host.IsConnectionJoined(connection.ConnectionId))
         {
-            Assert.True(DateTime.UtcNow < deadline, $"{sessionId} never joined");
+            joining.AssertAlive(Ticks, $"{sessionId} join");
             await Task.Delay(5);
             // A deferred join is applied (and answered) by the next tick.
             await TickAsync();
@@ -111,11 +175,11 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
         {
             await client.SendAsync(new ClientHelloMessage($"wire-{sessionId}"));
             await client.SendAsync(new ClientJoinRequestMessage(sessionId, displayName, token));
-            DateTime deadline = DateTime.UtcNow + Timeout;
+            LoopbackDeadline answering = new(Ticks);
             JoinRejectedMessage? rejected = null;
             while (rejected == null)
             {
-                Assert.True(DateTime.UtcNow < deadline, $"{sessionId} was never answered");
+                answering.AssertAlive(Ticks, $"an answer for {sessionId}");
                 await Task.Delay(5);
                 await TickAsync();
                 Assert.True(await FlushAllAsync());
@@ -131,6 +195,26 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
     }
 
     public ServerConnection ConnectionFor(WireLoopbackClient client) => _connections[client];
+
+    // The server's tick number as a LoopbackDeadline progress counter: it advances whenever the
+    // server is still running, however slowly, and stops dead when it is not.
+    public long Ticks => unchecked((long)Runtime.CurrentServerTick);
+
+    // Ticks the server and drains its clients until done(), bounded by LoopbackDeadline rather than
+    // by a flat 30 s of wall clock, so a loaded machine cannot fail the wait for something that was
+    // only going to be late. This is the shared form of the UntilAsync helper the classes in this
+    // family each had a copy of; they forward here.
+    public async Task UntilAsync(Func<bool> done, string what)
+    {
+        LoopbackDeadline deadline = new(Ticks);
+        while (!done())
+        {
+            deadline.AssertAlive(Ticks, what);
+            await TickAsync();
+            await FlushAllAsync();
+            await Task.Delay(2);
+        }
+    }
 
     // Closes the client socket and waits until the server has dropped the connection.
     public async Task DisconnectAsync(WireLoopbackClient client)
@@ -416,13 +500,17 @@ internal sealed class WireLoopbackClient : IAsyncDisposable
         _shutdown.Dispose();
     }
 
+    // Waits on arriving frames, so the progress counter is how many have arrived: the failure this
+    // is here to catch is a server that has gone silent, and that is exactly "no new frame for the
+    // no-progress window". A server that is merely slow keeps the count moving and keeps the wait
+    // alive, up to LoopbackDeadline.HardTimeout.
     private async Task WaitForCoreAsync(Func<IReadOnlyList<WireFrame>, bool> condition, string what)
     {
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        LoopbackDeadline deadline = new(Frames.Count);
         while (!condition(Frames))
         {
             Assert.True(ReadFault == null, $"{SessionId} read loop faulted: {ReadFault}");
-            Assert.True(DateTime.UtcNow < deadline, $"{SessionId} never received {what}.");
+            deadline.AssertAlive(Frames.Count, $"{what} on {SessionId}");
             await Task.Delay(5);
         }
     }

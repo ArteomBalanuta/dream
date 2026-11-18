@@ -69,10 +69,10 @@ public sealed class AdminAccountSanctionLoopbackTests
         WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(server.Port, session);
         ServerConnection connection = await accept.WaitAsync(WireLoopbackServer.Timeout);
         await client.HandshakeAsync();
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        LoopbackDeadline joining = new(server.Ticks);
         while (!server.Host.IsConnectionJoined(connection.ConnectionId))
         {
-            Assert.True(DateTime.UtcNow < deadline, $"{session} never joined");
+            joining.AssertAlive(server.Ticks, $"{session} join");
             await Task.Delay(5);
             await server.TickAsync();
             Assert.True(await OutboundDrain.FlushAsync(connection, WireLoopbackServer.Timeout));
@@ -82,17 +82,9 @@ public sealed class AdminAccountSanctionLoopbackTests
         return client;
     }
 
-    private static async Task UntilAsync(WireLoopbackServer server, Func<bool> done, string what)
-    {
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
-        while (!done())
-        {
-            Assert.True(DateTime.UtcNow < deadline, $"never saw {what}");
-            await server.TickAsync();
-            await server.FlushAllAsync();
-            await Task.Delay(2);
-        }
-    }
+    // Bounded by LoopbackDeadline, not by a flat 30 s of wall clock: see WireLoopbackHarness.
+    private static Task UntilAsync(WireLoopbackServer server, Func<bool> done, string what) =>
+        server.UntilAsync(done, what);
 
     private static string[] SystemLines(WireLoopbackClient client) =>
         [.. client.Frames.Select(frame => frame.Decoded.Message).OfType<ServerChatMessage>()

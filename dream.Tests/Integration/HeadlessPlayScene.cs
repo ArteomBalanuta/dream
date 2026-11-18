@@ -161,9 +161,15 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
         }
     }
 
+    // Bounded by LoopbackDeadline rather than by a flat 30 s of wall clock, with the number of
+    // applied server messages as the progress counter: the failure worth catching here is a session
+    // that stops being told anything, which is exactly "nothing applied for the no-progress
+    // window". A session that is merely slow because the suite is loaded keeps applying messages
+    // and keeps this wait alive, up to LoopbackDeadline.HardTimeout. The connection check is
+    // unchanged and still fails first when the session actually drops.
     public async Task PumpUntilAsync(Func<HeadlessPlayScene, bool> done, string what)
     {
-        DateTime deadline = DateTime.UtcNow + WireLoopbackServer.Timeout;
+        LoopbackDeadline deadline = new(Applied.Count);
         while (true)
         {
             Pump();
@@ -173,7 +179,7 @@ internal sealed class HeadlessPlayScene : IAsyncDisposable
             }
 
             Assert.True(Session.IsConnected, $"{SessionId} lost its session: {Session.DisconnectReason}");
-            Assert.True(DateTime.UtcNow < deadline, $"{SessionId} never reached {what}");
+            deadline.AssertAlive(Applied.Count, $"{what} on {SessionId}");
             await Task.Delay(1);
         }
     }
