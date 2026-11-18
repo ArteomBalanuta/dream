@@ -111,6 +111,7 @@ public sealed partial class WorldSessionRuntime
         StepOwnerProgress(tick);
         StepQuestLogs(tick);
         StepPresence(tick);
+        StepPendingModeSaves(tick);
     }
 
     // Called from the detach path, before MarkDespawned. Also drops the queued messages of the session,

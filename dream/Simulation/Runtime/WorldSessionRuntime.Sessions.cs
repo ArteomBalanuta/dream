@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
@@ -176,6 +177,10 @@ public sealed partial class WorldSessionRuntime
             PersistPlayerProfile(sessionId, target.Combatant);
         }
 
+        // That save carried the live mode (RuntimePersistenceBridge reads GetSessionInteractionMode),
+        // so a paced write waiting for this session has nothing left to write.
+        _pendingModeSaves.Remove(sessionId);
+        _lastModeSaveTick.Remove(sessionId);
         _persistence.ForgetUnrestoredSession(sessionId);
         // The build material is per connection: a rejoin starts from Auto, as its HUD does.
         _buildMaterialSelections.Remove(sessionId);
@@ -236,10 +241,33 @@ public sealed partial class WorldSessionRuntime
         _sessionInteractionModes.Remove(player.SessionId);
         _buildMaterialSelections.Remove(player.SessionId);
         _pendingLoot.Remove(player.SessionId);
+        _lastModeSaveTick.Remove(player.SessionId);
+        _pendingModeSaves.Remove(player.SessionId);
     }
 
     // Sessions with a stored interaction mode (tests): at most the registry's Count.
     internal int SessionInteractionModeCount => _sessionInteractionModes.Count;
+
+    // At most one mode profile save per session per second. The change test below stops a starved
+    // (honest) seat's repeated request, but a client that alternates RequestedMode every tick changes
+    // the value every tick by construction, so the test passes and one SQLite profile write is queued
+    // per tick per connection - a remote write amplifier against the shared persistence queue, which
+    // every legitimate write (loot, inventory, sanctions, checkpoints) then queues behind. The mode
+    // itself stays immediate: only the write is paced, and the last mode of a paced burst is written
+    // by StepPendingModeSaves once the interval has passed, so a flip a player can actually make
+    // (a keypress) is persisted within a second of the press and the detach save writes the live mode
+    // in any case. Server ticks, never wall time, so the authoritative path stays deterministic.
+    internal const int ModeSaveIntervalTicks = SimulationClock.AuthoritativeTicksPerSecond;
+
+    private readonly Dictionary<PlayerSessionId, ulong> _lastModeSaveTick = [];
+    private readonly Dictionary<PlayerSessionId, PlayerInteractionMode> _pendingModeSaves = [];
+    private readonly List<PlayerSessionId> _modeSaveFlushScratch = [];
+
+    // Mode profile writes the pacing collapsed since this runtime started: an operator sees a
+    // per-tick flipper here and in the server.session.mode-save-paced line.
+    internal int ModeSavesPaced { get; private set; }
+
+    internal int PendingModeSaveCount => _pendingModeSaves.Count;
 
     private PlayerInteractionMode GetSessionInteractionMode(PlayerSessionId sessionId)
     {
@@ -277,12 +305,78 @@ public sealed partial class WorldSessionRuntime
             return;
         }
 
+        // The join's restore (saveUnchanged) is server driven, once per join, and is never paced; it
+        // also does not stamp the interval, so a player's first mode change after joining is immediate.
+        if (!saveUnchanged
+            && _lastModeSaveTick.TryGetValue(sessionId, out ulong lastSaveTick)
+            && CurrentServerTick - lastSaveTick < (ulong)ModeSaveIntervalTicks)
+        {
+            _pendingModeSaves[sessionId] = interactionMode;
+            ModeSavesPaced++;
+            NetworkDiagnosticsLog.Write(
+                "server.session.mode-save-paced",
+                $"session={sessionId.Value} tick={CurrentServerTick}");
+            return;
+        }
+
+        if (!saveUnchanged)
+        {
+            _lastModeSaveTick[sessionId] = CurrentServerTick;
+        }
+
+        _pendingModeSaves.Remove(sessionId);
+        SaveSessionInteractionModeProfile(player, interactionMode);
+    }
+
+    private void SaveSessionInteractionModeProfile(ConnectedPlayer player, PlayerInteractionMode interactionMode)
+    {
         PersistedPlayerProfile profile = GetCachedProfile(player.CharacterKey.Value);
         SaveProfile(player.CharacterKey.Value, profile with
         {
             DisplayName = player.DisplayName,
             InteractionMode = interactionMode
         });
+    }
+
+    // Writes the last mode of a paced burst once its session's interval has passed. Called once a tick.
+    private void StepPendingModeSaves(ulong tick)
+    {
+        if (_pendingModeSaves.Count == 0)
+        {
+            return;
+        }
+
+        _modeSaveFlushScratch.Clear();
+        foreach (KeyValuePair<PlayerSessionId, PlayerInteractionMode> entry in _pendingModeSaves)
+        {
+            if (!_lastModeSaveTick.TryGetValue(entry.Key, out ulong lastSaveTick)
+                || tick - lastSaveTick >= (ulong)ModeSaveIntervalTicks)
+            {
+                _modeSaveFlushScratch.Add(entry.Key);
+            }
+        }
+
+        for (int i = 0; i < _modeSaveFlushScratch.Count; i++)
+        {
+            PlayerSessionId sessionId = _modeSaveFlushScratch[i];
+            if (!_pendingModeSaves.Remove(sessionId, out PlayerInteractionMode interactionMode))
+            {
+                continue;
+            }
+
+            if (_playerProfiles == null
+                || !_sessions.TryGet(sessionId, out ConnectedPlayer? player)
+                || player == null
+                || player.IsLocal)
+            {
+                continue;
+            }
+
+            _lastModeSaveTick[sessionId] = tick;
+            SaveSessionInteractionModeProfile(player, interactionMode);
+        }
+
+        _modeSaveFlushScratch.Clear();
     }
 
     private PlayerSessionId ResolvePrimaryControlledSessionId()
