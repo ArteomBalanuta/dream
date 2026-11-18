@@ -16,6 +16,7 @@
   "items": [
     {
       "key": "tool.builder-hammer",
+      "attackRange": 1.6,
       "displayName": "Builder Hammer",
       "description": "Reliable close-range construction tool for quick world edits.",
       "visualId": "held.tool.builder",
@@ -31,6 +32,7 @@
     },
     {
       "key": "tool.field-blade",
+      "attackRange": 1.7,
       "displayName": "Field Blade",
       "description": "Short combat blade with quick recovery and clean follow-up swings.",
       "visualId": "held.tool.blade",
@@ -46,6 +48,7 @@
     },
     {
       "key": "tool.stone-maul",
+      "attackRange": 1.9,
       "displayName": "Stone Maul",
       "description": "Heavy breaker meant for deliberate hits and strong stagger pressure.",
       "visualId": "held.tool.maul",
@@ -61,6 +64,7 @@
     },
     {
       "key": "tool.survey-lantern",
+      "attackRange": 1.4,
       "displayName": "Survey Lantern",
       "description": "Utility tool for traversal loadouts and world inspection passes.",
       "visualId": "held.tool.lantern",
@@ -76,6 +80,7 @@
     },
     {
       "key": "tool.torch",
+      "attackRange": 1.6,
       "displayName": "Torch",
       "description": "A burning torch that lights the ground around you after dark.",
       "visualId": "held.tool.torch",
@@ -88,6 +93,7 @@
     },
     {
       "key": "gear.iron-blade",
+      "attackRange": 1.8,
       "displayName": "Iron Blade",
       "description": "A forged blade. Each one is a little different from the last.",
       "visualId": "held.weapon.iron-blade",
@@ -292,6 +298,7 @@
     },
     {
       "key": "gear.hunting-spear",
+      "attackRange": 2.5,
       "displayName": "Hunting Spear",
       "description": "A long spear with a leaf-shaped head, made for keeping things at a distance.",
       "visualId": "held.weapon.spear",
@@ -309,6 +316,7 @@
     },
     {
       "key": "gear.iron-dagger",
+      "attackRange": 1.5,
       "displayName": "Iron Dagger",
       "description": "A narrow iron dagger, quick in the hand and mean in close.",
       "visualId": "held.weapon.dagger",
@@ -326,6 +334,7 @@
     },
     {
       "key": "gear.short-sword",
+      "attackRange": 1.7,
       "displayName": "Short Sword",
       "description": "A plain short sword, dulled at the tip from hard use.",
       "visualId": "held.weapon.short-sword",
@@ -343,6 +352,7 @@
     },
     {
       "key": "gear.long-sword",
+      "attackRange": 1.9,
       "displayName": "Long Sword",
       "description": "A long, well-balanced sword with a darkened fuller.",
       "visualId": "held.weapon.sword",
@@ -360,6 +370,7 @@
     },
     {
       "key": "gear.greatsword",
+      "attackRange": 2.2,
       "displayName": "Greatsword",
       "description": "A slab of iron as long as a man. It asks for both shoulders.",
       "visualId": "held.weapon.greatsword",
@@ -377,6 +388,7 @@
     },
     {
       "key": "gear.hand-axe",
+      "attackRange": 1.6,
       "displayName": "Hand Axe",
       "description": "A short-hafted axe meant for wood and worse.",
       "visualId": "held.weapon.hand-axe",
@@ -394,6 +406,7 @@
     },
     {
       "key": "gear.battle-axe",
+      "attackRange": 2.0,
       "displayName": "Battle Axe",
       "description": "A broad bearded axe with a notched edge.",
       "visualId": "held.weapon.axe",
@@ -411,6 +424,7 @@
     },
     {
       "key": "gear.flanged-mace",
+      "attackRange": 1.7,
       "displayName": "Flanged Mace",
       "description": "A flanged iron head on an oak haft. Made to dent armour.",
       "visualId": "held.weapon.mace",
@@ -428,6 +442,7 @@
     },
     {
       "key": "gear.war-hammer",
+      "attackRange": 2.0,
       "displayName": "War Hammer",
       "description": "A blunt iron hammer, heavy enough to crack a skull through a helm.",
       "visualId": "held.weapon.hammer",
@@ -445,6 +460,7 @@
     },
     {
       "key": "gear.short-bow",
+      "attackRange": 10,
       "displayName": "Short Bow",
       "description": "A short horn-tipped bow for fast, quiet work.",
       "visualId": "held.weapon.short-bow",
@@ -462,6 +478,7 @@
     },
     {
       "key": "gear.long-bow",
+      "attackRange": 14,
       "displayName": "Long Bow",
       "description": "A tall yew bow, slow to draw and hard to forget.",
       "visualId": "held.weapon.bow",
@@ -479,6 +496,7 @@
     },
     {
       "key": "gear.ash-staff",
+      "attackRange": 2.0,
       "displayName": "Ash Staff",
       "description": "A pale ash staff, scorched at one end and cold at the other.",
       "visualId": "held.weapon.staff",
@@ -496,6 +514,7 @@
     },
     {
       "key": "gear.bone-staff",
+      "attackRange": 2.0,
       "displayName": "Bone Staff",
       "description": "Knuckle bones lashed around a black spine. It hums when no one speaks.",
       "visualId": "held.weapon.bone-staff",

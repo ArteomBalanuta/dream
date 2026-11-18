@@ -1022,8 +1022,8 @@ public class RuntimeAuthoritativeSessionHostTests
         host.JoinSession("session-a", "Player A");
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
         // The day wolf spawns in the far corner; the test puts it in front of the player.
-        runtime.Enemies.ActiveActors[0].SetPosition(new Vector3(5.5f, 1f, 2.5f));
-        runtime.Player.SetFacing((new Vector3(5.5f, 1f, 2.5f) - runtime.Player.Camera.Position).Normalized());
+        runtime.Enemies.ActiveActors[0].SetPosition(new Vector3(5.5f, 1f, 4.2f));
+        runtime.Player.SetFacing((new Vector3(5.5f, 1f, 4.2f) - runtime.Player.Camera.Position).Normalized());
         runtime.Enemies.ActiveActors[0].Combatant.ApplyDamage(99);
 
         AuthoritativeActionResult result = host.ProcessAction(new PlayerActionMessage(
@@ -1071,8 +1071,8 @@ public class RuntimeAuthoritativeSessionHostTests
         host.JoinSession("session-a", "Player A");
         runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Combat);
         // The day wolf spawns in the far corner; the test puts it in front of the player.
-        runtime.Enemies.ActiveActors[0].SetPosition(new Vector3(5.5f, 1f, 2.5f));
-        runtime.Player.SetFacing((new Vector3(5.5f, 1f, 2.5f) - runtime.Player.Camera.Position).Normalized());
+        runtime.Enemies.ActiveActors[0].SetPosition(new Vector3(5.5f, 1f, 4.2f));
+        runtime.Player.SetFacing((new Vector3(5.5f, 1f, 4.2f) - runtime.Player.Camera.Position).Normalized());
         runtime.Enemies.ActiveActors[0].Combatant.ApplyDamage(99);
 
         host.ProcessAction(new PlayerActionMessage(

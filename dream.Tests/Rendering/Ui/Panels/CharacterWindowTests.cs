@@ -178,8 +178,8 @@ public sealed class CharacterWindowTests : IDisposable
     private UiRect PlateOf(int attributeIndex)
     {
         // Header rows are 16 u apart from y 38; the first attribute sits 7 u below them, and each
-        // group (an attribute plus its derived rows) follows at a fixed pitch.
-        float[] y = [109f, 109f + 20f + 16f + 5f, 109f + 20f + 16f + 5f + 20f + 32f + 5f, 109f + 20f + 16f + 5f + 20f + 32f + 5f + 20f + 16f + 5f];
+        // group (an attribute plus its derived rows; Agility carries Defense, Attack Speed and Attack Range) follows at a fixed pitch.
+        float[] y = [109f, 109f + 20f + 16f + 5f, 109f + 20f + 16f + 5f + 20f + 48f + 5f, 109f + 20f + 16f + 5f + 20f + 48f + 5f + 20f + 16f + 5f];
         return _scene.Layout.FromUnits(_scene.Layout.Character, 157f, y[attributeIndex] - 1f, 14f, 14f);
     }
 

@@ -1,4 +1,5 @@
 using Dream.Multiplayer.Diagnostics;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Content;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Persistence;
@@ -983,6 +984,11 @@ internal sealed partial class PlayerInventoryService
     public string? ResolveEquippedVisualKey(string playerName)
         => _equippedSummaryByPlayer.TryGetValue(playerName, out EquippedSummary summary) ? summary.VisualKey : null;
 
+    // The attack reach of the equipped main-hand item (WeaponReach.ForItem), read from the cache. Allocates
+    // nothing; unarmed when nothing is equipped or no inventory is loaded.
+    public float ResolveEquippedAttackReach(string playerName)
+        => _equippedSummaryByPlayer.TryGetValue(playerName, out EquippedSummary summary) ? summary.AttackReach : WeaponReach.UnarmedMetres;
+
     public HeldLightKind ResolveEquippedHeldLight(string playerName)
         => _equippedSummaryByPlayer.TryGetValue(playerName, out EquippedSummary summary) ? summary.Light : HeldLightKind.None;
 
@@ -998,6 +1004,7 @@ internal sealed partial class PlayerInventoryService
 
         HeldLightKind mainLight = HeldLightKind.None;
         HeldLightKind offLight = HeldLightKind.None;
+        float attackReach = WeaponReach.UnarmedMetres;
         Span<string?> visuals = new string?[VisualKeyFieldCount];
         ulong digest = ModifierDigestSalt;
         bool anyRolled = false;
@@ -1015,6 +1022,7 @@ internal sealed partial class PlayerInventoryService
             if (slot == EquipmentSlot.MainHand)
             {
                 mainLight = definition.HeldLight;
+                attackReach = WeaponReach.ForItem(definition);
             }
             else if (slot == EquipmentSlot.OffHand)
             {
@@ -1060,7 +1068,8 @@ internal sealed partial class PlayerInventoryService
         _equippedSummaryByPlayer[playerName] = new EquippedSummary(
             EquipmentSlots.ResolveHeldLight(mainLight, offLight),
             anyRolled ? digest : 0UL,
-            BuildVisualKey(visuals));
+            BuildVisualKey(visuals),
+            attackReach);
     }
 
     // The player VisualKey: nine positional fields "main|off|head|body|hands|feet|legs|back|companion",
@@ -1908,7 +1917,7 @@ internal sealed partial class PlayerInventoryService
     }
 
     // The held light and rolled-modifier digest an inventory's equipment gives its actor.
-    private readonly record struct EquippedSummary(HeldLightKind Light, ulong Digest, string? VisualKey);
+    private readonly record struct EquippedSummary(HeldLightKind Light, ulong Digest, string? VisualKey, float AttackReach);
 
     private enum InventoryWriteVerdict
     {

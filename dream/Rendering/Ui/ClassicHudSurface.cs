@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dream.Rendering.Hud;
+using Dream.Simulation.Combat;
 using Dream.Rendering.Ui.Panels;
 using Dream.Simulation.Inventory;
 using OpenTK.Mathematics;
@@ -189,7 +190,7 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         _closeVendor = false;
         _quickbarCycle = -1;
         _builder ??= new HudViewBuilder(sprites, _view);
-        _builder.Refresh(WithMana(frame.Status, frame.Quickbar), frame.Inventory);
+        _builder.Refresh(WithAttackReach(WithMana(frame.Status, frame.Quickbar), frame.Inventory), frame.Inventory);
         if (_builder.InventoryChanged)
         {
             // The snapshot changed under a drag: the dragged slot may be a different item now.
@@ -251,6 +252,10 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         quickbar is { MaxMana: > 0 } && status.MaxMana <= 0
             ? status with { CurrentMana = quickbar.CurrentMana, MaxMana = quickbar.MaxMana }
             : status;
+
+    // The status with the main hand's attack reach filled in (a table lookup, no allocation).
+    private static HudStatusSnapshot WithAttackReach(in HudStatusSnapshot status, PlayerInventorySnapshot? inventory) =>
+        status with { AttackRange = WeaponReach.ForItemKind(inventory?.EquippedSlot?.Item?.ItemKind) };
 
     // What the panels picked this frame, cleared by the read.
     public void TakeRequests(out InventoryHudAction? action, out bool closeInventory)

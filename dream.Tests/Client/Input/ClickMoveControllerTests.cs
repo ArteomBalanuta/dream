@@ -4,6 +4,7 @@ using Dream.Client.Input;
 using Dream.Client.Navigation;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Core;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 
 namespace Dream.Tests.Client.Input;
@@ -268,7 +269,7 @@ public class ClickMoveControllerTests
         Assert.False(far.PrimaryUsePressed);
         Assert.Equal(1f, far.MoveIntent.ForwardAxis);
 
-        enemy.Anchor = new Vector3(7.5f, 2f, 5.5f);
+        enemy.Anchor = new Vector3(6.5f, 2f, 5.5f);
         PlayerCommandFrame near = controller.SteerTick(Frame());
         Assert.True(near.PrimaryUsePressed);
         Assert.Equal(0f, near.MoveIntent.ForwardAxis);
@@ -276,11 +277,47 @@ public class ClickMoveControllerTests
     }
 
     [Fact]
+    public void Attack_StopsAtTheApproachFractionOfTheReach_NotBefore()
+    {
+        var (controller, host, _) = Create();
+        host.Mode = PlayerInteractionMode.Combat;
+        float stop = controller.AttackReachMetres * WeaponReach.ClientApproachFraction;
+        FakeTarget enemy = new() { Anchor = new Vector3(5.5f + stop + 0.05f, 2f, 5.5f) };
+        host.NextPick = Enemy(enemy);
+        controller.OnFrame(Pointer(right: true), true);
+
+        Assert.False(controller.SteerTick(controller.MarkFrame(Frame())).PrimaryUsePressed);
+
+        enemy.Anchor = new Vector3(5.5f + stop - 0.05f, 2f, 5.5f);
+        Assert.True(controller.SteerTick(Frame()).PrimaryUsePressed);
+    }
+
+    [Fact]
+    public void Attack_WithALongerWeapon_SwingsFromFurtherAway()
+    {
+        var (controller, host, _) = Create();
+        host.Mode = PlayerInteractionMode.Combat;
+        FakeTarget enemy = new() { Anchor = new Vector3(5.5f + 8f, 2f, 5.5f) };
+        host.NextPick = Enemy(enemy);
+        controller.OnFrame(Pointer(right: true), true);
+        Assert.False(controller.SteerTick(controller.MarkFrame(Frame())).PrimaryUsePressed);
+
+        controller.AttackReachMetres = WeaponReach.ForItemKind("gear.long-bow");
+        Assert.True(controller.SteerTick(Frame()).PrimaryUsePressed);
+    }
+
+    [Fact]
+    public void Attack_ReachStartsUnarmed()
+    {
+        Assert.Equal(WeaponReach.UnarmedMetres, Create().Controller.AttackReachMetres);
+    }
+
+    [Fact]
     public void AttackRequestsCombatModeOnce_AndHoldsNoPrimaryUntilItIsCombat()
     {
         var (controller, host, _) = Create();
         host.Mode = PlayerInteractionMode.Building;
-        FakeTarget enemy = new() { Anchor = new Vector3(7.5f, 2f, 5.5f) };
+        FakeTarget enemy = new() { Anchor = new Vector3(6.5f, 2f, 5.5f) };
         host.NextPick = Enemy(enemy);
         controller.OnFrame(Pointer(right: true), true);
 
@@ -301,7 +338,7 @@ public class ClickMoveControllerTests
     {
         var (controller, host, _) = Create();
         host.Mode = PlayerInteractionMode.Combat;
-        FakeTarget enemy = new() { Anchor = new Vector3(7.5f, 2f, 5.5f) };
+        FakeTarget enemy = new() { Anchor = new Vector3(6.5f, 2f, 5.5f) };
         host.NextPick = Enemy(enemy);
         controller.OnFrame(Pointer(right: true), true);
 
@@ -588,7 +625,7 @@ public class ClickMoveControllerTests
     {
         var (controller, host, _) = Create();
         host.Mode = PlayerInteractionMode.Combat;
-        FakeTarget first = new() { Anchor = new Vector3(7.5f, 2f, 5.5f) };
+        FakeTarget first = new() { Anchor = new Vector3(6.5f, 2f, 5.5f) };
         host.NextPick = Enemy(first);
         controller.OnFrame(Pointer(right: true), true);
         first.IsAlive = false;
@@ -596,7 +633,7 @@ public class ClickMoveControllerTests
         Assert.Equal(ClickGoalKind.None, controller.Goal);
         controller.OnFrame(Pointer(right: false), true);
 
-        FakeTarget second = new() { Anchor = new Vector3(7.5f, 2f, 6.5f) };
+        FakeTarget second = new() { Anchor = new Vector3(6.5f, 2f, 6.0f) };
         host.NextPick = Enemy(second);
         controller.OnFrame(Pointer(right: true), true);
 
