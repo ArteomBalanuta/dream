@@ -80,7 +80,7 @@ public sealed partial class WorldSessionRuntime
 
         if (TryGetTrade(target, out _))
         {
-            return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, $"{target.DisplayName} is already trading.");
+            return RejectTrade(message, player, InventoryEquipOutcome.TradeUnavailable, $"Trade: {QuotedName(target.DisplayName)} is already trading.");
         }
 
         if (!TryGetTradePositions(player, target, out bool bothAlive, out bool inRange) || !bothAlive)
@@ -90,7 +90,7 @@ public sealed partial class WorldSessionRuntime
 
         if (!inRange)
         {
-            return RejectTrade(message, player, InventoryEquipOutcome.TooFar, $"{target.DisplayName} is too far away to trade.");
+            return RejectTrade(message, player, InventoryEquipOutcome.TooFar, $"Trade: {QuotedName(target.DisplayName)} is too far away to trade.");
         }
 
         // Last of the guards, so a refused request (offline, too far, already trading) is unaffected. The
