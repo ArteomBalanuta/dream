@@ -1,5 +1,4 @@
 using OpenTK.Mathematics;
-using Dream.Simulation.Enemies;
 using Dream.Simulation.World;
 
 namespace Dream.Simulation.Combat;
@@ -27,14 +26,5 @@ public static class CombatUseResolver
         }
 
         return registry.TryResolveCubeRecord(map, hitCube);
-    }
-
-    public static EnemyActor? TryResolveEnemyHit(
-        EnemyRegistry enemies,
-        Vector3 origin,
-        Vector3 direction,
-        float maxHitDistance = DefaultHitRange)
-    {
-        return enemies.TryResolveHit(origin, direction, maxHitDistance);
     }
 }
