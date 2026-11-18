@@ -48,87 +48,123 @@ internal struct LoopbackDeadline
     // and still short enough that a genuinely stuck test reports inside a normal run.
     public static readonly TimeSpan HardTimeout = TimeSpan.FromSeconds(180);
 
-    // A budget in PROGRESS, for a wait whose condition is known to need only a bounded number of
-    // server ticks: an admin reply, a chat notice, a standing applied to a live connection - all of
-    // which are a persistence round trip plus one tick. Ticks are the honest unit for those, and
-    // they are starvation-proof by construction: a loaded machine spends the same ticks over more
-    // seconds, it does not make the event need more ticks.
+    // A budget in PROGRESS, so a condition that never becomes true fails after so much work rather
+    // than after so many seconds. Work is the honest unit and it is starvation-proof: a loaded
+    // machine does the same work over more seconds, it does not make the event need more work.
     //
-    // It also fixes what the hard cap alone cost. The cap is a backstop for a condition that never
-    // becomes true, and as the OPERATIVE deadline it is very expensive: one such wait burned the
-    // full 180 s in a full-suite run and that was nearly the whole suite's slowdown. With a budget,
-    // the same never-true condition fails after this many ticks, which on a healthy machine is
-    // seconds. The cap stays underneath for anything the budget cannot judge.
+    // It also fixes what the hard cap cost. The cap is a backstop for a condition that never becomes
+    // true, and as the OPERATIVE deadline it is very expensive: one wait burned the full 180 s in a
+    // full-suite run and that was nearly the whole suite's slowdown.
     //
-    // Two budgets, because the waits are two shapes and one value serves neither well. Measured: a
-    // UntilAsync iteration is a tick plus a client drain plus a 2 ms delay, about 17 ms, so the loop
-    // spends roughly 58 ticks a second on an idle machine - 4096 ticks cost 70 s, which is not a
-    // cost bound worth having.
+    // THE BUDGET MUST BE SPENT ON EVERY SIDE THE CONDITION DEPENDS ON, which is why this takes a
+    // list of counters rather than one. The first attempt budgeted server ticks only, and server
+    // ticks are the wrong side for most of these waits: the test loop drives the ticks itself, so
+    // they keep advancing however starved the machine is, while the thing actually being watched - a
+    // notice routed, sent, received and parsed by the CLIENT's own read loop - makes no progress at
+    // all. Admin_Mute_SilencesThePlayer then failed at 512 ticks under a full suite with its server
+    // side provably healthy (row set, 18 writes completed, 0 pending, 0 failed), and the message it
+    // printed confidently ruled out the only cause there was. A budget is now spent only once it has
+    // been exhausted on ALL of its counters, so a starved side holds the wait open while the
+    // healthy-but-stuck case still fails quickly.
     //
-    // WriteRoundTripTicks is for a wait that still has a persistence write in front of it (an admin
-    // command's reply is sent by that write's own barrier read). The write is wall clock on the
-    // worker, so the margin is for it: 1024 ticks is about 18 s idle, several times SQLite's 5 s
-    // busy timeout, and more wall clock than that when the machine is loaded, since a starved loop
-    // spends its ticks more slowly.
+    // Measured: an UntilAsync iteration is a tick plus a client drain plus a 2 ms delay, about
+    // 17 ms, so an idle loop spends roughly 58 ticks a second, and a client it drains receives about
+    // one snapshot frame per tick (SnapshotIntervalTicks is 1 in this harness).
     //
-    // AppliedTicks is for a wait whose write has ALREADY landed - the test observed the reply the
-    // barrier read sent - so all that is left is the tick on which StepAccountStandings applies the
-    // result to the live connections, plus the server reading one frame off the loopback socket.
-    // That is one or two ticks; 512 is about 9 s idle, which is a large allowance for a loopback
-    // read and keeps the failure cheap.
-    public const long WriteRoundTripTicks = 1024;
-    public const long AppliedTicks = 512;
+    // WriteRoundTrip is for a wait that still has a persistence write in front of it (an admin
+    // command's reply is sent by that write's own barrier read). The margin is for the write, which
+    // is wall clock on the worker: 1024 is about 18 s idle, several times SQLite's 5 s busy timeout.
+    //
+    // Applied is for a wait whose write has ALREADY landed - the test observed the reply that the
+    // barrier read sent - so all that is left is the tick that applies the result to the live
+    // connections plus the delivery of one frame. That is a couple of ticks and a couple of frames;
+    // 512 is about 9 s idle, a large allowance, and it keeps the failure cheap.
+    public const long WriteRoundTrip = 1024;
+    public const long Applied = 512;
 
     private readonly DateTime _hardDeadline;
     private readonly TimeSpan _noProgressWindow;
-    private readonly long _startProgress;
-    private readonly long _tickBudget;
+    private readonly long _budget;
+    private readonly long[] _start;
+    private readonly long[] _last;
     private DateTime _quietSince;
-    private long _lastProgress;
 
-    // progress is any counter that advances while the loop is getting somewhere: the server's tick
-    // number, the client's received-frame count. maxTicks bounds the wait in that counter as well;
-    // pass it only for a condition verified to need a bounded number of ticks, never for one on a
-    // cadence (a 120 s trade timeout is about 7680 ticks) and never for one gated on the wall clock.
-    public LoopbackDeadline(long progress, long? maxTicks = null)
+    // counters are every side the condition depends on: the server's tick number for what the
+    // server does, a client's received-frame count for what that client has to observe. budget
+    // bounds the wait in each of them; pass it only for a condition verified to need a bounded
+    // amount of work, never for one on a cadence (a 120 s trade timeout is about 7680 ticks) and
+    // never for one gated on the wall clock.
+    public LoopbackDeadline(ProgressCounter[] counters, long? budget = null)
     {
         _noProgressWindow = WireLoopbackServer.Timeout;
         DateTime now = DateTime.UtcNow;
         _hardDeadline = now + HardTimeout;
         _quietSince = now;
-        _lastProgress = progress;
-        _startProgress = progress;
-        _tickBudget = maxTicks ?? 0;
+        _budget = budget ?? 0;
+        _start = new long[counters.Length];
+        _last = new long[counters.Length];
+        for (int i = 0; i < counters.Length; i++)
+        {
+            _start[i] = counters[i].Value;
+            _last[i] = _start[i];
+        }
     }
 
-    // Fails the test when the loop has stopped getting anywhere: nothing advanced for the
-    // no-progress window, the tick budget is spent, or the hard cap is up. Call it once per
-    // iteration, before doing the work.
-    public void AssertAlive(long progress, string what) => AssertAlive(progress, () => what);
-
-    // The message is built only on failure, so a wait can name the state it was watching without
-    // paying for the string on every pass.
-    public void AssertAlive(long progress, Func<string> what)
+    // Fails the test when the loop has stopped getting anywhere: nothing advanced on any side for
+    // the no-progress window, every side has spent its budget, or the hard cap is up. Call it once
+    // per iteration, before doing the work. The message is built only on failure, so a wait can
+    // report the state it was watching without paying for the string on every pass.
+    public void AssertAlive(ProgressCounter[] counters, Func<string> what)
     {
         DateTime now = DateTime.UtcNow;
-        if (progress != _lastProgress)
+        bool moved = false;
+        bool allSpent = _budget > 0;
+        for (int i = 0; i < counters.Length; i++)
         {
-            _lastProgress = progress;
+            long value = counters[i].Value;
+            if (value != _last[i])
+            {
+                _last[i] = value;
+                moved = true;
+            }
+
+            if (value - _start[i] < _budget)
+            {
+                allSpent = false;
+            }
+        }
+
+        if (moved)
+        {
             _quietSince = now;
         }
 
         Assert.True(
             now - _quietSince < _noProgressWindow,
-            $"never saw {what()}: nothing advanced for {_noProgressWindow.TotalSeconds:0} s, so the server is stuck, not slow.");
-        if (_tickBudget > 0)
+            $"never saw {what()}: nothing advanced for {_noProgressWindow.TotalSeconds:0} s on any of [{Spent(counters)}], so this is stuck, not slow.");
+        Assert.True(
+            !allSpent,
+            $"never saw {what()}, and every side it depends on has since done more than {_budget} units of work: [{Spent(counters)}]. None of them was starved, so the condition is not coming.");
+        Assert.True(now < _hardDeadline, $"never saw {what()} within {HardTimeout.TotalSeconds:0} s ([{Spent(counters)}]).");
+    }
+
+    // What each side actually did, so a failure states what it measured instead of guessing why.
+    private string Spent(ProgressCounter[] counters)
+    {
+        string[] parts = new string[counters.Length];
+        for (int i = 0; i < counters.Length; i++)
         {
-            Assert.True(
-                progress - _startProgress < _tickBudget,
-                $"never saw {what()} within {_tickBudget} server ticks, which is not a loaded machine: this condition needs a couple of ticks once its write has landed.");
+            parts[i] = $"{counters[i].Name} +{counters[i].Value - _start[i]}";
         }
 
-        Assert.True(now < _hardDeadline, $"never saw {what()} within {HardTimeout.TotalSeconds:0} s.");
+        return string.Join(", ", parts);
     }
+}
+
+// A progress counter a wait can be bounded on, named so a failure can say what it measured.
+internal readonly record struct ProgressCounter(string Name, Func<long> Read)
+{
+    public long Value => Read();
 }
 
 // The real DedicatedServerService and a given host over loopback TCP, ticked by the test one fixed
@@ -226,10 +262,11 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
             }
         }
 
-        LoopbackDeadline joining = new(Ticks);
+        ProgressCounter[] joinProgress = [ServerTicks, Observing(client)];
+        LoopbackDeadline joining = new(joinProgress);
         while (!Host.IsConnectionJoined(connection.ConnectionId))
         {
-            joining.AssertAlive(Ticks, $"{sessionId} join");
+            joining.AssertAlive(joinProgress, () => $"{sessionId} join");
             await Task.Delay(5);
             // A deferred join is applied (and answered) by the next tick.
             await TickAsync();
@@ -252,11 +289,12 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
         {
             await client.SendAsync(new ClientHelloMessage($"wire-{sessionId}"));
             await client.SendAsync(new ClientJoinRequestMessage(sessionId, displayName, token));
-            LoopbackDeadline answering = new(Ticks);
+            ProgressCounter[] answerProgress = [ServerTicks, Observing(client)];
+            LoopbackDeadline answering = new(answerProgress);
             JoinRejectedMessage? rejected = null;
             while (rejected == null)
             {
-                answering.AssertAlive(Ticks, $"an answer for {sessionId}");
+                answering.AssertAlive(answerProgress, () => $"an answer for {sessionId}");
                 await Task.Delay(5);
                 await TickAsync();
                 Assert.True(await FlushAllAsync());
@@ -277,22 +315,42 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
     // server is still running, however slowly, and stops dead when it is not.
     public long Ticks => unchecked((long)Runtime.CurrentServerTick);
 
+    // What the server itself has done, as a LoopbackDeadline counter. Note what it is NOT evidence
+    // of: this loop drives the ticks, so they advance however starved the machine is. A condition
+    // observed on a client has to be budgeted on that client's own progress as well - see Observing.
+    public ProgressCounter ServerTicks => new("server ticks", () => Ticks);
+
+    // What a client has actually received off its socket and parsed on its own read loop. That is
+    // the side a "the client was told X" condition lives on, and the side that goes quiet under load
+    // while the server keeps ticking.
+    public static ProgressCounter Observing(WireLoopbackClient client) =>
+        new($"frames received by {client.SessionId}", () => client.Frames.Count);
+
+    // What the persistence worker has finished. A wait for a ROW to appear lives on this side, not
+    // on the tick: the write runs on the worker thread and the server's ticks say nothing about it.
+    public ProgressCounter PersistenceWrites =>
+        new(
+            "persistence writes settled",
+            () => Runtime.PersistenceWrites is { } writes ? writes.CompletedWrites + writes.FailedWrites : 0L);
+
     // Ticks the server and drains its clients until done(), bounded by LoopbackDeadline rather than
     // by a flat 30 s of wall clock, so a loaded machine cannot fail the wait for something that was
     // only going to be late. This is the shared form of the UntilAsync helper the classes in this
     // family each had a copy of; they forward here.
-    public Task UntilAsync(Func<bool> done, string what, long? maxTicks = null) =>
-        UntilAsync(done, () => what, maxTicks);
+    public Task UntilAsync(Func<bool> done, string what, long? budget = null, params ProgressCounter[] observed) =>
+        UntilAsync(done, () => what, budget, observed);
 
-    // maxTicks bounds the wait in server ticks as well as seconds; see LoopbackDeadline. The message
-    // is a factory so a wait can report the state it was watching without building the string on
-    // every pass.
-    public async Task UntilAsync(Func<bool> done, Func<string> what, long? maxTicks = null)
+    // budget bounds the wait in work as well as seconds, and is spent only once EVERY side has
+    // exhausted it: the server's ticks plus whatever `observed` names. Pass the client a condition
+    // is read from, or the budget measures the wrong side of the wire. The message is a factory so a
+    // wait can report the state it was watching without building the string on every pass.
+    public async Task UntilAsync(Func<bool> done, Func<string> what, long? budget = null, params ProgressCounter[] observed)
     {
-        LoopbackDeadline deadline = new(Ticks, maxTicks);
+        ProgressCounter[] counters = [ServerTicks, .. observed];
+        LoopbackDeadline deadline = new(counters, budget);
         while (!done())
         {
-            deadline.AssertAlive(Ticks, what);
+            deadline.AssertAlive(counters, what);
             await TickAsync();
             await FlushAllAsync();
             await Task.Delay(2);
@@ -589,11 +647,12 @@ internal sealed class WireLoopbackClient : IAsyncDisposable
     // alive, up to LoopbackDeadline.HardTimeout.
     private async Task WaitForCoreAsync(Func<IReadOnlyList<WireFrame>, bool> condition, string what)
     {
-        LoopbackDeadline deadline = new(Frames.Count);
+        ProgressCounter[] arriving = [new($"frames received by {SessionId}", () => Frames.Count)];
+        LoopbackDeadline deadline = new(arriving);
         while (!condition(Frames))
         {
             Assert.True(ReadFault == null, $"{SessionId} read loop faulted: {ReadFault}");
-            deadline.AssertAlive(Frames.Count, $"{what} on {SessionId}");
+            deadline.AssertAlive(arriving, () => $"{what} on {SessionId}");
             await Task.Delay(5);
         }
     }

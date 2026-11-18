@@ -69,10 +69,11 @@ public sealed class AdminAccountSanctionLoopbackTests
         WireLoopbackClient client = await WireLoopbackClient.ConnectAsync(server.Port, session);
         ServerConnection connection = await accept.WaitAsync(WireLoopbackServer.Timeout);
         await client.HandshakeAsync();
-        LoopbackDeadline joining = new(server.Ticks);
+        ProgressCounter[] joinProgress = [server.ServerTicks, WireLoopbackServer.Observing(client)];
+        LoopbackDeadline joining = new(joinProgress);
         while (!server.Host.IsConnectionJoined(connection.ConnectionId))
         {
-            joining.AssertAlive(server.Ticks, $"{session} join");
+            joining.AssertAlive(joinProgress, () => $"{session} join");
             await Task.Delay(5);
             await server.TickAsync();
             Assert.True(await OutboundDrain.FlushAsync(connection, WireLoopbackServer.Timeout));
@@ -226,8 +227,18 @@ public sealed class AdminAccountSanctionLoopbackTests
         await UntilAsync(server, () => !adminContext.IsAdmin, "the demotion");
         await UntilAsync(server, () => RejectionOf(bee) != null, "the remote ban closing the connection");
         Assert.Contains("banned elsewhere", RejectionOf(bee)!.Reason, StringComparison.Ordinal);
+        // The same one-chance shape as M8's unmuted line, inverted: this line is sent once, and if
+        // the standing refresh has not reached Cee's connection yet the line is routed normally and
+        // MutedText never comes, so the wait below would ask for something that cannot arrive. The
+        // refresh is what this test is about, so it is asserted on the connection first - more than
+        // the test checked before - and the silencing of the line is still proved after it.
+        await UntilAsync(
+            server,
+            () => server.Host.TryGetConnectionContext(server.ConnectionFor(cee).ConnectionId, out ServerRoutingContext? muted)
+                && muted!.Standing.MutedUntilUtc != null,
+            "the remote mute reaching Cee's connection");
         await cee.SendAsync(new ClientChatMessage(ChatChannel.World, "can anyone hear me"));
-        await UntilAsync(server, () => SystemLines(cee).Contains(DedicatedServerHost.MutedText), "the remote mute");
+        await UntilAsync(server, () => SystemLines(cee).Contains(DedicatedServerHost.MutedText), "the remote mute silencing the line");
 
         await CommandAsync(admin, "/announce still an admin?");
         await UntilAsync(server, () => SystemLines(admin).Contains(DedicatedServerHost.PermissionDeniedText), "the refusal for the demoted admin");
