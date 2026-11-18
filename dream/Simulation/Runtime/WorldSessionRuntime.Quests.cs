@@ -61,20 +61,17 @@ public sealed partial class WorldSessionRuntime
         InventoryEquipOutcome outcome = ResolveQuestGiver(player, intent.NpcActorId, intent.QuestKey, out QuestDefinition? quest);
         if (outcome == InventoryEquipOutcome.Equipped)
         {
-            long xp = 0;
+            // BH-QUEST-2: the XP is part of the reward, so its profile write goes INSIDE the turn-in's
+            // own closure. The turn-in asks for it only once every guard has passed, so it is still
+            // granted only for an accepted turn-in, and never for a refused or failed one.
+            PlayerSessionId session = message.SessionId;
             outcome = RunInventoryAction(
                 player,
-                (service, key, definition) =>
-                {
-                    InventoryEquipOutcome result = service.TryTurnInQuest(key, definition, out long rewarded);
-                    xp = rewarded;
-                    return result;
-                },
+                (service, key, definition) => service.TryTurnInQuest(
+                    key, definition, out _, () => GrantQuestExperience(session, definition.Rewards.Xp)),
                 quest!);
             if (outcome == InventoryEquipOutcome.Equipped)
             {
-                // Only after the turn-in was accepted, and never for a refused or failed one.
-                GrantQuestExperience(message.SessionId, xp);
                 MarkInventoryPush(message.SessionId);
             }
         }
@@ -212,14 +209,18 @@ public sealed partial class WorldSessionRuntime
     private bool HasActiveQuestAnywhere() => EnemyContent.Quests.Count > 0;
 
     // XP of a quest through the combatant, like a kill's: level up while the bar is full, then save the
-    // profile. A separate write from the turn-in closure; see the accepted risk in the M5 plan.
-    private void GrantQuestExperience(PlayerSessionId session, long xp)
+    // profile. Called from the turn-in while it builds its one closure (BH-QUEST-2): the progression is
+    // applied in memory here and the profile write is RETURNED, so the turn-in runs it inside that
+    // closure. It used to be queued after the closure, as a savepoint of its own, which let a failed
+    // completion pay the XP durably and leave the quest turn-in-able again after a restart. Null when
+    // there is nothing to grant or no profile to save.
+    private Action? GrantQuestExperience(PlayerSessionId session, long xp)
     {
         if (xp <= 0
             || !TryResolveAuthoritativePlayerTarget(session, out _, out IAuthoritativePlayerTarget? target)
             || target == null)
         {
-            return;
+            return null;
         }
 
         PlayerCombatant combatant = target.Combatant;
@@ -234,7 +235,7 @@ public sealed partial class WorldSessionRuntime
         }
 
         combatant.ApplyProgression(level, (int)Math.Min(experience, int.MaxValue));
-        PersistPlayerProfile(session, combatant);
+        return PrepareProfileWrite(session, combatant);
     }
 
     // Once a tick (StepMultiplayerSystems): sends the quest log of a player when it was never sent for this

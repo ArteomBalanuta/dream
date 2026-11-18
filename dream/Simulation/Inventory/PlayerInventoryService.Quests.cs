@@ -230,7 +230,17 @@ internal sealed partial class PlayerInventoryService
     // The closure order is the guard order: CompleteQuest first (it throws unless the quest is still
     // active, so a second turn-in that raced a failed first one stops there), then the consumed items (the
     // held destroy throws on an item that was never persisted), the credit, then the reward rows.
-    internal InventoryEquipOutcome TryTurnInQuest(string playerName, QuestDefinition quest, out long rewardedXp)
+    //
+    // rewardWrite (BH-QUEST-2) is the caller's own durable part of the reward: the XP's profile write. It
+    // is asked for only once every guard has passed, and the write it returns runs LAST inside this one
+    // closure, so it commits with the completion or rolls back with it. Queued after the closure it was a
+    // savepoint of its own, so a failed completion paid the XP and left the quest active in the rows -
+    // and a restart allowed the same turn-in, and the same XP, again.
+    internal InventoryEquipOutcome TryTurnInQuest(
+        string playerName,
+        QuestDefinition quest,
+        out long rewardedXp,
+        Func<Action?>? rewardWrite = null)
     {
         rewardedXp = 0;
         if (!Ensure(playerName))
@@ -354,6 +364,7 @@ internal sealed partial class PlayerInventoryService
         string questKey = quest.Key;
         long credit = rewards.Gold;
         long[] consumedIds = [.. consumed.Select(entry => entry.ItemInstanceId)];
+        Action? paidReward = rewardWrite?.Invoke();
         NoteWriteQueued(playerName);
         EnqueueWorldWrite(world =>
         {
@@ -377,6 +388,9 @@ internal sealed partial class PlayerInventoryService
             {
                 world.SaveInventorySlot(slot);
             }
+
+            // Last, and inside this savepoint: the XP cannot land without everything above it.
+            paidReward?.Invoke();
         });
         RefreshEquippedSummary(playerName);
         rewardedXp = rewards.Xp;

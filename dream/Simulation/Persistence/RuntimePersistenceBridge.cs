@@ -636,19 +636,34 @@ internal sealed partial class RuntimePersistenceBridge
 
     public void PersistPlayerProfile(PlayerSessionId sessionId, PlayerCombatant combatant)
     {
+        Action? write = PrepareProfileWrite(sessionId, combatant);
+        if (write != null)
+        {
+            _writes?.Enqueue(write);
+        }
+    }
+
+    // As PersistPlayerProfile, but the repository call is RETURNED instead of queued, so the caller
+    // decides which closure (and so which savepoint) it belongs to. The quest turn-in appends its XP's
+    // profile write to its own closure: queued after that closure it was a savepoint of its own, so a
+    // failed completion rolled back while the XP committed, and the quest stayed turn-in-able after a
+    // restart (BH-QUEST-2). Null when this session has no profile to save. The profile is stamped and
+    // cached here, exactly as a queued save would.
+    public Action? PrepareProfileWrite(PlayerSessionId sessionId, PlayerCombatant combatant)
+    {
         if (_playerProfiles == null
             || !_host.Sessions.TryGet(sessionId, out ConnectedPlayer? player)
             || player == null
             || player.IsLocal
             || _unrestoredPlayerSessions.Contains(sessionId))
         {
-            return;
+            return null;
         }
 
         // MovementSpeed is not simulated: they keep the values the row was loaded with.
         string key = player.CharacterKey.Value;
         PersistedPlayerProfile existing = GetCachedProfile(key);
-        SaveProfile(key, existing with
+        return PrepareProfileWrite(key, existing with
         {
             DisplayName = player.DisplayName,
             InteractionMode = _host.GetSessionInteractionMode(sessionId),
@@ -664,7 +679,7 @@ internal sealed partial class RuntimePersistenceBridge
                 Level = combatant.Level,
                 Experience = combatant.Experience
             }
-        });
+        }, out _);
     }
 
     // Saves a leaving player's position, facing and HP (player_world_state), queued ahead of its
@@ -941,6 +956,14 @@ internal sealed partial class RuntimePersistenceBridge
     // Returns the profile as cached and queued, with its stamp.
     public PersistedPlayerProfile SaveProfile(string playerName, PersistedPlayerProfile profile)
     {
+        Action write = PrepareProfileWrite(playerName, profile, out PersistedPlayerProfile stamped);
+        _writes?.Enqueue(write);
+        return stamped;
+    }
+
+    // Stamps and caches the profile and returns its repository call, without queueing it.
+    private Action PrepareProfileWrite(string playerName, PersistedPlayerProfile profile, out PersistedPlayerProfile stamped)
+    {
         // Stamped when queued, and strictly after the copy it replaces (the clock may not have moved):
         // the repository stores this stamp, and a restore compares it with a prefetched row's.
         DateTime stamp = DateTime.UtcNow;
@@ -949,11 +972,11 @@ internal sealed partial class RuntimePersistenceBridge
             stamp = previous.UpdatedUtc.AddTicks(1);
         }
 
-        profile = profile with { UpdatedUtc = stamp };
-        CacheProfile(playerName, profile);
+        stamped = profile with { UpdatedUtc = stamp };
+        CacheProfile(playerName, stamped);
         IPlayerProfileRepository profiles = _playerProfiles!;
-        _writes?.Enqueue(() => profiles.Save(profile));
-        return profile;
+        PersistedPlayerProfile saved = stamped;
+        return () => profiles.Save(saved);
     }
 
     // Loads the rubble groups, prunes the stale ones and heals lost terrain overrides; returns the kept

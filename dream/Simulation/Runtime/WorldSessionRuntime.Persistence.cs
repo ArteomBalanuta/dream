@@ -187,6 +187,11 @@ public sealed partial class WorldSessionRuntime : IRuntimePersistenceHost
     private void PersistPlayerProfile(PlayerSessionId sessionId, PlayerCombatant combatant) =>
         _persistence.PersistPlayerProfile(sessionId, combatant);
 
+    // The profile write, built and cached but not queued, for a caller that has to run it inside another
+    // closure (the quest turn-in's; see GrantQuestExperience).
+    private Action? PrepareProfileWrite(PlayerSessionId sessionId, PlayerCombatant combatant) =>
+        _persistence.PrepareProfileWrite(sessionId, combatant);
+
     private void PersistPlacedCube(WorldObjectRecord record, GeometryMaterialId materialId) =>
         _persistence.PersistPlacedCube(record, materialId);
 
