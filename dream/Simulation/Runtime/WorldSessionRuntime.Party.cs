@@ -154,6 +154,7 @@ public sealed partial class WorldSessionRuntime
                 PartyOutcome.InviteExpired => "The invite has expired.",
                 PartyOutcome.PartyFull => "That party is full.",
                 PartyOutcome.AlreadyInParty => "You are already in a party.",
+                PartyOutcome.NotLeader => "Whoever invited you no longer leads that party.",
                 _ => "The invite was not valid.",
             };
             SendSystemLine(player.SessionId, text);

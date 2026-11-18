@@ -151,7 +151,8 @@ public sealed class PartyRegistry
     }
 
     // The invitee answers its pending invite. On accept the inviter's party takes it in, or a new party of
-    // the two is made when the inviter has none. The invite is consumed either way.
+    // the two is made when the inviter has none. The invite is consumed either way. An inviter who has
+    // since joined a party it does not lead cannot admit anyone to it: NotLeader.
     public PartyOutcome Respond(string invitee, bool accept, ulong tick, out string? inviter)
     {
         inviter = null;
@@ -180,6 +181,14 @@ public sealed class PartyRegistry
 
         if (_partyOf.TryGetValue(invite.From, out Party? party))
         {
+            // Leadership is re-checked at the moment of effect, not only when the invite was sent: the
+            // inviter may have joined another party as a plain member in between, and an invite is not a
+            // bearer token for whatever party its sender happens to sit in when it is redeemed.
+            if (!CharacterNames.Comparer.Equals(party.Members[0], invite.From))
+            {
+                return PartyOutcome.NotLeader;
+            }
+
             if (party.Members.Count >= PartyRules.MaxMembers)
             {
                 return PartyOutcome.PartyFull;
