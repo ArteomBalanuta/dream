@@ -486,8 +486,12 @@ public sealed partial class ContentCatalog
             throw Fail(ItemsFileName, path, "must restore health or mana");
         }
 
+        // The cooldown group is a content key: it is looked up by value (AbilityCooldowns.IsReady) and
+        // travels on the wire as AbilityCooldown.Key, and the quickbar drops a cooldown whose key is
+        // longer than its own key cap, which would leave the tile looking ready while every click is
+        // refused (BH-CONTENT-2). So it is read with the same rules as every other key.
         string? group = use.TryGetValue("cooldownGroup", out JsonElement groupElement)
-            ? ReadNonEmptyString(ItemsFileName, $"{path}.cooldownGroup", groupElement)
+            ? ReadKey(ItemsFileName, $"{path}.cooldownGroup", groupElement)
             : null;
         return new ItemUseDefinition(health, mana, cooldown, group);
     }
