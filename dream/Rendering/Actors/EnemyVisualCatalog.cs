@@ -107,8 +107,8 @@ public static class EnemyVisualCatalog
     // at its floor rate (MinPlaybackSpeed) instead of skating.
     private const float PatrolReferenceSpeed = 1.4f;
     private const float ChaseReferenceSpeed = 5.0f;
-    internal const float GaitThresholdSpeed = 2.0f;
-    internal const float GaitHysteresisSpeed = 0.4f;
+    internal const float GaitThresholdSpeed = EnemyPresentationBand.GaitThresholdSpeed;
+    internal const float GaitHysteresisSpeed = EnemyPresentationBand.GaitHysteresisSpeed;
 
     public static readonly EnemyClipSet WolfClips = new(
         WolfAssetDefinition.IdleClip,

@@ -1,6 +1,7 @@
 using Xunit;
 using Dream.Server;
 using Dream.Simulation.Content;
+using Dream.Simulation.Runtime;
 using Dream.Tests.Server.Persistence.Migrations;
 
 namespace Dream.Tests.Server;
@@ -37,6 +38,8 @@ public sealed class StartupContentTests
         {
         }
 
-        Assert.StartsWith($"server.content.digest digest={ContentCatalog.Shipped.ContentDigest} ", log[0], StringComparison.Ordinal);
+        // The start reads the content it spawns enemies from: the shipped catalog in production, the
+        // suite's default enemy content (LegacyWolfPopulation) here.
+        Assert.StartsWith($"server.content.digest digest={WorldSessionRuntime.DefaultEnemyContent.ContentDigest} ", log[0], StringComparison.Ordinal);
     }
 }

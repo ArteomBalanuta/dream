@@ -114,8 +114,11 @@ public sealed class LegacyDatabaseServerStartupTests(ITestOutputHelper output)
         output.WriteLine(error.Message);
         Assert.Equal(99, error.StoredVersion);
         Assert.Contains("99", error.Message, StringComparison.Ordinal);
-        // The content digest comes before the database is touched; nothing else may be logged.
-        Assert.Empty(log.Where(line => !line.StartsWith("server.content.digest ", StringComparison.Ordinal)));
+        // The content lines (the digest, and the no-camps warning for the suite's camp-less default
+        // enemy content) come before the database is touched; nothing else may be logged.
+        Assert.Empty(log.Where(line =>
+            !line.StartsWith("server.content.digest ", StringComparison.Ordinal)
+            && !line.StartsWith("server.content.no-camps ", StringComparison.Ordinal)));
         Assert.Equal(bytesBefore, File.ReadAllBytes(database.DatabasePath));
         Assert.Equal(filesBefore, Directory.GetFiles(database.RootDirectory).Where(f => !f.EndsWith(".lock", StringComparison.Ordinal)).Order().ToArray());
     }

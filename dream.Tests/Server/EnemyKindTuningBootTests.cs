@@ -47,7 +47,7 @@ public sealed class EnemyKindTuningBootTests
         {
             try
             {
-                SqliteConnection.ClearAllPools();
+                SqlitePools.Release(databasePath);
                 Directory.Delete(directory, recursive: true);
             }
             catch (IOException)

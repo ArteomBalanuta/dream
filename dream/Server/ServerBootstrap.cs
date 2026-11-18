@@ -1,8 +1,6 @@
 using System.Globalization;
 using System.Net;
 using Dream.Assets;
-using Dream.Client.Presentation;
-using Dream.Rendering.Actors;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Transport;
 using Dream.Server.Hosting;
@@ -13,6 +11,7 @@ using Microsoft.Data.Sqlite;
 using Dream.Server.Persistence.Worlds;
 using Dream.Server.Worlds;
 using Dream.Simulation.Content;
+using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
@@ -735,8 +734,8 @@ public static class ServerBootstrap
             return;
         }
 
-        float low = EnemyVisualCatalog.GaitThresholdSpeed - EnemyVisualCatalog.GaitHysteresisSpeed;
-        float high = EnemyVisualCatalog.GaitThresholdSpeed + EnemyVisualCatalog.GaitHysteresisSpeed;
+        float low = EnemyPresentationBand.GaitThresholdSpeed - EnemyPresentationBand.GaitHysteresisSpeed;
+        float high = EnemyPresentationBand.GaitThresholdSpeed + EnemyPresentationBand.GaitHysteresisSpeed;
         foreach ((string name, float speed) in new[] { ("chase_speed", row.ChaseSpeed), ("patrol_speed", row.PatrolSpeed) })
         {
             if (speed > low && speed < high)
@@ -746,10 +745,10 @@ public static class ServerBootstrap
             }
         }
 
-        if (row.ChaseSpeed > ClientScenePresenter.EnemyTeleportDistance)
+        if (row.ChaseSpeed > EnemyPresentationBand.TeleportDistance)
         {
             log($"server.content.enemy-tuning-warning kind={row.EnemyKind} chase_speed={Num(row.ChaseSpeed)} " +
-                $"reason=covers more than the client teleport distance ({Num(ClientScenePresenter.EnemyTeleportDistance)} m) per second; the client will snap it");
+                $"reason=covers more than the client teleport distance ({Num(EnemyPresentationBand.TeleportDistance)} m) per second; the client will snap it");
         }
 
         static string Num(float value) => value.ToString("0.###", CultureInfo.InvariantCulture);
