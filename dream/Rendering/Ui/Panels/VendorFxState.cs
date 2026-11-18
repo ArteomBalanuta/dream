@@ -22,7 +22,6 @@ public sealed class VendorFxState
     public static void Reset() => _current = null;
 
     private bool _pending;
-    private string? _pendingKind;
     private ulong _pendingOccupancy;
     private float _pendingAt;
     private float _flashStart;
@@ -67,9 +66,6 @@ public sealed class VendorFxState
         return _hasIcon[line];
     }
 
-    // The kind a buy is waiting on, or null. Read by tests.
-    internal string? PendingKind => _pending ? _pendingKind : null;
-
     // Called once a frame before the bag is drawn. Resolves a pending buy into FlashAnchor: the first
     // frame the bag gains cells, the flash lands on the lowest newly occupied cell's item.
     internal void BeginFrame(HudView v)
@@ -94,7 +90,6 @@ public sealed class VendorFxState
         {
             int anchor = v.BagAnchorAt(System.Numerics.BitOperations.TrailingZeroCount(gained));
             _pending = false;
-            _pendingKind = null;
             if (anchor >= 0)
             {
                 FlashAnchor = anchor;
@@ -108,15 +103,15 @@ public sealed class VendorFxState
         if (waited < 0f || waited > PendingSeconds)
         {
             _pending = false;
-            _pendingKind = null;
         }
     }
 
-    // A buy was sent: remember the kind and which cells were full, so the item that arrives can flash.
-    internal void NoteBuy(string? itemKind, HudView v)
+    // A buy was sent: remember which cells were full, so the item that arrives can flash. The first cells
+    // gained are taken to be the purchase (a pickup landing in the same window can be mistaken for it; the
+    // flash is cosmetic and the window is short).
+    internal void NoteBuy(HudView v)
     {
         _pending = true;
-        _pendingKind = itemKind;
         _pendingOccupancy = v.BagOccupancy();
         _pendingAt = v.AnimationSeconds;
     }

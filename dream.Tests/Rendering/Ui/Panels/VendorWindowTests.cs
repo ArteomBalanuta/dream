@@ -451,4 +451,17 @@ public sealed class VendorWindowTests : IDisposable
         Assert.NotEqual(a, HudWidgetId.Of(VendorWindow.IdShopCell, VendorGrid.KindIdentity("gem.azure")));
         Assert.NotEqual(a, VendorWindow.IdShopCell);
     }
+
+    // One click on a stock that lists the same kind twice is one purchase, not one per line: the two lines
+    // share a widget id and the router answers by id alone.
+    [Fact]
+    public void DuplicateStockKinds_OneClickBuysExactlyOnce_ThroughTheRealRouter()
+    {
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 5), new VendorStockLine("gem.amber", "Amber", 5));
+        SetGold(100);
+
+        PressAndRelease(InventoryScene.Centre(Shop(0)), null);
+
+        Assert.Equal("gem.amber", Assert.Single(_actions.Picked).ItemKind);
+    }
 }

@@ -22,6 +22,22 @@ public static class VendorGrid
     public static UiRect CellRect(in UiLayout l, UiRect win, int cell) =>
         l.FromUnits(win, LeftUnits + (cell % Columns * CellUnits), TopUnits + (cell / Columns * CellUnits), CellUnits, CellUnits);
 
+    // The board cell under p (0..63), or -1 off the board (or for a non-finite p). The same arithmetic as
+    // InventoryWindow.CellAt; a test pins the two together, because the board must mirror the bag.
+    internal static int CellAt(in UiLayout l, UiRect win, Vector2 p)
+    {
+        UiRect board = BoardRect(in l, win);
+        if (!board.Contains(p))
+        {
+            return -1;
+        }
+
+        float cell = CellUnits * l.Scale;
+        int col = Math.Clamp((int)MathF.Floor((p.X - board.X) / cell), 0, Columns - 1);
+        int row = Math.Clamp((int)MathF.Floor((p.Y - board.Y) / cell), 0, Rows - 1);
+        return (row * Columns) + col;
+    }
+
     public static UiRect ItemRect(in UiLayout l, UiRect win, int anchor, ItemFootprint f) =>
         l.FromUnits(
             win,
@@ -31,7 +47,7 @@ public static class VendorGrid
             f.Rows * CellUnits);
 
     // anchors[i] is stock line i's top-left cell, or -1 when it does not fit (or the span is too short to
-    // hold it); footprints[i] is its footprint. Returns how many lines were placed. The caller passes
+    // hold it); footprints[i] is its footprint. Both spans are cleared over the shorter of the two lengths, which is also the most lines placed. Returns how many lines were placed. The caller passes
     // stackalloc spans of length VendorHudState.MaxStock.
     public static int Place(HudView v, VendorHudState vendor, Span<int> anchors, Span<ItemFootprint> footprints)
     {
@@ -39,9 +55,10 @@ public static class VendorGrid
         int room = Math.Min(anchors.Length, footprints.Length);
         ulong occupied = 0;
         int placed = 0;
-        for (int n = 0; n < anchors.Length; n++)
+        for (int n = 0; n < room; n++)
         {
             anchors[n] = -1;
+            footprints[n] = default;
         }
 
         for (int n = 0; n < count && n < room; n++)

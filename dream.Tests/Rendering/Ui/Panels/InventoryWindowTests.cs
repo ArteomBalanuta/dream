@@ -1845,4 +1845,43 @@ public sealed class InventoryWindowTests : IDisposable
         Assert.True(ground.G < 140, "the ground drop keeps its red");
         Assert.NotEqual(sell, ground);
     }
+
+    [Fact]
+    public void DragToSell_ASnapshotThatChangesMidDrag_CancelsTheDrag_AndSellsNothing()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+        OpenShop();
+
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(9)), OverShop());
+        Assert.True(InventoryUiState.Current.DragActive);
+
+        // The bag changes under the drag: the slot may no longer hold what was picked up.
+        _scene.Items[9] = InventoryScene.Item(78, "gem.azure");
+        _scene.Refresh();
+        ShopFrame();
+        Assert.True(InventoryUiState.Current.DragCancelled);
+
+        ReleaseAt(OverShop());
+
+        Assert.Empty(_sell.Sold);
+        Assert.Empty(_sell.Inventory);
+        Assert.DoesNotContain(UiFeedback.Coin, Spy.Emitted);
+    }
+
+    [Fact]
+    public void TheShopBoardAndTheBagBoardAgreeOnTheCellUnderAnyPoint()
+    {
+        UiLayout l = _scene.Layout;
+        UiRect win = l.Character;
+        UiRect board = VendorGrid.BoardRect(l, win);
+        for (float y = board.Y - 6f; y < board.Bottom + 6f; y += 3.7f)
+        {
+            for (float x = board.X - 6f; x < board.Right + 6f; x += 3.7f)
+            {
+                Vector2 p = new(x, y);
+                Assert.Equal(InventoryWindow.CellAt(l, win, p), VendorGrid.CellAt(l, win, p));
+            }
+        }
+    }
 }

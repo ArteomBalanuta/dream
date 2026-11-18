@@ -49,6 +49,7 @@ public static class ClassicHud
         _trade = null;
         _quests = null;
         _intents = null;
+        VendorFxState.Reset();
     }
 
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
