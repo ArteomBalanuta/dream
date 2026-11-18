@@ -917,7 +917,10 @@ public sealed partial class ContentCatalog
         _ = ReadInt(NpcsFileName, "$.version", properties["version"], 1, 1);
 
         List<NpcDefinition> list = [];
-        HashSet<string> keys = new(StringComparer.Ordinal);
+        // Case-insensitive, like every other content collection: an NPC key is looked up case-insensitively
+        // (QuestsFor, _questsByGiver, the quest-giver match), so two case-variant NPCs would each offer and
+        // accept the other's quests (BH-CONTENT-4). The dedupe must use the comparer the lookups use.
+        HashSet<string> keys = new(StringComparer.OrdinalIgnoreCase);
         JsonElement npcsElement = properties["npcs"];
         ExpectArray(NpcsFileName, "$.npcs", npcsElement);
         int index = 0;
