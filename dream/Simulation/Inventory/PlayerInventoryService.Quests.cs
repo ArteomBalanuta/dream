@@ -240,7 +240,8 @@ internal sealed partial class PlayerInventoryService
         string playerName,
         QuestDefinition quest,
         out long rewardedXp,
-        Func<Action?>? rewardWrite = null)
+        Func<Action?>? rewardWrite = null,
+        ContentCatalog? content = null)
     {
         rewardedXp = 0;
         if (!Ensure(playerName))
@@ -293,9 +294,16 @@ internal sealed partial class PlayerInventoryService
 
         BagBoard board = BuildBoard(remaining);
         List<(ItemDefinition Definition, int Slot)> placements = [];
+
+        // BH-QUEST-5: through the catalog the quest came from, not ContentCatalog.Shipped. The offer
+        // side reads the definitions through the runtime's own EnemyContent, so a reward item that only
+        // the runtime's items.json has would never resolve here and every turn-in returned
+        // QuestUnavailable with no diagnostic - the quest could never be handed in. The load-time check
+        // (ParseQuestRewards) already validates the reward against that same file's items.
+        ContentCatalog rewardSource = content ?? ContentCatalog.Shipped;
         foreach (QuestRewardItem reward in rewards.Items)
         {
-            if (!ContentCatalog.Shipped.TryGetItem(reward.ItemKind, out ItemDefinition? definition) || definition.Rolls != null)
+            if (!rewardSource.TryGetItem(reward.ItemKind, out ItemDefinition? definition) || definition.Rolls != null)
             {
                 return InventoryEquipOutcome.QuestUnavailable;
             }
@@ -340,13 +348,16 @@ internal sealed partial class PlayerInventoryService
         List<PersistedInventorySlot> newSlots = new(placements.Count);
         foreach ((ItemDefinition definition, int slotIndex) in placements)
         {
-            ToolDefinition tool = ToolCatalog.Resolve(definition.Key);
+            // The resolved definition's own fields, not ToolCatalog's: ToolCatalog is built from the
+            // shipped items alone and Resolve THROWS on a kind it does not know, so an alternate
+            // catalog's reward item would crash the turn-in. For a shipped kind the two are the same
+            // projection (ToolCatalog.BuildDefinitions copies Key, DisplayName and VisualId).
             long itemInstanceId = _objectIds.Take().Value;
             PersistedItemInstance item = new(
                 itemInstanceId,
-                tool.ItemKind,
-                tool.DisplayName,
-                tool.VisualId,
+                definition.Key,
+                definition.DisplayName,
+                definition.VisualId,
                 playerName,
                 WorldPosition: null,
                 State: "Inventory",

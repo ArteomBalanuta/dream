@@ -68,7 +68,11 @@ public sealed partial class WorldSessionRuntime
             outcome = RunInventoryAction(
                 player,
                 (service, key, definition) => service.TryTurnInQuest(
-                    key, definition, out _, () => GrantQuestExperience(session, definition.Rewards.Xp)),
+                    key,
+                    definition,
+                    out _,
+                    () => GrantQuestExperience(session, definition.Rewards.Xp),
+                    EnemyContent),
                 quest!);
             if (outcome == InventoryEquipOutcome.Equipped)
             {
