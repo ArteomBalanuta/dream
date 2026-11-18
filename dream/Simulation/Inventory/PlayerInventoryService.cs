@@ -132,6 +132,10 @@ internal sealed partial class PlayerInventoryService
     // The loaded inventories. slots by player name (item instance id by slot index; tests).
     internal IReadOnlyDictionary<string, Dictionary<int, long>> LoadedSlotsByPlayer => _slotsByPlayer;
 
+    // The inventory/quest revision entries held, which must track the loaded (and retained) inventories
+    // rather than every character ever seen (tests; see Evict).
+    internal int TrackedRevisionCount => _inventoryRevisions.Count + _questRevisions.Count;
+
     public int LoadedInventoryCount => _slotsByPlayer.Count;
 
     public int LoadedItemInstanceCount => _itemInstances.Count;
@@ -838,6 +842,14 @@ internal sealed partial class PlayerInventoryService
                 _writeTrackers.Remove(playerName);
             }
 
+            // Keyed by name like every other map above, and not part of the moved-out copy: a reloaded or
+            // restored inventory legitimately restarts at 1, and the quest-log sync is per session and starts
+            // at 0, so the first write after a reload still reads as stale and resends. Dropped here as well
+            // as on the no-tracker path below, or a long-lived server keeps one entry pair per character that
+            // ever queued a write and then departed - growth by lifetime joins, not by players online, and no
+            // LRU bounds these two.
+            _inventoryRevisions.Remove(playerName);
+            _questRevisions.Remove(playerName);
             return;
         }
 
