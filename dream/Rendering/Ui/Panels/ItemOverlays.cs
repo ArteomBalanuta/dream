@@ -266,6 +266,10 @@ public static class ItemOverlays
     // A release that would sell to the open shop: a warm ember glow, not the red of "drops on the ground".
     private static readonly UiColor SellGhostTint = new(255, 190, 110, 215);
 
+    // A release over the shop that is refused (a worn item): a cold blue-grey, agreeing with the cold shop
+    // frame, and unlike the white of an ordinary in-window outcome.
+    private static readonly UiColor RefusedGhostTint = new(150, 170, 200, 200);
+
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
     {
         InventoryUiState st = InventoryUiState.Current;
@@ -569,7 +573,9 @@ public static class ItemOverlays
         bool dropsOnGround = shop == InventoryWindow.DropVerdict.None
             && InventoryWindow.TryResolveRelease(in l, l.Inventory, v, st.DragSource, p, out InventoryHudAction action) == InventoryWindow.DropVerdict.Valid
             && action.Kind == InventoryHudActionKind.Drop;
-        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), InventoryWindow.IconRect(hv.Icon, box, l.Scale), shop == InventoryWindow.DropVerdict.Valid ? SellGhostTint : dropsOnGround ? DropGhostTint : GhostTint);
+        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), InventoryWindow.IconRect(hv.Icon, box, l.Scale), shop == InventoryWindow.DropVerdict.Valid ? SellGhostTint
+                : shop == InventoryWindow.DropVerdict.Invalid ? RefusedGhostTint
+                : dropsOnGround ? DropGhostTint : GhostTint);
     }
 
     // ---- context menu -----------------------------------------------------------------------

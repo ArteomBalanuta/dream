@@ -4,10 +4,9 @@ namespace Dream.Rendering.Hud;
 // display name and the price in gold. Built by the scene from VendorOpenedResult, never drawn raw.
 public readonly record struct VendorStockLine(string ItemKind, string DisplayName, long Price);
 
-// What the vendor window shows and remembers (M3): which NPC it is open for, its stock, and the sell
-// list's page and selection. One instance per scene, created with a parameterless constructor (the
+// What the vendor window shows and remembers (M3): which NPC it is open for and its stock. One instance per scene, created with a parameterless constructor (the
 // headless play scene fills fields by it). The scene opens and closes it; the window only reads the
-// stock and moves the page and the selection. Nothing here is sent to the server by itself.
+// stock. Nothing here is sent to the server by itself.
 public sealed class VendorHudState
 {
     public const int MaxStock = 16;
@@ -22,15 +21,6 @@ public sealed class VendorHudState
     public string Title { get; private set; } = string.Empty;
 
     public int StockCount { get; private set; }
-
-    // The sell list page, 0-based. The window clamps it to the pages the bag has.
-    public int SellPage { get; set; }
-
-    // The bag anchor and item id picked in the sell list, or -1 and 0. The window drops a pick whose
-    // anchor no longer holds that item.
-    public int SelectedAnchor { get; private set; } = -1;
-
-    public long SelectedItemId { get; private set; }
 
     public VendorStockLine StockAt(int index)
     {
@@ -65,8 +55,6 @@ public sealed class VendorHudState
         stock[..count].CopyTo(_stock);
         Array.Clear(_stock, count, _stock.Length - count);
         StockCount = count;
-        SellPage = 0;
-        ClearSelection();
     }
 
     public void Close()
@@ -76,19 +64,5 @@ public sealed class VendorHudState
         Title = string.Empty;
         Array.Clear(_stock);
         StockCount = 0;
-        SellPage = 0;
-        ClearSelection();
-    }
-
-    public void Select(int anchor, long itemInstanceId)
-    {
-        SelectedAnchor = anchor;
-        SelectedItemId = itemInstanceId;
-    }
-
-    public void ClearSelection()
-    {
-        SelectedAnchor = -1;
-        SelectedItemId = 0;
     }
 }

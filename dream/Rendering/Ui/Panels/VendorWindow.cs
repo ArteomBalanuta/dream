@@ -14,9 +14,8 @@ namespace Dream.Rendering.Ui.Panels;
 // is drawn through TryGet, so the window is complete without the forged art.
 public static class VendorWindow
 {
-    // Kept for the text-fit preview test, which still lays out the retired list rows.
-
-    // Text sizes in window units (1 u = Scale px); the boxes are the art's, so each is capped by its box.
+    // Text sizes in window units (1 u = Scale px) for the grid shop's own lines and cells; the boxes are
+    // the art's, so each is capped by its box.
     internal const float RowTextUnits = 9.5f;
     internal const float HeadTextUnits = 8f;
     internal const float CellTextUnits = 8f;
@@ -78,8 +77,9 @@ public static class VendorWindow
             }
         }
 
-        // What releasing the drag on the board would do. The same decision InventoryWindow makes on the
-        // release, so the cue never disagrees with it.
+        // What releasing the drag on the board would do: the rule InventoryWindow applies on the release.
+        // Build runs before InventoryWindow.Build, so st.DragCancelled is read one frame behind and a
+        // drag cancelled by a new snapshot glows for one extra frame; the release itself is never affected.
         Vector2 pointer = i.Pointer.Position;
         InventoryWindow.DropVerdict sell = InventoryWindow.DropVerdict.None;
         if (dragging && st.DragActive && !st.DragCancelled)
@@ -117,20 +117,24 @@ public static class VendorWindow
 
                 VendorStockLine line = vendor.StockAt(n);
                 UiRect r = VendorGrid.ItemRect(in l, win, anchors[n], footprints[n]);
-                if (!i.Button(CellId(vendor, n), r))
+                bool affordable = line.Price <= gold;
+                if (!i.Button(CellId(vendor, n), r, affordable))
                 {
                     continue;
                 }
 
-                if (line.Price > gold)
+                if (!affordable)
                 {
                     i.Emit(UiFeedback.Refuse);
-                    continue;
+                    break;
                 }
 
+                // One click is one purchase: only one widget can be hot, but two stock lines of the same
+                // kind share an id and the router answers by id alone, so stop at the first buy.
                 a.Vendor(new VendorHudAction(VendorHudActionKind.Buy, line.ItemKind));
                 i.Emit(UiFeedback.Coin);
-                fx.NoteBuy(line.ItemKind, v);
+                fx.NoteBuy(v);
+                break;
             }
         }
 
@@ -202,10 +206,7 @@ public static class VendorWindow
             string name = sell == InventoryWindow.DropVerdict.Valid ? UiSpriteNames.CellOverlayHover : UiSpriteNames.CellOverlayInvalid;
             if (board.Contains(pointer) && s.TryGet(name, out UiSprite overlay))
             {
-                float cell = VendorGrid.CellUnits * l.Scale;
-                int col = Math.Clamp((int)MathF.Floor((pointer.X - board.X) / cell), 0, VendorGrid.Columns - 1);
-                int row = Math.Clamp((int)MathF.Floor((pointer.Y - board.Y) / cell), 0, VendorGrid.Rows - 1);
-                c.Tile(overlay, VendorGrid.CellRect(in l, win, (row * VendorGrid.Columns) + col), White);
+                c.Tile(overlay, VendorGrid.CellRect(in l, win, VendorGrid.CellAt(in l, win, pointer)), White);
             }
         }
 
