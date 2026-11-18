@@ -188,11 +188,26 @@ public sealed partial class WorldSessionRuntime
 
     // Only honoured for the join that freshly attached the seat: a repeated join or a takeover of an
     // attached seat must not re-arm it.
+    //
+    // BH-REV1. FreshlyAttached is a property of the SEAT, and the client picks its own session id, so a
+    // rejoin under a brand-new id always had it: that walked straight past the character brake above, and
+    // the hold's release then wrote a full fresh window and a cleared spent mark into the character record.
+    // A hold only ever defers the window THIS join granted, so it is gated on the same character record
+    // ApplyJoinSpawnProtection consults: armed only when that join actually granted a new window, i.e. the
+    // record's JoinGrantTick is this seat's own fresh attach. A join that merely resumed -- the character
+    // attacked, or rejoined inside JoinHoldReattachCooldownTicks -- has nothing to defer and gets no hold,
+    // exactly as a reconnect inside the cooldown already got none under its old session id.
     public void HoldSpawnProtectionUntilInput(PlayerSessionId sessionId)
     {
         if (_sessions.TryGet(sessionId, out ConnectedPlayer? player) && player != null && player.IsSpawned
             && player.FreshlyAttached)
         {
+            ulong joinGrantTick = CharacterJoinGrantTick(player);
+            if (joinGrantTick == 0 || joinGrantTick < player.LastFreshAttachTick)
+            {
+                return;
+            }
+
             player.ProtectionHeldSinceTick = Math.Max(1UL, CurrentServerTick);
         }
     }
@@ -209,10 +224,23 @@ public sealed partial class WorldSessionRuntime
         ulong tick = CurrentServerTick;
         bool stillHeld = tick <= player.ProtectionHeldSinceTick + PlayerRespawnRules.JoinHoldMaxTicks;
         player.ProtectionHeldSinceTick = 0;
-        if (stillHeld)
+        if (!stillHeld)
         {
-            GrantSpawnProtection(player, tick, CharacterJoinGrantTick(player));
+            return;
         }
+
+        // BH-REV1, second half of the same brake: whatever armed the hold, the release may not hand back a
+        // window the character spent by attacking, nor erase the spent mark that refuses the next rejoin.
+        const ulong cooldown = PlayerRespawnRules.JoinHoldReattachCooldownTicks;
+        if (_characterSpawnProtection.TryGetValue(player.CharacterKey.Value, out CharacterSpawnProtection prior)
+            && prior.SpentTick != 0 && tick < prior.SpentTick + cooldown)
+        {
+            // Resume what is left (nothing, once an attack spent it), exactly as a rejoin does.
+            player.ProtectedThroughTick = prior.ProtectedThroughTick >= tick ? prior.ProtectedThroughTick : 0UL;
+            return;
+        }
+
+        GrantSpawnProtection(player, tick, CharacterJoinGrantTick(player));
     }
 
     private void ReleaseSpawnProtectionHold(PlayerCommandFrame frame, ConnectedPlayer? player)
