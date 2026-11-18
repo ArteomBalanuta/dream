@@ -309,6 +309,10 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
         }
         catch
         {
+            // The host failed to construct, so this world was never served: no final checkpoint may
+            // be written over what the database holds. The runtime's Dispose is idempotent, so the
+            // host dispose below still releases its owned bundle.
+            runtimeHost.Runtime.DisposeWithoutFinalCheckpoint();
             runtimeHost.Dispose();
             throw;
         }
