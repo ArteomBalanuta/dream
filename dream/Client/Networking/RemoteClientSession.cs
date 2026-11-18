@@ -125,6 +125,14 @@ public sealed class RemoteClientSession : IAsyncDisposable
     public static readonly TimeSpan ServerSilenceTimeout = TimeSpan.FromSeconds(8);
     public const string ServerSilenceDisconnectReason = "Connection lost: no data from the server for 8 s";
 
+    // How long DisposeAsync waits for each background loop, and for a direct send holding the frame
+    // buffer, before it gives up on that one and carries on with the teardown. Cancelling _shutdown
+    // normally ends them in microseconds -- a pending socket receive included, which .NET aborts on
+    // the token -- so this is only the bound that keeps a loop that does not from freezing the
+    // render thread that joins DisposeAsync. Matched to the server's own
+    // DedicatedServerService.ConnectionLoopShutdownTimeout.
+    public static readonly TimeSpan LoopShutdownTimeout = TimeSpan.FromSeconds(5);
+
     // The prefix of every reason a session ends with when the link broke, as opposed to the server
     // refusing or removing the player (a join rejection, a kick, a ban, a protocol mismatch).
     public const string ConnectionLostPrefix = "Connection lost:";
@@ -849,75 +857,39 @@ public sealed class RemoteClientSession : IAsyncDisposable
 
         _shutdown.Cancel();
         // First, so it cannot start a send loop after the one below has been awaited.
-        if (_keepaliveTask != null)
-        {
-            try
-            {
-                await _keepaliveTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        if (_watchdogTask != null)
-        {
-            try
-            {
-                await _watchdogTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
+        await StopLoopAsync(_keepaliveTask, "keepalive");
+        await StopLoopAsync(_watchdogTask, "watchdog");
         // Before the send loop: a retry it queued must not start a send loop after that one ended.
-        if (Volatile.Read(ref _joinSupervisorTask) is Task joinSupervisor)
-        {
-            try
-            {
-                await joinSupervisor;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        if (_sendLoopTask != null)
-        {
-            try
-            {
-                await _sendLoopTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        if (_receiveLoopTask != null)
-        {
-            try
-            {
-                await _receiveLoopTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
+        await StopLoopAsync(Volatile.Read(ref _joinSupervisorTask), "join-supervisor");
+        await StopLoopAsync(_sendLoopTask, "send");
+        await StopLoopAsync(_receiveLoopTask, "receive");
 
         // The send loop has exited, but a direct Send*Async call (SendHelloAsync and friends) does
         // not run on it and may still be writing the pooled frame buffer to the transport. Take
         // _sendLock so the buffer goes back to ArrayPool<byte>.Shared only after that send ends.
         // Senders that get the lock after this see _disposeState and throw ObjectDisposedException
         // instead of encoding into the returned buffer.
-        await _sendLock.WaitAsync();
-        try
+        //
+        // Bounded like the loop waits above, and for the same reason. A send that is still holding
+        // the lock when the bound expires keeps the pooled buffer: returning it to the pool under a
+        // live send would hand that send's bytes to the next borrower, so the buffer is abandoned
+        // (the GC collects it; the pool simply loses one rented array) rather than recycled.
+        if (await _sendLock.WaitAsync(LoopShutdownTimeout))
         {
-            _frameWriter.Dispose();
+            try
+            {
+                _frameWriter.Dispose();
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
         }
-        finally
+        else
         {
-            _sendLock.Release();
+            NetworkDiagnosticsLog.Write(
+                "client.shutdown.timeout",
+                $"endpoint={Options.EndpointLabel} session={Options.SessionId} send still in flight after {LoopShutdownTimeout.TotalSeconds:0} s: the frame buffer is not returned to the pool");
         }
 
         // _sendLock is deliberately not disposed: a sender still queued on WaitAsync would never be
@@ -925,6 +897,35 @@ public sealed class RemoteClientSession : IAsyncDisposable
         // is read, which this class never does.
         _shutdown.Dispose();
         await _connection.DisposeAsync();
+    }
+
+    // Waits for one background loop to end after _shutdown was cancelled, for at most
+    // LoopShutdownTimeout. The bound is what keeps the caller's thread free: PlayScene.Dispose joins
+    // DisposeAsync synchronously on the render thread (PlayScene.Lifetime.DisposeRemoteClient), and
+    // this process has no second thread that could close the window if that join never returned. A
+    // loop that outstays the bound is abandoned, not killed; it runs on a thread-pool thread, its
+    // cancellation is already requested, and the transport dispose at the end of DisposeAsync ends
+    // the socket operation it may be parked in.
+    private async ValueTask StopLoopAsync(Task? loop, string label)
+    {
+        if (loop == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await loop.WaitAsync(LoopShutdownTimeout);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (TimeoutException)
+        {
+            NetworkDiagnosticsLog.Write(
+                "client.shutdown.timeout",
+                $"endpoint={Options.EndpointLabel} session={Options.SessionId} loop={label} still running after {LoopShutdownTimeout.TotalSeconds:0} s: abandoning it");
+        }
     }
 
     private async ValueTask SendMessageAsync(IClientToServerMessage message, CancellationToken cancellationToken)
