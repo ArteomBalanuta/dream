@@ -79,8 +79,34 @@ public sealed class M8EndToEndLoopbackTests
     }
 
     // Bounded by LoopbackDeadline, not by a flat 30 s of wall clock: see WireLoopbackHarness.
+    //
+    // Every wait in this class is the same shape: an admin command's reply, a chat notice, a kick or
+    // ban notice, the message of the day. All of them are a persistence round trip followed by the
+    // one tick that applies the result to the live connections, so a tick budget is the honest bound
+    // and it keeps a never-true condition from spending the whole 180 s cap. Nothing here is on a
+    // cadence - this class never sets StandingRefreshIntervalTicks and never waits on it - and a
+    // /mute or /ban with no minutes runs to PermanentUntilUtc, so no wait here is on the clock
+    // either.
     private static Task UntilAsync(WireLoopbackServer server, Func<bool> done, string what) =>
-        server.UntilAsync(done, what);
+        server.UntilAsync(done, what, LoopbackDeadline.WriteRoundTripTicks);
+
+    // maxTicks defaults to the write round trip; a wait whose write has already landed passes
+    // LoopbackDeadline.AppliedTicks instead.
+    private static Task UntilAsync(WireLoopbackServer server, Func<bool> done, Func<string> what, long? maxTicks = null) =>
+        server.UntilAsync(done, what, maxTicks ?? LoopbackDeadline.WriteRoundTripTicks);
+
+    // What a stalled mute notice has to tell apart: whether the mute reached the player's own
+    // connection standing - StepAccountStandings' job on the tick after the write's barrier read,
+    // and the thing the notice is produced from - or whether it did and the notice still never came.
+    private static string MuteStateOf(WireLoopbackServer server, WireLoopbackClient client)
+    {
+        string standing =
+            server.Host.TryGetConnectionContext(server.ConnectionFor(client).ConnectionId, out ServerRoutingContext? context) && context != null
+                ? $"muted_until_utc={context.Standing.MutedUntilUtc?.ToString("o") ?? "null"}"
+                : "no connection context";
+        Dream.Simulation.Persistence.PersistenceWriteQueue? writes = server.Runtime.PersistenceWrites;
+        return $"{standing}, writes pending={writes?.PendingCount} completed={writes?.CompletedWrites} failed={writes?.FailedWrites}, tick={server.Runtime.CurrentServerTick}";
+    }
 
     private static async Task TicksAsync(WireLoopbackServer server, int ticks)
     {
@@ -210,9 +236,17 @@ public sealed class M8EndToEndLoopbackTests
             await CommandAsync(admin, $"/mute \"{NameOf(Bee)}\"");
             await UntilAsync(server, () => SystemLines(admin).Contains($"Muted {NameOf(Bee)}."), "the mute result");
 
-            // Muted at once, on the live connection.
+            // Muted at once, on the live connection. The line is sent BEFORE this waits on anything,
+            // which is the point: it proves a line sent the moment the admin's reply lands is already
+            // refused. The reply is sent by the write's own barrier read, which is also what queues
+            // the AccountUpdate, so by now the only thing left is the tick that applies it - a couple
+            // of ticks, not a cadence and not a clock.
             await SayAsync(bee, ChatChannel.World, "hello anyone");
-            await UntilAsync(server, () => SystemLines(bee).Contains(DedicatedServerHost.MutedText), "the muted notice");
+            await UntilAsync(
+                server,
+                () => SystemLines(bee).Contains(DedicatedServerHost.MutedText),
+                () => $"the muted notice ({MuteStateOf(server, bee)})",
+                LoopbackDeadline.AppliedTicks);
             await TicksAsync(server, 8);
             Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello anyone");
 
@@ -232,7 +266,11 @@ public sealed class M8EndToEndLoopbackTests
             await server.DisconnectAsync(bee);
             bee = await server.ConnectAndJoinAsync(Bee);
             await SayAsync(bee, ChatChannel.World, "hello again");
-            await UntilAsync(server, () => SystemLines(bee).Contains(DedicatedServerHost.MutedText), "the muted notice after a rejoin");
+            await UntilAsync(
+                server,
+                () => SystemLines(bee).Contains(DedicatedServerHost.MutedText),
+                () => $"the muted notice after a rejoin ({MuteStateOf(server, bee)})",
+                LoopbackDeadline.AppliedTicks);
             await TicksAsync(server, 8);
             Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello again");
 
@@ -274,7 +312,8 @@ public sealed class M8EndToEndLoopbackTests
             await UntilAsync(
                 restarted,
                 () => SystemLines(bee).Contains(DedicatedServerHost.MutedText),
-                "the muted notice after a restart, which only accounts.muted_until_utc can produce");
+                () => $"the muted notice after a restart, which only accounts.muted_until_utc can produce ({MuteStateOf(restarted, bee)})",
+                LoopbackDeadline.AppliedTicks);
             await TicksAsync(restarted, 8);
             Assert.DoesNotContain(Chats(admin), chat => chat.Text == "hello after the restart");
 

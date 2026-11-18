@@ -48,25 +48,67 @@ internal struct LoopbackDeadline
     // and still short enough that a genuinely stuck test reports inside a normal run.
     public static readonly TimeSpan HardTimeout = TimeSpan.FromSeconds(180);
 
+    // A budget in PROGRESS, for a wait whose condition is known to need only a bounded number of
+    // server ticks: an admin reply, a chat notice, a standing applied to a live connection - all of
+    // which are a persistence round trip plus one tick. Ticks are the honest unit for those, and
+    // they are starvation-proof by construction: a loaded machine spends the same ticks over more
+    // seconds, it does not make the event need more ticks.
+    //
+    // It also fixes what the hard cap alone cost. The cap is a backstop for a condition that never
+    // becomes true, and as the OPERATIVE deadline it is very expensive: one such wait burned the
+    // full 180 s in a full-suite run and that was nearly the whole suite's slowdown. With a budget,
+    // the same never-true condition fails after this many ticks, which on a healthy machine is
+    // seconds. The cap stays underneath for anything the budget cannot judge.
+    //
+    // Two budgets, because the waits are two shapes and one value serves neither well. Measured: a
+    // UntilAsync iteration is a tick plus a client drain plus a 2 ms delay, about 17 ms, so the loop
+    // spends roughly 58 ticks a second on an idle machine - 4096 ticks cost 70 s, which is not a
+    // cost bound worth having.
+    //
+    // WriteRoundTripTicks is for a wait that still has a persistence write in front of it (an admin
+    // command's reply is sent by that write's own barrier read). The write is wall clock on the
+    // worker, so the margin is for it: 1024 ticks is about 18 s idle, several times SQLite's 5 s
+    // busy timeout, and more wall clock than that when the machine is loaded, since a starved loop
+    // spends its ticks more slowly.
+    //
+    // AppliedTicks is for a wait whose write has ALREADY landed - the test observed the reply the
+    // barrier read sent - so all that is left is the tick on which StepAccountStandings applies the
+    // result to the live connections, plus the server reading one frame off the loopback socket.
+    // That is one or two ticks; 512 is about 9 s idle, which is a large allowance for a loopback
+    // read and keeps the failure cheap.
+    public const long WriteRoundTripTicks = 1024;
+    public const long AppliedTicks = 512;
+
     private readonly DateTime _hardDeadline;
     private readonly TimeSpan _noProgressWindow;
+    private readonly long _startProgress;
+    private readonly long _tickBudget;
     private DateTime _quietSince;
     private long _lastProgress;
 
     // progress is any counter that advances while the loop is getting somewhere: the server's tick
-    // number, the client's received-frame count.
-    public LoopbackDeadline(long progress)
+    // number, the client's received-frame count. maxTicks bounds the wait in that counter as well;
+    // pass it only for a condition verified to need a bounded number of ticks, never for one on a
+    // cadence (a 120 s trade timeout is about 7680 ticks) and never for one gated on the wall clock.
+    public LoopbackDeadline(long progress, long? maxTicks = null)
     {
         _noProgressWindow = WireLoopbackServer.Timeout;
         DateTime now = DateTime.UtcNow;
         _hardDeadline = now + HardTimeout;
         _quietSince = now;
         _lastProgress = progress;
+        _startProgress = progress;
+        _tickBudget = maxTicks ?? 0;
     }
 
     // Fails the test when the loop has stopped getting anywhere: nothing advanced for the
-    // no-progress window, or the hard cap is up. Call it once per iteration, before doing the work.
-    public void AssertAlive(long progress, string what)
+    // no-progress window, the tick budget is spent, or the hard cap is up. Call it once per
+    // iteration, before doing the work.
+    public void AssertAlive(long progress, string what) => AssertAlive(progress, () => what);
+
+    // The message is built only on failure, so a wait can name the state it was watching without
+    // paying for the string on every pass.
+    public void AssertAlive(long progress, Func<string> what)
     {
         DateTime now = DateTime.UtcNow;
         if (progress != _lastProgress)
@@ -77,8 +119,15 @@ internal struct LoopbackDeadline
 
         Assert.True(
             now - _quietSince < _noProgressWindow,
-            $"never saw {what}: nothing advanced for {_noProgressWindow.TotalSeconds:0} s, so the server is stuck, not slow.");
-        Assert.True(now < _hardDeadline, $"never saw {what} within {HardTimeout.TotalSeconds:0} s.");
+            $"never saw {what()}: nothing advanced for {_noProgressWindow.TotalSeconds:0} s, so the server is stuck, not slow.");
+        if (_tickBudget > 0)
+        {
+            Assert.True(
+                progress - _startProgress < _tickBudget,
+                $"never saw {what()} within {_tickBudget} server ticks, which is not a loaded machine: this condition needs a couple of ticks once its write has landed.");
+        }
+
+        Assert.True(now < _hardDeadline, $"never saw {what()} within {HardTimeout.TotalSeconds:0} s.");
     }
 }
 
@@ -88,6 +137,32 @@ internal struct LoopbackDeadline
 internal sealed class WireLoopbackServer : IAsyncDisposable
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
+
+    // The options a wire test uses unless it brings its own, and why they move the idle timeout off
+    // ServerConnectionOptions.Default's 10 s.
+    //
+    // The server closes a connection that has sent no complete frame for IdleTimeout. A real client
+    // never trips that: RemoteClientSession runs a keepalive task that writes an empty frame every
+    // second for exactly this reason. WireLoopbackClient is a hand-written wire client with no
+    // keepalive, so it sends nothing at all while the test is waiting for something - and a wait
+    // that takes longer than 10 s therefore gets its own connection closed underneath it, after
+    // which the thing it is waiting for can NEVER arrive. The test then runs to its cap and fails
+    // for a bug that is not there.
+    //
+    // That is how Admin_Mute_SilencesThePlayer_AcrossARejoin_UntilUnmuted failed a full-suite run
+    // at the default gate while passing in 2 s alone: the muted notice needs a couple of ticks, but
+    // once a loaded machine stretched those ticks past 10 s the muted player's connection was gone.
+    // Reproduced here by holding the wait open deliberately: the failure reports "no connection
+    // context" for a client that had joined.
+    //
+    // So it is a harness artifact, not server behaviour worth preserving in these tests, and it is
+    // raised past LoopbackDeadline.HardTimeout so no bounded wait can outlive the connection it is
+    // waiting on. Nothing loses coverage: every test that means to exercise the idle close builds
+    // its own ServerConnectionOptions and passes them to StartAsync (Wave8IdleTimeoutClientStall,
+    // CoalesceOverflowResync, Wave10TransferInteraction, and the Server/ connection suites), so none
+    // of them reads this.
+    public static readonly ServerConnectionOptions WireClientOptions =
+        PerTickSnapshots.Options with { IdleTimeout = LoopbackDeadline.HardTimeout + TimeSpan.FromSeconds(60) };
 
     private readonly Dictionary<WireLoopbackClient, ServerConnection> _connections = [];
 
@@ -112,8 +187,10 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
             new TcpServerTransport(IPAddress.Loopback, 0),
             new TransportJsonCodec(),
             new LengthPrefixedMessageFramer(),
-            // Tests step the server one tick at a time and wait for that tick's snapshot.
-            options ?? PerTickSnapshots.Options);
+            // Tests step the server one tick at a time and wait for that tick's snapshot, and a
+            // keepalive-less wire client must not be idle-closed while a wait runs: see
+            // WireClientOptions.
+            options ?? WireClientOptions);
         service.Start();
         return Task.FromResult(new WireLoopbackServer(host, service));
     }
@@ -204,9 +281,15 @@ internal sealed class WireLoopbackServer : IAsyncDisposable
     // by a flat 30 s of wall clock, so a loaded machine cannot fail the wait for something that was
     // only going to be late. This is the shared form of the UntilAsync helper the classes in this
     // family each had a copy of; they forward here.
-    public async Task UntilAsync(Func<bool> done, string what)
+    public Task UntilAsync(Func<bool> done, string what, long? maxTicks = null) =>
+        UntilAsync(done, () => what, maxTicks);
+
+    // maxTicks bounds the wait in server ticks as well as seconds; see LoopbackDeadline. The message
+    // is a factory so a wait can report the state it was watching without building the string on
+    // every pass.
+    public async Task UntilAsync(Func<bool> done, Func<string> what, long? maxTicks = null)
     {
-        LoopbackDeadline deadline = new(Ticks);
+        LoopbackDeadline deadline = new(Ticks, maxTicks);
         while (!done())
         {
             deadline.AssertAlive(Ticks, what);
