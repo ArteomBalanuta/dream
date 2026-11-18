@@ -1,7 +1,7 @@
 # Desktop client startup + settings defaults
 host=127.0.0.1
 port=5057
-player_name=dream-client
+player_name=merc
 host_port=5057
 field_of_view=70
 mouse_sensitivity=2.5
