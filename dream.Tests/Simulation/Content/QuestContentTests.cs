@@ -195,8 +195,17 @@ public sealed class QuestContentTests
 
         string many = string.Join(",", Enumerable.Range(0, ContentCatalog.MaxQuests + 1).Select(n => quest.Replace("\"K\"", "\"K" + n + "\"", StringComparison.Ordinal)));
         Rejected("{\"version\":1,\"quests\":[" + many + "]}");
-        string exactly = string.Join(",", Enumerable.Range(0, ContentCatalog.MaxQuests).Select(n => quest.Replace("\"K\"", "\"K" + n + "\"", StringComparison.Ordinal)));
-        Assert.Equal(ContentCatalog.MaxQuests, Load("{\"version\":1,\"quests\":[" + exactly + "]}").Quests.Count);
+        // One giver may hold at most MaxQuestsPerGiver, because BuildNpcDialogue sends an NPC's whole
+        // list and the dialogue has that many row plates; authoring more silently dropped the rest.
+        string perGiver = string.Join(",", Enumerable.Range(0, ContentCatalog.MaxQuestsPerGiver + 1).Select(n => quest.Replace("\"K\"", "\"K" + n + "\"", StringComparison.Ordinal)));
+        Rejected("{\"version\":1,\"quests\":[" + perGiver + "]}");
+
+        // The shipped npcs.json has two givers, so the authorable total is MaxQuestsPerGiver per giver.
+        // MaxQuests remains the total bound and is still enforced above; reaching it needs more givers.
+        string spread = string.Join(",", Enumerable.Range(0, ContentCatalog.MaxQuestsPerGiver * 2).Select(n =>
+            quest.Replace("\"K\"", "\"K" + n + "\"", StringComparison.Ordinal)
+                 .Replace("\"gate-warden\"", n < ContentCatalog.MaxQuestsPerGiver ? "\"gate-warden\"" : "\"spawn-quartermaster\"", StringComparison.Ordinal)));
+        Assert.Equal(ContentCatalog.MaxQuestsPerGiver * 2, Load("{\"version\":1,\"quests\":[" + spread + "]}").Quests.Count);
     }
 
     [Fact]
