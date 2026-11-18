@@ -20,7 +20,12 @@ public sealed class FxInstanceBuffer : IDisposable
 
     public int UploadCount { get; private set; }
 
-    // Writes the first `count` instances and leaves the buffer bound to GL_ARRAY_BUFFER.
+    // Writes the first `count` instances and leaves GL_ARRAY_BUFFER unbound.
+    //
+    // The unbind belongs here, on the per-frame path, and not only at the construction site:
+    // GL_ARRAY_BUFFER is not VAO state, so a binding left behind by an upload outlives the draw and
+    // the next buffer write that forgets to bind its own target would land in our instances. One
+    // extra GL.BindBuffer per frame; it allocates nothing.
     public void Upload(FxInstance[] instances, int count)
     {
         ArgumentNullException.ThrowIfNull(instances);
@@ -40,10 +45,13 @@ public sealed class FxInstanceBuffer : IDisposable
         GL.BindBuffer(BufferTarget.ArrayBuffer, _handle);
         GL.BufferData(BufferTarget.ArrayBuffer, Capacity * FxInstance.Stride, IntPtr.Zero, BufferUsageHint.StreamDraw);
         GL.BufferSubData(BufferTarget.ArrayBuffer, IntPtr.Zero, count * FxInstance.Stride, instances);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
         UploadCount++;
     }
 
-    // Points the three instance attributes of the currently bound VAO at this buffer.
+    // Points the three instance attributes of the currently bound VAO at this buffer, and leaves
+    // GL_ARRAY_BUFFER unbound: the pointers are captured into the VAO by VertexAttribPointer, so
+    // the binding has no reason to survive the call.
     public void BindAttributes()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -62,6 +70,7 @@ public sealed class FxInstanceBuffer : IDisposable
         GL.EnableVertexAttribArray(FxInstance.RotationFrameBiasLocation);
         GL.VertexAttribPointer(FxInstance.RotationFrameBiasLocation, 4, VertexAttribPointerType.Float, false, FxInstance.Stride, FxInstance.RotationOffset);
         GL.VertexAttribDivisor(FxInstance.RotationFrameBiasLocation, 1);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
     }
 
     public void Dispose()

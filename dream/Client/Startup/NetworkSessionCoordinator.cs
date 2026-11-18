@@ -255,7 +255,12 @@ public sealed class NetworkSessionCoordinator
 
                     if (session.IsConnected || session.DisconnectReason is not string reason)
                     {
-                        _connectedSession = session;
+                        if (!TryPublish(session, generation))
+                        {
+                            ResetCancelledReconnect(generation);
+                            return;
+                        }
+
                         State = ConnectionFlowState.Connected;
                         StatusMessage = $"Connected to {resolved!.Host}:{resolved.Port}.";
                         return;
@@ -339,6 +344,42 @@ public sealed class NetworkSessionCoordinator
     }
 
     private bool IsCurrentConnect(int generation) => Volatile.Read(ref _connectGeneration) == generation;
+
+    // Hands the arrived session to the game, or disposes it. False means it was not published.
+    //
+    // Checking the generation and THEN assigning _connectedSession loses the race it was written to
+    // win: a connect settles on a thread-pool thread (OpenTK's loop installs no synchronization
+    // context), CancelConnect runs on the render thread, and a cancel landing between the check and
+    // the assignment used to be overwritten - the player was dropped into the join they pressed
+    // Escape on, with nothing left to dispose it later.
+    //
+    // So the slot is CLAIMED first and the generation re-tested after. CancelConnect bumps the
+    // generation before it clears the slot, so whichever side of the claim a cancel falls on, one of
+    // the two sees it: a cancel before the claim leaves the generation stale here (we take the
+    // session back out and dispose it), and a cancel after the claim takes the session out itself
+    // and disposes it (our take-back then fails, so it is disposed exactly once). The claim is a
+    // compare-exchange against null, so a session published by another connect is never displaced.
+    private bool TryPublish(RemoteClientSession session, int generation)
+    {
+        if (Interlocked.CompareExchange(ref _connectedSession, session, null) != null)
+        {
+            // Another connect already published; this one is stale by definition.
+            DisposeInBackground(session);
+            return false;
+        }
+
+        if (IsCurrentConnect(generation))
+        {
+            return true;
+        }
+
+        if (ReferenceEquals(Interlocked.CompareExchange(ref _connectedSession, null, session), session))
+        {
+            DisposeInBackground(session);
+        }
+
+        return false;
+    }
 
     private static void DisposeInBackground(RemoteClientSession? session)
     {
@@ -586,7 +627,11 @@ public sealed class NetworkSessionCoordinator
                 return null;
             }
 
-            _connectedSession = session;
+            if (!TryPublish(session, generation))
+            {
+                return null;
+            }
+
             State = ConnectionFlowState.Connected;
             StatusMessage = $"Connected to {options.Host}:{options.Port}.";
         }
