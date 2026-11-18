@@ -154,12 +154,44 @@ def inventory_close() -> np.ndarray:
 
 
 
+# ---------------------------------------------------------------- vendor
+
+def vendor_coin() -> np.ndarray:
+    """Gold changing hands in a cold stone shop: a heavy metal clank, a short coin-on-stone tail."""
+    rng = rng_for("vendor_coin")
+    n = samples(0.42)
+    # The clank: a low struck-metal body, inharmonic and quick to die.
+    clank = bell(420, 0.30, rng, ratios=(1.0, 1.51, 2.32, 3.1), decays=(1.0, 0.6, 0.35, 0.2),
+                 amps=(1.0, 0.55, 0.35, 0.18))
+    out = np.zeros(n)
+    add_at(out, clank, 0)
+    out += sine(sweep(190, 95, n, 6.0), n) * decay(n, 0.05) * 0.8
+    out += bandpass(noise(n, rng), 600, 3000) * decay(n, 0.012, attack=0.0006) * 0.35
+    # The tail: a coin settling on stone, a dull ring and a smaller second knock.
+    ln = samples(0.16)
+    tt = tvec(ln)
+    ring = (np.sin(2 * np.pi * 1450 * tt) + 0.4 * np.sin(2 * np.pi * 2130 * tt)) * np.exp(-tt / 0.035)
+    add_at(out, ring * 0.22, samples(0.075))
+    add_at(out, bandpass(noise(ln, rng), 500, 2200) * decay(ln, 0.01, attack=0.0006) * 0.25, samples(0.14))
+    return finalize(out, 0.5, 0.0008, 0.06)
+
+
+def vendor_refuse() -> np.ndarray:
+    """A hand laid flat over the counter: a dull dead thud, no bright tail."""
+    rng = rng_for("vendor_refuse")
+    n = samples(0.26)
+    thud = sine(sweep(120, 52, n, 7.0), n) * decay(n, 0.06, attack=0.001)
+    body = lowpass(noise(n, rng), 420) * decay(n, 0.035, attack=0.001)
+    return finalize(thud + body * 0.9, 0.5, 0.001, 0.05)
+
+
 # ---------------------------------------------------------------- build
 
 SINGLES = {
     "block_place": block_place, "loot_pickup": loot_pickup, "potion_drink": potion_drink,
     "level_up": level_up, "respawn": respawn, "stat_spend": stat_spend, "ui_click": ui_click,
     "ui_hover": ui_hover, "inventory_open": inventory_open, "inventory_close": inventory_close,
+    "vendor_coin": vendor_coin, "vendor_refuse": vendor_refuse,
 }
 
 
