@@ -1023,6 +1023,19 @@ public sealed partial class ContentCatalog
         Dictionary<string, JsonElement> properties = ReadProperties(SkillsFileName, "$", root, ["version", "skills", "defaultQuickbar"]);
         _ = ReadInt(SkillsFileName, "$.version", properties["version"], 1, 1);
 
+        // BH-SKILL-3: one AbilityCooldowns list serves both skill keys and item cooldown groups, compared
+        // ordinal-ignore-case, so a skill whose key equals an item's effective cooldown group would
+        // silently gate that item and be gated by it. Authors learn at load instead of shipping it.
+        Dictionary<string, string> cooldownGroupOwners = new(StringComparer.OrdinalIgnoreCase);
+        for (int itemIndex = 0; itemIndex < items.List.Count; itemIndex++)
+        {
+            ItemDefinition item = items.List[itemIndex];
+            if (item.Use != null)
+            {
+                cooldownGroupOwners.TryAdd(item.Use.EffectiveCooldownGroup, item.Key);
+            }
+        }
+
         Dictionary<string, SkillDefinition> byKey = new(StringComparer.OrdinalIgnoreCase);
         List<SkillDefinition> list = [];
         JsonElement skillsElement = properties["skills"];
@@ -1040,6 +1053,15 @@ public sealed partial class ContentCatalog
             if (!byKey.TryAdd(skill.Key, skill))
             {
                 throw Fail(SkillsFileName, $"{path}.key", $"duplicate skill key '{skill.Key}'");
+            }
+
+            if (cooldownGroupOwners.TryGetValue(skill.Key, out string? owningItem))
+            {
+                throw Fail(
+                    SkillsFileName,
+                    $"{path}.key",
+                    $"skill key '{skill.Key}' is also the cooldown group of item '{owningItem}', "
+                        + "so the two would share one cooldown");
             }
 
             list.Add(skill);
