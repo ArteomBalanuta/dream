@@ -40,7 +40,7 @@ public static class NpcDialogueWindow
     // Clear of the inventory (0x100..0x502), the character window and the vendor window (0x600..0x643).
     internal const int IdOfferRow = InventoryWindow.IdBase + 0x7A0;
 
-    // Four ids, one per QuestOfferState (0x7B0..0x7B3): the action button's id carries the state the
+    // Four seeds, one per QuestOfferState (0x7B0..0x7B3): the action button's id carries the state the
     // button was drawn from. The one button stands for three mutually exclusive, non-equivalent actions
     // chosen from live server state, and a ServerQuestLog push can rewrite that state between the press
     // and the release (a collect objective counts bag contents, so Ready can fall back to InProgress).
@@ -50,7 +50,50 @@ public static class NpcDialogueWindow
     internal const int IdAction = InventoryWindow.IdBase + 0x7B0;
     internal const int IdClose = InventoryWindow.IdBase + 0x7B4;
 
+    // BH-QUEST-1: the state alone is not the button's identity. A dialogue re-open (E pressed while the
+    // left button is still down) rebuilds the offers and resets SelectedOffer to 0, so the release frame
+    // can compute the SAME state id for a DIFFERENT quest and the click is redirected — an abandon of
+    // another quest deletes its stored progress. The id therefore carries the whole identity the button
+    // was drawn from: the offer state, the NPC it belongs to and the quest key. Anything that changes
+    // between the press and the release makes the router's press id no longer match, so the click is
+    // dropped (the established failure mode), never redirected.
+    //
+    // The identity does not fit in an int, so it is hashed into a band of its own, 0x4000_0000..
+    // 0x4FFF_FFFF, which no other HUD id uses (every other id is below 0x0100_0000). A stable FNV-1a is
+    // used, not string.GetHashCode: that is randomised per process and the id must be the same in the
+    // press frame and the release frame of the same run.
+    internal const int IdActionBand = 0x4000_0000;
+    internal const int IdActionBandMask = 0x0FFF_FFFF;
+
+    // The state seed of the action id; the state's own contribution, kept separate so the four states
+    // stay distinguishable on their own.
     internal static int ActionId(QuestOfferState state) => IdAction + (int)state;
+
+    // The id the action button is actually registered with: the state, the NPC and the quest key.
+    internal static int ActionId(QuestOfferState state, int npcActorId, ReadOnlySpan<char> questKey)
+    {
+        uint hash = 2166136261u;
+        hash = Fold(hash, (uint)ActionId(state));
+        hash = Fold(hash, (uint)npcActorId);
+        hash = Fold(hash, (uint)questKey.Length);
+        for (int i = 0; i < questKey.Length; i++)
+        {
+            hash = (hash ^ questKey[i]) * 16777619u;
+            hash = (hash ^ (uint)(questKey[i] >> 8)) * 16777619u;
+        }
+
+        return IdActionBand + (int)(hash & IdActionBandMask);
+    }
+
+    private static uint Fold(uint hash, uint value)
+    {
+        for (int b = 0; b < 4; b++)
+        {
+            hash = (hash ^ ((value >> (b * 8)) & 0xFF)) * 16777619u;
+        }
+
+        return hash;
+    }
 
     private static readonly UiColor GoldColor = new(0xD8, 0xB4, 0x5A, 255);
     private static readonly UiColor ReadyColor = new(0x5F, 0xD6, 0xA0, 255);
@@ -105,7 +148,7 @@ public static class NpcDialogueWindow
         DrawRowPlate(c, s, action);
         if (selected != null && actionText != null)
         {
-            int actionId = ActionId(selected.State);
+            int actionId = ActionId(selected.State, quests.NpcActorId, selected.Key);
             if (live && i.Hovered(actionId, action))
             {
                 c.Solid(action, HoverFill);
