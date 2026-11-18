@@ -1,6 +1,7 @@
 using Dream.Client.Replication;
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Effects;
+using Dream.Simulation.Content;
 using Dream.Simulation.Runtime;
 using OpenTK.Mathematics;
 using Xunit;
@@ -86,6 +87,37 @@ public class ClientSkillCastPublisherTests
 
         Assert.False(ClientSkillCastPublisher.Publish(hub, result, new Vector3(float.NaN, 0f, 0f), Vector3.UnitX));
         Assert.False(ClientSkillCastPublisher.Publish(hub, result, Origin, new Vector3(float.PositiveInfinity, 0f, 0f)));
+        Assert.Empty(seen);
+    }
+
+    [Theory]
+    [InlineData(SkillKind.MeleeArc, SkillFxKind.Arc, 3.5f, 3.5f)]
+    [InlineData(SkillKind.RangedBolt, SkillFxKind.Bolt, 18f, 18f)]
+    [InlineData(SkillKind.SelfHeal, SkillFxKind.Mend, 0f, 0f)]
+    [InlineData(SkillKind.SelfHeal, SkillFxKind.Mend, 5f, 0f)]
+    public void Wire_Entry_Maps_The_Simulation_Kind_And_Keeps_The_Wire_Range(
+        SkillKind skillKind, SkillFxKind kind, float wireRange, float expectedRange)
+    {
+        (SceneEventHub hub, List<SkillCastEvent> seen) = Listen();
+
+        Assert.True(ClientSkillCastPublisher.Publish(hub, skillKind, Origin, Vector3.UnitZ, wireRange));
+
+        SkillCastEvent e = Assert.Single(seen);
+        Assert.Equal(kind, e.Kind);
+        Assert.Equal(expectedRange, e.Range);
+    }
+
+    [Theory]
+    [InlineData((SkillKind)99, 3f)]
+    [InlineData(SkillKind.MeleeArc, 0f)]
+    [InlineData(SkillKind.RangedBolt, -1f)]
+    [InlineData(SkillKind.RangedBolt, float.NaN)]
+    [InlineData(SkillKind.SelfHeal, -1f)]
+    public void Wire_Entry_Rejects_Nonsense(SkillKind skillKind, float range)
+    {
+        (SceneEventHub hub, List<SkillCastEvent> seen) = Listen();
+
+        Assert.False(ClientSkillCastPublisher.Publish(hub, skillKind, Origin, Vector3.UnitX, range));
         Assert.Empty(seen);
     }
 }
