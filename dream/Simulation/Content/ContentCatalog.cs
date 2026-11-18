@@ -38,7 +38,15 @@ public sealed partial class ContentCatalog
 
     // Vendors and gold (M3).
     public const int MaxNpcs = 64;
-    public const int MaxNpcStock = 32;
+
+    // The most stock entries one vendor may be authored with. The vendor window draws
+    // VendorWindow.BuyRows fixed row plates from the art and has no pager over the buy list (only the
+    // sell list pages), and VendorHudState keeps at most MaxStock lines, so a ninth stock entry is
+    // simply unbuyable - it never appears in any UI and nothing says so at load (BH-CONTENT-1). The
+    // shipped quartermaster already has 6 of 8. Rendering cannot be referenced from the simulation, so
+    // the number is repeated here and ContentVendorStockCapTests pins the two together. Raising it
+    // means teaching the vendor window to page or scroll the buy list: that is UI work, not content.
+    public const int MaxNpcStock = 8;
     public const int MaxNpcGreetingLength = 400;
     public const float MaxNpcOffset = 1000f;
     public const int MaxGoldAmount = 1_000_000;
@@ -934,7 +942,11 @@ public sealed partial class ContentCatalog
             ExpectArray(NpcsFileName, $"{path}.stock", stockElement);
             if (stockElement.GetArrayLength() > MaxNpcStock)
             {
-                throw Fail(NpcsFileName, $"{path}.stock", $"has more than {MaxNpcStock} entries");
+                throw Fail(
+                    NpcsFileName,
+                    $"{path}.stock",
+                    $"has more than {MaxNpcStock} entries; the vendor window draws only the first few "
+                        + "buy rows and has no pager, so the rest would be unbuyable");
             }
 
             List<NpcStockEntry> stock = [];
