@@ -309,14 +309,24 @@ public sealed partial class DedicatedServerHost
         });
         bool barrier = queued && writes.EnqueueRead(() =>
         {
+            ServerChatMessage reply = new(ChatChannel.System, "", outcome.Text ?? "The change could not be saved.", tick);
             if (outcome.Applied is { } account)
             {
-                _pendingAccountUpdates.Enqueue(new AccountUpdate(account, null));
+                // The confirmation rides with the account update instead of taking the reply queue
+                // directly. The two queues drain at different points of a tick -- account updates first
+                // (StepAccountStandings), replies after AdvanceTime -- so a barrier landing between them
+                // told the administrator "Muted X." a whole tick before the standing reached X's
+                // connection, and a line X sent in that window was still published. Carried here, the
+                // reply is queued by ApplyAccountUpdate once the standing is in force, and goes out on
+                // that same tick's drain.
+                _pendingAccountUpdates.Enqueue(
+                    new AccountUpdate(account, null, new PendingConnectionReply(adminConnection, reply)));
+                return;
             }
 
-            EnqueueConnectionReply(
-                adminConnection,
-                new ServerChatMessage(ChatChannel.System, "", outcome.Text ?? "The change could not be saved.", tick));
+            // Nothing was applied (no such account, a guard refused, or the write failed), so there is no
+            // update to ride with: the administrator still hears what happened, on the direct path.
+            EnqueueConnectionReply(adminConnection, reply);
         });
         if (!barrier)
         {
@@ -326,8 +336,13 @@ public sealed partial class DedicatedServerHost
 
     // A change to what the host knows of an account, made off the tick and applied to its connections
     // on the next tick. Read null: re-apply the recent sanctions on top of the connection's standing;
-    // otherwise the standing was just read from the database (role included).
-    private readonly record struct AccountUpdate(AccountKey Account, AccountStanding? Read);
+    // otherwise the standing was just read from the database (role included). Reply, when set, is the
+    // administrator's confirmation of the sanction that produced this update: it is queued as the update
+    // is applied, so the confirmation never runs ahead of the enforcement it reports.
+    private readonly record struct AccountUpdate(
+        AccountKey Account,
+        AccountStanding? Read,
+        PendingConnectionReply? Reply = null);
 
     private readonly ConcurrentQueue<AccountUpdate> _pendingAccountUpdates = new();
     private int _standingRefreshInFlight;
@@ -448,6 +463,15 @@ public sealed partial class DedicatedServerHost
                 NetworkDiagnosticsLog.Write("server.admin.ban-applied", $"connection={connection.Key}");
                 CloseConnectionWithReason(connection.Key, BanMessage.Format(next));
             }
+        }
+
+        // Last, and unconditionally: every connection of the account now carries the new standing, so the
+        // administrator's confirmation is true when it is queued. It is queued even when the account has
+        // no connection here (nobody to apply it to, but the row was still written), so a sanction can
+        // never report nothing.
+        if (update.Reply is { } reply)
+        {
+            _pendingConnectionReplies.Enqueue(reply);
         }
     }
 
