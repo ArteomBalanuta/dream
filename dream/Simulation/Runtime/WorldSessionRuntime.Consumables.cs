@@ -62,7 +62,8 @@ public sealed partial class WorldSessionRuntime
         {
             combatant.RestoreHealth(use.RestoreHealth);
             combatant.RestoreMana(use.RestoreMana);
-            player.Cooldowns.Start(use.EffectiveCooldownGroup, tick + (ulong)Math.Max(0, use.CooldownTicks), tick);
+            // BH-SKILL-2: recorded against the character too, so a reconnect resumes it instead of wiping it.
+            StartCooldown(player, use.EffectiveCooldownGroup, tick + (ulong)Math.Max(0, use.CooldownTicks), tick);
             player.VitalsDirty = true;
         }
 

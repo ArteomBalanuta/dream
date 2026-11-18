@@ -54,7 +54,8 @@ public sealed partial class WorldSessionRuntime
             return CreateRejectedActionResult(message, "Skill rejected: not enough mana.");
         }
 
-        player.Cooldowns.Start(skill.Key, tick + (ulong)Math.Max(0, skill.CooldownTicks), tick);
+        // BH-SKILL-2: recorded against the character too, so a reconnect resumes it instead of wiping it.
+        StartCooldown(player, skill.Key, tick + (ulong)Math.Max(0, skill.CooldownTicks), tick);
         player.VitalsDirty = true;
         if (!isHeal)
         {

@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Diagnostics;
+using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
@@ -53,8 +54,11 @@ public sealed partial class WorldSessionRuntime
             // (nothing, once an attack spent it) and starts a new one only after the reattach cooldown, so
             // dropping the connection mid-fight can no longer buy fresh immunity. See ApplyJoinSpawnProtection.
             ApplyJoinSpawnProtection(attached);
-            // M4: cooldowns live on the session and a join starts clean; the owner gets its vitals again.
-            attached.Cooldowns.Clear();
+            // BH-SKILL-2: a join no longer starts clean. Cooldowns are a time cost and belong to the
+            // character, like the spawn-protection window above, so a reconnect resumes the ones still
+            // running instead of wiping them (mana, health and the potions in the bag already persist).
+            // The owner gets its vitals again either way.
+            RestoreCharacterCooldowns(attached);
             attached.VitalsDirty = true;
             attached.LastSentMana = -1;
             attached.LastSentMaxMana = -1;
@@ -63,6 +67,110 @@ public sealed partial class WorldSessionRuntime
         // An attached player's cached profile is never evicted (MarkProfileDeparted).
         MarkProfileActive(attached.CharacterKey.Value);
         return attached;
+    }
+
+    // BH-SKILL-2. Cooldowns used to live only on the seat, and AttachRemoteSession cleared them, so
+    // dropping the connection and rejoining handed back every running cooldown while mana, health and
+    // the bag survived -- a free reset of the only thing a cast costs besides mana. They are tracked
+    // against the CHARACTER as well now, exactly as the spawn-protection window is (see
+    // ApplyJoinSpawnProtection): a cooldown is recorded here whenever a seat starts one, and a fresh
+    // attach restores what is still running at the current server tick rather than clearing.
+    //
+    // Two live seats can share a CharacterKey (wave 16), which is why the record is written on every
+    // Start rather than on detach: a second seat joining the same character inherits the cooldowns the
+    // first one is already serving, so a seat swap cannot be used to defeat this either. Everything is
+    // in server ticks, so lockstep peers agree, and the restore keeps the recorded order.
+    private readonly Dictionary<string, List<AbilityCooldown>> _characterCooldowns = new(StringComparer.Ordinal);
+
+    // An entry whose cooldowns have all expired grants exactly what no entry grants, so the table is
+    // pruned of those once it grows past this. The removed set is a function of the tick and the
+    // contents, never of iteration order.
+    private const int CharacterCooldownCap = 512;
+
+    // Starts a cooldown on the seat and records it against the character.
+    private void StartCooldown(ConnectedPlayer player, string key, ulong readyTick, ulong nowTick)
+    {
+        player.Cooldowns.Start(key, readyTick, nowTick);
+
+        string character = player.CharacterKey.Value;
+        if (!_characterCooldowns.TryGetValue(character, out List<AbilityCooldown>? entries))
+        {
+            PruneCharacterCooldowns(nowTick);
+            entries = [];
+            _characterCooldowns[character] = entries;
+        }
+
+        for (int i = entries.Count - 1; i >= 0; i--)
+        {
+            if (entries[i].ReadyTick <= nowTick
+                || string.Equals(entries[i].Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                entries.RemoveAt(i);
+            }
+        }
+
+        entries.Add(new AbilityCooldown(key, readyTick));
+    }
+
+    // A fresh attach: the seat's list is replaced by the character's cooldowns that are still running.
+    private void RestoreCharacterCooldowns(ConnectedPlayer attached)
+    {
+        attached.Cooldowns.Clear();
+        if (!_characterCooldowns.TryGetValue(attached.CharacterKey.Value, out List<AbilityCooldown>? entries))
+        {
+            return;
+        }
+
+        ulong tick = CurrentServerTick;
+        for (int i = entries.Count - 1; i >= 0; i--)
+        {
+            if (entries[i].ReadyTick <= tick)
+            {
+                entries.RemoveAt(i);
+            }
+        }
+
+        for (int i = 0; i < entries.Count; i++)
+        {
+            attached.Cooldowns.Start(entries[i].Key, entries[i].ReadyTick);
+        }
+    }
+
+    private void PruneCharacterCooldowns(ulong tick)
+    {
+        if (_characterCooldowns.Count < CharacterCooldownCap)
+        {
+            return;
+        }
+
+        List<string>? stale = null;
+        foreach (KeyValuePair<string, List<AbilityCooldown>> entry in _characterCooldowns)
+        {
+            bool running = false;
+            for (int i = 0; i < entry.Value.Count; i++)
+            {
+                if (entry.Value[i].ReadyTick > tick)
+                {
+                    running = true;
+                    break;
+                }
+            }
+
+            if (!running)
+            {
+                (stale ??= []).Add(entry.Key);
+            }
+        }
+
+        if (stale == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < stale.Count; i++)
+        {
+            _characterCooldowns.Remove(stale[i]);
+        }
     }
 
     private ConnectedPlayer AttachRemoteSessionCore(PlayerSessionId sessionId, string? displayName)
