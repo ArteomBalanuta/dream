@@ -24,6 +24,23 @@ public class ClickMoveControllerTests
         public bool IsSupport(int x, int y, int z) => y == 0;
     }
 
+    private sealed class WalledNav : INavWorld, ISightWorld
+    {
+        public bool Walled { get; set; }
+
+        public int Width => 64;
+
+        public int Height => 16;
+
+        public int Depth => 64;
+
+        public bool IsBlocked(int x, int y, int z) => y == 0;
+
+        public bool IsSupport(int x, int y, int z) => y == 0;
+
+        public bool HasClearLine(Vector3 origin, Vector3 anchor) => !Walled;
+    }
+
     private sealed class FakeTarget : IClickTarget
     {
         public bool IsAlive { get; set; } = true;
@@ -304,6 +321,29 @@ public class ClickMoveControllerTests
 
         controller.AttackReachMetres = WeaponReach.ForItemKind("gear.long-bow");
         Assert.True(controller.SteerTick(Frame()).PrimaryUsePressed);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Attack_InReachBehindAWall_KeepsWalking_AndSwingsOnceTheLineIsClear(bool walled, bool swings)
+    {
+        var (controller, host, _) = Create();
+        host.Mode = PlayerInteractionMode.Combat;
+        WalledNav nav = new() { Walled = walled };
+        host.World = nav;
+        controller.AttackReachMetres = WeaponReach.ForItemKind("gear.long-bow");
+        FakeTarget enemy = new() { Anchor = new Vector3(5.5f + 8f, 2f, 5.5f) };
+        host.NextPick = Enemy(enemy);
+        controller.OnFrame(Pointer(right: true), true);
+
+        PlayerCommandFrame frame = controller.SteerTick(controller.MarkFrame(Frame()));
+
+        Assert.Equal(swings, frame.PrimaryUsePressed);
+        Assert.Equal(swings ? 0f : 1f, frame.MoveIntent.ForwardAxis);
+
+        nav.Walled = !walled;
+        Assert.Equal(walled, controller.SteerTick(Frame()).PrimaryUsePressed);
     }
 
     [Fact]

@@ -599,7 +599,7 @@ internal sealed class AuthoritativeCombatResolver
 
     // True when a solid cube lies between the origin and the anchor (the last half cell excluded, so a
     // target standing against a wall is not hidden by it).
-    private static bool IsBlockedByWall(Map map, Vector3 origin, Vector3 anchor)
+    public static bool IsBlockedByWall(Map map, Vector3 origin, Vector3 anchor)
     {
         Vector3 toTarget = anchor - origin;
         float distance = toTarget.Length;

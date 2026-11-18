@@ -113,6 +113,19 @@ public class PathFollowerPhysicsTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void PinnedStepMetres_IsAFractionOfOneCruiseTick_WithRoomToSpare()
+    {
+        Assert.Equal(
+            PathFollower.PinnedStepCruiseFraction * PathFollower.CruiseTickMetres,
+            PathFollower.PinnedStepMetres,
+            5);
+        // A free body at cruise must clear the line by at least twice, and a body that is genuinely
+        // stopped (zero travel) must sit under it.
+        Assert.True(PathFollower.CruiseTickMetres >= 2f * PathFollower.PinnedStepMetres);
+        Assert.True(0f < PathFollower.PinnedStepMetres);
+    }
+
+    [Fact]
     public void WalksAroundATwoHighWall()
     {
         using ClientWorldSession session = NewSession();

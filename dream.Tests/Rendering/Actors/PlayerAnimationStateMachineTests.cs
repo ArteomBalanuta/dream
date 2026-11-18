@@ -484,12 +484,25 @@ public class PlayerAnimationStateMachineTests
         PlayerAnimationFrame frame = new PlayerAnimationStateMachine().Update(Inputs(speed: speed), Dt);
 
         Assert.Equal(expectedClip, frame.Clip);
+        // Every shipped speed, the walk floor included, plays its clip at exactly the body's pace
+        // (speed over the clip's authored speed): the clamp must never bite on a shipped speed.
+        float reference = expectedClip == "walk"
+            ? PlayerAnimationStateMachine.ReferenceWalkSpeed
+            : PlayerAnimationStateMachine.ReferenceRunSpeed;
+        Assert.Equal(speed / reference, frame.PlaybackSpeed, 4);
         if (speed >= PlayerSimulationTuning.DefaultRunSpeed)
         {
-            // The analog floor is clamped up to MinPlaybackSpeed; cruise and sprint are the speeds
-            // the legs have to match.
             Assert.InRange(MathF.Abs(frame.PlaybackSpeed - 1f), 0f, 0.15f);
         }
+    }
+
+    [Fact]
+    public void TheMinPlaybackSpeed_IsTheWalkFloorsOwnRateOnTheWalkClip()
+    {
+        Assert.Equal(
+            PlayerSimulationTuning.DefaultWalkSpeed / PlayerAnimationStateMachine.ReferenceWalkSpeed,
+            PlayerAnimationStateMachine.MinPlaybackSpeed,
+            4);
     }
 
     // The thresholds are derived from the speeds they separate, and lie strictly between the tiers.
