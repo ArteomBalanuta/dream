@@ -30,7 +30,7 @@ public sealed class TerrainLockstepRestartTests(ITestOutputHelper output)
         long previousOverrides = 0;
         for (int phase = 0; phase < PhaseTicks.Length; phase++)
         {
-            int divergence = RunPhase(left, right, PhaseTicks[phase], out int compared, out int terrainRubble);
+            int divergence = RunPhase(left, right, phase, PhaseTicks[phase], out int compared, out int terrainRubble);
             Assert.True(divergence < 0, $"phase {phase + 1}: the servers diverged at tick {divergence}");
             SqlitePools.Release(left.DatabasePath, right.DatabasePath);
             // DumpWorld includes the wave D terrain tables (overrides and chunks).
@@ -58,12 +58,19 @@ public sealed class TerrainLockstepRestartTests(ITestOutputHelper output)
         }
     }
 
-    private static int RunPhase(TempDatabase left, TempDatabase right, int ticks, out int compared, out int rubbleCells)
+    private static int RunPhase(TempDatabase left, TempDatabase right, int phase, int ticks, out int compared, out int rubbleCells)
     {
         int firstDivergence = -1;
         compared = 0;
-        using PersistentScriptedServer first = new(left.OpenBundle());
-        using PersistentScriptedServer second = new(right.OpenBundle());
+        // Phase 1 opens a world this test created and nothing has written to, so the scripted build cell
+        // is guaranteed empty and the harness still checks it. A later phase opens a world an earlier
+        // phase wrote: the seed is random per database, the cube is hit on ticks 130, 158, 186 and 214,
+        // and a 200-tick phase only reaches 186, so for some seeds the cube is still standing in that
+        // cell when the next phase starts. That is setup state, not a divergence, so later phases allow
+        // it; both servers run the same database image, so they allow it identically.
+        bool restarting = phase > 0;
+        using PersistentScriptedServer first = new(left.OpenBundle(), allowOccupiedBuildCell: restarting);
+        using PersistentScriptedServer second = new(right.OpenBundle(), allowOccupiedBuildCell: restarting);
         Assert.Equal(first.Seed, second.Seed);
         Assert.Equal(first.Hash(), second.Hash());
         Assert.Equal(first.Runtime.Map.WorldChecksum, second.Runtime.Map.WorldChecksum);

@@ -359,7 +359,17 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             BuildCell = new Vector3(MathF.Floor(primary.X) + 1f, 1f, MathF.Floor(primary.Z));
             if (!allowOccupiedBuildCell)
             {
-                Assert.Null(Runtime.Map.TryGetCubeAtCell((int)BuildCell.X, 1, (int)BuildCell.Z));
+                // Harness setup, not a determinism check. A caller that restarts on a world an earlier
+                // phase wrote must pass allowOccupiedBuildCell: whether the built cube broke before that
+                // phase ended depends on the world's random seed. The message says "fixture:" so a
+                // mis-set-up run can never be read as a checksum divergence.
+                Cube? standing = Runtime.Map.TryGetCubeAtCell((int)BuildCell.X, 1, (int)BuildCell.Z);
+                Assert.True(
+                    standing is null,
+                    $"fixture: the scripted build cell {BuildCell} is already occupied ({standing?.MaterialId.ToString() ?? "null"}) " +
+                    $"before the script runs, so this harness never builds the cube the script attacks. This is a setup failure of " +
+                    $"{nameof(PersistentScriptedServer)}, not a determinism divergence: a restart on a world an earlier phase wrote " +
+                    "must be constructed with allowOccupiedBuildCell: true.");
             }
 
             Runtime.Enemies.Clear();
