@@ -77,7 +77,7 @@ public class ClientReplayReconciliationTests(ITestOutputHelper output)
         // client's unacknowledged travel on top of it, a whole window of cruise further on.
         float replayGain = (landing - server[ackIndex]).Xz.Length;
         float cruiseTravel = UnacknowledgedTicks * SimulationClock.FixedDeltaSeconds * PlayerSimulationTuning.DefaultRunSpeed;
-        Assert.True(replayGain > 0.5f * cruiseTravel, $"replay only moved the snap {replayGain} m past the ack");
+        Assert.True(replayGain > 0.75f * cruiseTravel, $"replay only moved the snap {replayGain} m past the ack");
         // It lands a little ahead of where the server actually goes, and cannot do better: the
         // server idled the seat through the stall, so it resumes from rest and ramps back up while
         // the client body never stopped cruising, and a replay that translates the client's path

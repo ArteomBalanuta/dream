@@ -195,6 +195,70 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         Assert.Equal(expectHit, enemy.Combatant.Health.CurrentHealth < 1_000_000);
     }
 
+    // The same gate for a player victim: the PvP clause of ProcessCombatUse measures the horizontal anchor
+    // distance too, so deleting it lets the swing land from beyond reach and fails the out-of-reach case.
+    [Theory]
+    [InlineData(1.5f, 1.5f, true)]
+    [InlineData(1.5f, 1.5f + WeaponReach.ServerToleranceMetres - 0.01f, true)]
+    [InlineData(1.5f, 1.5f + WeaponReach.ServerToleranceMetres + 0.05f, false)]
+    [InlineData(14f, 14f + WeaponReach.ServerToleranceMetres - 0.01f, true)]
+    [InlineData(14f, 14f + WeaponReach.ServerToleranceMetres + 0.05f, false)]
+    public void ProcessCombatUse_HitsAPlayerOnlyWithinTheWeaponsReachPlusTolerance(float reach, float distance, bool expectHit)
+    {
+        Fixture fixture = new(simulationSeed: 4242UL);
+        fixture.Host.Reach = reach;
+        fixture.Host.Pvp = true;
+        PlayerCombatant victim = new(() => new Vector3(5f, 1f, 3f), actorId: 900);
+        victim.Health.SetAuthoritativeState(10_000, 10_000);
+        fixture.Host.PvpVictims.Add(victim);
+        PlayerCombatant attacker = new(() => Vector3.Zero);
+
+        AuthoritativeActionResult result = fixture.Resolver.ProcessCombatUse(
+            new PlayerActionMessage(SessionA, 3, new CombatUseIntent(Vector3.Zero, Vector3.UnitX)),
+            fixture.RayAt(victim.Actor.GetWorldAnchor(), distance),
+            PlayerInteractionMode.Combat,
+            attacker,
+            tick: 77UL);
+
+        Assert.True(result.Accepted);
+        CombatResolutionResult payload = Assert.IsType<CombatResolutionResult>(result.Payload);
+        Assert.Equal(expectHit, payload.TargetActorId == 900);
+        Assert.Equal(expectHit, victim.Health.CurrentHealth < 10_000);
+    }
+
+    // The nearest enemy ALONG THE RAY is not always the nearest horizontally: an enemy off to the side of the ray
+    // is near along it but farther from the attacker's feet. Gating after the pick lets it shadow an enemy that is
+    // straight ahead and in reach; the gate is part of the selection, so the one in reach takes the swing.
+    [Fact]
+    public void ProcessCombatUse_AnEnemyOutOfReachNearerAlongTheRayDoesNotShadowOneInReach()
+    {
+        const int InReachId = 4101;
+        const int OutOfReachId = 4102;
+        const float AheadMetres = 1.2f;
+        const float SideMetres = 0.85f; // inside the ray's hit radius
+        const float AlongMetres = 1.0f; // nearer along the ray than AheadMetres
+        float sideHorizontal = MathF.Sqrt((AlongMetres * AlongMetres) + (SideMetres * SideMetres));
+        Assert.True(AlongMetres < AheadMetres && AheadMetres < sideHorizontal);
+
+        Fixture fixture = new(simulationSeed: 4242UL);
+        // Accepted reach halfway between the two horizontal distances.
+        fixture.Host.Reach = ((AheadMetres + sideHorizontal) / 2f) - WeaponReach.ServerToleranceMetres;
+        EnemyActor ahead = fixture.AddEnemy(new Vector3(5f, 1f, 3f), maxHealth: 1_000_000, actorId: InReachId);
+        Vector3 aheadAnchor = ahead.Combatant.GetCombatAnchorWorldPosition();
+        EnemyActor side = fixture.AddEnemy(new Vector3(5f + SideMetres, 1f, 3f + (AheadMetres - AlongMetres)), maxHealth: 1_000_000, actorId: OutOfReachId);
+
+        AuthoritativeActionResult result = fixture.Resolver.ProcessCombatUse(
+            new PlayerActionMessage(SessionA, 3, new CombatUseIntent(Vector3.Zero, Vector3.UnitX)),
+            fixture.RayAt(aheadAnchor, AheadMetres),
+            PlayerInteractionMode.Combat,
+            new PlayerCombatant(() => Vector3.Zero),
+            tick: 77UL);
+
+        Assert.Equal(InReachId, Assert.IsType<CombatResolutionResult>(result.Payload).TargetActorId);
+        Assert.True(ahead.Combatant.Health.CurrentHealth < 1_000_000);
+        Assert.Equal(1_000_000, side.Combatant.Health.CurrentHealth);
+    }
+
     [Fact]
     public void ProcessCombatUse_FatalEnemyHit_AwardsKillExperienceLevelsUpAndPersists()
     {
@@ -389,12 +453,12 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         return map;
     }
 
-    private static EnemyActor CreateEnemy(SceneEventHub events, Vector3 position, int maxHealth, int level = 1)
+    private static EnemyActor CreateEnemy(SceneEventHub events, Vector3 position, int maxHealth, int level = 1, int actorId = EnemyActorId)
     {
         EnemyCombatant combatant = new(
             () => position,
             events,
-            actorId: EnemyActorId,
+            actorId: actorId,
             maxHealth: maxHealth,
             attackDamage: 1,
             attackIntervalSeconds: 1f);
@@ -456,9 +520,9 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
 
         public List<(int Amount, FloatingCombatTextKind Kind)> Damage { get; } = [];
 
-        public EnemyActor AddEnemy(Vector3 position, int maxHealth, int level = 1)
+        public EnemyActor AddEnemy(Vector3 position, int maxHealth, int level = 1, int actorId = EnemyActorId)
         {
-            EnemyActor enemy = CreateEnemy(Events, position, maxHealth, level);
+            EnemyActor enemy = CreateEnemy(Events, position, maxHealth, level, actorId);
             Enemies.Add(enemy);
             return enemy;
         }
@@ -480,6 +544,22 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
         public float Reach { get; set; } = WeaponReach.UnarmedMetres;
 
         public float ResolveAttackReach(PlayerSessionId attacker) => Reach;
+
+        public bool Pvp { get; set; }
+
+        public List<PlayerCombatant> PvpVictims { get; } = [];
+
+        public CombatTargetPolicy TargetPolicy => new(Pvp);
+
+        public void FillPvpTargets(PlayerSessionId attacker, List<CombatTargetCandidate> into)
+        {
+            foreach (PlayerCombatant victim in PvpVictims)
+            {
+                into.Add(new CombatTargetCandidate(victim.Actor, victim.Actor.GetWorldAnchor(), Priority: 0));
+            }
+        }
+
+        public PlayerCombatant? ResolvePvpVictim(int actorId) => PvpVictims.Find(victim => victim.Actor.Id == actorId);
 
         public bool TryGetSessionCombatant(PlayerSessionId sessionId, out PlayerCombatant? combatant)
         {

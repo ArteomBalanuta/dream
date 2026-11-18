@@ -28,9 +28,10 @@ public sealed record ItemRollTable(
 // (EquipmentSlots.MaskOf). Rolls is null for an item that cannot be rolled. Footprint is the size in
 // bag cells (1..4 by 1..4; the file's optional "footprint": [cols, rows], 1x1 when absent). SellPrice is
 // the gold a vendor pays for a common copy (the optional "sellPrice"; 0, the default, means the item
-// cannot be sold); AttackRange is the optional "attackRange" in metres of a main-hand weapon (null: the
-// wielder attacks with the unarmed reach, see WeaponReach); VendorRules.SellPrice applies the rarity multiplier. Use is set for a consumable
+// cannot be sold); VendorRules.SellPrice applies the rarity multiplier. Use is set for a consumable
 // (the optional "use" object); such an item may list no equipment slots (mask 0, never equippable).
+// AttackRange is the optional "attackRange" in metres of a main-hand weapon (null: the wielder attacks
+// with the unarmed reach, see WeaponReach).
 public sealed record ItemDefinition(
     string Key,
     string DisplayName,

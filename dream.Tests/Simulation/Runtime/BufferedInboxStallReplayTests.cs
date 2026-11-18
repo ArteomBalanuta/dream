@@ -81,7 +81,12 @@ public class BufferedInboxStallReplayTests(ITestOutputHelper output)
 
         float minimumWalk = 0.5f * sentFrames * SimulationClock.FixedDeltaSeconds * PlayerSimulationTuning.DefaultRunSpeed;
         Assert.True(walked > minimumWalk, $"the walker only walked {walked} m");
-        Assert.True(latestError >= 4f * ReplayRampDeficit, $"latest error {latestError} m");
+        // The latest-only inbox idles the seat after MaxCommandRepeatTicks of the stall, so it loses that many
+        // fewer than StallTicks of cruise; it has to show at least half of that loss (the old bound, the 3 m snap
+        // distance, was half of the 6 m the stall cost at the old speed).
+        float stallLoss = (StallTicks - WorldSessionRuntime.MaxCommandRepeatTicks)
+            * SimulationClock.FixedDeltaSeconds * PlayerSimulationTuning.DefaultRunSpeed;
+        Assert.True(latestError >= 0.5f * stallLoss, $"latest error {latestError} m, stall loss {stallLoss} m");
 
         // The replay keeps the seat within one ramp deficit (ReplayRampDeficit) of the prediction
         // and never snaps, against the latest-only inbox's full-stall snap above. The premise
