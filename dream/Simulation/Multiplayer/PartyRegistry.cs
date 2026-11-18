@@ -204,6 +204,9 @@ public sealed class PartyRegistry
         _partyOf[invite.From] = created;
         _partyOf[invitee] = created;
         PartyCount++;
+        // The new leader may itself have been carrying an invite from somebody else; it is in a party now,
+        // so that invite can only ever be refused (AlreadyInParty) while it holds the invitee's one slot.
+        DropInviteTo(invite.From);
         MarkAll(created);
         return PartyOutcome.Ok;
     }
@@ -287,6 +290,16 @@ public sealed class PartyRegistry
         }
 
         _scratch.Clear();
+    }
+
+    // Drops the pending invite held by a key that has just joined a party, so the invitee's one invite slot
+    // is not held by an invite that can only ever be refused (and no dead accept sits on its panel).
+    private void DropInviteTo(string invitee)
+    {
+        if (_invites.Remove(invitee))
+        {
+            _changed.Add(invitee);
+        }
     }
 
     private void MarkAll(Party party)
