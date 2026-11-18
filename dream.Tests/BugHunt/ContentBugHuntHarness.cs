@@ -46,7 +46,12 @@ internal static class ContentBugHunt
     // The shipped items plus `count` fixed-stat copies of potion.health, one per stock entry, so a
     // vendor may be stocked past the shipped catalog's seven unrolled items. A vendor sells fixed-stat
     // items only, which is why the copies are of a potion and not of a rolled tool.
-    public static string ItemsWithVendorFillers(int count)
+    public static string ItemsWithVendorFillers(int count) => ItemsWithVendorFillers(count, cols: 0, rows: 0);
+
+    // As above, but every filler is cols x rows bag cells. A footprint of 0 leaves the template's own
+    // (1x1), which is what the count-only tests want; a larger one is how a stock that passes the entry
+    // cap and still cannot fit on the shop board is built.
+    public static string ItemsWithVendorFillers(int count, int cols, int rows)
     {
         JsonNode root = JsonNode.Parse(ShippedFile(ContentCatalog.ItemsFileName))!;
         JsonArray items = root["items"]!.AsArray();
@@ -56,6 +61,11 @@ internal static class ContentBugHunt
             JsonNode copy = JsonNode.Parse(template.ToJsonString())!;
             copy["key"] = VendorStockKey(n);
             copy["displayName"] = "Filler " + n;
+            if (cols > 0 && rows > 0)
+            {
+                copy["footprint"] = new JsonArray(cols, rows);
+            }
+
             items.Add(copy);
         }
 

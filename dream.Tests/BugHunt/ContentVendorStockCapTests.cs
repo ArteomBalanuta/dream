@@ -17,13 +17,46 @@ namespace Dream.Tests.BugHunt;
 // and then actually PLACE the shipped stock by footprint rather than counting rows.
 public sealed class ContentVendorStockCapTests
 {
-    // The cap must stay inside what the hud keeps and what the board can hold.
+    // The cap must stay inside what the hud keeps and what the board can hold. Asserting the literal 8
+    // would be a tautology, so the cap is tied to the two things that actually bound it.
     [Fact]
     public void TheAuthoringCap_FitsTheHudCapAndTheBoard()
     {
-        Assert.Equal(8, ContentCatalog.MaxNpcStock);
-        Assert.True(ContentCatalog.MaxNpcStock <= VendorHudState.MaxStock);
-        Assert.True(ContentCatalog.MaxNpcStock <= VendorGrid.Columns * VendorGrid.Rows);
+        Assert.True(
+            ContentCatalog.MaxNpcStock <= VendorHudState.MaxStock,
+            $"the cap {ContentCatalog.MaxNpcStock} exceeds the {VendorHudState.MaxStock} lines the hud keeps");
+        Assert.True(
+            ContentCatalog.MaxNpcStock <= VendorGrid.Columns * VendorGrid.Rows,
+            "the cap exceeds the cells on the shop board");
+    }
+
+    // The invariant the retired row count used to carry by construction: an authored ware that the
+    // window cannot DRAW must not load. The count alone no longer proves that - five 4x4 wares are
+    // well under the cap of 8, yet four of them fill the 64-cell board exactly and the fifth is placed
+    // nowhere. Before the validator placed its stock, npcs.json took this without a word and the ware
+    // was silently unbuyable: BH-CONTENT-1, reopened by the move to a grid.
+    [Fact]
+    public void AVendorWhoseWaresCannotFitTheBoard_FailsToLoad()
+    {
+        ContentValidationException error = Assert.Throws<ContentValidationException>(() => ContentBugHunt.Load(
+            itemsJson: ContentBugHunt.ItemsWithVendorFillers(5, cols: 4, rows: 4),
+            npcsJson: ContentBugHunt.VendorWithStock(5)));
+
+        Assert.Contains("finds no room", error.Message);
+    }
+
+    // The control, so the test above cannot pass for the wrong reason: five 2x4 wares DO fit (four per
+    // four-row band, so all five land) and that file loads. Note 3x4 would NOT be a control - five of
+    // those also fail, because an 8-wide board fits only two 3-wide wares per band and wastes the last
+    // two columns. Cell count is not the test; packing is.
+    [Fact]
+    public void AVendorWhoseWaresJustFitTheBoard_LoadsEveryEntry()
+    {
+        ContentCatalog catalog = ContentBugHunt.Load(
+            itemsJson: ContentBugHunt.ItemsWithVendorFillers(5, cols: 2, rows: 4),
+            npcsJson: ContentBugHunt.VendorWithStock(5));
+
+        Assert.Equal(5, catalog.Npcs.Single(npc => npc.Key == "spawn-quartermaster").Stock.Count);
     }
 
     // The gate the row count used to stand in for: every authored ware of every shipped vendor really

@@ -236,7 +236,27 @@ public sealed class InputPressIdentityTests : IDisposable
             BuildVendor,
             () => OpenVendor([ThreeWares[1], ThreeWares[2]]));
 
+        // Both halves, so this cannot pass vacuously. A negative assertion alone would stay green if
+        // the cell stopped registering a widget at all, or if ShopCell pointed at empty board.
         Assert.DoesNotContain(_bought.Picked, a => a.ItemKind == "bh.ware.three");
+        Assert.All(_bought.Picked, a => Assert.Equal("bh.ware.two", a.ItemKind));
+    }
+
+    // The positive control for the test above: the SAME mid-press stock change, pressed on the cell
+    // whose kind does not move, still buys. Without this, "nothing was bought" could be the normal
+    // outcome of any stock change and the test above would be proving nothing.
+    [Fact]
+    public void VendorShopCell_AStockChangeThatLeavesThePressedWareInPlace_StillBuysIt()
+    {
+        OpenVendor(ThreeWares);
+
+        PressAndRelease(
+            Centre(ShopCell(0)),
+            BuildVendor,
+            () => OpenVendor([ThreeWares[0], ThreeWares[2]]));
+
+        VendorHudAction action = Assert.Single(_bought.Picked);
+        Assert.Equal("bh.ware.one", action.ItemKind);
     }
 
     // The other half: the pressed kind itself leaves the stock mid-press, so nothing under the pointer
