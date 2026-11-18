@@ -96,6 +96,13 @@ public sealed class FxSimulation
     // a cast on a crowded pool cannot starve the ambient dust (96) and torch embers.
     public const int MaxCastParticles = 19;
     public const int CastPoolReserve = 128;
+    // The largest hit (a critical); it keeps the same reserve, so hit spam cannot take the ambient's slots.
+    public const int MaxHitParticles = 23;
+    // Hit marks in the atlas, all additive: impact flash, crit star, slash blade along +X, ragged splat.
+    private const float HitFlash = 27f;
+    private const float HitStar = 28f;
+    private const float HitSlash = 29f;
+    private const float HitSplat = 30f;
     private const int ArcSparks = 14;
     private const int ArcEmbers = 4;
     private const int BoltDarts = 12;
@@ -174,23 +181,91 @@ public sealed class FxSimulation
         return inputs.CameraPosition + inputs.CameraFront * MathF.Max(MinViewDistance, along);
     }
 
+    // A hit is a short burst of marks, each a single frame that lives a fraction of a second, plus the
+    // familiar sparks. Regular: flash, slash and 8 sparks (10 particles) in amber. Critical: a long star,
+    // a flash, two crossed slashes, 16 sparks and 3 embers (23) in white gold, about twice the size.
+    // Incoming: a ragged red splat, a dim flash, 6 sparks and 2 embers (10) in red.
+    // At most MaxHitParticles, never into the reserve the ambient dust lives on; marks are placed first.
     public void SpawnHit(Vector3 anchor, FloatingCombatTextKind kind)
     {
         anchor.Y -= AnchorDrop;
+        int budget = Math.Max(Math.Min(MaxHitParticles, _pool.Capacity - _pool.Count - CastPoolReserve), 0);
+        int granted = budget;
+        int planned;
         switch (kind)
         {
             case FloatingCombatTextKind.Critical:
-                EmitSparks(anchor, 16, new Vector3(1f, 0.88f, 0.58f), 3f, 8f, 1f);
-                EmitBurstEmbers(anchor, 3, 0.8f, 2.4f, 0.85f);
+            {
+                planned = 4 + 16 + 3;
+                float angle = _random.Range(-0.5f, 0.5f);
+                Vector3 gold = new Vector3(1f, 0.88f, 0.58f) * CastBrightness;
+                EmitHitMark(anchor, HitStar, 0f, 0.25f, 0.6f, 0.2f, gold, ref budget);
+                EmitHitMark(anchor, HitFlash, 0f, 0.2f, 0.4f, 0.14f, gold, ref budget);
+                EmitHitMark(anchor, HitSlash, angle + 0.75f, 0.35f, 0.65f, 0.16f, gold, ref budget);
+                EmitHitMark(anchor, HitSlash, angle - 0.75f, 0.35f, 0.65f, 0.16f, gold, ref budget);
+                EmitHitSparks(anchor, 16, new Vector3(1f, 0.88f, 0.58f), 3f, 8f, ref budget);
+                EmitHitEmbers(anchor, 3, 0.8f, 2.4f, 0.85f, ref budget);
                 break;
+            }
             case FloatingCombatTextKind.Incoming:
-                EmitSparks(anchor, 6, new Vector3(1f, 0.34f, 0.14f), 2f, 5f, 1f);
-                EmitBurstEmbers(anchor, 2, 0.6f, 1.6f, 0.7f);
+            {
+                planned = 2 + 6 + 2;
+                Vector3 blood = new Vector3(1f, 0.16f, 0.08f) * CastBrightness;
+                EmitHitMark(anchor, HitSplat, _random.Range(0f, 6.2832f), 0.2f, 0.42f, 0.22f, blood, ref budget);
+                EmitHitMark(anchor, HitFlash, 0f, 0.12f, 0.24f, 0.12f, blood * 0.7f, ref budget);
+                EmitHitSparks(anchor, 6, new Vector3(1f, 0.34f, 0.14f), 2f, 5f, ref budget);
+                EmitHitEmbers(anchor, 2, 0.6f, 1.6f, 0.7f, ref budget);
                 break;
+            }
             default:
-                EmitSparks(anchor, 8, new Vector3(1f, 0.72f, 0.36f), 2.5f, 6f, 1f);
+            {
+                planned = 2 + 8;
+                Vector3 amber = new Vector3(1f, 0.72f, 0.36f) * CastBrightness;
+                EmitHitMark(anchor, HitFlash, 0f, 0.16f, 0.3f, 0.12f, amber, ref budget);
+                EmitHitMark(anchor, HitSlash, _random.Range(0f, 3.1416f), 0.22f, 0.42f, 0.14f, amber, ref budget);
+                EmitHitSparks(anchor, 8, new Vector3(1f, 0.72f, 0.36f), 2.5f, 6f, ref budget);
                 break;
+            }
         }
+
+        _pool.CountDropped(planned - (granted - budget));
+    }
+
+    // One camera-facing mark, additive and bright at once, squaring away over its short life.
+    private void EmitHitMark(Vector3 anchor, float frame, float rotation, float startHalfSize, float endHalfSize, float life, Vector3 rgb, ref int budget)
+    {
+        if (budget <= 0)
+        {
+            return;
+        }
+
+        budget--;
+        FxParticle mark = new()
+        {
+            Kind = FxParticleKind.Flash,
+            Position = anchor,
+            Life = life,
+            StartHalfSize = startHalfSize,
+            EndHalfSize = endHalfSize,
+            Rotation = rotation,
+            Frame = frame,
+            Color = new Vector4(rgb, 0f)
+        };
+        _pool.TryAdd(in mark);
+    }
+
+    private void EmitHitSparks(Vector3 anchor, int count, Vector3 rgb, float speedMin, float speedMax, ref int budget)
+    {
+        count = Math.Min(count, budget);
+        budget -= count;
+        EmitSparks(anchor, count, rgb, speedMin, speedMax, 1f);
+    }
+
+    private void EmitHitEmbers(Vector3 anchor, int count, float speedMin, float speedMax, float brightness, ref int budget)
+    {
+        count = Math.Min(count, budget);
+        budget -= count;
+        EmitBurstEmbers(anchor, count, speedMin, speedMax, brightness);
     }
 
     public void SpawnDeath(Vector3 anchor)

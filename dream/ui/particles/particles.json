@@ -137,13 +137,33 @@
    "alpha": "coverage",
    "index": 26,
    "name": "ring"
+  },
+  {
+   "alpha": "zero",
+   "index": 27,
+   "name": "flash"
+  },
+  {
+   "alpha": "zero",
+   "index": 28,
+   "name": "star"
+  },
+  {
+   "alpha": "zero",
+   "index": 29,
+   "name": "slash"
+  },
+  {
+   "alpha": "zero",
+   "index": 30,
+   "name": "splat"
   }
  ],
  "image": "particles.png",
  "margin": 4,
  "origin": "top-left",
  "reserved": [
-  27,
+  31,
   31
  ],
  "rows": 4,
