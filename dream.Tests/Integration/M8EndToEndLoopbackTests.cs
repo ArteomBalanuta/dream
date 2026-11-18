@@ -300,6 +300,25 @@ public sealed class M8EndToEndLoopbackTests
             // clears the row.
             await CommandAsync(admin, $"/unmute \"{NameOf(Bee)}\"");
             await UntilAsync(server, admin, () => SystemLines(admin).Contains($"Unmuted {NameOf(Bee)}."), "the unmute result");
+
+            // The line below gets ONE chance - it is sent once, and a line routed while the sender
+            // is still muted is replaced by MutedText and never reaches anyone - so it is sent only
+            // once the unmute is in force on BEE's connection, which is what decides whether the
+            // line is routed. The admin's reply is not that: the reply and the AccountUpdate behind
+            // it are enqueued by the same barrier read, but the reply travels the connection's
+            // outbound queue while the standing is applied by StepAccountStandings on a tick, so
+            // seeing the reply does not mean the sender is free yet. Waiting on the admin's reply
+            // alone lost this line in 1 of 3 full-suite reps, and the wait then asked for something
+            // that could not arrive: "every side it depends on has since done more than 1024 units
+            // of work: [server ticks +1024, frames received by m8-adm +1024]" - nothing starved,
+            // the line had simply been swallowed. This asserts the unmute reached the sender, which
+            // is more than the test checked before, and then the line still has to arrive.
+            await UntilAsync(
+                server, bee,
+                () => server.Host.TryGetConnectionContext(server.ConnectionFor(bee).ConnectionId, out ServerRoutingContext? freed)
+                    && freed!.Standing.MutedUntilUtc == null,
+                () => $"the unmute reaching Bee's own connection, which decides whether the line is routed ({MuteStateOf(server, bee)})",
+                LoopbackDeadline.Applied);
             await SayAsync(bee, ChatChannel.World, "i can talk");
             await UntilAsync(
                 server, admin,
