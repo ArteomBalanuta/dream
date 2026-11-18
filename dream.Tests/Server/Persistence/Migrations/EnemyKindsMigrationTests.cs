@@ -5,6 +5,7 @@ using Dream.Server.Persistence.Migrations;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Persistence;
+using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Microsoft.Data.Sqlite;
@@ -220,13 +221,12 @@ public sealed class EnemyKindsMigrationTests
     }
 
     // Every chase is faster than the player's walk and slower than the player's sprint, so a wolf catches a
-    // walking player and Shift always escapes. The two literals are the player's cruise and sprint speeds.
-    // (The integration step switches them to the PlayerSimulationTuning constants.)
+    // walking player and Shift always escapes.
     [Fact]
     public void EveryShippedChase_IsFasterThanThePlayersWalk_AndSlowerThanThePlayersSprint()
     {
-        const float playerCruise = 1.72f;
-        const float playerSprint = 4.0f;
+        const float playerCruise = PlayerSimulationTuning.DefaultRunSpeed;
+        const float playerSprint = PlayerSimulationTuning.DefaultSprintSpeed;
         Assert.All(ContentCatalog.Shipped.Enemies, template =>
         {
             Assert.True(template.MoveSpeed > playerCruise, $"{template.Key} chases at {template.MoveSpeed}");

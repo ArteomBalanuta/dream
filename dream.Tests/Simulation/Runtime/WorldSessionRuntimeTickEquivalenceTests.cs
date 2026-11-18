@@ -97,14 +97,18 @@ public class WorldSessionRuntimeTickEquivalenceTests(ITestOutputHelper output)
     // sprint and walk floor were slowed, the wolf family was slowed and given its own bite interval
     // (chase, patrol and interval now come from enemies.json), and a primary attack only lands within
     // the main hand's authored reach. Every walking tick puts the seats somewhere new, so all ten
-    // checkpoints moved. OUTCOME_PLACEHOLDER
+    // checkpoints moved. The script's shape now: the build is accepted, the wolf hits players 2 times
+    // (one bite interval apart), players hit the wolf 2 times (the secondaries stand still and the wolf only
+    // comes within the unarmed reach of the primary), no wolf dies, 20 queued actions are processed and the
+    // wolf chases for 27 ticks before it settles into its bite range. Exports rise to 31 mutations: besides
+    // the placement and the fracture, session-c's approach shoves the cube 29 times on its way to the wolf.
     // The previous values were
     // 0x1A1BAA6E45BBACD3, 0x040DC65A79CDD59F, 0xBC1CC1AC529E604A, 0xF1E4FE4528377000, 0xB709A19E46CCC057,
     // 0x015F2B430951B84B, 0xEAF32C18E2FF7370, 0x6013610680906590, 0x7EC02EE1E4B36B83, 0x18F2DDA4A60C2E40.
     private static readonly ulong[] GoldenCheckpoints =
     [
-        0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL,
-        0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
+        0xE507449644B7F8A7UL, 0xB31C38D66AD188FCUL, 0xB32CF3382DE54FD8UL, 0x68D0D3E2216E246AUL, 0xCE838FBEEA4FA8C9UL,
+        0x5B0445647894FF24UL, 0x356EFCDB6998B2D9UL, 0xBB4BCFD79C0C0C96UL, 0x75B730C485ADA7F4UL, 0xD24A7823F1DB9E6CUL
     ];
 
     [Fact]

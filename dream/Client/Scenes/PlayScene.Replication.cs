@@ -580,5 +580,7 @@ public partial class PlayScene
         _localHeldLight = presentation.HeldLight;
         // Before the first snapshot nothing is drawn in the hands; afterwards each hand shows its item.
         _localEquipmentVisuals = inventory is null ? default : presentation.Visuals;
+        // Click-to-attack walks to a fraction of the main hand's reach before swinging.
+        _clickMove.AttackReachMetres = WeaponReach.ForItemKind(inventory?.EquippedSlot?.Item?.ItemKind);
     }
 }
