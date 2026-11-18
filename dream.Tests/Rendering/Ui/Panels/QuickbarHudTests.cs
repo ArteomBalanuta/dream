@@ -6,6 +6,7 @@ using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
+using Dream.Tests.Utilities;
 using Xunit;
 
 namespace Dream.Tests.Rendering.Ui.Panels;
@@ -425,19 +426,15 @@ public sealed class QuickbarHudTests
         StatusBarRecordingCanvas c = new(StatusBarTestData.Table, recording: false);
         StatusBarFakeInput input = new();
         StatusBarFakeActions actions = new();
-        for (int warm = 0; warm < 50; warm++)
-        {
-            StatusBarPanel.Build(c, input, v, l, StatusBarTestData.Table, actions);
-        }
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int n = 0; n < 200; n++)
-        {
-            StatusBarPanel.Build(c, input, v, l, StatusBarTestData.Table, actions);
-        }
-
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        Assert.True(allocated < 4096, $"{allocated} B over 200 frames");
+        // The old measurement warmed 50 frames - short of the tier-up call count once the
+        // runtime's tiering delay is counted - and then charged a single 200-frame window against
+        // a 4096 B tolerance. A tier-up or OSR transition landing inside that one window is
+        // charged to this thread, so the reading was a function of machine speed and suite load,
+        // and the tolerance was the only thing hiding it. AllocationAssert warms past tier-up and
+        // keeps the cleanest of several steady-state rounds, so the bound can be what the name
+        // claims: a steady frame allocates nothing at all.
+        AllocationAssert.AtMost(0, () => StatusBarPanel.Build(c, input, v, l, StatusBarTestData.Table, actions));
     }
 
     private sealed class RecordingActions : IHudActions

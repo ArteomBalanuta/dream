@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using OpenTK.Mathematics;
@@ -20,6 +20,10 @@ namespace Dream.Tests.Multiplayer.Protocol;
 // (WorldChunkMessage, WorldTransferSender, WorldTransferReassembler) and the pooled export.
 public class WorldTransferProtocolTests(ITestOutputHelper output)
 {
+    // The steady-state cost of one tick-side world capture: the capture object and the map's two
+    // dictionary enumerators, and nothing per cube however large the world.
+    private const long CaptureBudgetBytes = 256;
+
     // Quantized centers and pieces are within half a 1/4096 m step of the original.
     private const float QuantizationTolerance = 0.5f / WorldSnapshotJsonConverter.QuantizationScale + 1e-5f;
 
@@ -320,17 +324,17 @@ public class WorldTransferProtocolTests(ITestOutputHelper output)
     {
         using RuntimeAuthoritativeSessionHost server = RuntimeAuthoritativeSessionHost.CreateDefault();
         WorldSessionRuntime runtime = server.Runtime;
-        for (int i = 0; i < 3; i++)
-        {
-            runtime.CaptureWorldSnapshot().Release();
-        }
+        // Three warm-up captures left the capture path short of the runtime's tier-up call count,
+        // and a single measured capture then charged whatever tier-up or OSR transition landed in
+        // that one window against the budget. AllocationAssert warms past tier-up and keeps the
+        // cleanest of several steady-state rounds, so the figure below is the capture's own cost
+        // rather than the machine's. The capture is repeatable in place: Release returns the
+        // pooled arrays, so every round does the same work.
+        long allocated = AllocationAssert.AtMost(CaptureBudgetBytes, () => runtime.CaptureWorldSnapshot().Release());
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
         WorldSnapshotCapture capture = runtime.CaptureWorldSnapshot();
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         output.WriteLine($"capture of {capture.CubeCount} cubes, {capture.SubcellCount} subcells, {capture.RubbleCount} rubble cells: {allocated} B");
         Assert.True(capture.CubeCount > 100);
-        Assert.True(allocated <= 1024, $"{allocated} B allocated by the capture");
 
         // The list-based export allocated per cube; the capture's views read the arrays.
         WorldSnapshot world = capture.ToWorldSnapshot();

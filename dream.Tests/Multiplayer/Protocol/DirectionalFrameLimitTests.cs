@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using Xunit;
 using Dream.Multiplayer.Protocol;
 using Dream.Server;
@@ -112,6 +112,16 @@ public class DirectionalFrameLimitTests
         byte[] chunk = new byte[64];
         BinaryPrimitives.WriteInt32LittleEndian(chunk, declared);
 
+        // One throwaway rejection first, on its own buffer. The rejection cannot be repeated on
+        // the measured buffer (nothing resets it), so the window below holds a single call and
+        // can never reach the runtime's tier-up call count - but it would otherwise be the
+        // process's FIRST call down this path, and the static initialisation that a first call
+        // drags in is charged to the measuring thread. Warming it here leaves only the rejection
+        // itself in the window.
+        FrameReceiveBuffer warmup = new();
+        warmup.Append(chunk);
+        Assert.Throws<InvalidOperationException>(() => warmup.TryReadPayload(server, out _));
+
         long before = GC.GetAllocatedBytesForCurrentThread();
         buffer.Append(chunk);
         InvalidOperationException? fault = null;
@@ -128,8 +138,10 @@ public class DirectionalFrameLimitTests
         Assert.NotNull(fault);
         Assert.Contains("exceeds configured maximum", fault!.Message, StringComparison.Ordinal);
         Assert.Equal(capacity, buffer.Capacity);
-        // The exception and its message only; nowhere near the declared size.
-        Assert.True(allocated < 16 * 1024, $"Allocated {allocated} B while rejecting a {declared} B frame.");
+        // The exception and its message only (about 630 B), nowhere near the declared size. The
+        // bound was 16 KB, which is the buffer's own initial capacity: a single growth to it
+        // would have passed. 2 KB still leaves room for the message but not for a reservation.
+        Assert.True(allocated < 2048, $"Allocated {allocated} B while rejecting a {declared} B frame.");
     }
 
     [Fact]
