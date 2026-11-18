@@ -111,6 +111,8 @@ for _frame, _iron in (("frame.iron", "iron"), ("frame.warm", "iron.warm"), ("fra
     _register(_frame, dataclasses.replace(fg.MATERIALS[_iron], rough=0.74, aniso=0.08, bare_f0=(0.115, 0.115, 0.118), bare_albedo=(0.012, 0.012, 0.013), bare_rough=0.55))
 # bag cells and button faces: dark gunmetal that holds a faint bevel
 _register("cell", fg.Material((0.0105, 0.0105, 0.0113), (0.016, 0.016, 0.017), 0.66, 0.0, (0.014, 0.014, 0.015), (0.07, 0.07, 0.073), 0.58, 0.6, 0.5, 0.03))
+# the bag niche floor: pitted slate, cold and nearly matte, with a pale tooth where its pits wear
+_register("cell.stone", fg.Material((0.0062, 0.0060, 0.0057), (0.018, 0.018, 0.018), 0.82, 0.0, (0.020, 0.019, 0.018), (0.04, 0.04, 0.04), 0.7, 0.5, 0.8, 0.05))
 # the scroll rod: dark steel, its highlight a soft broken streak
 _register("rod.steel", fg.Material((0.012, 0.012, 0.013), (0.085, 0.085, 0.09), 0.52, 0.45, (0.02, 0.02, 0.021), (0.14, 0.14, 0.145), 0.46, 0.5, 0.3, 0.30))
 _register("rail.dim", fg.Material((0.075, 0.048, 0.019), (0.085, 0.066, 0.036), 0.52, 0.15, (0.14, 0.09, 0.04), (0.20, 0.15, 0.08), 0.42, 0.7, 0.3, 0.6))
@@ -1238,10 +1240,22 @@ def build_silhouettes() -> list[Sprite]:
 GLYPH_MATS = {GOLD: "glyph.brass", AMBER: "glyph.ember", TAN: "glyph.brass", LEATHER: "rail.dim"}
 
 
+GLYPH_CHROMA, GLYPH_KNEE, GLYPH_CEIL, GLYPH_CEIL_HOVER = 0.62, 0.22, 0.40, 0.55
+
+
 def glyph_finish(R: Leg, hover: bool, shadow=(0.55, 0.65), name="glyph") -> np.ndarray:
     r = finish_relief(R, GLYPH_MATS, "glyph.brass")
     r.h[...] = r.h / HEIGHT_K * 0.34  # glyphs are shallower than the silhouettes
-    hi = render_chain(r, name, None, None, wear=0.10, grime=0.35, rust=0.0, dust=0.0, exposure=1.15 if hover else 0.55)
+    prim = r.h.copy()
+    micro(r, name, 1.7, 0.06, 0.05, 0.10)  # hammer facets, dents and the pock of old brass; wear follows the primary form only
+    hi = render_chain(r, name, prim, None, wear=0.16, grime=0.85, rust=0.26, dust=0.0, exposure=1.15 if hover else 0.55)
+    # the glyphs were saturated toy gold: pull the chroma in and run the brightest channel through a soft knee at GLYPH_CEIL
+    y = (hi[..., :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=F32))[..., None]
+    rgb = np.clip(y + (hi[..., :3] - y) * GLYPH_CHROMA, 0, None)
+    v = rgb.max(axis=2, keepdims=True)
+    ceil = GLYPH_CEIL_HOVER if hover else GLYPH_CEIL
+    v2 = np.where(v > GLYPH_KNEE, GLYPH_KNEE + (ceil - GLYPH_KNEE) * (1 - np.exp(-(v - GLYPH_KNEE) / (ceil - GLYPH_KNEE))), v)
+    hi = np.dstack((rgb * (v2 / np.maximum(v, 1e-6)), hi[..., 3:])).astype(F32)
     return ua_shadow(hi, shadow, 0.9)
 
 
@@ -1344,29 +1358,82 @@ def build_wells() -> list[Sprite]:
 # cells --------------------------------------------------------------------------------
 
 
+def _corner_rivets(r: fg.Relief, name: str, inset: float = 1.3, rad: float = 0.46, w_u: float = 20.0, h_u: float = 20.0) -> None:
+    for i, (x, y) in enumerate(((inset, inset), (w_u - inset, inset), (inset, h_u - inset), (w_u - inset, h_u - inset))):
+        r.dome(x, y, rad, z=zat(r, x, y), mat="frame.rivet", collar=False, seed=f"{name}.rv{i}")
+
+
 def cell_relief(name: str, face: str = "cell") -> fg.Relief:
+    """The bag cell: a rolled iron bezel with a rivet in each corner round a carved stone niche. The niche floor is dark
+    pitted slate, deep enough that the lip throws a shadow across its top and left, and dull enough that an icon reads on it."""
     r = fg.Relief(20, 20, "frame.black", 1.0)
-    r.plate(Rect(0.5, 0.5, 19.0, 19.0, 0.4), z=0.8, bevel=1.6, profile="chamfer", rise=0.85, mat=face, wobble=0.02, seed=name)
+    r.plate(Rect(0.4, 0.4, 19.2, 19.2, 0.5), z=1.0, bevel=1.9, profile="rolled", rise=0.6, mat="frame.warm", wobble=0.04, nick=0.012, seed=name + ".lip")
+    r.pocket(Rect(2.3, 2.3, 15.4, 15.4, 0.4), depth=2.7, wall=1.1, mat="cell.stone", wobble=0.05, nick=0.01, seed=name + ".niche")
+    _corner_rivets(r, name)
     return r
 
 
-CELL_RENDER = dict(wear=0.06, grime=0.35, rust=0.0, dust=0.02)
+def shop_cell_relief(name: str) -> fg.Relief:
+    """The shop cell: the same 20 u footprint as a bag cell but a different object, a cast iron grate. A square of
+    diagonal bars sits over a black well, so light falls through it and the floor beneath is rust-stained, not stone."""
+    r = fg.Relief(20, 20, "frame.black", 1.0)
+    r.plate(Rect(0.4, 0.4, 19.2, 19.2, 0.9), z=1.0, bevel=1.6, profile="rolled", rise=0.55, mat="frame.iron", wobble=0.05, nick=0.014, seed=name + ".frame")
+    r.pocket(Rect(2.0, 2.0, 16.0, 16.0, 0.8), depth=3.4, wall=0.9, mat="well", wobble=0.04, nick=0.01, seed=name + ".well")
+    floor = zat(r, 10.0, 10.0)
+    for k in range(-3, 4):
+        c = 10.0 + k * 5.2
+        for pts in (((c - 12, 0), (c + 12, 24)), ((c + 12, 0), (c - 12, 24))):
+            r.plate(fg.Capsule(pts, 0.5), z=floor + 0.45, bevel=0.5, profile="round", mat="frame.cold", mode="max", seed=f"{name}.bar{k}")
+    for x, y in ((10.0, 10.0),):
+        r.dome(x, y, 1.0, z=floor + 0.7, mat="frame.rivet", collar=True, seed=name + ".hub")
+    _corner_rivets(r, name, 1.2, 0.48)
+    return r
+
+
+CELL_RENDER = dict(wear=0.08, grime=0.55, rust=0.22, dust=0.03)
+SHOP_CELL_RENDER = dict(wear=0.03, grime=0.8, rust=0.34, dust=0.02)
+
+
+def cell_value_map(r: fg.Relief, floor_mat: str, floor: float) -> np.ndarray:
+    """The floor sits in the shade of its own lip: darkest at the top and left."""
+    x = np.broadcast_to(r.xs[None, :], (r.H_px, r.W_px))
+    y = np.broadcast_to(r.ys[:, None], (r.H_px, r.W_px))
+    m = fg.blur((r.mid == fg.MAT_ID[floor_mat]).astype(F32), 0.35 * PPU)
+    shade_ = floor - 0.22 * np.exp(-((y - 2.3) / 3.5) ** 2) - 0.12 * np.exp(-((x - 2.3) / 3.0) ** 2)
+    return (1 + m * (shade_ - 1)).astype(F32)
 
 
 def render_cell_empty() -> np.ndarray:
     r = cell_relief("cell.empty")
-    return fg.downsample(render_micro(r, "cell.empty", 0.55, **CELL_RENDER))
+    vm = cell_value_map(r, "cell.stone", 1.0)
+    prim = r.h.copy()
+    micro(r, "cell.empty", 1.0, 0.05, 0.035, 0.06)   # pitted: the third band is the 1.25 u pock of weathered stone
+    return fg.downsample(render_chain(r, "cell.empty", prim, value_map=vm, **CELL_RENDER))
 
 
-def lattice_tile(name: str, tone: tuple, line: tuple) -> np.ndarray:
-    """A flat 20 u tile with a half line on each edge, so tiling makes a 1 u lattice. Dark iron, faintly beaten."""
+def render_shop_cell_empty() -> np.ndarray:
+    r = shop_cell_relief("shop.cell.empty")
+    vm = cell_value_map(r, "well", 3.2)
+    return fg.downsample(render_micro(r, "shop.cell.empty", 0.5, value_map=vm, **SHOP_CELL_RENDER))
+
+
+def lattice_tile(name: str, tone: tuple, line: tuple, studs: bool = True, grate: bool = False) -> np.ndarray:
+    """A flat 20 u tile with a half line on each edge, so tiling makes a 1 u lattice, a rivet at every crossing and
+    pitted, rust-flecked slate between. grate gives the shop's board the iron look instead of the bag's stone."""
     r = fg.Relief(20, 20, "cell", 1.0, "xy")
+    depth = 0.55 if grate else 0.45
     for ox in (0.0, 20.0):
-        r.pocket(Rect(ox - 0.5, -1.0, 1.0, 22.0), depth=0.35, wall=0.35, mat="frame.black", seed=f"{name}.v{ox}")
+        r.pocket(Rect(ox - 0.6, -1.0, 1.2, 22.0), depth=depth, wall=0.4, mat="frame.black", seed=f"{name}.v{ox}")
     for oy in (0.0, 20.0):
-        r.pocket(Rect(-1.0, oy - 0.5, 22.0, 1.0), depth=0.35, wall=0.35, mat="frame.black", seed=f"{name}.h{oy}")
+        r.pocket(Rect(-1.0, oy - 0.6, 22.0, 1.2), depth=depth, wall=0.4, mat="frame.black", seed=f"{name}.h{oy}")
+    if studs:
+        for ox in (0.0, 20.0):
+            for oy in (0.0, 20.0):
+                r.dome(ox, oy, 0.52, z=zat(r, min(max(ox, 0.05), 19.95), min(max(oy, 0.05), 19.95)) + 0.05, mat="frame.rivet", collar=False, seed=f"{name}.st{ox}{oy}")
     r.tint = np.broadcast_to(np.array(tone, dtype=F32), (r.H_px, r.W_px, 3)).copy()
-    hi = render_micro(r, name, 0.55, wear=0.0, grime=0.3, rust=0.0, dust=0.0)
+    prim = r.h.copy()
+    micro(r, name, 1.2, 0.06, 0.04, 0.07)
+    hi = render_chain(r, name, prim, wear=0.0, grime=0.45, rust=0.16 if not grate else 0.3, dust=0.0)
     return fg.downsample(hi, wrap="xy")
 
 
@@ -1375,20 +1442,107 @@ def flat_tile(rgb: str, alpha: float) -> np.ndarray:
 
 
 def build_cells() -> list[Sprite]:
-    res = run_jobs([("render_cell_empty", ()), ("render_cell_state", ("cell.occupied",)), ("render_cell_state", ("cell.hover",)), ("render_cell_state", ("cell.invalid",))])
+    res = run_jobs([("render_cell_empty", ()), ("render_cell_state", ("cell.occupied",)), ("render_cell_state", ("cell.hover",)), ("render_cell_state", ("cell.invalid",)),
+                    ("render_shop_cell_empty", ()), ("render_cell_state", ("shop.cell.occupied",)), ("render_overlay_ember", ())])
     out = [Sprite("cell.empty", res[0]), Sprite("cell.occupied", res[1], tile="xy"), Sprite("cell.hover", res[2], tile="xy"), Sprite("cell.invalid", res[3], tile="xy")]
     out.append(Sprite("cell.overlay.hover", flat_tile("#071451", 64 / 255), tile="xy"))
     out.append(Sprite("cell.overlay.invalid", flat_tile("#51070A", 64 / 255), tile="xy"))
+    out += [Sprite("shop.cell.empty", res[4]), Sprite("shop.cell.occupied", res[5], tile="xy"), Sprite("cell.overlay.ember", res[6], tile="xy")]
     return out
 
 
-CELL_STATES = {"cell.occupied": (0.62, 0.62, 0.66), "cell.hover": (0.55, 0.70, 1.15), "cell.invalid": (1.25, 0.55, 0.55)}
+CELL_STATES = {"cell.occupied": (0.62, 0.62, 0.66), "cell.hover": (0.55, 0.70, 1.15), "cell.invalid": (1.25, 0.55, 0.55),
+               "shop.cell.occupied": (0.80, 0.66, 0.54)}
+CELL_TILE_GAIN = 0.74   # the pitted, riveted tiles hold more relief than the flat ones did, so their albedo drops to keep the face quiet
 
 
 def render_cell_state(name: str) -> np.ndarray:
-    return lattice_tile(name, CELL_STATES[name], (1, 1, 1))
+    tone = tuple(c * CELL_TILE_GAIN for c in CELL_STATES[name])
+    return lattice_tile(name, tone, (1, 1, 1), grate=name.startswith("shop."))
 
 
+# the buy flash and the board frames ---------------------------------------------------
+
+EMBER_LIN = np.array((0.62, 0.17, 0.028), dtype=F32)  # glowing iron, linear light: a dull orange-red, never yellow
+
+
+def render_overlay_ember() -> np.ndarray:
+    """The flash on the bag cell that receives a purchase: iron brought to a heat in cracks and along its rim. Tiles, because
+    every value is a function of the tile's own wrapped coordinates; the runtime fades it with the alpha it draws it at."""
+    n = 20 * PPU
+    X = (np.arange(n, dtype=F32)[None, :] + 0.5) / PPU
+    Y = (np.arange(n, dtype=F32)[:, None] + 0.5) / PPU
+    per = (20.0, 20.0)
+    f = fg.waves(X, Y, "overlay.ember.vein", 7, 2.2, 9.0, (1.0, 1.0), per) + 0.55 * fg.waves(X, Y, "overlay.ember.fine", 7, 0.7, 2.0, (1.0, 1.0), per)
+    vein = np.exp(-(f / 0.34) ** 2)                      # thin bright cracks where the field crosses zero
+    e = np.minimum(np.minimum(X, 20 - X), np.minimum(Y, 20 - Y))
+    rim = np.exp(-e / 1.9)
+    heat = np.clip(0.30 + 0.62 * vein + 0.55 * rim, 0, 1)
+    lin = EMBER_LIN[None, None, :] * (0.25 + 1.05 * heat[..., None])
+    rgb = ua.linear_to_srgb(np.clip(lin, 0, 1)).astype(F32)
+    alpha = np.clip(0.16 + 0.34 * heat, 0, 0.5)
+    return fg.downsample(np.dstack((rgb, alpha)).astype(F32), wrap="xy")
+
+
+FRAME_U, FRAME_SLICE_U, FRAME_RING = 16.0, 4, 2.7
+
+
+def render_frame(kind: str) -> np.ndarray:
+    """A 9-slice border laid over the edge of the shop board: a wrought iron ring with a rivet in each corner and a hole
+    for the board. Ember is the iron brought to a glow in its cavities and along its inner lip; cold is the same
+    iron gone blue-grey and dusted with frost, with no heat anywhere in it."""
+    ember = kind == "ember"
+    name = f"shop.frame.{kind}"
+    u = FRAME_U
+    r = fg.Relief(u, u, "frame.black", 0.0)
+    r.plate(Rect(0.2, 0.2, u - 0.4, u - 0.4, 0.9), z=0.9, bevel=1.5, profile="rolled", rise=0.62, mat="frame.iron" if ember else "frame.cold",
+            wobble=0.05, nick=0.014, seed=name + ".ring")
+    inner = Rect(FRAME_RING, FRAME_RING, u - 2 * FRAME_RING, u - 2 * FRAME_RING, 0.5)
+    r.pocket(inner, depth=1.2, wall=0.85, seed=name + ".lip")
+    for i, (x, y) in enumerate(((1.35, 1.35), (u - 1.35, 1.35), (1.35, u - 1.35), (u - 1.35, u - 1.35))):
+        r.dome(x, y, 0.55, z=zat(r, x, y), mat="frame.rivet", collar=True, seed=f"{name}.rv{i}")
+    X, Y = r.xs[None, :], r.ys[:, None]
+    d_in = inner.sdf(X, Y)                              # > 0 inside the hole
+    r.a = np.where(d_in > 0.15, 0.0, r.a).astype(F32)
+    r.h = np.where(d_in > 0.15, 0.0, r.h).astype(F32)
+    prim = r.h.copy()
+    micro(r, name, 0.8)
+    m = fg.bake(r.h, prim, fg.GOTHIC_RIG.lights[0].dir, r.wrap)
+    surf = r.surface(name)
+    if not ember:
+        surf.albedo = surf.albedo * np.array((0.80, 0.98, 1.38), dtype=F32)
+        surf.f0 = surf.f0 * np.array((0.80, 0.98, 1.38), dtype=F32)
+    s = fg.age(surf, m, name, 0.10, 0.5 if ember else 0.25, 0.30 if ember else 0.0, 0.0 if ember else 0.35, streak=r._drip_mask())
+    if ember:
+        heat_rim = np.exp(-np.maximum(-d_in, 0) / 0.42) * (d_in < 0.4)
+        heat = np.clip(0.8 * smooth(m.cavity, 0.55, 0.95) + 0.75 * heat_rim * (0.55 + 0.45 * (1 - m.ao)), 0, 1.1) * (r.a > 0.5)
+        s.emit = (EMBER_LIN[None, None, :] * 1.5 * heat[..., None]).astype(F32)
+    hdr = fg.light(s, m)
+    img = fg.finish(hdr, s.alpha, 1.0)
+    if ember:
+        # the heat leaks a little way into the board: a faint warm halo on the transparent side of the lip
+        halo = np.exp(-np.maximum(d_in, 0) / 0.42) * (d_in > 0.0) * (d_in < 1.1)
+        glow = ua.linear_to_srgb(np.clip(EMBER_LIN * 1.6, 0, 1)).astype(F32)
+        a0 = img[..., 3]
+        ha = np.clip(halo * 0.34, 0, 1)
+        out_a = a0 + ha * (1 - a0)
+        w = ha * (1 - a0) / np.maximum(out_a, 1e-5)
+        img = np.dstack((img[..., :3] * (1 - w[..., None]) + glow * w[..., None], out_a)).astype(F32)
+    return fg.downsample(img)
+
+
+def render_frame_ember() -> np.ndarray:
+    return render_frame("ember")
+
+
+def render_frame_cold() -> np.ndarray:
+    return render_frame("cold")
+
+
+def build_shop_frames() -> list[Sprite]:
+    res = run_jobs([("render_frame_ember", ()), ("render_frame_cold", ())])
+    sl = FRAME_SLICE_U * SCALE
+    return [Sprite("shop.frame.ember", res[0], slice=(sl, sl, sl, sl)), Sprite("shop.frame.cold", res[1], slice=(sl, sl, sl, sl))]
 
 
 # button plates ------------------------------------------------------------------------
@@ -1509,7 +1663,7 @@ def all_sprites() -> list[Sprite]:
     side = build_side()
     out: list[Sprite] = list(side)
     out += build_crowns(side[0].image, side[1].image)
-    for fn in (build_slabs, build_cells, build_rod, build_wells, build_silhouettes, build_glyphs, build_plates):
+    for fn in (build_slabs, build_cells, build_shop_frames, build_rod, build_wells, build_silhouettes, build_glyphs, build_plates):
         out += fn()
     return out
 

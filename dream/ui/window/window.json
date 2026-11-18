@@ -9,8 +9,8 @@
  "origin": "top-left",
  "scale": 4,
  "size": [
-  2140,
-  2076
+  2151,
+  2108
  ],
  "sprites": {
   "btn.plate24.disabled": {
@@ -156,7 +156,7 @@
    "x": 388,
    "y": 1904
   },
-  "cell.overlay.hover": {
+  "cell.overlay.ember": {
    "h": 80,
    "meta": {},
    "pivot": [
@@ -169,7 +169,7 @@
    "x": 476,
    "y": 1904
   },
-  "cell.overlay.invalid": {
+  "cell.overlay.hover": {
    "h": 80,
    "meta": {},
    "pivot": [
@@ -180,6 +180,19 @@
    "tile": "xy",
    "w": 80,
    "x": 564,
+   "y": 1904
+  },
+  "cell.overlay.invalid": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "xy",
+   "w": 80,
+   "x": 652,
    "y": 1904
   },
   "currency.field": {
@@ -197,7 +210,7 @@
    ],
    "tile": "none",
    "w": 452,
-   "x": 916,
+   "x": 1180,
    "y": 1904
   },
   "currency.plate": {
@@ -210,7 +223,7 @@
    "slice": null,
    "tile": "none",
    "w": 48,
-   "x": 1468,
+   "x": 1612,
    "y": 2008
   },
   "glyph.close.hover": {
@@ -223,7 +236,7 @@
    "slice": null,
    "tile": "none",
    "w": 72,
-   "x": 1376,
+   "x": 1640,
    "y": 1904
   },
   "glyph.close.normal": {
@@ -236,7 +249,7 @@
    "slice": null,
    "tile": "none",
    "w": 72,
-   "x": 1456,
+   "x": 1720,
    "y": 1904
   },
   "glyph.combine.hover": {
@@ -275,7 +288,7 @@
    "slice": null,
    "tile": "none",
    "w": 72,
-   "x": 1536,
+   "x": 1800,
    "y": 1904
   },
   "glyph.repair.normal": {
@@ -288,7 +301,7 @@
    "slice": null,
    "tile": "none",
    "w": 72,
-   "x": 1616,
+   "x": 1880,
    "y": 1904
   },
   "glyph.store.hover": {
@@ -301,7 +314,7 @@
    "slice": null,
    "tile": "none",
    "w": 72,
-   "x": 1696,
+   "x": 1960,
    "y": 1904
   },
   "glyph.store.normal": {
@@ -314,8 +327,70 @@
    "slice": null,
    "tile": "none",
    "w": 72,
-   "x": 1776,
+   "x": 2040,
    "y": 1904
+  },
+  "shop.cell.empty": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 80,
+   "x": 740,
+   "y": 1904
+  },
+  "shop.cell.occupied": {
+   "h": 80,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": null,
+   "tile": "xy",
+   "w": 80,
+   "x": 828,
+   "y": 1904
+  },
+  "shop.frame.cold": {
+   "h": 64,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    16,
+    16,
+    16,
+    16
+   ],
+   "tile": "none",
+   "w": 64,
+   "x": 4,
+   "y": 2008
+  },
+  "shop.frame.ember": {
+   "h": 64,
+   "meta": {},
+   "pivot": [
+    0,
+    0
+   ],
+   "slice": [
+    16,
+    16,
+    16,
+    16
+   ],
+   "tile": "none",
+   "w": 64,
+   "x": 76,
+   "y": 2008
   },
   "sil.armor": {
    "h": 240,
@@ -392,7 +467,7 @@
    "slice": null,
    "tile": "none",
    "w": 80,
-   "x": 652,
+   "x": 916,
    "y": 1904
   },
   "sil.pet": {
@@ -418,7 +493,7 @@
    "slice": null,
    "tile": "none",
    "w": 80,
-   "x": 740,
+   "x": 1004,
    "y": 1904
   },
   "sil.weapon.left": {
@@ -475,7 +550,7 @@
    ],
    "tile": "none",
    "w": 48,
-   "x": 1524,
+   "x": 1668,
    "y": 2008
   },
   "tip.panel": {
@@ -493,7 +568,7 @@
    ],
    "tile": "none",
    "w": 48,
-   "x": 772,
+   "x": 916,
    "y": 2008
   },
   "well.1x1": {
@@ -511,7 +586,7 @@
    ],
    "tile": "none",
    "w": 80,
-   "x": 828,
+   "x": 1092,
    "y": 1904
   },
   "well.2x2": {
@@ -578,7 +653,7 @@
    "slice": null,
    "tile": "none",
    "w": 52,
-   "x": 1660,
+   "x": 1804,
    "y": 2008
   },
   "win.arrow.down.normal": {
@@ -591,7 +666,7 @@
    "slice": null,
    "tile": "none",
    "w": 52,
-   "x": 1720,
+   "x": 1864,
    "y": 2008
   },
   "win.bottom": {
@@ -606,7 +681,7 @@
    "slice": null,
    "tile": "none",
    "w": 760,
-   "x": 4,
+   "x": 148,
    "y": 2008
   },
   "win.crown.combine": {
@@ -654,7 +729,7 @@
    ],
    "tile": "none",
    "w": 32,
-   "x": 1580,
+   "x": 1724,
    "y": 2008
   },
   "win.scroll.rod": {
@@ -667,7 +742,7 @@
    "slice": null,
    "tile": "none",
    "w": 632,
-   "x": 828,
+   "x": 972,
    "y": 2008
   },
   "win.setoption.tab.hover": {
@@ -680,7 +755,7 @@
    "slice": null,
    "tile": "none",
    "w": 132,
-   "x": 1780,
+   "x": 1924,
    "y": 2008
   },
   "win.setoption.tab.normal": {
@@ -693,8 +768,8 @@
    "slice": null,
    "tile": "none",
    "w": 132,
-   "x": 1920,
-   "y": 2008
+   "x": 4,
+   "y": 2080
   },
   "win.side.left": {
    "h": 176,
@@ -771,7 +846,7 @@
    ],
    "tile": "none",
    "w": 32,
-   "x": 1620,
+   "x": 1764,
    "y": 2008
   }
  },

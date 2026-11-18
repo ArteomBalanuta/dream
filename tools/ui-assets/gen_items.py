@@ -1786,13 +1786,56 @@ def write_ramps(out: Path) -> None:
 
 ICON_EXPOSURE = 0.50   # the icons sit on dark cells in a dark window: they must not be the brightest thing on screen
 ICON_ALBEDO = 0.72    # and a little darker still, so aged gold and paint stop shouting
-ICON_DESAT = 0.75      # linear-light saturation kept; pure toy colours read cheap next to forged iron
+ICON_DESAT = 0.55      # linear-light saturation kept; pure toy colours read cheap next to forged iron (was 0.75)
+# The engine multiplies UI albedo up to ~2.17x with no tonemap, so an authored channel above ~0.40 blooms into candy.
+GRADE_CEIL = 0.43      # asymptote of the soft knee on the brightest channel; the measured p99 is in check_items
+GRADE_KNEE = 0.20      # below this the value is untouched
+GRADE_CHROMA = 0.52    # sRGB chroma kept after the knee for lit material (was 0.62 on the first pass)
+GRADE_CHROMA_EMIT = 0.58   # glass and flame keep more of their colour, they are the only light an icon has
+GRADE_EMIT_LIFT = 0.10     # emissive pixels may sit this far above the ceiling
+AGE_WEAR, AGE_GRIME, AGE_RUST, AGE_DUST = 0.38, 1.0, 0.42, 0.24
+PATINA_PIT, PATINA_BLOTCH = 0.26, 0.34   # pitting amplitude (0.4-1.6 u) and soot blotches (3-12 u) on every unlit surface
 
 
-def forge_render(s: Scene) -> tuple:
+def _scene_maps(s: Scene, n: np.ndarray, d_in: np.ndarray) -> fg.Maps:
+    """forge's bake needs a height field the scene does not keep, so the cavity, convexity and edge maps come from
+    the normals it does keep: the divergence of the smoothed normal is negative in a recess and positive on a
+    bevel, and the silhouette distance gives the outermost rim of every part its edge."""
+    nx, ny = fg.blur(n[..., 0], 0.30 * PPU), fg.blur(n[..., 1], 0.30 * PPU)
+    div = np.gradient(nx, axis=1) + np.gradient(ny, axis=0)
+    inside = s.a > 0.5
+    scale = max(float(np.percentile(np.abs(div[inside]), 96)) if inside.any() else 1.0, 1e-6)
+    curv = np.clip(div / scale, -1, 1).astype(np.float32)
+    near = 1 - smooth(0.25, 1.1, np.maximum(d_in, 0))
+    edge = np.clip(np.clip(curv, 0, 1) * 1.3 + near * 0.55, 0, 1) * inside
+    cavity = np.clip(np.clip(-curv, 0, 1) * 1.1 + (1 - s.ao) * 0.9, 0, 1) * inside
+    return fg.Maps(n.astype(np.float32), s.ao.astype(np.float32), np.ones(s.a.shape, np.float32), cavity.astype(np.float32),
+                   curv, edge.astype(np.float32))
+
+
+def gothic_grade(img: np.ndarray, emis: np.ndarray) -> np.ndarray:
+    """Float sRGB RGBA in, the same out: chroma pulled in and the brightest channel run through a soft knee that
+    asymptotes at GRADE_CEIL, so no highlight, paint or gem can leave the authored ceiling."""
+    rgb = img[..., :3]
+    e = np.clip(emis, 0, 1)[..., None]
+    y = (rgb @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))[..., None]
+    k = GRADE_CHROMA + (GRADE_CHROMA_EMIT - GRADE_CHROMA) * e
+    rgb = np.clip(y + (rgb - y) * k, 0, None)
+    v = rgb.max(axis=2, keepdims=True)
+    ceil = GRADE_CEIL + GRADE_EMIT_LIFT * e
+    over = np.maximum(v - GRADE_KNEE, 0)
+    span = np.maximum(ceil - GRADE_KNEE, 1e-3)
+    v2 = np.where(v > GRADE_KNEE, GRADE_KNEE + span * (1 - np.exp(-over / span)), v)
+    rgb = rgb * (v2 / np.maximum(v, 1e-6))
+    return np.dstack((rgb, img[..., 3:])).astype(np.float32)
+
+
+def forge_render(s: Scene, seed: str = "") -> tuple:
     """The painted scene buffers, lit through forge: linear-light GGX with Schlick Fresnel and baked AO, bloom and a
     filmic curve in finish(). The buffers already carry normals, albedo, metal, gloss and emission, so the shapes and
-    colours stay the designed ones; only the light transport changes. Returns hi-res float RGBA and the mask channels."""
+    colours stay the designed ones; only the light transport changes. Before the light, forge.age wears the form
+    (edge wear to bare metal, soot and rust in the recesses, dust on the up-facing slopes); after it the grade holds
+    every channel under the ceiling. Returns hi-res float RGBA and the mask channels."""
     H, W = s.H, s.W
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     n = s.nrm.copy()
@@ -1809,15 +1852,35 @@ def forge_render(s: Scene) -> tuple:
     rough = np.clip(np.sqrt(2.0 / (s.gloss + 2.0)) * 1.6, 0.12, 0.85)
     surf = fg.Surface((lin * (1 - metal)).astype(np.float32), f0.astype(np.float32), rough.astype(np.float32),
                       np.zeros((H, W), np.float32), np.zeros((H, W), np.float32), s.a.copy())
-    # forge's rig has no sky, so polished metal would turn black: give it a dim fill from above (faces that look up take more)
-    sky = 0.55 + 0.45 * np.clip(-n[..., 1:2], 0, 1)
-    surf.emit = (lin * s.emis[..., None] * 2.6 + np.clip(lin * 1.25, 0, 0.8) * metal * sky * 0.075).astype(np.float32)
-    maps = fg.Maps(n.astype(np.float32), s.ao.astype(np.float32), np.ones((H, W), np.float32), np.zeros((H, W), np.float32),
-                   np.zeros((H, W), np.float32), np.zeros((H, W), np.float32))
-    img = fg.finish(fg.light(surf, maps), s.a, exposure=ICON_EXPOSURE)
-    fres = (1 - np.clip(nz[..., 0], 0, 1)) ** 3
     solid = s.a > 0.5
     d = quick_sdf(solid) / PPU
+    maps = _scene_maps(s, n, d)
+    # bare metal under the wear: steel on metal parts, a pale scuff on cloth, leather and bone
+    keep = (s.emis < 0.05)[..., None]
+    X = (xx + 0.5) / PPU
+    Y = (yy + 0.5) / PPU
+    pit = fg.waves(X, Y, f"icon.{seed}.pit", 8, 0.4, 1.6)
+    blot = fg.waves(X, Y, f"icon.{seed}.blot", 6, 3.0, 12.0)
+    patina = (1 + PATINA_PIT * np.clip(pit, -1.5, 1.5) * 0.5) * (1 - PATINA_BLOTCH * smooth(0.2, 1.4, blot))
+    surf.albedo = np.where(keep, surf.albedo * patina[..., None], surf.albedo).astype(np.float32)
+    surf.f0 = np.where(keep, surf.f0 * (0.55 + 0.45 * np.clip(patina, 0, 1.2))[..., None], surf.f0).astype(np.float32)
+    surf.bare_albedo = np.where(metal > 0.5, surf.albedo, np.clip(lin * 1.9 + 0.025, 0, 0.6)).astype(np.float32)
+    surf.bare_f0 = np.where(metal > 0.5, np.clip(lin * 1.25 + 0.07, 0, 0.8), f0).astype(np.float32)
+    surf.bare_rough = np.full((H, W), 0.42, np.float32)
+    surf.wear_gain = (0.55 + 0.6 * s.metal).astype(np.float32)
+    aged = fg.age(surf, maps, f"icon.{seed}", wear=AGE_WEAR, grime=AGE_GRIME, rust=AGE_RUST, dust=AGE_DUST)
+    aged.albedo = np.where(keep, aged.albedo, surf.albedo).astype(np.float32)   # glass and flame are not rusted
+    aged.f0 = np.where(keep, aged.f0, surf.f0).astype(np.float32)
+    aged.rough = np.where(keep[..., 0], aged.rough, surf.rough).astype(np.float32)
+    # forge's rig has no sky, so polished metal would turn black: give it a dim fill from above (faces that look up take more)
+    sky = 0.55 + 0.45 * np.clip(-n[..., 1:2], 0, 1)
+    aged.emit = (lin * s.emis[..., None] * 2.6 + np.clip(lin * 1.25, 0, 0.8) * metal * sky * 0.075).astype(np.float32)
+    img = fg.finish(fg.light(aged, maps), s.a, exposure=ICON_EXPOSURE)
+    # a hard dark rim inside the silhouette: the outline reads as one cut pixel of soot, not a smooth glow
+    rim_dark = 1 - 0.42 * (1 - smooth(0.0, 0.34, np.maximum(d, 0)))
+    img[..., :3] *= rim_dark[..., None]
+    img = gothic_grade(img, s.emis)
+    fres = (1 - np.clip(nz[..., 0], 0, 1)) ** 3
     rim = 1 - smooth(0.0, 1.4, np.maximum(d, 0))
     rim = np.clip(rim * 0.8 + fres * 0.6, 0, 1)
     refl = np.clip(0.5 + 0.35 * n[..., 0] + 0.35 * n[..., 1], 0, 1)
@@ -1830,7 +1893,7 @@ def render_icon(name: str) -> tuple:
     s = Scene(SEED_NAME.get(name, name), cols, rows)
     fn(s)
     s.center(getattr(fn, "top", None))
-    img, mask = forge_render(s)
+    img, mask = forge_render(s, SEED_NAME.get(name, name))
     return defringe(fg.downsample(img)), mask_down(mask, s.a)
 
 
