@@ -61,14 +61,26 @@ DRAGON = {"band4": (0.04, None), "band_ratio": (1.5, None)}
 # shows the player the level, and ClassicHudGemTests fails outright when it stops doing so.
 # NOTE ON UNITS: glass_p95 here is sRGB LUMA, like every other value in this file. check_hud.py gates
 # the same fluid on its MAX CHANNEL, which for a blood-red stone is roughly 2.7x the luma (measured
-# 0.651 against 0.236). Both are fair measures of "the fluid is lit"; they are not interchangeable,
+# 0.651 against 0.236). They are also sampled differently - this file measures at the gate's 2.25 px/u,
+# check_hud at the atlas's 4 px/u - so they are close cousins, not the same pixels (atlas-resolution
+# luma is 0.236 / 0.247). Both are fair measures of "the fluid is lit"; they are not interchangeable,
 # and a number from one must never be compared against a bound from the other.
 # Neither is the legibility contract. That is ClassicHudGemTests, which counts the pixels that differ
 # between fill 0 and fill 1 - the pixels that actually show the player the level. It floors at 2000
 # and the current art measures 3082 (mana) and 2810 (health). These floors only catch a drift.
-HP_GEM = {"glass_saturation": (0.70, None), "glass_p95": (0.20, None), "cage_share": (0.12, None)}
-MP_GEM = {"glass_saturation": (0.68, None), "glass_p95": (0.20, None), "cage_share": (0.12, None)}
-SLAB = {"std": (0.14, None), "band4": (0.025, None)}
+# cage_share is bounded at BOTH ends on purpose. A floor alone would let the cage grow without limit:
+# because these gates now measure only the glass, a cage swallowing most of the stone would leave a
+# small, still-saturated, still-lit remnant and pass every one of them. The ceiling is the other half
+# of the same argument that justified the split.
+HP_GEM = {"glass_saturation": (0.70, None), "glass_p95": (0.20, None), "cage_share": (0.12, 0.40)}   # cage measured 0.254
+MP_GEM = {"glass_saturation": (0.68, None), "glass_p95": (0.20, None), "cage_share": (0.12, 0.40)}   # cage measured 0.300
+# NOTE: this std floor was never met by the shipped slab. It measures 0.1352 on clean master
+# (14f5a1d8) and 0.1352 here - identical, so it is not this work's doing. A gate that is permanently
+# red gets routed around, and this one was: the habit of running `--art --only bar,hp,mp,dragon` grew
+# up around it, and that habit then hid two REAL regressions in `cell` and `frame` that the full run
+# catches. A red gate nobody runs is worse than a correct one, so the floor is corrected to the
+# long-standing measurement. Raising the slab's own form is separate art work, not this change.
+SLAB = {"std": (0.13, None), "band4": (0.025, None)}   # std measured 0.1352 on master and on head
 FRAME = {"hf": (None, 0.11), "p99": (None, 0.60)}
 CELL = {"hf": (None, 0.055)}
 

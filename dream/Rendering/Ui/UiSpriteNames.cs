@@ -58,8 +58,12 @@ public static class UiSpriteNames
     public const string CellInvalid = "cell.invalid";
     public const string CellOverlayHover = "cell.overlay.hover";
     public const string CellOverlayInvalid = "cell.overlay.invalid";
-    // The grid shop's sprites (window page). NOT in Required: the panels draw each through TryGet and skip
-    // it when absent, so the classic HUD does not fall back to ImGui before the atlas carries them.
+    // The grid shop's sprites (window page). These ARE in Required, because the shipped window atlas
+    // carries them. They were held out of Required only while the panels were written and the art was
+    // not yet merged; the panels still draw each through TryGet, which is belt and braces, not a
+    // licence to remove one. Dropping or renaming any of these without also taking it out of Required
+    // makes UiSpriteTable.Validate throw and silently drops the WHOLE classic HUD back to the ImGui
+    // HUD at runtime.
     public const string ShopCellEmpty = "shop.cell.empty";
     public const string ShopCellOccupied = "shop.cell.occupied";
     public const string ShopFrameEmber = "shop.frame.ember";

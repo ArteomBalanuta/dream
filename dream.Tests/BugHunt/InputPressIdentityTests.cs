@@ -236,10 +236,15 @@ public sealed class InputPressIdentityTests : IDisposable
             BuildVendor,
             () => OpenVendor([ThreeWares[1], ThreeWares[2]]));
 
-        // Both halves, so this cannot pass vacuously. A negative assertion alone would stay green if
-        // the cell stopped registering a widget at all, or if ShopCell pointed at empty board.
-        Assert.DoesNotContain(_bought.Picked, a => a.ItemKind == "bh.ware.three");
-        Assert.All(_bought.Picked, a => Assert.Equal("bh.ware.two", a.ItemKind));
+        // The real outcome, measured rather than assumed: "two" IS bought, from the cell it MOVED to.
+        // The router matches the press by id and the id carries the kind, so the click follows the
+        // ware the player actually pressed even when the board renumbers under the pointer. What must
+        // never happen is buying "three", which slid into the cell the pointer is still sitting on.
+        // Asserting the exact single outcome is also the vacuity defence: a bare DoesNotContain, and
+        // even DoesNotContain plus All, are both green on an empty list, so neither would notice if
+        // clicks stopped registering altogether.
+        VendorHudAction bought = Assert.Single(_bought.Picked);
+        Assert.Equal("bh.ware.two", bought.ItemKind);
     }
 
     // The positive control for the test above: the SAME mid-press stock change, pressed on the cell
