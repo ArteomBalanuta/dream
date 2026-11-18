@@ -379,3 +379,89 @@ applies on the next tick, the mute survives rejoin and restart - so the test was
 wrong. But for a moderation feature the confirmation is the product: an admin told "muted" expects the
 next message to be refused. Making the reply follow enforcement is a change in
 `QueueSanction`/`StepAccountStandings`.
+
+## Waves 15-16, and the last of the test-reliability work
+
+Suite: **9070 passed, 0 failed, 47 skipped**.
+
+### Moderation confirmation now follows enforcement
+
+`/mute`'s barrier read runs on the persistence worker and enqueued the `AccountUpdate` and the admin's
+"Muted X." reply on two different queues: account updates drain in `StepAccountStandings`, the first
+statement of the tick (`DedicatedServerHost.cs:1314`), while connection replies drain after
+`AdvanceTime` (`:690`). Chat is decided on the receive path via `IsMuted`. A barrier read landing
+between the two drain points told the admin the mute was in place a tick before it reached the target,
+and **a message sent inside that window was still published**. Reverting the fix demonstrates it: the
+griefer's line "one more word out of me" reaches the admin AFTER the admin has been told "Muted."
+
+`AccountUpdate` now carries the confirmation, and `ApplyAccountUpdate` enqueues it last and
+unconditionally, so the reply is emitted from `StepAccountStandings` once the standing is in force.
+Failure cases (no such account, guard refused, write failed, queue closed) still reply on the direct
+path, so the admin can never be left uninformed. `ban`, `unban`, `mute` and `unmute` all share
+`QueueSanction` and are all fixed by it; `kick` does not have the shape (it replies inline on the
+receive path) and was left alone. No tick-thread wait and no database read on the tick.
+
+### Economy: a corrected premise and a hardened subsystem
+
+The premise this wave started from was wrong, and the packet says so: **gold is not on
+`player_profiles`.** It lives in `player_wallets (world_id, player_name, gold, updated_utc)`
+(migration 0012), per world, and the only durable writer in the repo is the relative statement
+`ApplyWalletDeltaSql` (`gold = player_wallets.gold + $delta`). The stale-absolute-write and
+cross-world angles do not reach gold at all.
+
+20 hypotheses disproved, including the buy-sell money pump (blocked at content load), double
+quest-reward payment (`CompleteQuest` is `WHERE state = 1` and throws unless exactly one row changed),
+vendor stock (there is none; supply is definitional) and overflow (every check is
+`amount > MaxGold - current`). Two Low findings remain unfixed and are information divergence rather
+than value loss: a wallet row above `MaxGold` is capped in memory forever with no diagnostic, and
+`TryAddGold` is the one wallet mutator without a `HasSeenFailedWrite` gate.
+
+### Death credit is exactly-once - with one hole, now closed
+
+**`WasFatal` cannot fire twice for one death.** It is an EDGE
+(`previousHealth > 0 && CurrentHealth == 0`, `HealthState.cs:31`), every enemy damage path funnels
+through one `EnemyCombatant.ApplyDamage` on the single-threaded tick, and enemy actor ids are never
+reused. Kill gold, XP and loot are therefore exactly-once; 16 hypotheses were disproved with the
+specific guard that kills each.
+
+The hole was next door: `RecordEnemyKill` **deduped by session id while crediting by character key**
+(`WorldSessionRuntime.Quests.cs:185` vs `:207`), so one death advanced a kill objective twice when two
+live seats shared a `CharacterKey`. The credit loop now dedupes on the resolved character key.
+
+**Two live seats CAN share a `CharacterKey`** - proved by a test driving the real
+`RuntimeAuthoritativeSessionHost.JoinSession`, not by reading: a reconnect arriving after a second
+session took the name leaves both players spawned with equal keys, because the duplicate-name gate
+(`:224`) sits below the existing-session branch (`:166`). Closing THAT is a policy decision and is
+left open: every shape of it either refuses a legitimate reconnect or evicts a player already
+playing, and the existing-session branch IS the reconnect path. The presence lease now prevents the
+cross-world case; this is the same-world case it does not cover.
+
+Also fixed: a persisted enemy row with `current_health = 0` restored dead, was pruned with no credit
+and no row delete, and leaked one enemy actor id on every restart (checkpoints skip `!IsActive`, so it
+never self-healed). The restore now clamps current health to at least 1, so the anomalous row becomes
+a live enemy that the next checkpoint rewrites and a kill deletes - self-healing, and without putting
+a database write on a per-tick registry call. The schema permits it: `enemy_instances`' CHECK is only
+`current_hp >= 0`.
+
+### The last allocation flake was a drifting player, not a flip
+
+`CubeRestFreezerTests.Tick_WithAFrozenCarpetAndAWalkingPlayer_AllocatesNothing` had been classified as
+"already correct" because it already used `AllocationAssert.AtMost(0, ...)`. It was not. The measured
+body advanced simulation state and flipped direction on a tick counter, while the helper runs a
+load-dependent number of iterations - so machine speed decided which ticks were measured.
+
+The actual mechanism: over the helper's ~12,000-tick span the player **drifted off the carpet**
+(the gait ramp is not symmetric between directions), reached the edge at tick ~4268, woke 38 cubes,
+fell to the floor, and from there every tick allocated on the AWAKE-cube path. Only the early clean
+rounds held the minimum at zero. The frozen path - what the test is named for - allocates **0 B**,
+verified across ticks 64..4267, identical idle and under 16-core load.
+
+The walk is now turned by the player's own position rather than a tick counter, verified stable over
+60,000 ticks with 0 cubes ever woken, and the test additionally asserts it turned, stayed in band,
+stayed on the carpet and woke nothing - so a future drift fails loudly instead of silently changing
+what is measured.
+
+**Product observation, not a defect:** once cubes are awake, `PhysicsSyncSystem` allocates 160-680 B
+per tick (peak 2976 B) - boxing `(Cube, position)` into `Body.UserObject` per moved body
+(`PhysicsSyncSystem.cs:177`) plus `movedCubes.ToArray()` (`:222`). That is the documented wake path,
+but it is a per-tick allocation on the authoritative loop that nothing asserts against.
