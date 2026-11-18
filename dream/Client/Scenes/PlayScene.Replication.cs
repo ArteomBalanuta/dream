@@ -168,6 +168,12 @@ public partial class PlayScene
             }
 
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
+            // The presenter just released every enemy interpolation buffer of the old world; the
+            // renderer's render-only death linger has to go the same way. Its enemies did not die,
+            // they ceased, and a linger left standing would start a death clip for every one of
+            // them, frozen at its old-world matrix and casting shadows in the new world.
+            // (_render is null only in a headless scene, which draws nothing.)
+            _render?.Enemies.ClearDeathLinger();
             // A new session shows no mana, cooldowns or bar from the one before; the join's inventory
             // brings the bar, and the first vitals message the mana.
             _quickbarHud.Clear();

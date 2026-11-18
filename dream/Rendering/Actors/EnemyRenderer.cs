@@ -32,6 +32,20 @@ public sealed class EnemyRenderer
 
     public void ClearCasters() => _casters.Clear();
 
+    // Drops every corpse and every remembered last-drawn frame. Called when the world under the
+    // renderer is replaced (a join applied mid-session: a reconnect, a takeover, a world transfer).
+    // The old world's enemies do not die, they cease to exist, but the linger cannot tell the two
+    // apart: without this the next draw finds every old actor id in its last-drawn table and absent
+    // from the new world's id set, and starts a death clip for each one - frozen at its OLD-world
+    // matrix, drawn and casting shadows in the new world for up to MaxLingerSeconds.
+    //
+    // Render-only, exactly as the linger is: the instances go back to the visual-state pool and
+    // nothing outside this renderer is touched. The linger's other guarantees are unchanged - a
+    // corpse still holds no actor, no authoritative pose and no interpolation buffer, it is still
+    // bounded by its clip and by MaxLingerSeconds, and ObserveDrawn still releases one under a
+    // reused id so a respawn draws no corpse under itself.
+    public void ClearDeathLinger() => _dying.Clear(_visualStates);
+
     // Draws every enemy at its authoritative pose.
     public void Draw(Camera camera, IReadOnlyList<EnemyActor> actors, float deltaTime, bool showCollisionGeometry)
     {
