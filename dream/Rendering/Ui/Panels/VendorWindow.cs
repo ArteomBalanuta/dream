@@ -15,13 +15,10 @@ namespace Dream.Rendering.Ui.Panels;
 public static class VendorWindow
 {
     // Kept for the text-fit preview test, which still lays out the retired list rows.
-    public const int BuyRows = 8;
-    public const int SellRows = 8;
 
     // Text sizes in window units (1 u = Scale px); the boxes are the art's, so each is capped by its box.
     internal const float RowTextUnits = 9.5f;
     internal const float HeadTextUnits = 8f;
-    internal const float ButtonTextUnits = 9.5f;
     internal const float CellTextUnits = 8f;
 
     // The lines of the free band above the board (58..190 u): the "For sale" head, then the hovered

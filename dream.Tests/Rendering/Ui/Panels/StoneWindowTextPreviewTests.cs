@@ -245,21 +245,38 @@ public sealed class StoneWindowTextPreviewTests : IDisposable
         InventoryFakeCanvas c = Canvas(in l);
         VendorWindow.Build(c, _scene.Input, _scene.View, l, _scene.Table, _scene.Actions);
 
+        // The grid shop's boxes: the title and gold strips, the "For sale" head, the two hover-info
+        // lines, and then every rect the board can draw text in. A price sits in the ITEM's rect
+        // (bottom-right), which spans a multi-cell footprint, so the placed item rects are listed
+        // as well as the plain cells - a cell box alone would not contain a 2x1 item's price.
         List<UiRect> boxes =
         [
             l.FromUnits(win, 35f, 8f, 120f, 8f),
             l.FromUnits(win, 35f, 20f, 119f, 8f),
             l.FromUnits(win, 19f, 46f, 152f, 12f),
-            l.FromUnits(win, 19f, 168f, 152f, 13f),
-            l.FromUnits(win, 19f, 182f + (VendorWindow.SellRows * 13f) + 6f, 152f, 16f),
+            l.FromUnits(win, 19f, 58f, 152f, 12f),
+            l.FromUnits(win, 19f, 71f, 152f, 12f),
         ];
-        boxes.AddRange(Rows(in l, win, 58f, 13f, VendorWindow.BuyRows));
-        boxes.AddRange(Rows(in l, win, 182f, 13f, VendorWindow.SellRows));
+        for (int cell = 0; cell < VendorGrid.Columns * VendorGrid.Rows; cell++)
+        {
+            boxes.Add(VendorGrid.CellRect(in l, win, cell));
+        }
+
+        Span<int> anchors = stackalloc int[VendorHudState.MaxStock];
+        Span<ItemFootprint> footprints = stackalloc ItemFootprint[VendorHudState.MaxStock];
+        VendorGrid.Place(_scene.View, _vendor, anchors, footprints);
+        for (int n = 0; n < anchors.Length; n++)
+        {
+            if (anchors[n] >= 0)
+            {
+                boxes.Add(VendorGrid.ItemRect(in l, win, anchors[n], footprints[n]));
+            }
+        }
 
         UiTextProbe.AssertEveryTextFits(c, in l, win, boxes, $"vendor {w}x{h} @{Tag(configured)}");
         UiTextProbe.AssertSizeFitsBox(in l, UiText.For(in l, VendorWindow.RowTextUnits, 12f), 12f, "vendor row");
         UiTextProbe.AssertSizeFitsBox(in l, UiText.For(in l, VendorWindow.HeadTextUnits, 12f), 12f, "vendor head");
-        UiTextProbe.AssertSizeFitsBox(in l, UiText.For(in l, VendorWindow.ButtonTextUnits, 16f), 16f, "vendor button");
+        UiTextProbe.AssertSizeFitsBox(in l, UiText.For(in l, VendorWindow.CellTextUnits, VendorGrid.CellUnits), VendorGrid.CellUnits, "vendor cell");
     }
 
     // ---- the trade window -------------------------------------------------------------------

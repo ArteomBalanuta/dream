@@ -1,5 +1,6 @@
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Hud;
+using Dream.Simulation.Inventory;
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Panels;
 using Dream.Tests.Rendering.Ui.Panels;
@@ -153,76 +154,104 @@ public sealed class InputPressIdentityTests : IDisposable
         Assert.False(_intents.TryDequeue(out IPlayerActionPayload offered), $"the click was redirected: {offered}");
     }
 
-    // ---- BH-INPUT-3: the vendor sell row ----
+    // ---- BH-INPUT-3: the vendor shop cell ----
+    //
+    // The paged sell list this section used to cover is gone: selling is now a drag from the bag onto
+    // the shop board, and a mid-drag inventory push cancels the drag outright (InventoryUiState
+    // .BeginFrame sets DragCancelled when the snapshot arrays change identity), so no substituted item
+    // can be sold. What is left on a press/release is the BUY cell, and it has exactly the old hazard:
+    // the stock is a live list, so a cell can be redrawn under the pointer holding another kind.
 
     private readonly VendorHudState _vendor = new();
+    private readonly VendorActions _bought = new();
 
-    private UiRect SellRow(int n) => Units(19f, 182f + (n * 13f), 152f, 12f);
+    private sealed class VendorActions : IHudActions
+    {
+        public List<VendorHudAction> Picked { get; } = new();
+
+        public void Inventory(InventoryHudAction action)
+        {
+        }
+
+        public void CloseInventory()
+        {
+        }
+
+        public void Vendor(VendorHudAction action) => Picked.Add(action);
+    }
 
     private void BuildVendor() =>
-        VendorWindow.Build(_scene.Canvas, _input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+        VendorWindow.Build(_scene.Canvas, _input, _scene.View, _scene.Layout, _scene.Table, _bought);
 
-    private void OpenVendor()
+    // Kinds with no icon art, so every footprint is 1x1 and line n sits on cell n.
+    private static readonly VendorStockLine[] ThreeWares =
+    [
+        new VendorStockLine("bh.ware.one", "Tallow Candle", 5),
+        new VendorStockLine("bh.ware.two", "Amberlight Shard", 9),
+        new VendorStockLine("bh.ware.three", "Iron Band", 14)
+    ];
+
+    private void OpenVendor(ReadOnlySpan<VendorStockLine> stock)
     {
-        _vendor.Open(900, "Old Mara", []);
+        _vendor.Open(900, "Old Mara", stock);
         _scene.View.Vendor = _vendor;
+        _scene.View.InventoryOpen = true;
+        // A price over the wallet is refused and buys nothing, which would hide the identity bug
+        // these tests exist for, so the purse is always deep enough for every ware.
+        _scene.View.Inventory = _scene.View.Inventory!.Value with { Gold = 1000 };
     }
 
-    // The control: a stable bag still selects the row's own item, and Sell still carries it.
-    [Fact]
-    public void VendorSellRow_AStableBag_StillSelectsTheItemTheRowWasDrawnFrom()
+    // The cell the stock line at index n is drawn on.
+    private UiRect ShopCell(int n)
     {
-        OpenVendor();
-        AddBagItems(4);
-
-        PressAndRelease(Centre(SellRow(2)), BuildVendor);
-
-        Assert.Equal(2, _vendor.SelectedAnchor);
-        Assert.Equal(102L, _vendor.SelectedItemId);
+        Span<int> anchors = stackalloc int[VendorHudState.MaxStock];
+        Span<ItemFootprint> footprints = stackalloc ItemFootprint[VendorHudState.MaxStock];
+        VendorGrid.Place(_scene.View, _vendor, anchors, footprints);
+        return VendorGrid.ItemRect(_scene.Layout, _scene.Layout.Character, anchors[n], footprints[n]);
     }
 
-    // BH-INPUT-3: the bag changes mid-press and row 2 comes to hold item 103. The selection must
-    // never land on 103 — a player who presses Sell by reflex would sell it, and the server would
-    // accept it, because the Sell step carries the selection's own instance id.
+    // The control: a stable stock buys the kind the cell was drawn from.
     [Fact]
-    public void VendorSellRow_AnItemLeavingTheBagMidPress_NeverSelectsTheItemThatMovedIntoTheRow()
+    public void VendorShopCell_AStableStock_BuysTheKindTheCellWasDrawnFrom()
     {
-        OpenVendor();
-        AddBagItems(4);
+        OpenVendor(ThreeWares);
+
+        PressAndRelease(Centre(ShopCell(1)), BuildVendor);
+
+        VendorHudAction action = Assert.Single(_bought.Picked);
+        Assert.Equal(VendorHudActionKind.Buy, action.Kind);
+        Assert.Equal("bh.ware.two", action.ItemKind);
+    }
+
+    // BH-INPUT-3: the stock changes mid-press and cell 1 comes to hold "three". The release must never
+    // buy "three" — the player pressed "two", and a position-keyed id would charge them for the
+    // newcomer instead.
+    [Fact]
+    public void VendorShopCell_AWareLeavingTheStockMidPress_NeverBuysTheOneThatMovedIntoTheCell()
+    {
+        OpenVendor(ThreeWares);
 
         PressAndRelease(
-            Centre(SellRow(2)),
+            Centre(ShopCell(1)),
             BuildVendor,
-            () =>
-            {
-                _scene.Items[0] = null;
-                _scene.Refresh();
-            });
+            () => OpenVendor([ThreeWares[1], ThreeWares[2]]));
 
-        Assert.NotEqual(103L, _vendor.SelectedItemId);
-        Assert.Equal(102L, _vendor.SelectedItemId);
-        Assert.Equal(2, _vendor.SelectedAnchor);
+        Assert.DoesNotContain(_bought.Picked, a => a.ItemKind == "bh.ware.three");
     }
 
-    // The other half: the pressed item itself leaves the bag mid-press, so nothing carries its id and
-    // the click is dropped. Nothing is selected, so Sell has nothing to send.
+    // The other half: the pressed kind itself leaves the stock mid-press, so nothing under the pointer
+    // carries its id and the click is dropped. Nothing is bought at all.
     [Fact]
-    public void VendorSellRow_ThePressedItemLeavingTheBagMidPress_SelectsNothingAtAll()
+    public void VendorShopCell_ThePressedWareLeavingTheStockMidPress_BuysNothingAtAll()
     {
-        OpenVendor();
-        AddBagItems(4);
+        OpenVendor(ThreeWares);
 
         PressAndRelease(
-            Centre(SellRow(2)),
+            Centre(ShopCell(1)),
             BuildVendor,
-            () =>
-            {
-                _scene.Items[2] = null;
-                _scene.Refresh();
-            });
+            () => OpenVendor([ThreeWares[0], ThreeWares[2]]));
 
-        Assert.Equal(-1, _vendor.SelectedAnchor);
-        Assert.Equal(0L, _vendor.SelectedItemId);
+        Assert.Empty(_bought.Picked);
     }
 
     // ---- BH-INPUT-1: the world label ----
