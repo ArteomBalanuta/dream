@@ -1,3 +1,4 @@
+using Dream.Simulation.Content;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.World;
@@ -23,6 +24,10 @@ public sealed record RuntimePersistencePorts(
 
     // Accounts and character ownership (global); null for hosts without accounts.
     public IAccountRepository? Accounts { get; init; }
+
+    // The shipped content with the database's enemy_kinds tuning applied; null falls back to
+    // WorldSessionRuntime.DefaultEnemyContent.
+    public ContentCatalog? EnemyContent { get; init; }
 
     // The terrain chunks of a stored world, as loaded; null for generated worlds.
     public IReadOnlyList<PersistedTerrainChunk>? StoredTerrain { get; init; }

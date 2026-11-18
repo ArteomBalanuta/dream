@@ -122,8 +122,8 @@ public static class RemoteEnemyStateApplier
     // measures the gait from the drawn pose instead.
     private const float ClientAggroRangePlaceholder = 10f;
     private const float ClientAttackRangePlaceholder = 1.35f;
-    private const float ClientMoveSpeedPlaceholder = 5.0f;
-    private const float ClientPatrolSpeedPlaceholder = 1.4f;
+    private const float ClientMoveSpeedPlaceholder = 3.0f;
+    private const float ClientPatrolSpeedPlaceholder = 1.0f;
     private const string ClientDisplayNameFallback = "Wolf";
 
     // Wire levels are hostile; 0 (absent) is level 1.

@@ -555,7 +555,7 @@ internal sealed partial class RuntimePersistenceBridge
         {
             // A retired or unknown kind: the row is kept (checkpoints never delete rows) but the
             // enemy is not restored. The population step spawns a wolf when none is active.
-            if (!ContentCatalog.Shipped.TryGetEnemy(enemy.EnemyKind, out EnemyTemplate? template))
+            if (!_host.EnemyContent.TryGetEnemy(enemy.EnemyKind, out EnemyTemplate? template))
             {
                 NetworkDiagnosticsLog.Write(
                     "server.persistence.restore-skipped-enemy",

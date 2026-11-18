@@ -5,6 +5,7 @@ using Dream.Simulation.Combat;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Rules;
 using Dream.Simulation.Enemies;
+using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Physics;
 using Dream.Simulation.Players;
@@ -128,10 +129,13 @@ public sealed partial class WorldSessionRuntime : IDisposable
         ulong simulationSeed = DefaultSimulationSeed,
         bool headlessMap = true,
         IReadOnlyList<PersistedTerrainChunk>? storedTerrain = null,
-        IAccountRepository? accounts = null)
+        IAccountRepository? accounts = null,
+        ContentCatalog? enemyContent = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         World = world;
+        // Before the restore below, which rebuilds the stored enemies from it.
+        EnemyContent = enemyContent ?? DefaultEnemyContent;
         StoredTerrain = storedTerrain;
         SimulationSeed = simulationSeed;
         _worldSpawn = playerStartPosition;

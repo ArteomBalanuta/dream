@@ -101,7 +101,7 @@ public sealed class ContentStringBoundsTests
     [InlineData("-1")]
     public void AMoveSpeedBelowTheMinimum_IsRejected(string speed)
     {
-        string enemies = ShippedEnemiesJson.Replace("\"moveSpeed\": 5.0", $"\"moveSpeed\": {speed}");
+        string enemies = ShippedEnemiesJson.Replace("\"moveSpeed\": 3.0", $"\"moveSpeed\": {speed}");
         Assert.NotEqual(ShippedEnemiesJson, enemies);
         ContentValidationException ex = Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
         Assert.Contains("moveSpeed", ex.Message, StringComparison.Ordinal);
@@ -112,8 +112,8 @@ public sealed class ContentStringBoundsTests
     {
         // The patrol walk goes down with it: it can never exceed the chase speed.
         string enemies = ShippedEnemiesJson
-            .Replace("\"moveSpeed\": 5.0", "\"moveSpeed\": 0.01")
-            .Replace("\"patrolSpeed\": 1.4", "\"patrolSpeed\": 0.01");
+            .Replace("\"moveSpeed\": 3.0", "\"moveSpeed\": 0.01")
+            .Replace("\"patrolSpeed\": 1.0", "\"patrolSpeed\": 0.01");
         Assert.NotNull(ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
     }
 
@@ -125,7 +125,7 @@ public sealed class ContentStringBoundsTests
     [InlineData("101")]
     public void APatrolSpeedOutsideTheRange_IsRejected(string speed)
     {
-        string enemies = ShippedEnemiesJson.Replace("\"patrolSpeed\": 1.4", $"\"patrolSpeed\": {speed}");
+        string enemies = ShippedEnemiesJson.Replace("\"patrolSpeed\": 1.0", $"\"patrolSpeed\": {speed}");
         Assert.NotEqual(ShippedEnemiesJson, enemies);
         ContentValidationException ex = Assert.Throws<ContentValidationException>(() => ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson));
         Assert.Contains("patrolSpeed", ex.Message, StringComparison.Ordinal);

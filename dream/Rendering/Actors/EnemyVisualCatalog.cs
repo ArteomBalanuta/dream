@@ -99,14 +99,16 @@ public static class EnemyVisualCatalog
     public const string DireWolfKey = "enemy.dire-wolf";
     public const string HoundKey = "enemy.hound";
 
-    // The gait boundary for every enemy: the wolf patrols at 1.4 m/s and chases at 5.0-6.0, so a
-    // threshold of 3.0 sits in the empty middle and nothing an enemy actually does lands in the
-    // band. The reference speeds are the shipped patrol and chase speeds of the plain wolf, which
-    // is the model both the wolf and the dire wolf draw.
+    // The gait boundary for every enemy: it sits in the empty middle between the fastest shipped
+    // patrol walk and the slowest shipped chase, clear of both by the hysteresis, so nothing an
+    // enemy actually does lands in the band (a test pins that against enemies.json). The reference
+    // speeds are the ground speeds the wolf's walk and gallop clips were authored for, not the
+    // simulation's: the shipped chase is slower than the gallop was authored for, so the clip plays
+    // at its floor rate (MinPlaybackSpeed) instead of skating.
     private const float PatrolReferenceSpeed = 1.4f;
     private const float ChaseReferenceSpeed = 5.0f;
-    private const float GaitThresholdSpeed = 3.0f;
-    private const float GaitHysteresisSpeed = 0.4f;
+    internal const float GaitThresholdSpeed = 2.0f;
+    internal const float GaitHysteresisSpeed = 0.4f;
 
     public static readonly EnemyClipSet WolfClips = new(
         WolfAssetDefinition.IdleClip,

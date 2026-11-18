@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Content;
 using Dream.Simulation.Players;
 using Dream.Simulation.Rules;
 using Dream.Simulation.World;
@@ -33,6 +34,10 @@ internal interface IRuntimePersistenceHost
     // The formulas an enemy's damage and attack interval are derived with (EnemyFactory).
     // Defaults to the built-in formulas so test fakes need not provide them.
     CombatFormulaService CombatFormulas => CombatFormulaService.Default;
+
+    // The content a restored enemy is rebuilt from (its kind's tuned template). Defaults to the shipped
+    // catalog so test fakes need not provide it.
+    ContentCatalog EnemyContent => ContentCatalog.Shipped;
 
     // Enemy actor id allocation and the default spawn (the runtime's enemy partial).
     bool TryAllocateEnemyActorId(out int actorId);

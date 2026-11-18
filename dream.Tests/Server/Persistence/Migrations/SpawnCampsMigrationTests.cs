@@ -32,7 +32,7 @@ public sealed class SpawnCampsMigrationTests
         using SqliteConnection c = database.Open();
         using SqliteCommand command = c.CreateCommand();
         command.CommandText = "SELECT object_id, enemy_kind, display_name, position_x, position_y, position_z, facing_x, facing_y, facing_z, " +
-            "current_hp, max_hp, strength, agility, vitality, energy, movement_speed, attack_speed, level, created_utc, updated_utc " +
+            "current_hp, max_hp, strength, agility, vitality, energy, level, created_utc, updated_utc " +
             "FROM enemy_instances ORDER BY object_id;";
         using SqliteDataReader reader = command.ExecuteReader();
         List<string> rows = [];
@@ -60,9 +60,9 @@ public sealed class SpawnCampsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(new SchemaMigrationResult(10, 16, result.BackupPath), result);
-        Assert.Contains("v0010-to-v0016", Assert.Single(database.Backups()), StringComparison.Ordinal);
-        Assert.Equal(16L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
+        Assert.Equal(new SchemaMigrationResult(10, 17, result.BackupPath), result);
+        Assert.Contains("v0010-to-v0017", Assert.Single(database.Backups()), StringComparison.Ordinal);
+        Assert.Equal(17L, database.Scalar("SELECT MAX(version) FROM schema_version;"));
         Assert.Equal("spawn_camps", database.Scalar("SELECT name FROM schema_version WHERE version = 11;"));
         Assert.Equal(before, Dump(database));
         Assert.Equal(2L, database.Scalar("SELECT COUNT(*) FROM enemy_instances WHERE camp_key IS NULL;"));

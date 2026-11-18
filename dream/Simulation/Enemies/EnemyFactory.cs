@@ -9,10 +9,11 @@ namespace Dream.Simulation.Enemies;
 
 // The one place an enemy is built, for a new spawn and for a restore from a row, so the two cannot
 // drift. Strength, Vitality, Attack Speed and Level are instance stats (they come from the template at
-// spawn and from the row at restore); damage and the attack interval are derived from them through the
-// enemy.* formulas, and maximum health is derived at spawn and read from the row at restore. Aggro and
-// attack range, the body, the visual and loot come from the template. Allocates (the actor, its
-// closures), so it only runs on spawn and restore.
+// spawn and from the row at restore); damage is derived from them through the enemy.* formulas, and
+// maximum health is derived at spawn and read from the row at restore. The chase speed, the attack
+// interval, aggro and attack range, the body, the visual and loot come from the template (the
+// authored kind, or its enemy_kinds tuning). Allocates (the actor, its closures), so it only runs on
+// spawn and restore.
 internal static class EnemyFactory
 {
     // Every persisted enemy row has always been written with these, so rows stay byte-equal.
@@ -64,7 +65,7 @@ internal static class EnemyFactory
 
         // A row is hostile on load: SetBase clamps what the sheet keeps, and the formulas see the same values.
         PersistedCreatureStats stored = row.Stats;
-        StatBlock stats = Clamped(stored.Strength, stored.Agility, stored.Vitality, stored.Energy, stored.MovementSpeed, stored.AttackSpeed);
+        StatBlock stats = Clamped(stored.Strength, stored.Agility, stored.Vitality, stored.Energy, template.MoveSpeed, stored.AttackSpeed);
         // The level is hostile too: a row outside 1..the content maximum is clamped here. Restore does not
         // rewrite the row; the first checkpoint with a diff writes the clamped value. Kill XP and the wire
         // value agree on one number.
@@ -79,7 +80,10 @@ internal static class EnemyFactory
             stats[StatId.AttackSpeed],
             (int)stats[StatId.Vitality],
             level,
-            intervalOverride: null);
+            // The attack interval is a KIND stat, like the chase speed below: a restored enemy bites at
+            // the rate its kind is authored (or tuned in enemy_kinds) with, not at the one its row's
+            // attack_speed would derive.
+            intervalOverride: template.AttackIntervalSeconds);
 
         Vector3 position = row.Position;
         EnemyCombatant combatant = new(
@@ -100,10 +104,10 @@ internal static class EnemyFactory
         // and killing it deletes the row.
         combatant.Health.SetAuthoritativeState(Math.Clamp(stored.CurrentHealth, 1, maxHealth), maxHealth);
 
-        // The chase speed is hostile too, and it is the actor's real movement input: take it from the
-        // clamped sheet above (ClampEnemyBase maps NaN to the minimum and bounds the ceiling) rather
-        // than the raw column, so the actor cannot move at a speed its own replicated sheet denies -
-        // a NaN row otherwise froze the enemy for good and a huge one closed the whole gap in a tick.
+        // The chase speed is a KIND stat: it comes from the template (authored, or tuned in enemy_kinds),
+        // never from the row's movement_speed, which is informational. A row that is NaN, zero or huge
+        // therefore cannot freeze the enemy or close the whole gap in a tick. The template value goes
+        // through the same clamp as a spawn's, so the replicated sheet and the actor agree.
         EnemyActor actor = Build(combatant, template, position, stats[StatId.MovementSpeed], row.DisplayName, row.EnemyKind, level, home ?? position);
         // The facing is hostile too, and facing_x/y/z carry no CHECK either. FaceDirection only rejects a
         // near-zero direction: a non-finite one normalizes to a non-finite Forward, which poisons every
@@ -132,8 +136,8 @@ internal static class EnemyFactory
             aggroRange: template.AggroRange,
             attackRange: template.AttackRange,
             moveSpeed: moveSpeed,
-            // The chase speed is instance state (a row can carry its own); the patrol walk is not
-            // persisted and always comes from the template, capped at the chase speed it was given.
+            // The chase speed and the patrol walk both come from the kind; the patrol walk is capped at
+            // the chase speed it was given.
             patrolSpeed: Math.Min(template.PatrolSpeed, moveSpeed),
             preferredStandOffDistance: WolfDefinition.PreferredStandOffDistance,
             collisionRadius: WolfDefinition.CollisionRadius,
