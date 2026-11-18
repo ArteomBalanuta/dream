@@ -263,6 +263,9 @@ public static class ItemOverlays
     // readable and needs no new art.
     private static readonly UiColor DropGhostTint = new(255, 120, 100, 200);
 
+    // A release that would sell to the open shop: a warm ember glow, not the red of "drops on the ground".
+    private static readonly UiColor SellGhostTint = new(255, 190, 110, 215);
+
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
     {
         InventoryUiState st = InventoryUiState.Current;
@@ -561,9 +564,12 @@ public static class ItemOverlays
         float width = footprint.Cols * InventoryWindow.CellUnits * l.Scale;
         float height = footprint.Rows * InventoryWindow.CellUnits * l.Scale;
         UiRect box = new(p.X - (width * 0.5f), p.Y - (height * 0.5f), width, height);
-        bool dropsOnGround = InventoryWindow.TryResolveRelease(in l, l.Inventory, v, st.DragSource, p, out InventoryHudAction action) == InventoryWindow.DropVerdict.Valid
+        // The shop is decided first, as on the release: a drop over it never also reads as a ground drop.
+        InventoryWindow.DropVerdict shop = VendorGrid.TryResolveSell(in l, v, st.DragSource, p, out _);
+        bool dropsOnGround = shop == InventoryWindow.DropVerdict.None
+            && InventoryWindow.TryResolveRelease(in l, l.Inventory, v, st.DragSource, p, out InventoryHudAction action) == InventoryWindow.DropVerdict.Valid
             && action.Kind == InventoryHudActionKind.Drop;
-        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), InventoryWindow.IconRect(hv.Icon, box, l.Scale), dropsOnGround ? DropGhostTint : GhostTint);
+        c.Sprite(ItemTierStyle.IconFor(hv.Icon, hv.Tier), InventoryWindow.IconRect(hv.Icon, box, l.Scale), shop == InventoryWindow.DropVerdict.Valid ? SellGhostTint : dropsOnGround ? DropGhostTint : GhostTint);
     }
 
     // ---- context menu -----------------------------------------------------------------------

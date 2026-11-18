@@ -58,6 +58,13 @@ public static class UiSpriteNames
     public const string CellInvalid = "cell.invalid";
     public const string CellOverlayHover = "cell.overlay.hover";
     public const string CellOverlayInvalid = "cell.overlay.invalid";
+    // The grid shop's sprites (window page). NOT in Required: the panels draw each through TryGet and skip
+    // it when absent, so the classic HUD does not fall back to ImGui before the atlas carries them.
+    public const string ShopCellEmpty = "shop.cell.empty";
+    public const string ShopCellOccupied = "shop.cell.occupied";
+    public const string ShopFrameEmber = "shop.frame.ember";
+    public const string ShopFrameCold = "shop.frame.cold";
+    public const string CellOverlayEmber = "cell.overlay.ember";
     public const string Well2x2 = "well.2x2";
     public const string Well2x3 = "well.2x3";
     public const string SilWeaponLeft = "sil.weapon.left";
