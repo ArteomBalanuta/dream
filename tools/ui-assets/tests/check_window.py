@@ -472,15 +472,15 @@ def check_shop() -> None:
 # Measured on the shipped sprites; each constant carries what was measured (filled in after the render).
 SHOP_FACE = (0.05, 0.24)   # shop.cell.empty face luma: measured 0.115 (cell.empty 0.133)
 SHOP_KEY = 0.06            # lit-minus-dark rim luma: measured 0.112 (cell.empty 0.165)
-SHOP_DIFF = 12.0           # mean abs RGB difference to cell.empty: measured 17.4
+SHOP_DIFF = 12.0           # mean abs RGB difference to cell.empty: measured 17.9
 SHOP_TEXTURE = 2.0         # interior luma std against the niche's: measured 2.62 (0.116 against 0.044)
 SHOP_WARM = 4.0            # R-B lead of shop.cell.occupied over cell.occupied: measured 5.6 (+3.0 against -2.6)
 FLASH_A = (0.15, 0.60)     # cell.overlay.ember alpha range: measured 0.259..0.506, std 0.064
 FLASH_WARM = 100.0         # cell.overlay.ember R-B: measured 150 (mean 193, 107, 43)
-EMBER_RB = 25.0            # shop.frame.ember R-B over the ring: measured 39.2
-COLD_BR = 10.0             # shop.frame.cold B-R over the ring: measured 16.4
-EMBER_HOT = (0.03, 0.30)   # share of ring pixels that glow (R > 150 and R > 2B): measured 0.147
-EMBER_LUMA = 0.32          # the ring is iron with heat in it, not a glowing band: measured mean luma 0.260
+EMBER_RB = 25.0            # shop.frame.ember R-B over the ring: measured 44.8
+COLD_BR = 10.0             # shop.frame.cold B-R over the ring: measured 18.0
+EMBER_HOT = (0.03, 0.30)   # share of ring pixels that glow (R > 150 and R > 2B): measured 0.179
+EMBER_LUMA = 0.32          # the ring is iron with heat in it, not a glowing band: measured mean luma 0.263
 
 
 def main() -> int:

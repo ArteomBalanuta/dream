@@ -108,16 +108,17 @@ _register("pewter.dark", fg.Material((0.008, 0.008, 0.009), (0.040, 0.040, 0.043
 # dim brass inlay for the frame rails: a bone-gold that has gone brown, not a polished trim
 # the frame's iron wears to a dull grey, not to bright steel
 for _frame, _iron in (("frame.iron", "iron"), ("frame.warm", "iron.warm"), ("frame.cold", "iron.cold"), ("frame.black", "iron.black"), ("frame.rivet", "iron.rivet")):
-    _register(_frame, dataclasses.replace(fg.MATERIALS[_iron], rough=0.74, aniso=0.08, bare_f0=(0.115, 0.115, 0.118), bare_albedo=(0.012, 0.012, 0.013), bare_rough=0.55))
+    _register(_frame, dataclasses.replace(fg.MATERIALS[_iron], rough=0.74, aniso=0.08, bare_f0=(0.185, 0.130, 0.062), bare_albedo=(0.020, 0.012, 0.005), bare_rough=0.55))   # worn edges show tarnished brass, not grey steel
 # bag cells and button faces: dark gunmetal that holds a faint bevel
 _register("cell", fg.Material((0.0105, 0.0105, 0.0113), (0.016, 0.016, 0.017), 0.66, 0.0, (0.014, 0.014, 0.015), (0.07, 0.07, 0.073), 0.58, 0.6, 0.5, 0.03))
 # the bag niche floor: pitted slate, cold and nearly matte, with a pale tooth where its pits wear
 _register("cell.stone", fg.Material((0.0062, 0.0060, 0.0057), (0.018, 0.018, 0.018), 0.82, 0.0, (0.020, 0.019, 0.018), (0.04, 0.04, 0.04), 0.7, 0.5, 0.8, 0.05))
 # the scroll rod: dark steel, its highlight a soft broken streak
 _register("rod.steel", fg.Material((0.012, 0.012, 0.013), (0.085, 0.085, 0.09), 0.52, 0.45, (0.02, 0.02, 0.021), (0.14, 0.14, 0.145), 0.46, 0.5, 0.3, 0.30))
-_register("rail.dim", fg.Material((0.075, 0.048, 0.019), (0.085, 0.066, 0.036), 0.52, 0.15, (0.14, 0.09, 0.04), (0.20, 0.15, 0.08), 0.42, 0.7, 0.3, 0.6))
+# the gold leaf of the frame: raised a third over the first pass so its remnants read as warm against the cold iron
+_register("rail.dim", fg.Material((0.100, 0.064, 0.025), (0.110, 0.086, 0.047), 0.52, 0.15, (0.17, 0.11, 0.05), (0.24, 0.18, 0.09), 0.42, 0.7, 0.3, 0.6))
 _register("glyph.brass", fg.Material((0.034, 0.020, 0.0055), (0.26, 0.18, 0.062), 0.46, 0.2, (0.050, 0.031, 0.010), (0.46, 0.33, 0.14), 0.36, 0.8, 0.3, 0.10))
-_register("glyph.ember", fg.Material((0.050, 0.020, 0.0030), (0.24, 0.12, 0.034), 0.48, 0.2, (0.075, 0.030, 0.006), (0.42, 0.24, 0.07), 0.38, 0.8, 0.3, 0.10))
+_register("glyph.ember", fg.Material((0.022, 0.0105, 0.0030), (0.12, 0.070, 0.026), 0.60, 0.2, (0.075, 0.030, 0.006), (0.42, 0.24, 0.07), 0.45, 0.8, 0.3, 0.10))
 
 
 # regions ------------------------------------------------------------------------------
@@ -588,7 +589,7 @@ def crown_value_map(r: fg.Relief) -> np.ndarray:
     return np.where((x < SIDE_W) | (x > 177.0), column, body).astype(F32)
 
 
-FRAME_RENDER = dict(wear=0.12, grime=0.55, rust=0.14, dust=0.05, detail=0.6)
+FRAME_RENDER = dict(wear=0.14, grime=0.55, rust=0.24, dust=0.05, detail=0.6)
 
 
 def render_crown(kind: str) -> np.ndarray:
@@ -1245,7 +1246,7 @@ GLYPH_CHROMA, GLYPH_KNEE, GLYPH_CEIL, GLYPH_CEIL_HOVER = 0.62, 0.22, 0.40, 0.55
 
 def glyph_finish(R: Leg, hover: bool, shadow=(0.55, 0.65), name="glyph") -> np.ndarray:
     r = finish_relief(R, GLYPH_MATS, "glyph.brass")
-    r.h[...] = r.h / HEIGHT_K * 0.34  # glyphs are shallower than the silhouettes
+    r.h[...] = r.h / HEIGHT_K * 0.55  # glyphs are shallower than the silhouettes, but cast enough shadow to read as cast metal
     prim = r.h.copy()
     micro(r, name, 1.7, 0.06, 0.05, 0.10)  # hammer facets, dents and the pock of old brass; wear follows the primary form only
     hi = render_chain(r, name, prim, None, wear=0.16, grime=0.85, rust=0.26, dust=0.0, exposure=1.15 if hover else 0.55)
@@ -1294,7 +1295,7 @@ def well_value_map(r: fg.Relief) -> np.ndarray:
     return (1 + floor * (shade_ - 1)).astype(F32)
 
 
-WELL_RENDER = dict(wear=0.09, grime=0.5, rust=0.06, dust=0.04, detail=0.4)
+WELL_RENDER = dict(wear=0.10, grime=0.5, rust=0.14, dust=0.04, detail=0.4)
 
 
 def render_well(w_u: int, h_u: int) -> np.ndarray:
@@ -1358,9 +1359,9 @@ def build_wells() -> list[Sprite]:
 # cells --------------------------------------------------------------------------------
 
 
-def _corner_rivets(r: fg.Relief, name: str, inset: float = 1.3, rad: float = 0.46, w_u: float = 20.0, h_u: float = 20.0) -> None:
+def _corner_rivets(r: fg.Relief, name: str, inset: float = 1.3, rad: float = 0.46, w_u: float = 20.0, h_u: float = 20.0, mat: str = "frame.rivet") -> None:
     for i, (x, y) in enumerate(((inset, inset), (w_u - inset, inset), (inset, h_u - inset), (w_u - inset, h_u - inset))):
-        r.dome(x, y, rad, z=zat(r, x, y), mat="frame.rivet", collar=False, seed=f"{name}.rv{i}")
+        r.dome(x, y, rad, z=zat(r, x, y), mat=mat, collar=False, seed=f"{name}.rv{i}")
 
 
 def cell_relief(name: str, face: str = "cell") -> fg.Relief:
@@ -1369,7 +1370,7 @@ def cell_relief(name: str, face: str = "cell") -> fg.Relief:
     r = fg.Relief(20, 20, "frame.black", 1.0)
     r.plate(Rect(0.4, 0.4, 19.2, 19.2, 0.5), z=1.0, bevel=1.9, profile="rolled", rise=0.6, mat="frame.warm", wobble=0.04, nick=0.012, seed=name + ".lip")
     r.pocket(Rect(2.3, 2.3, 15.4, 15.4, 0.4), depth=2.7, wall=1.1, mat="cell.stone", wobble=0.05, nick=0.01, seed=name + ".niche")
-    _corner_rivets(r, name)
+    _corner_rivets(r, name, mat="brass")   # a gold stud in each corner: the one warm accent in the bag grid
     return r
 
 
@@ -1512,6 +1513,7 @@ def render_frame(kind: str) -> np.ndarray:
     if not ember:
         surf.albedo = surf.albedo * np.array((0.80, 0.98, 1.38), dtype=F32)
         surf.f0 = surf.f0 * np.array((0.80, 0.98, 1.38), dtype=F32)
+        surf.bare_f0 = np.broadcast_to(np.array((0.105, 0.125, 0.17), dtype=F32), surf.bare_f0.shape).copy() if surf.bare_f0 is not None and surf.bare_f0.ndim == 3 else np.array((0.105, 0.125, 0.17), dtype=F32)   # worn edges stay cold: the brass of the other frames is not for a refusal
     s = fg.age(surf, m, name, 0.10, 0.5 if ember else 0.25, 0.30 if ember else 0.0, 0.0 if ember else 0.35, streak=r._drip_mask())
     if ember:
         heat_rim = np.exp(-np.maximum(-d_in, 0) / 0.42) * (d_in < 0.4)
@@ -1564,7 +1566,7 @@ def plate_relief(w_u: int, h_u: int, state: str, name: str) -> fg.Relief:
     return r
 
 
-PLATE_RENDER = dict(wear=0.12, grime=0.5, rust=0.08, dust=0.03, detail=0.5)
+PLATE_RENDER = dict(wear=0.14, grime=0.5, rust=0.15, dust=0.03, detail=0.5)
 
 
 def render_plate(w_u: int, h_u: int, state: str) -> np.ndarray:

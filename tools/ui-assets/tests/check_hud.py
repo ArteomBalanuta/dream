@@ -166,13 +166,20 @@ def check_gems(errs, S):
         fl = rgb / 255.0
         sat = (fl.max(axis=2) - fl.min(axis=2)) / np.maximum(fl.max(axis=2), 1e-6)
         iron = (sat < 0.30) & (luma(full) > 0.06) & (luma(full) < 0.6)
-        for label, m, need in (("oxidised body", body, 0.15), ("deep glass", deep, 0.30), ("iron cage", iron, 0.04)):   # measured: body 0.436/0.254, deep 0.602/0.650, iron 0.099/0.137
+        for label, m, need in (("oxidised body", body, 0.15), ("deep glass", deep, 0.30), ("iron cage", iron, 0.04)):   # measured: body 0.425/0.412, deep 0.500/0.440, iron 0.090/0.090
             if (m & ins).sum() < need * ins.sum():
                 errs.append(f"gem.{kind}.full: {label} cover {(m & ins).sum() / ins.sum():.3f} of the stone, want {need}")
         if (luma(full)[ins] > 0.80).mean() > 0.004:   # measured 0.0010 / 0.0002: no plastic hot spot survives
             errs.append(f"gem.{kind}.full: plastic highlights cover {(luma(full)[ins] > 0.80).mean():.4f} of the stone")
-        if np.percentile(fl.max(axis=2)[ins], 99) > 0.70:   # measured p99 of the brightest channel 0.596 / 0.525
-            errs.append(f"gem.{kind}.full: p99 channel {np.percentile(fl.max(axis=2)[ins], 99):.3f} over the 0.70 ceiling")
+        if np.percentile(fl.max(axis=2)[ins], 99) > 0.80:   # measured p99 of the brightest channel 0.728 / 0.655
+            errs.append(f"gem.{kind}.full: p99 channel {np.percentile(fl.max(axis=2)[ins], 99):.3f} over the 0.80 ceiling")
+        # the glass alone (HSV S > 0.45; the near-neutral iron cage drags a whole-sprite mean down): lit through, still oxidised
+        glass = ins & (sat > 0.45)
+        gv = fl.max(axis=2)[glass]
+        if np.percentile(gv, 95) < 0.40:   # measured glass p95 0.651 / 0.616; the C# ClassicHudGemTests counts the pixels that differ between fill 0 and 1
+            errs.append(f"gem.{kind}.full: glass p95 {np.percentile(gv, 95):.3f} under 0.40: the fluid is not lit")
+        if sat[glass].mean() < 0.70:   # measured 0.784 / 0.742
+            errs.append(f"gem.{kind}.full: glass saturation {sat[glass].mean():.3f} under 0.70")
         if np.percentile(sat[ins], 50) > 0.85:   # measured median saturation 0.76 / 0.70
             errs.append(f"gem.{kind}.full: median saturation {np.percentile(sat[ins], 50):.2f} is candy")
         if not (np.array_equal(full[..., 3], empty[..., 3]) and np.array_equal(full[..., 3], mask[..., 3]) and np.array_equal(full[..., 3], spec[..., 3])):

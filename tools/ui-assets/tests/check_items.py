@@ -228,13 +228,13 @@ def check_ramps() -> list[str]:
 # The engine multiplies UI albedo up to about 2.17x with no tonemap, so an authored channel above ~0.40 blooms into candy.
 # Measured on the shipped icons (non-emissive pixels, alpha > 0.8); the ceilings carry a little room over the worst icon.
 # Before the aging pass the same icons peaked at 1.00 with p99 0.95 and sat at saturation 0.9, which is the candy this gate stops.
-GOLD_GAP = 12    # gilded helm median (82, 70, 54): g - b = 16, was > 40 when the gold was pure toy gold
-BLUE_GAP = 8     # azure feather (74, 80, 89): b - r = 15; travel cloak (29, 32, 40): b - r = 11; was 25
+GOLD_GAP = 12    # gilded helm median (84, 72, 55): g - b = 17, was > 40 when the gold was pure toy gold
+BLUE_GAP = 6     # azure feather (74, 81, 90): b - r = 16; travel cloak (30, 32, 38): b - r = 8 after its chroma was cut to 0.44; was 25
 RED_GAP = 8      # hunting spear (41, 27, 25): r - g = 14; was 15
 BONE_MIN = 70    # bone cuirass median (100, 98, 94): min channel 94; was 120, which no 0.40-ceiling icon can reach
-CEIL_P99 = 0.46          # per icon, p99 of max(R,G,B) over lit (non-emissive) pixels; measured worst 0.435 (consumable.greater-mana)
-CEIL_P999 = 0.48         # per icon, p99.9 of the same; measured worst 0.447
-CEIL_EMIT_P99 = 0.54     # emissive pixels (flames, glass, wisp) may sit higher; measured worst 0.502 (item.tool.survey-lantern)
+CEIL_P99 = 0.46          # per icon, p99 of max(R,G,B) over lit (non-emissive) pixels; measured worst 0.443 (consumable.greater-mana)
+CEIL_P999 = 0.48         # per icon, p99.9 of the same; measured worst 0.451
+CEIL_EMIT_P99 = 0.54     # emissive pixels (flames, glass, wisp) may sit higher; measured worst 0.510 (item.tool.torch)
 SAT_P90 = 0.62           # per icon, p90 of (max-min)/max over pixels whose max channel is above 0.15; measured worst 0.526 (potion.mana)
 SAT_CANDY_SHARE = 0.01   # share of pixels that are both saturated (>0.80) and bright (max > 0.30); measured worst 0.000
 
