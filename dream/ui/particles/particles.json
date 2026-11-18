@@ -117,13 +117,53 @@
    "alpha": "coverage",
    "index": 22,
    "name": "blob"
+  },
+  {
+   "alpha": "coverage",
+   "index": 23,
+   "name": "arc"
+  },
+  {
+   "alpha": "zero",
+   "index": 24,
+   "name": "bolt.0"
+  },
+  {
+   "alpha": "zero",
+   "index": 25,
+   "name": "bolt.1"
+  },
+  {
+   "alpha": "coverage",
+   "index": 26,
+   "name": "ring"
+  },
+  {
+   "alpha": "zero",
+   "index": 27,
+   "name": "flash"
+  },
+  {
+   "alpha": "zero",
+   "index": 28,
+   "name": "star"
+  },
+  {
+   "alpha": "zero",
+   "index": 29,
+   "name": "slash"
+  },
+  {
+   "alpha": "zero",
+   "index": 30,
+   "name": "splat"
   }
  ],
  "image": "particles.png",
  "margin": 4,
  "origin": "top-left",
  "reserved": [
-  23,
+  31,
   31
  ],
  "rows": 4,

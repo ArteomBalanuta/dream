@@ -289,6 +289,17 @@ public partial class PlayScene
             {
                 ApplyNpcDialogue(dialogue);
             }
+            else if (resultTargetsLocalSession && actionMessage.Result.Accepted
+                && actionMessage.Result.Payload is AbilityUsedResult used)
+            {
+                // Own cast only: AbilityUsedResult is unicast to the caster, and only an accepted cast gets here.
+                // The effect is aimed with the camera; the server resolves the cast on its own ray.
+                ClientSkillCastPublisher.Publish(
+                    _events,
+                    used,
+                    _runtime.Player.GetWorldPosition(),
+                    _runtime.Player.Camera.HorizontalForward);
+            }
         }
     }
 

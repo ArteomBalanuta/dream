@@ -20,8 +20,14 @@ BANNED = ("ImageFont", "urllib", "requests", "reference/", ".webp", "dream/fonts
 COLUMNS, ROWS, CELL, MARGIN = 8, 4, 64, 4
 SPARK, EMBER, DUST, ASH, HALO, HALO_CORE = range(0, 4), range(4, 8), range(8, 12), range(12, 16), 16, 17
 FLAME, BLOB = range(18, 22), 22
-ADDITIVE = (*SPARK, *EMBER, *DUST, HALO, HALO_CORE)
-RESERVED = range(23, 32)
+ARC, BOLT, RING = 23, range(24, 26), 26
+HIT = range(27, 31)  # flash, star, slash, splat: additive hit marks
+ADDITIVE = (*SPARK, *EMBER, *DUST, HALO, HALO_CORE, *BOLT, *HIT)
+RESERVED = range(31, 32)
+# Cap on the sheet size. Raised from 32 KB when the arc, bolt and ring cells were added: the sheet's
+# dimensions, grid and GPU cost are unchanged, only four more cells carry pixels. The four hit marks fit
+# under it by being coarsely levelled (HIT_STEP in gen_particles.py), so the cap did not move.
+MAX_PNG_BYTES = 40 * 1024
 
 
 def cell(sheet: np.ndarray, index: int) -> np.ndarray:
@@ -63,6 +69,26 @@ def check_frames(sheet: np.ndarray) -> list[str]:
                 errs.append(f"frame {index}: flame RGB under half its A (would read dark)")
             if (rgb.max(axis=2)[a == 0] > 8).any():
                 errs.append(f"frame {index}: flame emission outside its coverage")
+        if index in (ARC, RING):
+            # coverage like the flame: A peaks about 0.8 (204), RGB stays meaningful under it, no peak above 245
+            if not 190 <= a.max() <= 215:
+                errs.append(f"frame {index}: coverage A peak {a.max()} outside 190-215")
+            if not 100 <= rgb.max() <= 245:
+                errs.append(f"frame {index}: coverage RGB peak {rgb.max()} outside 100-245")
+            covered = a > 8
+            if (rgb.max(axis=2)[covered] * 2 < a[covered]).any():
+                errs.append(f"frame {index}: coverage RGB under half its A (would read dark)")
+            if (rgb.max(axis=2)[a == 0] > 8).any():
+                errs.append(f"frame {index}: emission outside its coverage")
+        if index in HIT:
+            if not 200 <= rgb.max() <= 245:
+                errs.append(f"frame {index}: hit mark peak {rgb.max()} outside 200-245")
+            if (rgb.max(axis=2) != rgb.min(axis=2)).any():
+                errs.append(f"frame {index}: hit mark not neutral (the particle tint sets the colour)")
+        if index in BOLT and not 200 <= rgb.max() <= 245:
+            errs.append(f"frame {index}: bolt core peak {rgb.max()} outside 200-245")
+        if index == RING and rgb[CELL // 2, CELL // 2].max() > 8:
+            errs.append(f"frame {index}: ring centre not dark")
         if index in DUST and not 190 <= rgb.max() <= 240:
             errs.append(f"frame {index}: dust RGB peak {rgb.max()} off target")
         if index == BLOB and (rgb.any() or a.max() < 200):
@@ -86,7 +112,7 @@ def check_frames(sheet: np.ndarray) -> list[str]:
             tot = rgb.sum(axis=(0, 1))
             if abs(int(tot[0]) - int(tot[2])) > 0.2 * tot.max():
                 errs.append(f"frame {index}: dust not grey")
-    for group in (SPARK, EMBER, DUST, ASH):
+    for group in (SPARK, EMBER, DUST, ASH, BOLT, HIT):
         cells = [cell(sheet, i) for i in group]
         for i, a_c in enumerate(cells):
             for b_c in cells[i + 1 :]:
@@ -132,12 +158,12 @@ def main() -> int:
     expect = {"size": [512, 256], "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "yDown": True, "alpha": "premultiplied", "image": "particles.png"}
     errs += [f"json {k}: {doc.get(k)!r}" for k, v in expect.items() if doc.get(k) != v]
     indices = [f["index"] for f in doc.get("frames", [])]
-    if indices != list(range(23)):
+    if indices != list(range(31)):
         errs.append(f"json frames {indices}")
-    if doc.get("reserved") != [23, 31]:
+    if doc.get("reserved") != [31, 31]:
         errs.append(f"json reserved {doc.get('reserved')}")
-    if png.stat().st_size > 32 * 1024:
-        errs.append(f"png is {png.stat().st_size} bytes, over 32 KB")
+    if png.stat().st_size > MAX_PNG_BYTES:
+        errs.append(f"png is {png.stat().st_size} bytes, over {MAX_PNG_BYTES}")
     errs += generator_errors(TOOLS / "gen_particles.py")
     if not (TOOLS / "previews" / "particles.png").exists():
         errs.append("missing preview particles.png")
