@@ -26,6 +26,10 @@ public sealed class CursorAimController
 
     private readonly ICursorAimHost _host;
     private bool _prevLeft;
+    // Whether the window was focused on the previous frame; see OnFrame (BH-INPUT-4). It starts TRUE
+    // so the controller needs no warm-up frame: a press on the very first frame it ever sees still
+    // counts, and only a frame that really reported "unfocused" arms the guard.
+    private bool _wasFocused = true;
     private bool _leftArmed;
     private bool _hasPoint;
     private Vector3 _groundPoint;
@@ -43,8 +47,24 @@ public sealed class CursorAimController
 
     public Vector3 GroundPoint => _groundPoint;
 
-    public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput, bool suppressed)
+    public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput, bool suppressed) =>
+        OnFrame(pointer, allowGameplayInput, suppressed, windowFocused: true);
+
+    // BH-INPUT-4: the click that gives the window the focus back is not a new press. While the window
+    // is unfocused SampleWorldPointer forces LeftDown false, so _prevLeft latches to false, and the
+    // first focused frame — with the button still physically down — reads a press edge and swings the
+    // weapon at whatever the player clicked only to come back to the game. Seeding the previous state
+    // from the pointer on the first focused frame skips exactly that one edge, the way
+    // UiInputRouter.BeginFrame already does when the UI becomes interactive again. A window that
+    // already had the focus is untouched, so an ordinary first click still arms and still attacks.
+    public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput, bool suppressed, bool windowFocused)
     {
+        if (!_wasFocused)
+        {
+            _prevLeft = pointer.LeftDown;
+        }
+
+        _wasFocused = windowFocused;
         bool leftPressed = pointer.LeftDown && !_prevLeft;
         _prevLeft = pointer.LeftDown;
 

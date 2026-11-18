@@ -122,6 +122,10 @@ public sealed class ClickMoveController
     private readonly IClickMoveHost _host;
     private readonly IClickPathing _pathing;
     private bool _prevRight;
+    // Whether the window was focused on the previous frame; see OnFrame (BH-INPUT-4). It starts TRUE
+    // so the controller needs no warm-up frame: a press on the very first frame it ever sees still
+    // counts, and only a frame that really reported "unfocused" arms the guard.
+    private bool _wasFocused = true;
     private bool _rightArmed;
     private ClickGoalKind _goal;
     private NavCell _goalCell;
@@ -161,8 +165,24 @@ public sealed class ClickMoveController
 
     // Frame level: press edges, picks and paths. The left button is the cursor aim's (a held attack);
     // the right button opens goals here.
-    public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput)
+    public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput) =>
+        OnFrame(pointer, allowGameplayInput, windowFocused: true);
+
+    // BH-INPUT-4: the click that gives the window the focus back is not a new press. While the window
+    // is unfocused SampleWorldPointer forces RightDown false, so _prevRight latches to false, and the
+    // first focused frame — with the button still physically down — would read a press edge and send
+    // a click-to-move / attack goal at the point the player clicked only to come back to the game.
+    // Seeding the previous state from the pointer on the first focused frame skips exactly that one
+    // edge, the way UiInputRouter.BeginFrame already does when the UI becomes interactive again. A
+    // window that already had the focus is untouched, so an ordinary first click still counts.
+    public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput, bool windowFocused)
     {
+        if (!_wasFocused)
+        {
+            _prevRight = pointer.RightDown;
+        }
+
+        _wasFocused = windowFocused;
         bool rightPressed = pointer.RightDown && !_prevRight;
         _prevRight = pointer.RightDown;
 

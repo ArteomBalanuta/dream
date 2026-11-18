@@ -82,8 +82,13 @@ public partial class PlayScene
         if (!loadingGated)
         {
             WorldPointerState pointer = _render.SampleWorldPointer(mouseState, _settings, _windowFocused);
-            _cursorAim.OnFrame(pointer, allowGameplayInput, SuppressCursorAim);
-            _clickMove.OnFrame(pointer, allowGameplayInput);
+            // The focus is carried in so the click that refocuses the window is not read as a press
+            // (BH-INPUT-4); _windowFocused is last Render's, which is the frame the click landed on.
+            // The capture script drives the pointer itself and never gives the window the focus, so it
+            // counts as focused here, exactly as the consumable hotkeys already treat it.
+            bool pointerFocused = _windowFocused || _hudCapture is not null;
+            _cursorAim.OnFrame(pointer, allowGameplayInput, SuppressCursorAim, pointerFocused);
+            _clickMove.OnFrame(pointer, allowGameplayInput, pointerFocused);
         }
 
         // The frame only captures input; each prediction tick below turns it into one command
