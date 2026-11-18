@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Tests.Utilities;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Runtime;
@@ -311,13 +312,15 @@ public sealed class WolfReachTests
         EnemyActor wolf = Actor(new Vector3(20.5f, 1f, 20.5f));
         Vector3 player = new(21.5f, 1.5f, 20.5f);
         wolf.Update(0.015625f, player, runtime.Map);
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int i = 0; i < 1000; i++)
+
+        // One warm-up call is far short of the runtime's tier-up threshold, and a single window
+        // charges any tiering transition that lands inside it to the measurement. AllocationAssert
+        // warms past the threshold and keeps the cleanest of several rounds, so the figure is the
+        // steady state this gate is about.
+        AllocationAssert.AtMost(0, () =>
         {
             wolf.Update(0.015625f, player, runtime.Map);
             wolf.Update(0.015625f, null, runtime.Map);
-        }
-
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        });
     }
 }

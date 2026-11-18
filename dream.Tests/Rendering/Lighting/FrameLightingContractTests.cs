@@ -468,7 +468,7 @@ public class FrameLightingContractTests
         Matrix4 view = Matrix4.LookAt(Spawn, Spawn + Vector3.UnitZ, Vector3.UnitY);
         float sink = 0f;
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             FrameLighting world = FrameLightingBuffer.ForWorld(in lighting, Spawn);
             FrameLighting viewModel = FrameLightingBuffer.ForViewModel(in lighting, in view);

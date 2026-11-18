@@ -400,7 +400,7 @@ public class UiBatchTests
             b.PopClip();
         }
 
-        long allocated = Dream.Tests.Utilities.AllocationAssert.MeasureBytesPerIteration(Frame);
+        long allocated = Dream.Tests.Utilities.AllocationAssert.AtMost(0, Frame);
 
         Assert.True(b.QuadCount > 1000);
         Assert.Equal(0, allocated);

@@ -332,7 +332,7 @@ public class WorldShaderContractTests
             * Matrix4.CreateTranslation(1f, 2f, 3f);
         float sink = 0f;
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             Matrix3 normalMatrix = NormalMatrix.FromModel(in model);
             sink += normalMatrix.M11;

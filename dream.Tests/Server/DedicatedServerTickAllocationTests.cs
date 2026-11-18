@@ -319,7 +319,7 @@ public class DedicatedServerTickAllocationTests
         Assert.True(service.HandleOverflowResyncResult(connection, accepted: false));
         Assert.True(connection.TryTakeOverflowResync());
 
-        long bytes = AllocationAssert.MeasureBytesPerIteration(() =>
+        long bytes = AllocationAssert.AtMost(0, () =>
         {
             bool accepted = host.RequestWorldResyncIfConnected("overflow");
             service.HandleOverflowResyncResult(connection, accepted);

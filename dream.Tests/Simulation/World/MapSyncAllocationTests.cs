@@ -196,7 +196,12 @@ public class MapSyncAllocationTests
                     CompatibilityCube: cube)
             ]);
         int toggle = 0;
-        return AllocationAssert.MeasureBytesPerIteration(() =>
+
+        // Every caller gates this at exactly 0 B. MeasureBytesPerIteration has no budget to settle
+        // on, so under a loaded suite it can return a round that still carries a tiering
+        // transition; AtMost keeps measuring until a round meets the budget, and a real allocation
+        // still fails. The bound is the same 0 B the caller asserted.
+        return AllocationAssert.AtMost(0, () =>
         {
             bool toOdd = (toggle++ & 1) == 0;
             GeometryCellKey from = toOdd ? evenKey : oddKey;

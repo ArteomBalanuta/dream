@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Tests.Utilities;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
@@ -150,12 +151,16 @@ public sealed class PlayerSessionRegistryRetentionTests
             return sum;
         }
 
-        Walk();
-        long before = GC.GetAllocatedBytesForCurrentThread();
+        // One warm-up call is far short of the runtime's tier-up threshold, so a single window of
+        // one more call charges the tiering transition to the measurement. AllocationAssert warms
+        // past the threshold and keeps the cleanest of several rounds; the walk is read-only, so
+        // every round does the same work and the figure is the steady state the gate is about.
         int total = Walk() + (registry.HasSpawnedRemotePlayer() ? 1 : 0);
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.Equal(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 1, total);
-        Assert.Equal(0, allocated);
+
+        int sink = 0;
+        AllocationAssert.AtMost(0, () => sink += Walk() + (registry.HasSpawnedRemotePlayer() ? 1 : 0));
+        Assert.NotEqual(0, sink);
     }
 
     // Through the runtime: thousands of fresh session ids come and go, the registry stays bounded
