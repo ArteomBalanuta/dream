@@ -12,6 +12,7 @@ using Dream.Simulation.Players;
 using Dream.Simulation.Runtime;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
+using Dream.Tests.Utilities;
 
 namespace Dream.Tests.Multiplayer.Protocol;
 
@@ -339,24 +340,53 @@ public class WorldTransferProtocolTests(ITestOutputHelper output)
     }
 
     // The writer thread's encode of one chunk allocates nothing per cube.
+    //
+    // WriteNextChunk is one-shot per sender, so the encode cannot be repeated in place, and a
+    // single raw measurement window reads whatever tiering noise lands in it: it flaked at 7256 B
+    // against a 512 B lump tolerance, 14x over, which is why no tolerance can make this valid.
+    // The encode is measured instead for two cube counts whose fixed cost is identical - a fresh
+    // sender writing one whole chunk into the same already-grown buffer - and only the DIFFERENCE
+    // is asserted, at exactly zero bytes for the 15,000 extra cubes. That is the guarantee the
+    // test is named for, and it needs no tolerance at all: the per-encode lump cancels instead of
+    // being budgeted for. The old 512 B lump is then still asserted separately, at the same
+    // number, as a steady-state measurement.
     [Fact]
     public void ChunkEncode_OfRestingCubes_AllocatesNothingPerCube()
     {
-        WorldSnapshotCapture capture = WorldSnapshotCapture.FromSnapshot(CreateWorld(cubes: 20_000, rubble: 0, subcells: 0));
-        ArrayBufferWriter<byte> payload = new(1 << 20);
-        using Utf8JsonWriter writer = new(payload);
-        new WorldTransferSender(1, capture, releaseCaptureWhenDone: false).WriteNextChunk(writer, int.MaxValue);
-        writer.Flush();
-        payload.ResetWrittenCount();
-        writer.Reset(payload);
+        const int SmallCubes = 5_000;
+        const int LargeCubes = 20_000;
 
-        WorldTransferSender sender = new(2, capture, releaseCaptureWhenDone: false);
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        sender.WriteNextChunk(writer, int.MaxValue);
-        writer.Flush();
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        output.WriteLine($"20,000 cubes in {payload.WrittenCount:N0} B, {allocated} B allocated");
-        Assert.True(allocated <= 512, $"{allocated} B allocated");
+        WorldSnapshotCapture small = WorldSnapshotCapture.FromSnapshot(CreateWorld(cubes: SmallCubes, rubble: 0, subcells: 0));
+        WorldSnapshotCapture large = WorldSnapshotCapture.FromSnapshot(CreateWorld(cubes: LargeCubes, rubble: 0, subcells: 0));
+        ArrayBufferWriter<byte> payload = new(1 << 22);
+        using Utf8JsonWriter writer = new(payload);
+        int transferId = 0;
+
+        void Encode(WorldSnapshotCapture capture)
+        {
+            payload.ResetWrittenCount();
+            writer.Reset(payload);
+            WorldTransferSender sender = new(++transferId, capture, releaseCaptureWhenDone: false);
+            Assert.True(sender.WriteNextChunk(writer, int.MaxValue));
+            writer.Flush();
+        }
+
+        Encode(large);
+        output.WriteLine($"{LargeCubes:N0} cubes in {payload.WrittenCount:N0} B");
+
+        long marginal = AllocationAssert.NoCostPerItem(
+            () => Encode(small),
+            () => Encode(large),
+            extraItems: LargeCubes - SmallCubes);
+
+        // The old lump budget is kept at the same 512 B, now as a steady-state measurement of a
+        // repeatable action instead of a raw window, so the fixed per-encode cost stays bounded
+        // too and nothing this test used to guarantee is dropped.
+        long perEncode = AllocationAssert.AtMost(512, () => Encode(small), iterations: 5);
+        output.WriteLine($"{marginal} B for the {LargeCubes - SmallCubes:N0} extra cubes, {perEncode} B per encode");
+
+        small.Release();
+        large.Release();
     }
 
     // ---- Helpers -------------------------------------------------------------------------------
