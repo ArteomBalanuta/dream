@@ -565,3 +565,79 @@ same tick drawing the identical damage roll is **intended determinism**, not a d
 pure function of (sim seed, tick, session, action sequence, target), pinned from both sides by
 `SkillResolutionTests.cs:197-201` and `:292-295`, and the two sequence spaces are kept disjoint on the
 client. No seeding change was made.
+
+## The review wave - nine defects a green suite could not see
+
+Suite before: **9177 passed, 0 failed**. Suite after the fixes below: **9220 passed, 0 failed**.
+
+Up to this point every fix had been made by a separate agent in isolation, each with a regression test
+proven to fail without it, and the full suite was green. Nobody had read the **combined** diff. Two
+reviewers did, one per half. They found **nine defects**, five in server/simulation and four in
+client/rendering. Three were fixes that were *incomplete*; one was a fix that *introduced* a new
+problem; one **reopened an exploit closed two waves earlier**.
+
+This is the limit of per-fix testing, and the reason `CLAUDE.md` runs the reviewer beside the tester.
+
+### Server / simulation
+
+- **[Must fix] The spawn-protection brake was bypassable through the join hold.** Protection had been
+  re-keyed from the session to the CHARACTER so that attack -> reconnect -> attack could not re-arm it.
+  But `HoldSpawnProtectionUntilInput` gated on `player.FreshlyAttached`, which derives from
+  `ConnectedPlayer.LastFreshAttachTick` - **per session** - and the client mints `RequestedSessionId`
+  afresh on every connect. So a rejoin under a new id was treated as a first join: the hold was honoured
+  for up to 5 minutes, and the first input granted a full fresh window **and wrote `SpentTick: 0`,
+  erasing the brake's own record each round.** The hold is now armed only when that join actually granted
+  the character a new window, and the release resumes rather than grants while a spend is inside the
+  cooldown. The pinned behaviour (a rejoin after a DEATH gets its own full window) still holds.
+- **A standing refresh queued BEFORE a sanction could undo it.** The code justified dropping the
+  sanction memory with "the read was queued behind every write this host made" - false for a read
+  enqueued earlier. A `/ban` committed between a refresh read's execution and its application had its
+  memory removed and the live connection reset to the stale unbanned standing, while the administrator
+  still got the confirmation. `SanctionMemory` now carries a monotonic sequence and the refresh only
+  drops a memory it provably post-dates.
+- **The write queue dropped queued READS without failing them.** A read's action is the only thing that
+  completes its caller, so a dropped read left a join's prefetch, a checkpoint's `TrySetResult` and two
+  `tracker.Settle` waiters hanging forever - and `_closed` stayed false, so the next batch failed the
+  same way. The batch factory is now retried (3 attempts, ~300 ms total, cancellable), and a genuinely
+  dropped read is RUN so its waiter learns.
+- **Quest XP was atomic in the database only.** `ApplyProgression` and `CacheProfile` ran at grant time
+  while the repository call rode inside the turn-in closure, so a rolled-back closure left the XP in
+  memory and in the cache - and the next unrelated profile save wrote it durably, after which the quest
+  could be turned in again. A rollback now runs on the tick thread. Deferring the grant into the closure
+  was rejected: the closure runs on the persistence worker and must not touch the combatant.
+- **The un-wedging escape let an enemy walk through walls.** Returning the asked-for delta gave an
+  overlapping enemy unconstrained movement with no bound, so a wolf built over - or restored into a wall
+  by a clamp that checks bounds, not solidity - traversed it into a sealed room. The desired step is now
+  taken only if it ends free; otherwise a bounded, fixed-order ring search picks the nearest free spot
+  most opposed to the desired direction.
+
+### Client / rendering
+
+- **The death linger was never reset.** `EnemyDeathLinger.Clear` had no production caller, and a
+  mid-session join (a reconnect or takeover swaps the map) left every old enemy id in `_lastDrawn` but
+  not `_currentIds` - so the renderer began a death clip for each, frozen at its **old-world** matrix,
+  drawing and casting shadows for 3 s in the new world. Cleared on the join path now.
+- **`CancelConnect` could lose the race it was written to win.** `TryConnectOnceAsync` checked the
+  generation and only then assigned `_connectedSession`, with no lock and no synchronization context, so
+  a cancel landing between the check and the write still published the cancelled session. Publication is
+  now a `CompareExchange` followed by a re-test, disposing on a stale generation. **The fixer found a
+  second instance the review missed**: the reconnect path had the identical unguarded assignment.
+- **The Fx instance-buffer unbind covered only the constructor.** `FxInstanceBuffer.Upload` rebinds the
+  buffer every frame particles are drawn and returned without unbinding, so the hazard was unchanged from
+  frame 1. The unbind moved onto `Upload` and `BindAttributes`.
+- **The NPC dialogue offer ROWS still used positional ids** while the action button beside them had been
+  given identity - an eighth instance of the press/release identity shape, bounded in harm because the
+  action button's own id carries the quest.
+
+### Residuals, stated rather than buried
+
+- The quest-XP rollback does not cover the case where a group commit fails AFTER the reward write ran and
+  the queue's replay also fails permanently: the grant is marked written with no rollback queued. That
+  player surfaces through the inventory's failed-write gate as `WriteFailed`, so it is visible, not
+  silent.
+- The wiring of that rollback into the turn-in path is covered by reading, not by a test - driving a real
+  NPC turn-in needs a spawned giver in range and the loopback rig, so the tests drive the grant directly.
+- `TryTakeConnectedSession` still does a plain read-then-null rather than an `Interlocked.Exchange`. It
+  runs on the render thread like `CancelConnect`, so it is not part of the race that was fixed.
+- Dispose-deadline drops in the write queue still discard reads, deliberately: running one there could
+  block the shutdown drain on a locked database.
