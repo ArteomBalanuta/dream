@@ -2,6 +2,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Content;
 using Dream.Simulation.Players;
+using Dream.Simulation.World;
 using OpenTK.Mathematics;
 
 namespace Dream.Simulation.Runtime;
@@ -75,12 +76,26 @@ public sealed partial class WorldSessionRuntime
             SpendSpawnProtection(player);
         }
 
-        return _combatResolver.ProcessSkillUse(
+        AuthoritativeActionResult result = _combatResolver.ProcessSkillUse(
             message,
             skill,
             context.CombatRayOrigin,
             direction,
             context.Combatant,
             tick);
+
+        // Told to every peer so they can draw it; the caster already draws its own from this result.
+        // Queued strictly on acceptance, after every refusal above has returned.
+        if (result.Accepted)
+        {
+            QueueCastEvent(new CastEventDelta(
+                context.Combatant.Actor.Id,
+                skill.Kind,
+                context.CombatRayOrigin,
+                direction,
+                skill.Range));
+        }
+
+        return result;
     }
 }

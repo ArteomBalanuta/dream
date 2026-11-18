@@ -324,13 +324,16 @@ public sealed class ServerConnection : IAsyncDisposable
             {
                 WorldMutations = Array.Empty<WorldMutationDelta>(),
                 DamageEvents = Array.Empty<DamageEventDelta>(),
+                // Presentation only, and seconds stale by the time a resync lands.
+                CastEvents = null,
                 WorldChecksum = null,
                 WorldChecksumSequence = 0
             }
         };
     }
 
-    // True when the snapshot carries deltas that a WithoutDeltas copy would drop.
+    // True when the snapshot carries deltas that a WithoutDeltas copy would drop. Cast events are
+    // deliberately not counted: WithoutDeltas clears them, but a dropped cast owes no resync.
     internal static bool HasDeltas(in ServerSnapshotEnvelope snapshot)
     {
         return (snapshot.WorldMutations?.Count ?? 0) > 0 ||

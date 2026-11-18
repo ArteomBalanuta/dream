@@ -21,7 +21,8 @@ public class Net2CoalesceChecksumTests
         ulong tick,
         WorldMutationDelta[] mutations,
         ulong? checksum = null,
-        ulong checksumSequence = 0)
+        ulong checksumSequence = 0,
+        CastEventDelta[]? casts = null)
     {
         return new ServerSnapshotEnvelope(
             tick,
@@ -32,7 +33,8 @@ public class Net2CoalesceChecksumTests
             mutations,
             [],
             checksum,
-            checksumSequence);
+            checksumSequence,
+            casts);
     }
 
     private static WorldMutationDelta Mutation(ulong sequence)
@@ -64,9 +66,10 @@ public class Net2CoalesceChecksumTests
     [Fact]
     public void MergedDrop_AgreesWithTheUnmergedWithoutDeltasPath()
     {
-        ServerSnapshotEnvelope newest = Snapshot(11, [Mutation(3)], checksum: 0xABCDEF, checksumSequence: 3);
+        CastEventDelta cast = new(7, Dream.Simulation.Content.SkillKind.MeleeArc, default, default, 3.5f);
+        ServerSnapshotEnvelope newest = Snapshot(11, [Mutation(3)], checksum: 0xABCDEF, checksumSequence: 3, casts: [cast]);
         ServerSnapshotCoalesceBuffer buffer = new();
-        buffer.Begin(Snapshot(10, [Mutation(1), Mutation(2)]));
+        buffer.Begin(Snapshot(10, [Mutation(1), Mutation(2)], casts: [cast]));
         buffer.Append(newest);
         buffer.DropDeltas();
 
@@ -77,6 +80,9 @@ public class Net2CoalesceChecksumTests
         Assert.Equal(unmerged.WorldChecksumSequence, merged.WorldChecksumSequence);
         Assert.Equal(unmerged.WorldMutations.Count, merged.WorldMutations.Count);
         Assert.Equal(unmerged.DamageEvents.Count, merged.DamageEvents.Count);
+        // Casts are dropped by both paths, and as absent rather than empty.
+        Assert.Null(unmerged.CastEvents);
+        Assert.Null(merged.CastEvents);
         // A dropped merge never claims deltas the connection has to be resynced for.
         Assert.False(ServerConnection.HasDeltas(merged));
     }

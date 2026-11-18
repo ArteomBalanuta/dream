@@ -14,13 +14,20 @@ public sealed class ServerSnapshotCoalesceBuffer
     private readonly Dictionary<string, ulong> _sequences = new(StringComparer.Ordinal);
     private readonly List<WorldMutationDelta> _mutations = [];
     private readonly List<DamageEventDelta> _damageEvents = [];
+    private readonly List<CastEventDelta> _castEvents = [];
     private ServerSnapshotEnvelope _latest;
+
+    // Cast events accumulate like mutations but are cosmetic: past this many the rest are dropped
+    // silently. There is deliberately no overflow flag and no world resync for them.
+    public const int MaxCoalescedCastEvents = 1024;
 
     public bool IsEmpty { get; private set; } = true;
 
     public int WorldMutationCount => _mutations.Count;
 
     public int DamageEventCount => _damageEvents.Count;
+
+    public int CastEventCount => _castEvents.Count;
 
     public ulong ServerTick => _latest.ServerTick;
 
@@ -39,6 +46,7 @@ public sealed class ServerSnapshotCoalesceBuffer
         AddSequences(first.LastAcceptedCommandSequences, takeMaximum: false);
         AddRange(_mutations, first.WorldMutations);
         AddRange(_damageEvents, first.DamageEvents);
+        AddCastEvents(first.CastEvents);
         _latest = first;
         IsEmpty = false;
     }
@@ -60,6 +68,7 @@ public sealed class ServerSnapshotCoalesceBuffer
         AddSequences(newer.LastAcceptedCommandSequences, takeMaximum: true);
         AddRange(_mutations, newer.WorldMutations);
         AddRange(_damageEvents, newer.DamageEvents);
+        AddCastEvents(newer.CastEvents);
         _latest = newer;
     }
 
@@ -70,6 +79,7 @@ public sealed class ServerSnapshotCoalesceBuffer
     {
         _mutations.Clear();
         _damageEvents.Clear();
+        _castEvents.Clear();
 
         // The checksum covered the deltas we just dropped, so it no longer describes what
         // this snapshot carries. ServerConnection.WithoutDeltas drops it on the unmerged
@@ -89,7 +99,8 @@ public sealed class ServerSnapshotCoalesceBuffer
         {
             LastAcceptedCommandSequences = _sequences,
             WorldMutations = _mutations,
-            DamageEvents = _damageEvents
+            DamageEvents = _damageEvents,
+            CastEvents = _castEvents.Count == 0 ? null : _castEvents
         };
     }
 
@@ -100,6 +111,7 @@ public sealed class ServerSnapshotCoalesceBuffer
         _sequences.Clear();
         _mutations.Clear();
         _damageEvents.Clear();
+        _castEvents.Clear();
         _latest = default;
         IsEmpty = true;
     }
@@ -137,6 +149,19 @@ public sealed class ServerSnapshotCoalesceBuffer
         }
 
         _sequences[sessionId] = sequence;
+    }
+
+    private void AddCastEvents(IReadOnlyList<CastEventDelta>? source)
+    {
+        if (source == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < source.Count && _castEvents.Count < MaxCoalescedCastEvents; i++)
+        {
+            _castEvents.Add(source[i]);
+        }
     }
 
     private static void AddRange<T>(List<T> target, IReadOnlyList<T>? source)
