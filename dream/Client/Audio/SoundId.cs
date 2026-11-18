@@ -31,7 +31,9 @@ public enum SoundId
     UiClick,
     UiHover,
     InventoryOpen,
-    InventoryClose
+    InventoryClose,
+    VendorCoin,
+    VendorRefuse
 }
 
 // Which volume slider a sound sits under (all of them also scale with Master).
@@ -44,12 +46,13 @@ public enum AudioBus
 
 public static class SoundIds
 {
-    public const int Count = (int)SoundId.InventoryClose + 1;
+    public const int Count = (int)SoundId.VendorRefuse + 1;
 
     public static AudioBus BusOf(SoundId id) => id switch
     {
         SoundId.StatSpend or SoundId.UiClick or SoundId.UiHover
-            or SoundId.InventoryOpen or SoundId.InventoryClose => AudioBus.Ui,
+            or SoundId.InventoryOpen or SoundId.InventoryClose or SoundId.VendorCoin
+            or SoundId.VendorRefuse => AudioBus.Ui,
         _ => AudioBus.Sfx
     };
 
