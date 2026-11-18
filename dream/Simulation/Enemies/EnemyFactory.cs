@@ -98,7 +98,14 @@ internal static class EnemyFactory
         // than the raw column, so the actor cannot move at a speed its own replicated sheet denies -
         // a NaN row otherwise froze the enemy for good and a huge one closed the whole gap in a tick.
         EnemyActor actor = Build(combatant, template, position, stats[StatId.MovementSpeed], row.DisplayName, row.EnemyKind, level, home ?? position);
-        actor.SetFacing(row.Facing);
+        // The facing is hostile too, and facing_x/y/z carry no CHECK either. FaceDirection only rejects a
+        // near-zero direction: a non-finite one normalizes to a non-finite Forward, which poisons every
+        // later facing comparison and the wire value. Such a row keeps the actor's default forward instead.
+        if (float.IsFinite(row.Facing.X) && float.IsFinite(row.Facing.Y) && float.IsFinite(row.Facing.Z))
+        {
+            actor.SetFacing(row.Facing);
+        }
+
         return actor;
     }
 

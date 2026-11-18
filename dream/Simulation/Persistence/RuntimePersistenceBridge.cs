@@ -592,13 +592,46 @@ internal sealed partial class RuntimePersistenceBridge
             }
 
             restoredHomes.Add(home);
-            _enemies.Add(EnemyFactory.Restore(enemy, template, actorId, _events, _host.CombatFormulas, home));
+            PersistedEnemyInstance row = enemy with { Position = SanitizeEnemyPosition(map, enemy.Position, home, enemy.ObjectId) };
+            _enemies.Add(EnemyFactory.Restore(row, template, actorId, _events, _host.CombatFormulas, home));
             _objectIdentities.Bind(enemy.ObjectId, actorId);
             if (campKey != null)
             {
                 _enemyCampKeys[actorId] = campKey;
             }
         }
+    }
+
+    // The stored position is hostile like every other enemy column (EnemyFactory.Restore clamps the level,
+    // the health pool and every stat, and takes the chase speed from the clamped sheet): enemy_instances has
+    // no CHECK on position_x/y/z, so a row can carry a position outside this map - a world exported or cloned
+    // onto a smaller floor, a physics excursion past the edge, a hand edit - or a non-finite one. Out of
+    // bounds strands the enemy outside the playable area and a camp keeps counting it as a live member;
+    // non-finite is worse, because the chase arithmetic never resolves (the same failure mode the
+    // movement_speed clamp was written for) and ActorQuantization maps it to 0 on the wire, so clients see
+    // it at the origin while the server does not. Checkpoints re-capture the row, so neither self-heals.
+    // The bound is the one the map already implies - identical to EnemyRegistry.ClampToMapBounds and the
+    // floor-resize path - and a non-finite component falls back to the home resolved for the row.
+    // Restore does not rewrite the row; the first checkpoint with a diff writes the sanitized value.
+    private static Vector3 SanitizeEnemyPosition(Map map, Vector3 position, Vector3 home, ObjectId objectId)
+    {
+        // Math.Clamp(float) returns the value when both comparisons are false, so NaN passes straight
+        // through a clamp: the finiteness check has to come first.
+        Vector3 candidate = float.IsFinite(position.X) && float.IsFinite(position.Y) && float.IsFinite(position.Z)
+            ? position
+            : home;
+        Vector3 sanitized = new(
+            Math.Clamp(candidate.X, 0.5f, map.Width - 0.5f),
+            Math.Clamp(candidate.Y, 0f, map.Height - 0.5f),
+            Math.Clamp(candidate.Z, 0.5f, map.Depth - 0.5f));
+        if (sanitized != position)
+        {
+            NetworkDiagnosticsLog.Write(
+                "server.persistence.restore-clamped-enemy",
+                $"objectId={objectId} stored={position} restored={sanitized} reason=out-of-bounds-or-non-finite");
+        }
+
+        return sanitized;
     }
 
     public void PersistPlayerProfile(PlayerSessionId sessionId, PlayerCombatant combatant)
