@@ -273,9 +273,12 @@ GEM_R_U, GEM_C_U = 24.0, 24.9   # the stone's radius and centre in its 50 u spri
 # keep the share of chroma that survives, knee where the highlight compression starts. The traced stone peaks at 1.00
 # with p99 0.99 and a ruby saturation near 1.0; what the grade leaves is measured in check_hud.
 GEM_GRADE = {
-    "hp": dict(cap=0.70, knee=0.30, keep=0.68, tint=(1.00, 0.88, 0.86), gain=1.45),
-    "mp": dict(cap=0.60, knee=0.26, keep=0.48, tint=(0.86, 0.95, 1.00), gain=1.3),
+    "hp": dict(cap=0.70, knee=0.30, keep=0.68, tint=(1.00, 0.88, 0.86), gain=1.45, core=(0.46, 0.50), glow=(0.23, 0.022, 0.013), hl=(0.40, 0.21, 0.17)),
+    "mp": dict(cap=0.60, knee=0.26, keep=0.48, tint=(0.86, 0.95, 1.00), gain=1.3, core=(0.54, 0.50), glow=(0.055, 0.12, 0.33), hl=(0.24, 0.31, 0.42)),
 }
+# glow is the candlelight that burns through the liquid (an sRGB add at the lit core, brighter where the fluid is thick
+# and along the thin lip of each clot); hl is the pale, wet, broken sheen on the upper-left glass. Neither may reach plastic:
+# the highlight stays well under luma 0.80.
 
 
 def _smoothstep(a, b, x):
@@ -327,34 +330,51 @@ def _cracks(seed: str, kind: str) -> np.ndarray:
     return a.reshape(GEM_PX, S4, GEM_PX, S4).mean(axis=(1, 3))
 
 
+def _swell(n: int, base: float, amp: float, phase: float, ends: float = 0.0) -> list:
+    """Radii of a forged bar that was beaten thicker in places: a slow swell plus a taper at both ends."""
+    out = []
+    for k in range(n):
+        t = k / (n - 1)
+        out.append(max(0.3, (base + amp * math.sin(t * math.tau * 1.5 + phase)) * (1 - ends * (2 * abs(t - 0.5)) ** 3)))
+    return out
+
+
 def _cage_relief(kind: str) -> BarRelief:
-    """A forged iron cage over the orb: a crown band and a lower band, two bowed ribs, a rivet where they cross and four
-    tapering claws that grip the rim. The second stone is the first mirrored, so its claws curl the other way."""
+    """A forged iron cage the orb sits inside: a girdle ring hugging the rim, a crown band and a lower band, two bowed
+    ribs, all hammered to uneven widths, a boss rivet where they cross and on the girdle, and four heavy claws that bite
+    over the glass. The second stone is the first mirrored, so its claws curl the other way."""
     r = BarRelief(GEM_U, GEM_U, "iron.black", 0.0)
     cx, cy, R = GEM_C_U + 0.1, GEM_C_U, GEM_R_U
     m = -1.0 if kind == "mp" else 1.0
+    # the girdle: a heavy ring on the rim, so the cage reads as seated in the bar and not floating on the glass
+    ring = [(cx + (R - 0.4) * math.cos(t), cy + (R - 0.4) * math.sin(t)) for t in np.linspace(0, math.tau, 96)]
+    r.sweep(ring, _swell(96, 1.35, 0.30, 0.6), z=1.0, mat="iron.warm", flatten=0.62, step_px=2.0)
     bands = []
-    for lat_deg, w, tag in ((34, 0.95, "upper"), (-24, 0.85, "lower")):
+    for lat_deg, w, tag, ph in ((34, 1.25, "upper", 0.4), (-24, 1.1, "lower", 2.1)):
         lat = math.radians(lat_deg)
         y0, rx = cy - R * math.sin(lat), R * math.cos(lat) * 0.985
-        pts = [(cx + rx * math.cos(t), y0 + rx * 0.30 * math.sin(t)) for t in np.linspace(math.radians(12), math.radians(168), 40)]
-        r.plate(forge.Capsule(pts, w), z=1.2, bevel=w * 0.9, profile="rolled", rise=0.9, mat="iron.warm", wobble=0.04, nick=0.012, seed=f"gem.cage.{kind}.{tag}")
+        pts = [(cx + rx * math.cos(t), y0 + rx * 0.30 * math.sin(t)) for t in np.linspace(math.radians(8), math.radians(172), 44)]
+        r.sweep(pts, _swell(44, w, 0.32, ph, 0.25), z=1.3, mat="iron.warm", flatten=0.6, step_px=2.0)
         bands.append(pts)
     ribs = []
     for i, s in enumerate((-0.54, 0.54)):
-        pts = [(cx + R * 0.97 * s * math.sin(t), cy - R * 0.97 * math.cos(t)) for t in np.linspace(math.radians(24), math.radians(156), 40)]
-        r.plate(forge.Capsule(pts, 0.85), z=1.25, bevel=0.8, profile="rolled", rise=0.9, mat="iron", wobble=0.05, nick=0.012, seed=f"gem.cage.{kind}.rib{i}")
+        pts = [(cx + R * 0.97 * s * math.sin(t), cy - R * 0.97 * math.cos(t)) for t in np.linspace(math.radians(22), math.radians(158), 44)]
+        r.sweep(pts, _swell(44, 1.15, 0.30, 1.3 + i, 0.30), z=1.35, mat="iron", flatten=0.6, step_px=2.0)
         ribs.append(pts)
     for i, rib in enumerate(ribs):
         for j, band in enumerate(bands):
             best = min(((ax - bx) ** 2 + (ay - by) ** 2, (ax + bx) / 2, (ay + by) / 2) for ax, ay in rib for bx, by in band)
-            r.dome(best[1], best[2], 1.1, z=float(r.h[int(best[2] * PPU), int(best[1] * PPU)]) + 0.1, mat="iron.rivet", seed=f"gem.cage.{kind}.rv{i}{j}", collar=True)
+            r.dome(best[1], best[2], 1.55, z=float(r.h[int(best[2] * PPU), int(best[1] * PPU)]) + 0.15, mat="iron.rivet", seed=f"gem.cage.{kind}.rv{i}{j}", collar=True)
+    for i, tdeg in enumerate((-70, -20, 25, 70, 115, 160, 205, 250)):
+        t = math.radians(tdeg)
+        x, y = cx + (R - 0.4) * math.cos(t), cy + (R - 0.4) * math.sin(t)
+        r.dome(x, y, 1.0, z=float(r.h[int(y * PPU), int(x * PPU)]) + 0.1, mat="iron.rivet", seed=f"gem.cage.{kind}.gr{i}", collar=False)
     for i, ang in enumerate((-132, -48, 138, 44)):
         a = math.radians(ang)
         ux, uy = math.cos(a), math.sin(a)
-        base = (cx + (R + 0.6) * ux, cy + (R + 0.6) * uy)
-        pts = [(base[0] - ux * t * 11.0 - math.sin(t * 2.4) * uy * 1.6 * m, base[1] - uy * t * 11.0 + math.sin(t * 2.4) * ux * 1.6 * m) for t in np.linspace(0, 1, 18)]
-        r.sweep(pts, [2.0 - 1.85 * (k / 17) ** 0.8 for k in range(18)], z=1.35, mat="iron.warm", flatten=0.55, step_px=2.0)
+        base = (cx + (R + 0.8) * ux, cy + (R + 0.8) * uy)
+        pts = [(base[0] - ux * t * 13.0 - math.sin(t * 2.4) * uy * 2.0 * m, base[1] - uy * t * 13.0 + math.sin(t * 2.4) * ux * 2.0 * m) for t in np.linspace(0, 1, 20)]
+        r.sweep(pts, [3.0 - 2.85 * (k / 19) ** 0.75 for k in range(20)], z=1.5, mat="iron.warm", flatten=0.55, step_px=2.0)
     return r
 
 
@@ -385,11 +405,23 @@ def _grade_glass(kind: str, state: str, px: np.ndarray, cage: np.ndarray) -> np.
     clot = _noise_px(seed + ".clot", 1.7)
     clots = _smoothstep(0.60, 0.74, clot)
     if state == "empty":
-        rgb = rgb * 0.62   # drained glass is darker than the full stone by a third at least (check_hud: empty < 0.6 x full)
+        rgb = rgb * 0.30   # drained glass is soot-dark: the lit fluid is what shows the level (the C# gem test counts the pixels that differ)
     if state == "full":
         body = 1.0 + 0.52 * (run - 0.5) - 0.62 * clots * (0.5 + 0.5 * run)
         rgb = rgb * body[..., None]
-        rgb = rgb + (clots * (1 - _smoothstep(0.74, 0.80, clot)) * 0.035)[..., None]   # a faint lip on each clot
+        yy, xx = np.mgrid[0:GEM_PX, 0:GEM_PX].astype(np.float32)
+        rpx = GEM_R_U * U.SCALE
+        d2 = ((xx - GEM_PX * g["core"][0]) ** 2 + (yy - GEM_PX * g["core"][1]) ** 2) / (0.52 * rpx) ** 2
+        core = np.exp(-d2) * (0.55 + 0.80 * run)
+        lip = clots * (1 - _smoothstep(0.74, 0.80, clot))
+        glow = np.array(g["glow"], np.float32)
+        rgb = rgb + (core + 0.9 * lip * (0.3 + 0.7 * np.exp(-d2 / 3.0)))[..., None] * glow * a[..., None]
+        ang = np.arctan2(yy - GEM_PX / 2, xx - GEM_PX / 2)
+        rad = np.hypot(yy - GEM_PX / 2, xx - GEM_PX / 2) / rpx
+        dang = np.abs(((ang - math.radians(-135 if kind == "hp" else -45) + math.pi) % math.tau) - math.pi)
+        arc = _smoothstep(math.radians(46), math.radians(14), dang) * _smoothstep(0.50, 0.62, rad) * (1 - _smoothstep(0.80, 0.90, rad))
+        broken = _smoothstep(0.50, 0.64, _noise_px(seed + ".wet", 1.1, octaves=2))
+        rgb = rgb + (arc * broken * 0.85)[..., None] * np.array(g["hl"], np.float32)
     rim = 1 - _smoothstep(0.50, 0.97, forge.blur(a, 4.5 * U.SCALE))
     pit = _noise_px(seed + ".soot", 0.9, octaves=2)
     smudge = _noise_px(seed + ".smudge", 4.0)
@@ -399,8 +431,8 @@ def _grade_glass(kind: str, state: str, px: np.ndarray, cage: np.ndarray) -> np.
     crack = _cracks(seed, kind)
     shifted = np.roll(crack, (-1, -1), axis=(0, 1))
     rgb = rgb * (1 - 0.88 * crack[..., None]) + np.array(g["tint"], np.float32) * (np.clip(shifted - crack, 0, 1) * 0.16)[..., None]
-    sh = np.roll(forge.blur(cage[..., 3], 1.3 * U.SCALE), (int(1.4 * U.SCALE), int(1.0 * U.SCALE)), axis=(0, 1))
-    rgb = rgb * (1 - 0.55 * sh[..., None])
+    sh = np.roll(forge.blur(cage[..., 3], 1.7 * U.SCALE), (int(2.2 * U.SCALE), int(1.6 * U.SCALE)), axis=(0, 1))   # the cast shadow lands on the fluid beneath
+    rgb = rgb * (1 - 0.80 * sh[..., None])
     ca = cage[..., 3:4]
     rgb = rgb * (1 - ca) + cage[..., :3] * ca
     out8 = (np.clip(rgb, 0, 1) * 255 + 0.5).astype(np.uint8)

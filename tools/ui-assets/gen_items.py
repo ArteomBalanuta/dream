@@ -1794,6 +1794,18 @@ GRADE_CHROMA = 0.52    # sRGB chroma kept after the knee for lit material (was 0
 GRADE_CHROMA_EMIT = 0.58   # glass and flame keep more of their colour, they are the only light an icon has
 GRADE_EMIT_LIFT = 0.10     # emissive pixels may sit this far above the ceiling
 AGE_WEAR, AGE_GRIME, AGE_RUST, AGE_DUST = 0.38, 1.0, 0.42, 0.24
+# The icons that were still the loudest paint in the window: a flat saturated face reads as a toy however it is aged. They keep
+# less chroma and carry more pitting and soot, so the paint looks flaked and the iron under it shows.
+ICON_TUNE = {
+    "item.shield.kite": dict(chroma=0.34, patina=1.6),
+    "item.gear.wooden-buckler": dict(chroma=0.40, patina=1.4),
+    "item.gear.kite-shield": dict(chroma=0.34, patina=1.6),
+    "item.gear.tower-shield": dict(chroma=0.40, patina=1.4),
+    "item.gear.travel-cloak": dict(chroma=0.44, patina=1.3),
+    "item.bow.verdant": dict(chroma=0.30, patina=1.3),
+}
+TOP_LIGHT = 0.34       # extra light on up-facing faces, so a silhouette has a bright top edge against the dark cell
+SHADOW_OPACITY, SHADOW_SIGMA_U, SHADOW_DX_U, SHADOW_DY_U = 0.62, 0.55, 0.45, 0.85   # contact shadow cast on the cell behind
 PATINA_PIT, PATINA_BLOTCH = 0.26, 0.34   # pitting amplitude (0.4-1.6 u) and soot blotches (3-12 u) on every unlit surface
 
 
@@ -1813,13 +1825,14 @@ def _scene_maps(s: Scene, n: np.ndarray, d_in: np.ndarray) -> fg.Maps:
                    curv, edge.astype(np.float32))
 
 
-def gothic_grade(img: np.ndarray, emis: np.ndarray) -> np.ndarray:
+def gothic_grade(img: np.ndarray, emis: np.ndarray, chroma: float | None = None) -> np.ndarray:
     """Float sRGB RGBA in, the same out: chroma pulled in and the brightest channel run through a soft knee that
     asymptotes at GRADE_CEIL, so no highlight, paint or gem can leave the authored ceiling."""
     rgb = img[..., :3]
     e = np.clip(emis, 0, 1)[..., None]
     y = (rgb @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))[..., None]
-    k = GRADE_CHROMA + (GRADE_CHROMA_EMIT - GRADE_CHROMA) * e
+    base = GRADE_CHROMA if chroma is None else chroma
+    k = base + (GRADE_CHROMA_EMIT - base) * e
     rgb = np.clip(y + (rgb - y) * k, 0, None)
     v = rgb.max(axis=2, keepdims=True)
     ceil = GRADE_CEIL + GRADE_EMIT_LIFT * e
@@ -1830,7 +1843,7 @@ def gothic_grade(img: np.ndarray, emis: np.ndarray) -> np.ndarray:
     return np.dstack((rgb, img[..., 3:])).astype(np.float32)
 
 
-def forge_render(s: Scene, seed: str = "") -> tuple:
+def forge_render(s: Scene, seed: str = "", tune: dict | None = None) -> tuple:
     """The painted scene buffers, lit through forge: linear-light GGX with Schlick Fresnel and baked AO, bloom and a
     filmic curve in finish(). The buffers already carry normals, albedo, metal, gloss and emission, so the shapes and
     colours stay the designed ones; only the light transport changes. Before the light, forge.age wears the form
@@ -1861,7 +1874,8 @@ def forge_render(s: Scene, seed: str = "") -> tuple:
     Y = (yy + 0.5) / PPU
     pit = fg.waves(X, Y, f"icon.{seed}.pit", 8, 0.4, 1.6)
     blot = fg.waves(X, Y, f"icon.{seed}.blot", 6, 3.0, 12.0)
-    patina = (1 + PATINA_PIT * np.clip(pit, -1.5, 1.5) * 0.5) * (1 - PATINA_BLOTCH * smooth(0.2, 1.4, blot))
+    pk = (tune or {}).get("patina", 1.0)
+    patina = (1 + PATINA_PIT * pk * np.clip(pit, -1.5, 1.5) * 0.5) * (1 - np.minimum(PATINA_BLOTCH * pk, 0.6) * smooth(0.2, 1.4, blot))
     surf.albedo = np.where(keep, surf.albedo * patina[..., None], surf.albedo).astype(np.float32)
     surf.f0 = np.where(keep, surf.f0 * (0.55 + 0.45 * np.clip(patina, 0, 1.2))[..., None], surf.f0).astype(np.float32)
     surf.bare_albedo = np.where(metal > 0.5, surf.albedo, np.clip(lin * 1.9 + 0.025, 0, 0.6)).astype(np.float32)
@@ -1879,7 +1893,15 @@ def forge_render(s: Scene, seed: str = "") -> tuple:
     # a hard dark rim inside the silhouette: the outline reads as one cut pixel of soot, not a smooth glow
     rim_dark = 1 - 0.42 * (1 - smooth(0.0, 0.34, np.maximum(d, 0)))
     img[..., :3] *= rim_dark[..., None]
-    img = gothic_grade(img, s.emis)
+    up = np.clip(-n[..., 1], 0, 1) * (n[..., 2] > 0.2)
+    img[..., :3] *= (1 + TOP_LIGHT * up)[..., None]   # candlelight lands on the top faces; the knee below still holds the ceiling
+    img = gothic_grade(img, s.emis, (tune or {}).get("chroma"))
+    # contact shadow: the item stands off the cell, so a soft black wedge falls to the lower right of its silhouette
+    a0 = img[..., 3]
+    sh = np.roll(fg.blur(a0, SHADOW_SIGMA_U * PPU), (int(SHADOW_DY_U * PPU), int(SHADOW_DX_U * PPU)), axis=(0, 1)) * SHADOW_OPACITY
+    out_a = a0 + sh * (1 - a0)
+    img[..., :3] *= (a0 / np.maximum(out_a, 1e-6))[..., None]
+    img[..., 3] = out_a
     fres = (1 - np.clip(nz[..., 0], 0, 1)) ** 3
     rim = 1 - smooth(0.0, 1.4, np.maximum(d, 0))
     rim = np.clip(rim * 0.8 + fres * 0.6, 0, 1)
@@ -1893,7 +1915,7 @@ def render_icon(name: str) -> tuple:
     s = Scene(SEED_NAME.get(name, name), cols, rows)
     fn(s)
     s.center(getattr(fn, "top", None))
-    img, mask = forge_render(s, SEED_NAME.get(name, name))
+    img, mask = forge_render(s, SEED_NAME.get(name, name), ICON_TUNE.get(name))
     return defringe(fg.downsample(img)), mask_down(mask, s.a)
 
 
