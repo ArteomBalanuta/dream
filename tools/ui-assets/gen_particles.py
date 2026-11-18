@@ -1,9 +1,10 @@
-"""Particle atlas for dream/ui/particles/: sparks, embers, dust motes, ash, two halos, flame tongues and a contact blob.
+"""Particle atlas for dream/ui/particles/: sparks, embers, dust motes, ash, two halos, flame tongues, a contact blob,
+a sweep crescent, two bolt lances, a ground ring and four hit marks (impact flash, crit star, slash, ragged splat).
 
 512x256 RGBA8, 8 columns by 4 rows of 64 px cells, frame 0 top-left, rows downward, loaded with no flip.
 Every cell keeps a 4 px margin that is fully zero. RGB is premultiplied emission and stays meaningful
-where A=0 (A=0 draws purely additive); A is coverage (ash, blob, flame; the flame's is scaled by the
-instance alpha, so it is additive at night and occludes the sky by day). Frames 23-31 are reserved and empty.
+where A=0 (A=0 draws purely additive); A is coverage (ash, blob, flame, arc, ring; the flame's is scaled by the
+instance alpha, so it is additive at night and occludes the sky by day). Frame 31 is reserved and empty.
 """
 from __future__ import annotations
 
@@ -32,6 +33,13 @@ GROUPS = (
     ("halo.core", 17, 1, "zero"),
     ("flame", 18, 4, "coverage"),
     ("blob", 22, 1, "coverage"),
+    ("arc", 23, 1, "coverage"),
+    ("bolt", 24, 2, "zero"),
+    ("ring", 26, 1, "coverage"),
+    ("flash", 27, 1, "zero"),
+    ("star", 28, 1, "zero"),
+    ("slash", 29, 1, "zero"),
+    ("splat", 30, 1, "zero"),
 )
 
 
@@ -205,6 +213,140 @@ def blob_frame() -> np.ndarray:
     return np.dstack((np.zeros((HI, HI, 3), dtype=np.float32), a))
 
 
+# arc, bolt, ring ----------------------------------------------------------------------------------
+
+def box_fade(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Per-axis fade that is exactly 0 at 25 px from the centre, inside the dark outer ring."""
+    return smoothstep(25.0, 22.0, np.abs(x)) * smoothstep(25.0, 22.0, np.abs(y))
+
+
+def arc_frame() -> np.ndarray:
+    """A swept crescent drawn flat, leading edge at +X: bright and sharp in front, fading inward, tapering
+    to nothing at both tips. Coverage alpha, like the flame: additive at night, occluding by day."""
+    x, y = grid()
+    outer = 24.0 - np.hypot(x + 6.0, y)  # > 0 inside the outer disc
+    inner = np.hypot(x + 14.0, y) - 21.5  # > 0 outside the inner disc
+    wob = 1.0
+    body = smoothstep(0.0, 1.6, outer) * smoothstep(0.0, 6.0, inner * wob)
+    streak = 0.9 + 0.1 * np.cos(np.arctan2(y, x + 14.0) * 5.0)
+    e = np.clip(body * streak, 0.0, 1.0) * box_fade(x, y)
+    e = e / max(float(e.max()), 1e-6)
+    steel = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return np.dstack((e[..., None] * steel * 0.8, 0.8 * e))
+
+
+def bolt_frame(i: int) -> np.ndarray:
+    """A lance along +X: a pointed head, a hot narrow core inside a soft sheath, and a long tapered tail."""
+    r = uiart.rng(f"particles.bolt.{i}")
+    x, y = grid()
+    head, tail = 22.0, 25.0
+    t = np.where(x >= 0, x / head, x / tail)  # 1 at the head, -1 at the tail
+    kink = r.uniform(0.6, 1.4) * np.sin(x * r.uniform(0.10, 0.16) + r.uniform(0, 6.283))
+    taper = np.clip(1.0 - np.maximum(-t, 0.0), 0.0, 1.0) ** 0.7
+    point = np.clip(1.0 - np.maximum(t, 0.0), 0.0, 1.0) ** 0.6  # narrows to a point at the head
+    w = np.maximum(6.5 * taper * (0.35 + 0.65 * point), 0.6)
+    d = (y - kink) / w
+    sheath = 0.55 * np.exp(-d * d)
+    core = np.exp(-((y - kink) / np.maximum(0.38 * w, 0.5)) ** 2)
+    along = (0.55 + 0.45 * smoothstep(-0.9, 0.6, t)) * smoothstep(1.0, 0.9, t) * smoothstep(-1.0, -0.55, t)
+    out = np.clip((sheath + 0.55 * core) * along, 0.0, 1.0)
+    for _ in range(2 + i):  # a few side flecks, different per variant
+        px, py = -r.uniform(0.2, 0.8) * tail, r.uniform(-6.0, 6.0)
+        out = np.maximum(out, r.uniform(0.25, 0.45) * np.exp(-((x - px) ** 2 + (y - py) ** 2) / 2.2))
+    out = out / max(float(out.max()), 1e-6) * 0.95 * box_fade(x, y)
+    tint = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return np.dstack((out[..., None] * tint, np.zeros_like(out)))
+
+
+def ring_frame() -> np.ndarray:
+    """A thin soft annulus drawn flat with a dark centre. Coverage alpha, like the arc."""
+    x, y = grid()
+    rad = np.hypot(x, y)
+    ang = np.arctan2(y, x)
+    d = (rad - 16.0) / 4.2
+    band = np.exp(-d * d)
+    uneven = 0.86 + 0.14 * np.sin(2.0 * ang + 0.7)
+    e = np.clip(band * uneven, 0.0, 1.0) * smoothstep(25.0, 22.0, rad)
+    e = e / max(float(e.max()), 1e-6)
+    bone = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return np.dstack((e[..., None] * bone * 0.8, 0.8 * e))
+
+
+# hit marks ----------------------------------------------------------------------------------------
+# All four are additive (A=0): short camera-facing flashes, bold low-frequency silhouettes that read at
+# about 30 px on screen. The particle tint sets the colour; peaks stay near 0.95 so no channel pins.
+
+HIT_FIRST = 27
+HIT_STEP = 24.0
+
+
+def spike(u: np.ndarray, v: np.ndarray, length: float, width: float) -> np.ndarray:
+    """A needle along the u axis, both directions: widest at the centre, tapering to a point at +-length."""
+    s = np.clip(np.abs(u) / length, 0.0, 1.0)
+    w = width * (1.0 - s) + 0.35
+    return np.exp(-((v / w) ** 2)) * (1.0 - s) ** 1.3
+
+
+def finish_hit(e: np.ndarray, peak: float = 0.95) -> np.ndarray:
+    x, y = grid()
+    e = np.clip(e, 0.0, None) * box_fade(x, y)
+    e = e / max(float(e.max()), 1e-6) * peak
+    return np.dstack((e[..., None] * np.ones(3, dtype=np.float32), np.zeros_like(e)))
+
+
+def flash_frame() -> np.ndarray:
+    """Impact flash: a white-hot core in a soft bloom with a short upright cross."""
+    x, y = grid()
+    r = np.hypot(x, y)
+    core = np.exp(-((r / 6.5) ** 2))
+    bloom = 0.38 * np.exp(-((r / 15.0) ** 2))
+    cross = 0.8 * np.maximum(spike(x, y, 23.0, 2.6), spike(y, x, 23.0, 2.6))
+    return finish_hit(core + bloom + 0.7 * cross)
+
+
+def star_frame() -> np.ndarray:
+    """Crit star: eight needles, the four cardinal ones long, the diagonals about two thirds as long."""
+    x, y = grid()
+    c = np.float32(np.sqrt(0.5))
+    d1, d2 = (x + y) * c, (x - y) * c
+    long_ = np.maximum(spike(x, y, 24.5, 3.0), spike(y, x, 24.5, 3.0))
+    short = np.maximum(spike(d1, d2, 16.0, 2.4), spike(d2, d1, 16.0, 2.4))
+    core = np.exp(-((np.hypot(x, y) / 5.0) ** 2))
+    return finish_hit(np.maximum(long_, 0.75 * short) + 0.9 * core)
+
+
+def slash_frame() -> np.ndarray:
+    """A bowed blade drawn along +X: a hot thin core in a soft sheath, tapering to a point at both ends."""
+    x, y = grid()
+    bow = 3.2 * (1.0 - (x / 24.0) ** 2)
+    s = np.clip(np.abs(x) / 24.5, 0.0, 1.0)
+    w = 3.4 * (1.0 - s) ** 0.8 + 0.4
+    d = (y - bow) / w
+    body = np.exp(-d * d) * (1.0 - s) ** 0.5
+    core = np.exp(-((y - bow) / (0.4 * w + 0.3)) ** 2) * (1.0 - s) ** 0.7
+    return finish_hit(0.65 * body + 0.6 * core)
+
+
+def splat_frame() -> np.ndarray:
+    """Incoming wound: an uneven ragged burst with a few loose droplets, symmetric in nothing."""
+    r = uiart.rng("particles.splat.0")
+    x, y = grid()
+    rad = np.hypot(x, y)
+    theta = np.arctan2(y, x)
+    reach = np.full_like(theta, 11.0)
+    for k in (3, 4, 6, 9):
+        reach += r.uniform(1.5, 4.5) * np.cos(k * theta + r.uniform(0, 6.283))
+    for _ in range(5):  # ragged tongues
+        a, w = r.uniform(0, 6.283), r.uniform(0.22, 0.4)
+        reach += r.uniform(7.0, 11.0) * np.exp(-((np.arctan2(np.sin(theta - a), np.cos(theta - a)) / w) ** 2))
+    body = smoothstep(1.0, 0.45, rad / np.maximum(reach, 4.0))
+    out = body * (0.6 + 0.4 * np.exp(-((rad / 9.0) ** 2)))
+    for _ in range(6):
+        ang, dist = r.uniform(0, 6.283), r.uniform(15.0, 22.0)
+        out = np.maximum(out, r.uniform(0.5, 0.85) * np.exp(-((x - np.cos(ang) * dist) ** 2 + (y - np.sin(ang) * dist) ** 2) / r.uniform(1.6, 3.2)))
+    return finish_hit(out)
+
+
 # atlas --------------------------------------------------------------------------------------------
 
 def frames() -> list[np.ndarray]:
@@ -215,6 +357,10 @@ def frames() -> list[np.ndarray]:
     out += [halo_frame(False), halo_frame(True)]
     out += [flame_frame(i) for i in range(4)]
     out.append(blob_frame())
+    out.append(arc_frame())
+    out += [bolt_frame(i) for i in range(2)]
+    out.append(ring_frame())
+    out += [flash_frame(), star_frame(), slash_frame(), splat_frame()]
     return out
 
 
@@ -222,6 +368,8 @@ def build() -> np.ndarray:
     sheet = np.zeros((ROWS * CELL, COLUMNS * CELL, 4), dtype=np.uint8)
     for index, hi in enumerate(frames()):
         cell = np.clip(downsample(hi.astype(np.float32)) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+        if index >= HIT_FIRST:  # coarse levels: a smooth 8-bit ramp is what bloats a PNG
+            cell = (np.round(cell / HIT_STEP) * HIT_STEP).astype(np.uint8)
         col, row = index % COLUMNS, index // COLUMNS
         x, y = col * CELL + MARGIN, row * CELL + MARGIN
         sheet[y : y + INNER, x : x + INNER] = cell
@@ -238,7 +386,7 @@ def main(out_root: Path) -> None:
     doc = {
         "version": 1, "image": "particles.png", "size": [COLUMNS * CELL, ROWS * CELL],
         "origin": "top-left", "yDown": True, "alpha": "premultiplied",
-        "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "reserved": [23, 31],
+        "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "reserved": [31, 31],
         "frames": frame_table,
     }
     (out / "particles.json").write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")

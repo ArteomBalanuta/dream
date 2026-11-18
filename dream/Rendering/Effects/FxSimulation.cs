@@ -92,6 +92,43 @@ public sealed class FxSimulation
     private const float PlumeEmberMinHalfSize = 0.02f * EmberSizeGain;
     private const float PlumeEmberMaxHalfSize = 0.034f * EmberSizeGain;
     private const float PlumeEmberEndHalfSize = 0.008f * EmberSizeGain;
+    // Skill casts. Every cast adds at most MaxCastParticles, and leaves CastPoolReserve slots free so
+    // a cast on a crowded pool cannot starve the ambient dust (96) and torch embers.
+    public const int MaxCastParticles = 19;
+    public const int CastPoolReserve = 128;
+    // The largest hit (a critical); it keeps the same reserve, so hit spam cannot take the ambient's slots.
+    public const int MaxHitParticles = 23;
+    // Hit marks in the atlas, all additive: impact flash, crit star, slash blade along +X, ragged splat.
+    private const float HitFlash = 27f;
+    private const float HitStar = 28f;
+    private const float HitSlash = 29f;
+    private const float HitSplat = 30f;
+    private const int ArcSparks = 14;
+    private const int ArcEmbers = 4;
+    private const int BoltDarts = 12;
+    private const int BoltSparks = 6;
+    private const int MendEmbers = 14;
+    // The caster's capsule centre to the soles of the feet, and to chest height.
+    private const float CasterFeetDrop = 0.9f;
+    private const float CasterChestLift = 0.2f;
+    private const float GroundQuadLift = 0.05f;
+    private const float ArcLife = 0.25f;
+    private const float RingLife = 0.6f;
+    private const float RingStartHalfSize = 0.3f;
+    private const float RingEndHalfSize = 0.9f;
+    private const float BoltMinSpeed = 24f;
+    private const float BoltMaxSpeed = 36f;
+    private const float BoltMaxLife = 0.8f;
+    private const float BoltHalfSize = 0.13f;
+    private const float DefaultArcRange = 2f;
+    private const float DefaultBoltRange = 12f;
+    // Peak channel of a cast sprite; with the tints below no packed channel reaches 255.
+    private const float CastBrightness = 0.9f;
+    // The most a ground quad occludes by day (the flame's trick: none at night, so it is pure light).
+    private const float GroundCoverage = 0.7f;
+    private static readonly Vector3 ArcTint = new(0.70f, 0.74f, 0.85f);
+    private static readonly Vector3 BoltTint = new(0.52f, 0.40f, 0.90f);
+    private static readonly Vector3 MendTint = new(0.46f, 0.68f, 0.44f);
     private const float SparkStretchPerSpeed = 0.03f;
     private const float MaxSparkStretch = 6f;
     private static readonly Vector3 SparkCoolTint = new(1f, 0.55f, 0.25f);
@@ -144,23 +181,91 @@ public sealed class FxSimulation
         return inputs.CameraPosition + inputs.CameraFront * MathF.Max(MinViewDistance, along);
     }
 
+    // A hit is a short burst of marks, each a single frame that lives a fraction of a second, plus the
+    // familiar sparks. Regular: flash, slash and 8 sparks (10 particles) in amber. Critical: a long star,
+    // a flash, two crossed slashes, 16 sparks and 3 embers (23) in white gold, about twice the size.
+    // Incoming: a ragged red splat, a dim flash, 6 sparks and 2 embers (10) in red.
+    // At most MaxHitParticles, never into the reserve the ambient dust lives on; marks are placed first.
     public void SpawnHit(Vector3 anchor, FloatingCombatTextKind kind)
     {
         anchor.Y -= AnchorDrop;
+        int budget = Math.Max(Math.Min(MaxHitParticles, _pool.Capacity - _pool.Count - CastPoolReserve), 0);
+        int granted = budget;
+        int planned;
         switch (kind)
         {
             case FloatingCombatTextKind.Critical:
-                EmitSparks(anchor, 16, new Vector3(1f, 0.88f, 0.58f), 3f, 8f, 1f);
-                EmitBurstEmbers(anchor, 3, 0.8f, 2.4f, 0.85f);
+            {
+                planned = 4 + 16 + 3;
+                float angle = _random.Range(-0.5f, 0.5f);
+                Vector3 gold = new Vector3(1f, 0.88f, 0.58f) * CastBrightness;
+                EmitHitMark(anchor, HitStar, 0f, 0.25f, 0.6f, 0.2f, gold, ref budget);
+                EmitHitMark(anchor, HitFlash, 0f, 0.2f, 0.4f, 0.14f, gold, ref budget);
+                EmitHitMark(anchor, HitSlash, angle + 0.75f, 0.35f, 0.65f, 0.16f, gold, ref budget);
+                EmitHitMark(anchor, HitSlash, angle - 0.75f, 0.35f, 0.65f, 0.16f, gold, ref budget);
+                EmitHitSparks(anchor, 16, new Vector3(1f, 0.88f, 0.58f), 3f, 8f, ref budget);
+                EmitHitEmbers(anchor, 3, 0.8f, 2.4f, 0.85f, ref budget);
                 break;
+            }
             case FloatingCombatTextKind.Incoming:
-                EmitSparks(anchor, 6, new Vector3(1f, 0.34f, 0.14f), 2f, 5f, 1f);
-                EmitBurstEmbers(anchor, 2, 0.6f, 1.6f, 0.7f);
+            {
+                planned = 2 + 6 + 2;
+                Vector3 blood = new Vector3(1f, 0.16f, 0.08f) * CastBrightness;
+                EmitHitMark(anchor, HitSplat, _random.Range(0f, 6.2832f), 0.2f, 0.42f, 0.22f, blood, ref budget);
+                EmitHitMark(anchor, HitFlash, 0f, 0.12f, 0.24f, 0.12f, blood * 0.7f, ref budget);
+                EmitHitSparks(anchor, 6, new Vector3(1f, 0.34f, 0.14f), 2f, 5f, ref budget);
+                EmitHitEmbers(anchor, 2, 0.6f, 1.6f, 0.7f, ref budget);
                 break;
+            }
             default:
-                EmitSparks(anchor, 8, new Vector3(1f, 0.72f, 0.36f), 2.5f, 6f, 1f);
+            {
+                planned = 2 + 8;
+                Vector3 amber = new Vector3(1f, 0.72f, 0.36f) * CastBrightness;
+                EmitHitMark(anchor, HitFlash, 0f, 0.16f, 0.3f, 0.12f, amber, ref budget);
+                EmitHitMark(anchor, HitSlash, _random.Range(0f, 3.1416f), 0.22f, 0.42f, 0.14f, amber, ref budget);
+                EmitHitSparks(anchor, 8, new Vector3(1f, 0.72f, 0.36f), 2.5f, 6f, ref budget);
                 break;
+            }
         }
+
+        _pool.CountDropped(planned - (granted - budget));
+    }
+
+    // One camera-facing mark, additive and bright at once, squaring away over its short life.
+    private void EmitHitMark(Vector3 anchor, float frame, float rotation, float startHalfSize, float endHalfSize, float life, Vector3 rgb, ref int budget)
+    {
+        if (budget <= 0)
+        {
+            return;
+        }
+
+        budget--;
+        FxParticle mark = new()
+        {
+            Kind = FxParticleKind.Flash,
+            Position = anchor,
+            Life = life,
+            StartHalfSize = startHalfSize,
+            EndHalfSize = endHalfSize,
+            Rotation = rotation,
+            Frame = frame,
+            Color = new Vector4(rgb, 0f)
+        };
+        _pool.TryAdd(in mark);
+    }
+
+    private void EmitHitSparks(Vector3 anchor, int count, Vector3 rgb, float speedMin, float speedMax, ref int budget)
+    {
+        count = Math.Min(count, budget);
+        budget -= count;
+        EmitSparks(anchor, count, rgb, speedMin, speedMax, 1f);
+    }
+
+    private void EmitHitEmbers(Vector3 anchor, int count, float speedMin, float speedMax, float brightness, ref int budget)
+    {
+        count = Math.Min(count, budget);
+        budget -= count;
+        EmitBurstEmbers(anchor, count, speedMin, speedMax, brightness);
     }
 
     public void SpawnDeath(Vector3 anchor)
@@ -173,6 +278,44 @@ public sealed class FxSimulation
         {
             EmitAsh(anchor);
         }
+    }
+
+    public void SpawnSkillCast(SkillFxKind kind, Vector3 origin, Vector3 direction, float range)
+    {
+        if (!float.IsFinite(origin.X) || !float.IsFinite(origin.Y) || !float.IsFinite(origin.Z))
+        {
+            return;
+        }
+
+        // A horizontal unit vector, or zero for "no direction".
+        float flat = direction.X * direction.X + direction.Z * direction.Z;
+        bool aimed = float.IsFinite(flat) && flat > 1e-4f;
+        Vector3 aim = aimed ? new Vector3(direction.X, 0f, direction.Z) / MathF.Sqrt(flat) : Vector3.Zero;
+        range = float.IsFinite(range) ? MathF.Max(range, 0f) : 0f;
+
+        // At most MaxCastParticles, and never into the reserve the ambient particles live on.
+        int budget = Math.Max(Math.Min(MaxCastParticles, _pool.Capacity - _pool.Count - CastPoolReserve), 0);
+        int granted = budget;
+        int planned;
+        switch (kind)
+        {
+            case SkillFxKind.Arc:
+                planned = (aimed ? 1 : 0) + ArcSparks + ArcEmbers;
+                EmitArc(origin, aim, aimed, range > 0f ? range : DefaultArcRange, ref budget);
+                break;
+            case SkillFxKind.Bolt:
+                planned = BoltDarts + BoltSparks;
+                EmitBolt(origin, aim, range > 0f ? range : DefaultBoltRange, ref budget);
+                break;
+            case SkillFxKind.Mend:
+                planned = 1 + MendEmbers;
+                EmitMend(origin, ref budget);
+                break;
+            default:
+                return;
+        }
+
+        _pool.CountDropped(planned - (granted - budget));
     }
 
     public void Advance(in FxFrameInputs inputs, ReadOnlySpan<PointLight> lights)
@@ -219,7 +362,7 @@ public sealed class FxSimulation
         // swap-removal shuffles slots, and a single pass would let particles pop across the ash.
         for (int i = 0; i < _pool.Count && written - start < particleCount; i++)
         {
-            if (_pool[i].Kind == FxParticleKind.Ash)
+            if (IsUnderlay(_pool[i].Kind))
             {
                 WriteParticle(ref _pool[i], ref destination[written]);
                 written++;
@@ -228,7 +371,7 @@ public sealed class FxSimulation
 
         for (int i = 0; i < _pool.Count && written - start < particleCount; i++)
         {
-            if (_pool[i].Kind != FxParticleKind.Ash)
+            if (!IsUnderlay(_pool[i].Kind))
             {
                 WriteParticle(ref _pool[i], ref destination[written]);
                 written++;
@@ -242,6 +385,12 @@ public sealed class FxSimulation
         }
 
         return written;
+    }
+
+    // Ash and the flat ground quads of a skill cast draw first, under the sparks and embers.
+    private static bool IsUnderlay(FxParticleKind kind)
+    {
+        return kind == FxParticleKind.Ash || kind == FxParticleKind.Arc || kind == FxParticleKind.Ring;
     }
 
     private void StepParticles(float dt)
@@ -524,18 +673,19 @@ public sealed class FxSimulation
         float rotation = p.Rotation;
         float stretch = 0f;
         float depthBias = 0f;
+        float coverage = 0f;
         switch (p.Kind)
         {
             case FxParticleKind.Spark:
                 fade = MathF.Pow(1f - t, 0.7f);
-                tint = Vector3.Lerp(Vector3.One, SparkCoolTint, t);
+                tint = p.Plain ? Vector3.One : Vector3.Lerp(Vector3.One, SparkCoolTint, t);
                 // Lay the streak along the velocity as the camera sees it. A velocity straight at
                 // (or away from) the lens, or no basis at all, projects to nothing and stays square.
                 Streak(p.Velocity, in _basis, halfSize, out rotation, out stretch);
                 break;
             case FxParticleKind.Ember:
                 fade = MathF.Min(1f, t / 0.08f) * MathF.Pow(1f - t, 0.6f) * (0.85f + 0.15f * MathF.Sin(p.Age * 17f + p.Phase));
-                tint = HeatRamp(t);
+                tint = p.Plain ? Vector3.One : HeatRamp(t);
                 break;
             case FxParticleKind.Ash:
                 fade = MathF.Min(1f, t / 0.15f) * (1f - t);
@@ -551,6 +701,24 @@ public sealed class FxSimulation
                 fade = (1f - t) * (1f - t);
                 depthBias = FlashDepthBias;
                 break;
+            case FxParticleKind.Arc:
+                fade = MathF.Min(1f, t / 0.15f) * MathF.Pow(1f - t, 1.5f);
+                stretch = FxInstance.GroundAligned;
+                depthBias = DepthBiasHeld;
+                coverage = (1f - _nightFactor) * GroundCoverage;
+                break;
+            case FxParticleKind.Ring:
+                fade = MathF.Min(1f, t / 0.1f) * (1f - t);
+                stretch = FxInstance.GroundAligned;
+                depthBias = DepthBiasHeld;
+                coverage = (1f - _nightFactor) * GroundCoverage;
+                break;
+            case FxParticleKind.Bolt:
+                // A dart is a lance head: bright at once, dimming along its flight. It lies along its
+                // velocity like a spark, but keeps its own violet.
+                fade = MathF.Min(1f, t / 0.05f) * MathF.Sqrt(MathF.Max(1f - t, 0f));
+                Streak(p.Velocity, in _basis, halfSize, out rotation, out stretch);
+                break;
         }
 
         // Fade out near the lens: a speck at 10 cm would otherwise cover a patch of the screen.
@@ -561,7 +729,15 @@ public sealed class FxSimulation
 
         instance.Position = p.Position;
         instance.HalfSize = halfSize;
-        instance.Color = FxInstance.PackColor(p.Color.X * tint.X * fade, p.Color.Y * tint.Y * fade, p.Color.Z * tint.Z * fade, p.Color.W * fade);
+        // A coverage quad occludes by day and is pure light at night; its RGB never drops below half
+        // the alpha, so the occluder is not black. Every other kind has coverage 0 and is unchanged.
+        float alpha = (p.Color.W + coverage) * fade;
+        float floor = alpha * 0.5f;
+        instance.Color = FxInstance.PackColor(
+            MathF.Max(p.Color.X * tint.X * fade, floor),
+            MathF.Max(p.Color.Y * tint.Y * fade, floor),
+            MathF.Max(p.Color.Z * tint.Z * fade, floor),
+            alpha);
         instance.Rotation = rotation;
         instance.Frame = p.Frame;
         instance.DepthBias = depthBias;
@@ -629,7 +805,7 @@ public sealed class FxSimulation
         }
     }
 
-    private void EmitSpark(Vector3 anchor, Vector3 away, Vector3 rgb, float speedMin, float speedMax, float sizeScale)
+    private void EmitSpark(Vector3 anchor, Vector3 away, Vector3 rgb, float speedMin, float speedMax, float sizeScale, bool plain = false)
     {
         Vector3 direction = _random.UnitVector() + away + Vector3.UnitY * 0.35f;
         direction = direction.LengthSquared > 1e-6f ? Vector3.Normalize(direction) : Vector3.UnitY;
@@ -645,9 +821,141 @@ public sealed class FxSimulation
             Frame = (float)FxFrame.Spark0 + _random.Range(0, 4),
             Gravity = -7f,
             Drag = 0.9f,
+            Plain = plain,
             Color = Premultiply(rgb.X * heat, rgb.Y * heat, rgb.Z * heat, 0f)
         };
         _pool.TryAdd(in spark);
+    }
+
+    // Cleave: a flat crescent swept across the ground ahead of the caster, steel sparks thrown into
+    // the forward half-plane, and a few hot embers. The crescent grows from 0.35 to 0.55 of the range
+    // in half-size (about 2.5 m to 3.9 m across for the 3.5 m skill, against a 0.6 m player).
+    private void EmitArc(Vector3 origin, Vector3 aim, bool aimed, float range, ref int budget)
+    {
+        Vector3 feet = new(origin.X, origin.Y - CasterFeetDrop + GroundQuadLift, origin.Z);
+        if (aimed && budget > 0)
+        {
+            budget--;
+            EmitGroundQuad(FxParticleKind.Arc, FxFrame.Arc, feet, MathF.Atan2(aim.Z, aim.X), 0.35f * range, 0.55f * range, ArcLife, ArcTint);
+        }
+
+        Vector3 hand = new Vector3(origin.X, origin.Y + CasterChestLift, origin.Z) + aim * 0.8f;
+        Vector3 steel = ArcTint * CastBrightness;
+        int sparks = Math.Min(ArcSparks, budget);
+        budget -= sparks;
+        for (int i = 0; i < sparks; i++)
+        {
+            EmitSpark(hand, aim, steel, 3f, 7f, 1f, plain: true);
+        }
+
+        int embers = Math.Min(ArcEmbers, budget);
+        budget -= embers;
+        for (int i = 0; i < embers; i++)
+        {
+            EmitEmber(hand, 1f, 2.5f, 0.9f);
+        }
+    }
+
+    // Bolt: twelve single-frame darts leave at chest height with a spread of speeds, so they string
+    // out into a lance in flight; each is stretched along its screen velocity (about 0.3 m thick and
+    // up to 1.5 m long, roughly 12 px by 70 px at isometric scale). A few sparks burst at the muzzle.
+    private void EmitBolt(Vector3 origin, Vector3 aim, float range, ref int budget)
+    {
+        Vector3 muzzle = new(origin.X, origin.Y + CasterChestLift, origin.Z);
+        Vector3 violet = BoltTint * CastBrightness;
+        int darts = Math.Min(BoltDarts, budget);
+        budget -= darts;
+        for (int i = 0; i < darts; i++)
+        {
+            float speed = _random.Range(BoltMinSpeed, BoltMaxSpeed);
+            Vector3 heading = aim;
+            Vector3 position = muzzle;
+            if (aim == Vector3.Zero)
+            {
+                // No aim: the lance becomes a radial burst.
+                heading = _random.UnitVector();
+            }
+            else
+            {
+                position += new Vector3(_random.Range(-0.08f, 0.08f), _random.Range(-0.08f, 0.08f), _random.Range(-0.08f, 0.08f));
+            }
+
+            FxParticle dart = new()
+            {
+                Kind = FxParticleKind.Bolt,
+                Position = position,
+                Velocity = heading * speed,
+                Life = MathF.Min(range / speed, BoltMaxLife),
+                StartHalfSize = BoltHalfSize,
+                EndHalfSize = BoltHalfSize * 0.6f,
+                Frame = (float)FxFrame.Bolt0 + _random.Range(0, 2),
+                Color = new Vector4(violet, 0f)
+            };
+            _pool.TryAdd(in dart);
+        }
+
+        int sparks = Math.Min(BoltSparks, budget);
+        budget -= sparks;
+        for (int i = 0; i < sparks; i++)
+        {
+            EmitSpark(muzzle + aim * 0.5f, aim, violet, 2f, 5f, 1f, plain: true);
+        }
+    }
+
+    // Mend: a ring spreading from 0.3 m to 0.9 m at the feet over 0.6 s, with bone-green motes rising
+    // past head height (0.07 to 0.11 m half-size, so 7 to 11 px across at isometric scale).
+    private void EmitMend(Vector3 origin, ref int budget)
+    {
+        Vector3 feet = new(origin.X, origin.Y - CasterFeetDrop + GroundQuadLift, origin.Z);
+        if (budget > 0)
+        {
+            budget--;
+            EmitGroundQuad(FxParticleKind.Ring, FxFrame.Ring, feet, 0f, RingStartHalfSize, RingEndHalfSize, RingLife, MendTint);
+        }
+
+        Vector3 green = MendTint * CastBrightness;
+        int embers = Math.Min(MendEmbers, budget);
+        budget -= embers;
+        for (int i = 0; i < embers; i++)
+        {
+            float angle = _random.Range(0f, MathHelper.TwoPi);
+            float radius = _random.Range(0.1f, 0.6f);
+            FxParticle mote = new()
+            {
+                Kind = FxParticleKind.Ember,
+                Position = feet + new Vector3(MathF.Cos(angle) * radius, 0.1f, MathF.Sin(angle) * radius),
+                Velocity = new Vector3(0f, _random.Range(1.8f, 2.8f), 0f),
+                Life = _random.Range(0.9f, 1.6f),
+                StartHalfSize = _random.Range(0.07f, 0.11f),
+                EndHalfSize = 0.02f,
+                Rotation = _random.Range(0f, MathHelper.TwoPi),
+                AngularVelocity = _random.Range(-1.5f, 1.5f),
+                Frame = (float)FxFrame.Ember0 + _random.Range(0, 4),
+                Gravity = 0.35f,
+                Drag = 0.6f,
+                Phase = _random.Range(0f, MathHelper.TwoPi),
+                Sway = 1f,
+                Plain = true,
+                Color = new Vector4(green, 0f)
+            };
+            _pool.TryAdd(in mote);
+        }
+    }
+
+    private void EmitGroundQuad(FxParticleKind kind, FxFrame frame, Vector3 position, float rotation, float startHalfSize, float endHalfSize, float life, Vector3 tint)
+    {
+        FxParticle quad = new()
+        {
+            Kind = kind,
+            Position = position,
+            Life = life,
+            StartHalfSize = startHalfSize,
+            EndHalfSize = endHalfSize,
+            Rotation = rotation,
+            Frame = (float)frame,
+            Color = new Vector4(tint * CastBrightness, 0f)
+        };
+        _pool.TryAdd(in quad);
     }
 
     private void EmitBurstEmbers(Vector3 anchor, int count, float speedMin, float speedMax, float brightness)

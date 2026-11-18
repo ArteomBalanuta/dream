@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add Dream Effects"
+  short_description: "Add or change a Dream client visual effect"
+  default_prompt: "Use $adding-dream-effects to add or change a Dream particle effect: claim atlas cells, spawn it in FxSimulation, trigger it through an event on FxEventBridge, and pass the particle gate and the zero-allocation tests."

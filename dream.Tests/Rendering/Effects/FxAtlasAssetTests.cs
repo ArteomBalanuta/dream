@@ -66,8 +66,8 @@ public class FxAtlasAssetTests
         Assert.Equal(Margin, root.GetProperty("margin").GetInt32());
         Assert.True(root.GetProperty("yDown").GetBoolean());
         Assert.Equal("premultiplied", root.GetProperty("alpha").GetString());
-        Assert.Equal(23, root.GetProperty("frames").GetArrayLength());
-        Assert.Equal(23, root.GetProperty("reserved")[0].GetInt32());
+        Assert.Equal(31, root.GetProperty("frames").GetArrayLength());
+        Assert.Equal(31, root.GetProperty("reserved")[0].GetInt32());
         Assert.Equal(31, root.GetProperty("reserved")[1].GetInt32());
     }
 
@@ -101,6 +101,8 @@ public class FxAtlasAssetTests
     [InlineData(11)]
     [InlineData(16)]
     [InlineData(17)]
+    [InlineData(24)]
+    [InlineData(25)]
     public void Additive_Frames_Have_Zero_Alpha_And_Visible_Emission(int frame)
     {
         Assert.Equal(0, MaxAlpha(frame));
@@ -161,6 +163,47 @@ public class FxAtlasAssetTests
                 Assert.True(rgb * 2 >= a, $"frame {frame} ({px},{py}) rgb {rgb} is dark under alpha {a}");
             }
         }
+    }
+
+    [Theory]
+    [InlineData(23)]
+    [InlineData(26)]
+    public void Arc_And_Ring_Frames_Are_Coverage_Alpha_Under_245_With_Meaningful_Rgb(int frame)
+    {
+        // Ground-aligned coverage frames, like the flame: additive at night, occluding the sky by day.
+        Assert.InRange(MaxAlpha(frame), 190, 215);
+        Assert.InRange(MaxRgb(frame), 100, 245);
+        foreach ((int px, int py) in Pixels(marginOnly: false))
+        {
+            int a = Channel(frame, px, py, 3);
+            int rgb = Math.Max(Channel(frame, px, py, 0), Math.Max(Channel(frame, px, py, 1), Channel(frame, px, py, 2)));
+            if (a > 8)
+            {
+                Assert.True(rgb * 2 >= a, $"frame {frame} ({px},{py}) rgb {rgb} is dark under alpha {a}");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(24)]
+    [InlineData(25)]
+    public void Bolt_Frames_Have_A_Hot_Core_Under_245(int frame)
+    {
+        Assert.InRange(MaxRgb(frame), 200, 245);
+    }
+
+    [Fact]
+    public void Ring_Is_Dark_In_The_Centre()
+    {
+        Assert.True(Channel(26, Cell / 2, Cell / 2, 0) <= 8);
+        Assert.True(Channel(26, Cell / 2, Cell / 2, 3) <= 8);
+    }
+
+    [Fact]
+    public void Bolt_Variants_Differ()
+    {
+        bool differ = Pixels(marginOnly: false).Any(p => Channel(24, p.Px, p.Py, 0) != Channel(25, p.Px, p.Py, 0));
+        Assert.True(differ);
     }
 
     [Fact]
@@ -248,10 +291,38 @@ public class FxAtlasAssetTests
         Assert.True(Lit(17) < Lit(16));
     }
 
+    [Theory]
+    [InlineData(27)]
+    [InlineData(28)]
+    [InlineData(29)]
+    [InlineData(30)]
+    public void Hit_Marks_Are_Additive_Neutral_And_Capped(int frame)
+    {
+        Assert.Equal(0, MaxAlpha(frame));
+        int peak = MaxRgb(frame);
+        Assert.InRange(peak, 200, 245);
+        foreach ((int px, int py) in Pixels(marginOnly: false))
+        {
+            Assert.True(Channel(frame, px, py, 0) == Channel(frame, px, py, 1) && Channel(frame, px, py, 1) == Channel(frame, px, py, 2), $"frame {frame} ({px},{py}) not neutral");
+        }
+    }
+
+    [Fact]
+    public void Hit_Marks_Differ_From_Each_Other()
+    {
+        for (int a = 27; a < 31; a++)
+        {
+            for (int b = a + 1; b < 31; b++)
+            {
+                Assert.True(Pixels(false).Any(p => Channel(a, p.Px, p.Py, 0) != Channel(b, p.Px, p.Py, 0)), $"frames {a} and {b} are identical");
+            }
+        }
+    }
+
     [Fact]
     public void Reserved_Cells_Are_Empty()
     {
-        for (int frame = 23; frame < Columns * Rows; frame++)
+        for (int frame = 31; frame < Columns * Rows; frame++)
         {
             for (int py = 0; py < Cell; py++)
             {
