@@ -101,3 +101,79 @@ other's work-in-progress. Both recovered; no work was lost. Parallel-agent brief
 repo should ban stash and use `git diff > patch` + `git apply -R` instead.
 
 Not pushed, not merged into `master`.
+
+## Later waves (6-8)
+
+Suite after these: **8946 passed, 0 failed, 47 skipped**, twice in a row.
+
+### Test-suite integrity - the most consequential change here
+
+`dream.Tests` called process-wide `SqliteConnection.ClearAllPools()` in **239 statements across
+94 parallel-phase files**, tearing down connection pools belonging to tests running concurrently
+in other xunit collections, in breach of the suite's own documented rule. This is the mechanism
+behind the long-standing "~35 spurious persistence/integration failures and testhost hangs on
+file locks under a loaded suite", and behind `TerrainLockstepRestartTests` failing only under
+load. All 239 now call `SqlitePools.Release(path|schema)`, which clears only the connection
+string in play; `NoProcessWidePoolClearGuardTests` fails if one is reintroduced. Two call sites
+were releasing the wrong database (`StoredWorldTestSupport.cs:61` released the not-yet-assigned
+field instead of the source it was copying; two soak teardowns released an already-disposed
+database).
+
+Separately: a mid-test `PersistenceWriteQueue.Flush(30 s)` blocks the calling thread and starves
+neighbouring test classes (3/3 reproducible). Polling with `UntilAsync` fixes it; other mid-test
+`Flush` calls in the loopback family are candidates for the same treatment.
+
+Six tests that asserted nothing now assert something real: `Building_Mode_Is_Available` compared
+an enum constant to itself (it now pins the wire values, since the enum crosses the wire as a bare
+int); `StartupWorld_ReportsLegacyAndCurrentPlanTimes` asserted nothing; four `MenuTextPreviewTests`
+theories rendered a menu and asserted nothing. `Admin_Mute_...AcrossARejoin` was satisfied by the
+2-minute in-memory `SanctionMemoryWindow` overlay and never exercised the `muted_until_utc` row it
+is named for - it now asserts the row and proves the row does the silencing by restarting the
+server. All 47 skipped tests were confirmed to be deliberate `DREAM_LOAD_TEST` opt-in gates;
+nothing was silently disabled.
+
+### Shutdown and lifecycle
+
+- **A faulted server tick skipped `_host.Dispose()` entirely**, abandoning the integrated server's
+  queued writes, final checkpoint, world lease and listening socket. Teardown now runs from a
+  `finally`, with the host disposal nested under the service disposal so a throw out of
+  `_service.DisposeAsync()` cannot cost the drain or the checkpoint. Bounded at 10 s; the fault is
+  logged before teardown so the trace survives. The server layer still propagates the fault -
+  making `TickLoopAsync` swallow it would turn a simulation crash into exit 0, and
+  `ServerTickMetricsTests.cs:235` pins that throw.
+- The dedicated server handled only Ctrl+C, so **SIGTERM and a closed console window skipped every
+  `using`** and lost the whole write queue and final checkpoint. `OrderlyShutdownSignals` now routes
+  `CancelKeyPress`, `PosixSignalRegistration` (SIGTERM/SIGINT/SIGQUIT/SIGHUP) and `ProcessExit` into
+  one cancellation; only the first signal starts a shutdown, and a handler blocks at most 4 s so it
+  stays inside Windows' console-close allowance.
+- A start that failed after the runtime host existed wrote a final checkpoint over a world never
+  served; `WriteWorldTime` is a plain UPDATE with no monotonic guard, so a clock of 0 overwrote the
+  stored world time.
+- `RemoteClientSession.DisposeAsync`'s waits are now bounded (5 s), because
+  `PlayScene.DisposeRemoteClient` joins it on the render thread. The packet's claimed root cause
+  ("cancellation cannot abort the receive") was **rejected empirically**: a probe showed the pending
+  `ReadAsync` ends ~0 ms after `Cancel()` on .NET 10/Windows.
+
+### Items as durable value
+
+No duplication or unaccounted loss is reachable: the `ux_player_inventory_slots_item` UNIQUE index
+on (world_id, item_instance_id) prevents cross-row aliasing, the `item_instances` insert trigger
+plus `LoadNextObjectId` healing prevent id reuse, and no stacks exist. Two Low defects fixed: a
+layout repair could strand an overflow row at an index the service treats as inert (now bounded and
+counted as `stranded=N`), and `StarterKitVersion` was installed unclamped while its sibling `Gold`
+was clamped.
+
+Half of that second finding was **rejected**: clamping does not make the kit arrive, and making it
+arrive would require treating the row as unrecorded, which repeats on every load because
+`UpsertStarterGrantSql` is raise-only (`WHERE kit_version < excluded.kit_version`). Since starter
+items sell for 2-14 gold, that would let a tampered row mint gold per relog. Durably repairing such
+a row needs `SqliteInventoryRepository` to accept a lowering write - a deliberate security
+trade-off, left for an owner decision.
+
+### Recurring shape worth knowing
+
+Three independent instances this session of **one field of a persisted row used unclamped while its
+siblings on the same row are clamped**: `max_health`, `movement_speed`, `StarterKitVersion`. Clamping
+is applied per field at the call site rather than by the row's loader, so a new field does not
+inherit its neighbours' bounds, and the bad value is only reachable from a corrupt, tampered or
+old-scale row.
