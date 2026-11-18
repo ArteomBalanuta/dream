@@ -465,3 +465,103 @@ what is measured.
 per tick (peak 2976 B) - boxing `(Cube, position)` into `Body.UserObject` per moved body
 (`PhysicsSyncSystem.cs:177`) plus `movedCubes.ToArray()` (`:222`). That is the documented wake path,
 but it is a per-tick allocation on the authoritative loop that nothing asserts against.
+
+## Waves 17-19
+
+Suite: **9135 passed, 0 failed, 47 skipped** - and that run happened while a sibling agent was
+saturating all 16 cores with a hostile load harness, which is exactly the condition that used to
+produce ~35 spurious failures and testhost hangs.
+
+### PvP and spawn protection (wave 17)
+
+**The PvP gate itself holds**: all 4 client-reachable player-damage paths go through
+`WorldSessionRuntime.FillPvpTargets` (`Combat.cs:147-172`), enemies through `FillEnemyTargets`
+(`Respawn.cs:126-142`), both applying `IsSpawnProtected` (`Respawn.cs:79-82`), and outgoing damage
+while protected is blocked (`Commands.cs:228-234`, `Skills.cs:59-63`). 14 hypotheses disproved.
+
+Two exploitable holes found and closed:
+
+- **Spawn protection could be re-armed at will by re-joining, with zero downtime, mid-fight.** It is
+  now keyed on the CHARACTER (`_characterSpawnProtection`, tick-based, reusing
+  `JoinHoldReattachCooldownTicks`): a character that spent its window by ATTACKING gets nothing back
+  for rejoining inside the cooldown, and otherwise a join may start a new window only once the
+  cooldown has run since the last join grant - in between it resumes the remainder. Attack ->
+  reconnect -> attack is dead, and a non-attacker cannot re-arm faster than the window expires.
+  Because the record is the character's, the known two-live-seats case hits the same record and
+  resumes the same window rather than defeating it.
+  **An existing test contradicted the packet's simpler "always resume" shape** -
+  `WolfBiteAdversarialTests` pins that a rejoin gets its own full window - so the rate limit was
+  scoped to join-granted windows and attacks, and a respawn grant clears the join brake. The test was
+  not edited and still passes.
+- **One player could permanently seal the single respawn point with build-protected cubes** - the
+  victim could not clear them, because the cubes were protected from them. `ResolveRespawnPosition`
+  now runs a bounded, map-only BFS (radius 8 cells, +/-3 of climb) and steps to the nearest free cell
+  outside the sealed region. No wall is damaged, no cube ownership is read, and build protection is
+  untouched. The "no-build zone around spawn" alternative was rejected on evidence: players start at
+  the world spawn, so any radius large enough to matter refuses nearly every build in ~35 existing
+  test files.
+  **Honest residual:** a griefer can still enclose someone with a much larger structure outside the
+  search radius. That is the generic "box anyone anywhere" problem, not the spawn-point invariant;
+  no bounded deterministic search closes it, and the fixes that would (letting players break
+  protected cubes, or a teleport/unstick command) each trade one griefing vector for another. Left
+  for whoever owns the build spec.
+
+### Content validation generalised (wave 18)
+
+The per-giver quest cap fixed earlier was an instance of a class, so this wave built a
+**validation-vs-runtime table** for every authored collection. **7 gaps, 6 findings** - and the first
+is the same bug in vendors: `MaxNpcStock = 32` at `ContentCatalog.cs:935`, but `VendorWindow.cs:57`
+draws `BuyRows = 8` with no pager and `VendorHudState.cs:64` caps at 16, so a vendor's 9th entry
+loads cleanly and is **unbuyable**. Shipped content sits at **6 of 8** - the same near-miss margin the
+quests had.
+
+Fixed by validating at load against the tightest runtime bound, matching the quest-cap precedent.
+New authorable maxima, all now failing loudly at load instead of silently dropping: vendor stock 8
+per NPC; `use.cooldownGroup` 64 chars via `ReadKey` (past 64, `QuickbarHudState.cs:87` silently
+dropped the cooldown so the tile showed ready and every click was refused); quest and item
+`description` 400; item `detailLines` 8. Also: `ContentDigest` now includes the cooldown group (it
+gates consumable use, and two catalogs with different cooldown pools hashed identically - the digest
+is logged at startup and compared run-to-run in tests only, never persisted or sent on the wire), and
+NPC key dedupe moved from `Ordinal` to `OrdinalIgnoreCase`, since `_questsByGiver` and the giver match
+already folded case and two case-variant NPCs each offered the other's quests.
+
+Shipped content is unchanged and still loads: stock 6/8, longest description 202/400, detail lines
+3/8.
+
+**Worldgen came back clean** - there is no RNG in the generation path at all,
+`NaturalTerrainMaterialPolicy` is explicitly seed-independent with fixed sub-seeds, and there is no
+`string.GetHashCode` / `DateTime` / `Guid` / parallelism anywhere in it.
+
+**A deferral worth recording:** the camp-restore Shipped-vs-EnemyContent finding was implemented, and
+doing so turned `CampBandTests` red - which exposed the real root cause. `RestoreWorld` runs inside
+the `WorldSessionRuntime` constructor (`WorldSessionRuntime.cs:187`), so `EnemyContent` is still the
+default at restore time; the mechanical fix would have made restore read a camp-less catalog, which
+is worse than the bug. Reverted cleanly. A real fix resolves the camp key at the first camp fill, or
+takes the catalog as a constructor argument.
+
+### Skills (wave 19)
+
+**4 of the 5 cast paths already re-validate the target at effect time**; only SelfHeal did not.
+
+- **A reconnect wiped every running cooldown** while mana, health and items persisted - rejoin as a
+  free reset, the same family as the spawn-protection exploit above. Cooldowns are now recorded per
+  `CharacterKey` on start and resumed on attach instead of cleared, so a second live seat on the same
+  character inherits the cooldowns the first seat is serving and a new session id cannot fetch a clean
+  bar. Expired entries are dropped at restore, so a bad connection owes only what it already owed.
+- **A SelfHeal at full health spent mana and the full cooldown for zero effect.** Now refused before
+  the spend. The boundary matters and is tested: a heal that mostly overheals (damaged by 1 against a
+  35-point heal) is still ACCEPTED, still heals 1, still spends 15 mana and still starts the cooldown
+  - only a strictly zero-effect cast is refused.
+  This needed an existing test changed: `SkillsLoopbackTests.AttackSkills_EndSpawnProtection_ButMendDoesNot`
+  cast mend at FULL health and asserted acceptance. Its named intent is that a NON-ATTACK skill does
+  not end spawn protection, and the full-health cast was incidental setup - so the caster is now
+  damaged first, which makes it a real mend cast and strengthens the test rather than weakening it.
+  Its spawn-protection assertions are untouched.
+- Skill keys and item cooldown groups shared one unvalidated namespace, so a collision let an item's
+  cooldown gate a skill. Now a load failure.
+
+**One finding rejected with evidence**: a skill cast and a command-synthesized primary attack in the
+same tick drawing the identical damage roll is **intended determinism**, not a defect. The seed is a
+pure function of (sim seed, tick, session, action sequence, target), pinned from both sides by
+`SkillResolutionTests.cs:197-201` and `:292-295`, and the two sequence spaces are kept disjoint on the
+client. No seeding change was made.
