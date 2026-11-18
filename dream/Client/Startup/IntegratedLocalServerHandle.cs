@@ -26,7 +26,9 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
     private readonly CancellationTokenSource? _shutdown;
     private readonly Task? _runTask;
 
-    private IntegratedLocalServerHandle(
+    // internal, not private, only so the teardown tests can hand it a run task that already
+    // faulted or was cancelled; StartAsync is the one production caller.
+    internal IntegratedLocalServerHandle(
         DedicatedServerHost? host,
         DedicatedServerService? service,
         CancellationTokenSource? shutdown,
@@ -157,6 +159,14 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
         }
     }
 
+    // How long the stop waits for the server's run task before it tears the server down anyway.
+    // RunAsync normally returns within a tick of the cancellation, and its own finally already
+    // bounds the connection loops (DedicatedServerService.ConnectionLoopShutdownTimeout, 5 s), so
+    // this is the backstop for a run task that is wedged rather than slow: the teardown below --
+    // the queued writes, the final checkpoint and the world lease -- matters more than waiting for
+    // it, and the host's own disposal waits for an in-flight tick under the tick lock regardless.
+    public static readonly TimeSpan RunTaskShutdownTimeout = TimeSpan.FromSeconds(10);
+
     public async ValueTask DisposeAsync()
     {
         if (_shutdown != null)
@@ -164,25 +174,54 @@ public sealed class IntegratedLocalServerHandle : ILocalServerHandle
             _shutdown.Cancel();
         }
 
-        // RunAsync returns only after every connection loop has released its seat, and
-        // DisposeAsync waits for any loop still running, so the host is disposed last.
-        if (_runTask != null)
+        // The run task is awaited inside a try whose finally owns the teardown, because an
+        // exception out of any tick (DedicatedServerHost.AdvanceTime and AdvanceOnceAsync have no
+        // catch, and RunAsync's only catch is OperationCanceledException) faults this task -- and
+        // before this finally existed, that fault rethrew here and skipped every statement after
+        // it. The integrated server would then abandon its queued writes, its final checkpoint, its
+        // world lease (so every later Single Player or Host start in this process failed with
+        // "World N is already in use") and its listening socket, while the client carried on to the
+        // title screen. The teardown now runs on all three outcomes -- completed, cancelled and
+        // faulted -- and exactly once, since each step below is itself idempotent.
+        try
+        {
+            // RunAsync returns only after every connection loop has released its seat, and
+            // DisposeAsync waits for any loop still running, so the host is disposed last.
+            if (_runTask != null)
+            {
+                await _runTask.WaitAsync(RunTaskShutdownTimeout);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            // Logged here rather than rethrown, and logged before the teardown runs so the trace
+            // survives even if a step of the teardown throws in its turn. The stop itself is what
+            // matters now, and PlaySessionEndTransition's callers only ever logged this fault
+            // anyway (StopLocalServer / StopLocalServerForExit hand it back as a non-fatal line).
+            Console.Error.WriteLine(
+                $"[server] the local server's run loop failed ({ex.GetType().Name}: {ex.Message}); " +
+                "stopping it and saving the world anyway");
+        }
+        finally
         {
             try
             {
-                await _runTask;
+                if (_service != null)
+                {
+                    await _service.DisposeAsync();
+                }
             }
-            catch (OperationCanceledException)
+            finally
             {
+                _shutdown?.Dispose();
+                // Last and unconditionally: the host is the only thing that drains the persistence
+                // write queue, writes the final checkpoint and releases the world lease, so a
+                // throw out of the service's disposal must not cost us those.
+                _host?.Dispose();
             }
         }
-
-        if (_service != null)
-        {
-            await _service.DisposeAsync();
-        }
-
-        _shutdown?.Dispose();
-        _host?.Dispose();
     }
 }
