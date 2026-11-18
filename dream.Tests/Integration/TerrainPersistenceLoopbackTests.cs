@@ -60,7 +60,7 @@ public sealed class TerrainPersistenceLoopbackTests(ITestOutputHelper output)
             Assert.True(server.Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(2L, ObjectIdTestSupport.Scalar(database.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides WHERE world_id = 1;"));
 
         await using (WireLoopbackServer server = await WireLoopbackServer.StartAsync(

@@ -31,7 +31,7 @@ public sealed class WorldRoundTripCharacterizationTests
     {
         using CharacterizationDatabase database = new();
         WrittenWorld written = WriteEverything(database.CreateSchema());
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         SqliteSchemaBootstrapper reopened = database.CreateSchema();
         AssertProfiles(reopened, written);
@@ -49,7 +49,7 @@ public sealed class WorldRoundTripCharacterizationTests
     {
         using CharacterizationDatabase database = new();
         WriteEverything(database.CreateSchema());
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         SqliteSchemaBootstrapper reopened = database.CreateSchema();
 
         string[] stamped =
@@ -103,7 +103,7 @@ public sealed class WorldRoundTripCharacterizationTests
         Dictionary<string, long> before = CountRows(schema);
 
         schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(schema);
         Dictionary<string, long> after = CountRows(database.CreateSchema());
 
         Assert.Equal(before, after);
@@ -515,6 +515,8 @@ public sealed class WorldRoundTripCharacterizationTests
             _schemaPath = Path.Combine(Dream.Tests.Load.LoadPaths.FindRepoRoot(), "dream", "config", "player-profiles.init.sql");
         }
 
+        public string DatabasePath => _databasePath;
+
         // A new bootstrapper on the same file, as a server restart builds one.
         public SqliteSchemaBootstrapper CreateSchema()
         {
@@ -525,7 +527,7 @@ public sealed class WorldRoundTripCharacterizationTests
 
         public void Dispose()
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(_databasePath);
             try
             {
                 Directory.Delete(_rootDirectory, recursive: true);

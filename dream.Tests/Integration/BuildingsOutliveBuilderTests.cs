@@ -28,7 +28,7 @@ public sealed class BuildingsOutliveBuilderTests(ITestOutputHelper output)
             Assert.NotNull(server.BuiltCubeId);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds built = ReadIds(database.DatabasePath);
         long cubeObjectId = Assert.Single(built.Cubes);
         int maxHealth = (int)Scalar(database.DatabasePath, "SELECT max_health FROM placed_cube_instances;");
@@ -54,7 +54,7 @@ public sealed class BuildingsOutliveBuilderTests(ITestOutputHelper output)
             await server.DisconnectAsync(client);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds after = ReadIds(database.DatabasePath);
         long damaged = Scalar(database.DatabasePath, $"SELECT COUNT(*) FROM placed_cube_instances WHERE object_id = {cubeObjectId} AND current_health < {maxHealth};");
         long rubble = Scalar(database.DatabasePath, "SELECT COUNT(*) FROM cube_fracture_pieces;");
@@ -74,7 +74,7 @@ public sealed class BuildingsOutliveBuilderTests(ITestOutputHelper output)
             Assert.True(server.BuiltCubeFractureTick > 0);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds before = ReadIds(database.DatabasePath);
         Assert.NotEmpty(before.Pieces);
         string owner = OwnerOf(database.DatabasePath, "cube_fracture_pieces");
@@ -89,7 +89,7 @@ public sealed class BuildingsOutliveBuilderTests(ITestOutputHelper output)
             Assert.True(host.Runtime.ObjectIds.Next >= before.NextObjectId);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds after = ReadIds(database.DatabasePath);
         output.WriteLine($"{restored} ownerless pieces restored; origins {string.Join(",", before.Origins)}");
         Assert.Equal(before.Pieces, after.Pieces);

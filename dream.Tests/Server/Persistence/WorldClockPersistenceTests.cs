@@ -61,7 +61,7 @@ public sealed class WorldClockPersistenceTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqlitePools.Release(databasePath);
             try
             {
                 Directory.Delete(directory, recursive: true);

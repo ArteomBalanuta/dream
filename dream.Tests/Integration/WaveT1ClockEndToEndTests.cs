@@ -34,7 +34,7 @@ public sealed class WaveT1ClockEndToEndTests(ITestOutputHelper output)
             Assert.Equal(0L, fresh.WorldTimeTicks);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         await using (ClockServer server = await ClockServer.StartAsync(database.OpenBundle()))
         {
             Assert.Equal(0L, server.Runtime.WorldClock.WorldTicks);
@@ -52,7 +52,7 @@ public sealed class WaveT1ClockEndToEndTests(ITestOutputHelper output)
 
         // Time spent stopped is not world time.
         await Task.Delay(400);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         await using (ClockServer server = await ClockServer.StartAsync(database.OpenBundle()))
         {
@@ -104,7 +104,7 @@ public sealed class WaveT1ClockEndToEndTests(ITestOutputHelper output)
                 new SqlitePersistenceCheckpointWriter(bundle.Schema).Write(PersistenceCheckpoint.Empty with { WorldTimeTicks = persisted });
             }
 
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(database.DatabasePath);
             try
             {
                 Environment.SetEnvironmentVariable(ServerBootstrap.DayLengthEnvironmentVariable, "1");

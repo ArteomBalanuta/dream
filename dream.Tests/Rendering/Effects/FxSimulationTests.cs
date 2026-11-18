@@ -610,10 +610,17 @@ public class FxSimulationTests
         FxInstance[] dust = WriteAll(simulation).Where(i => IsDust(i)).ToArray();
 
         Assert.Contains(dust, d => Vector3.Distance(d.Position, torch) < radius * 0.6f && (d.Color & 0xFFu) > 0u);
-        foreach (FxInstance d in dust.Where(d => Vector3.Distance(d.Position, torch) >= radius))
-        {
-            Assert.Equal(0u, d.Color);
-        }
+
+        // The lit half is guarded by the Assert.Contains above; the "black outside its radius"
+        // half had no counterpart. The loop body simply never ran if no dust landed at or beyond
+        // the radius, so a change to the dust field's extent, density or spawn radius - or to
+        // FxSimulation.ViewCentre - could shrink the field inside the torch radius and delete half
+        // of this test's coverage while it stayed green. The set is pinned non-empty first, and
+        // generously so: the field is far larger than a 5 f ball around the view centre, so most
+        // of DustTarget has to be outside it.
+        FxInstance[] outside = [.. dust.Where(d => Vector3.Distance(d.Position, torch) >= radius)];
+        Assert.InRange(outside.Length, FxSimulation.DustTarget / 4, dust.Length);
+        Assert.All(outside, d => Assert.Equal(0u, d.Color));
 
         // Warm light: red at least blue.
         Assert.All(dust, d => Assert.True((d.Color & 0xFFu) >= ((d.Color >> 16) & 0xFFu)));

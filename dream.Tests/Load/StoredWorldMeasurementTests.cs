@@ -137,7 +137,7 @@ public sealed class StoredWorldMeasurementTests(ITestOutputHelper output)
         SqliteWorldCatalog catalog = new(db.Schema);
         WorldRecord source = db.Record();
         IReadOnlyList<GeometryCellKey> seeded = WorldSeeder.SeedTerrainOverrides(db.DatabasePath, source.Descriptor, 628);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         Stopwatch watch = Stopwatch.StartNew();
         BakedTerrain baked = WorldTerrainBaker.Bake(source, source.Seed ?? 1UL, storedChunks: null, new SqliteTerrainOverrideRepository(new Dream.Server.Persistence.Store.SqliteWorldStore(db.Schema), WorldId.Default).LoadTerrainCellOverrides());

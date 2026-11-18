@@ -45,7 +45,7 @@ public sealed class MultiWorldIsolationTests(ITestOutputHelper output)
             Assert.NotNull(alphaCubeId);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         // Alpha now holds its built cube (whole, or as fracture pieces) and a clock; nobody else holds anything.
         long alphaObjects = WorldBundles.Count(database, "placed_cube_instances", alphaId)
@@ -70,7 +70,7 @@ public sealed class MultiWorldIsolationTests(ITestOutputHelper output)
             Assert.Equal(alphaBuildCell, new Vector3Cell(server.BuildCell));
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         foreach (string table in WorldBundles.WorldTables)
         {

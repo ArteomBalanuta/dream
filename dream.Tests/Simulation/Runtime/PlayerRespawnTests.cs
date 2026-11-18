@@ -403,7 +403,7 @@ public sealed class PlayerRespawnPersistenceTests
 
     private static int HpRow(MigrationTestDatabase db, long worldId = 1)
     {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         return Convert.ToInt32(
             db.Scalar($"SELECT current_hp FROM player_world_state WHERE world_id = {worldId} AND player_name = 'Alice';"),
             System.Globalization.CultureInfo.InvariantCulture);
@@ -486,7 +486,7 @@ public sealed class PlayerRespawnPersistenceTests
         db.Schema.EnsureSchema();
         StoreDead(db);
         Worlds(db, "create", "second");
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
 
         using (WaveIRuntimeKit.RealRun other = new(db, "second"))
         {

@@ -43,7 +43,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
             Assert.True(pieces > 0);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds beforeLoss = ReadIds(database.DatabasePath);
         long lostId = Assert.Single(beforeLoss.Overrides);
         Execute(database.DatabasePath, "DELETE FROM terrain_cell_overrides;");
@@ -67,7 +67,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
         }
 
         // The healed row is written on the write queue (flushed when the bundle is disposed).
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds healed = ReadIds(database.DatabasePath);
         Assert.Equal(lostId, Assert.Single(healed.Overrides));
         Assert.Equal(beforeLoss.NextObjectId, healed.NextObjectId);
@@ -83,7 +83,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
             Assert.True(third.ObjectIds.Next > healed.MaxId);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         AssertIdsUnique(ReadIds(database.DatabasePath));
     }
 
@@ -106,7 +106,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
             }
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds ids = ReadIds(database.DatabasePath);
         Assert.Equal(3, ids.Overrides.Count);
         AssertIdsUnique(ids);
@@ -122,7 +122,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
         database.Schema.EnsureSchema();
         SqliteTerrainChunkRepository repository = new(new SqliteWorldStore(database.Schema), WorldId.Default);
         repository.ReplaceTerrainChunks(exported);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         _ = new StoredMapSource(definition, repository.LoadTerrainChunks()).CreateCells();
 
         PersistedTerrainChunk victim = exported[1];
@@ -168,7 +168,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
             rig.Bridge.PersistTerrainCellRemoved(stale, cell);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds first = ReadIds(database.DatabasePath);
         Assert.Single(first.Overrides);
         int pieces = first.Pieces.Count;
@@ -188,7 +188,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
                 new ObjectId(first.NextObjectId + 50), cell, TerrainCellOverrideKind.Removed, null, DateTime.UtcNow, DateTime.UtcNow));
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds second = ReadIds(database.DatabasePath);
         Assert.Equal(first.Overrides, second.Overrides);
         Assert.Equal(first.NextObjectId, second.NextObjectId);
@@ -214,7 +214,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
             rig.FractureTerrain(first);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         WorldRecord copy = catalog.Copy(source.Descriptor.Id, "twin");
         string overridesBefore = WorldBundles.Dump(database, "terrain_cell_overrides", source.Descriptor.Id);
         string rubbleBefore = WorldBundles.Dump(database, "cube_fracture_pieces", source.Descriptor.Id);
@@ -234,7 +234,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
             Assert.Empty(rig.Host.Map.FindInvariantViolations());
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         Assert.Equal(2, WorldBundles.Count(database, "terrain_cell_overrides", copy.Descriptor.Id));
         Assert.Equal(1, WorldBundles.Count(database, "terrain_cell_overrides", source.Descriptor.Id));
         Assert.Equal(overridesBefore, WorldBundles.Dump(database, "terrain_cell_overrides", source.Descriptor.Id));
@@ -264,7 +264,7 @@ public sealed class WaveDTesterTerrainAdversarialTests(ITestOutputHelper output)
 
     private static void Execute(string databasePath, string sql)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(databasePath);
         using SqliteConnection connection = Open(databasePath, readOnly: false);
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = sql;

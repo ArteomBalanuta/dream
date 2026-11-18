@@ -113,7 +113,7 @@ public sealed class WorldsMigrationTests
         using MigrationTestDatabase database = new();
         database.Schema.EnsureSchema(UpToTheStarterGrants());
         database.ExecuteScript(VersionTwoRows);
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
 
         // Foreign keys ON, as every runtime connection has them: dropping item_instances must not
         // cascade into the slots.
@@ -193,7 +193,7 @@ public sealed class WorldsMigrationTests
             INSERT INTO placed_cube_instances (cube_id, owner_player_name, cell_x, cell_y, cell_z, shape_kind, material_id, current_health, max_health)
                 VALUES (7, 'ghost', 1.0, 2.0, 3.0, 'SolidCube', 'Stone', 4, 5);
             """);
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
 
         InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => database.Schema.EnsureSchema());
 
@@ -215,7 +215,7 @@ public sealed class WorldsMigrationTests
     {
         using MigrationTestDatabase database = new();
         database.Schema.EnsureSchema(UpToTheStarterGrants());
-        MigrationTestDatabase.ReleasePooledConnections();
+        SqlitePools.Release(database.DatabasePath);
         SqliteSchemaMigrator migrator = new(SchemaMigrations.LoadFromDirectory(MigrationTestDatabase.MigrationsDirectory));
         string pragma = foreignKeysOn ? "ON" : "OFF";
         long expected = foreignKeysOn ? 1L : 0L;

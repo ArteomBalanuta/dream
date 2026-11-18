@@ -31,7 +31,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
         PersistedIds first = ReadIds(database.DatabasePath);
         AssertNoSharedIdsAcrossKinds(first);
         DeleteNewestRows(database.DatabasePath, perKind: 3);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         output.WriteLine($"after deleting newest rows: next_object_id {ReadIds(database.DatabasePath).NextObjectId}, ever seen {everSeen.Count} ids, max {everSeen.Max()}");
 
         long counterBefore = ReadIds(database.DatabasePath).NextObjectId;
@@ -58,7 +58,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
 
         RunCrashedPhase(database, everSeen, "phase 1");
         DeleteNewestRows(database.DatabasePath, perKind: 3);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds survivors = ReadIds(database.DatabasePath);
         Dictionary<long, (long Origin, long X, long Y, long Z)> survivingPieces = ReadPieceGroups(database.DatabasePath);
         long rolledBack = survivors.MaxId + 1;
@@ -69,7 +69,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
             command.ExecuteNonQuery();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         RunCrashedPhase(database, everSeen, "phase 2", mustStartAbove: survivors.MaxId);
         PersistedIds second = ReadIds(database.DatabasePath);
         AssertNoSharedIdsAcrossKinds(second);
@@ -101,7 +101,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
             command.ExecuteNonQuery();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         List<(string Category, string Message)> lines = [];
         long maxInDb = before.MaxId;
         using (NetworkDiagnosticsLog.CaptureOnCurrentThread((category, message) => lines.Add((category, message))))
@@ -111,7 +111,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
             Assert.True(host.Runtime!.ObjectIds.Next > maxInDb, $"allocator starts at {host.Runtime.ObjectIds.Next}, not above {maxInDb}");
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         (string Category, string Message) healed = Assert.Single(lines, line => line.Category == "server.persistence.object-id-counter-healed");
         output.WriteLine($"corrupted to {target}: {healed.Message}");
         Assert.Contains($"stored={target}", healed.Message, StringComparison.Ordinal);
@@ -162,7 +162,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
         Assert.True(queue.FailedWrites > 0, "the shutdown drain should have dropped the pending writes");
         output.WriteLine($"dropped writes: {queue.FailedWrites}");
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds afterKill = ReadIds(database.DatabasePath);
         AssertNoSharedIdsAcrossKinds(afterKill);
         Assert.True(afterKill.NextObjectId > afterKill.MaxId);
@@ -183,7 +183,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
             server.RunScript(Script, ticks: PhaseTicks);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds ids = ReadIds(database.DatabasePath);
         output.WriteLine($"{label}: cubes {ids.Cubes.Count} pieces {ids.Pieces.Count} origins {ids.Origins.Count} enemies {ids.Enemies.Count} items {ids.Items.Count} next_object_id {ids.NextObjectId} max {ids.MaxId}");
         foreach (long id in ids.AllObjects.Concat(ids.Origins))
@@ -209,7 +209,7 @@ public sealed class WaveCTesterCrashAdversarialTests(ITestOutputHelper output)
 
     private static void DeleteNewestRows(string databasePath, int perKind)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(databasePath);
         using SqliteConnection connection = Open(databasePath, readOnly: false);
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = $"""

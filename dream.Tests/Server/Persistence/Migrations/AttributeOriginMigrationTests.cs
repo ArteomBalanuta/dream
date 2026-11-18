@@ -23,7 +23,7 @@ public sealed class AttributeOriginMigrationTests
         database.ExecuteScript(
             "INSERT INTO player_profiles (player_name, display_name, strength, agility, vitality, energy) VALUES " + values + ";" +
             $" UPDATE player_profiles SET created_utc = '{createdUtc}';");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         return database;
     }
 
@@ -89,7 +89,7 @@ public sealed class AttributeOriginMigrationTests
     {
         using MigrationTestDatabase database = V14With("('hero', 'Hero', 1000, 1000, 1000, 1000)");
         database.ExecuteScript("UPDATE player_profiles SET created_utc = '2026-11-04T19:44:38Z' WHERE player_name = 'hero';");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         database.Schema.EnsureSchema();
 
@@ -101,7 +101,7 @@ public sealed class AttributeOriginMigrationTests
     {
         using MigrationTestDatabase database = V14With("('legacy', 'Legacy', 1000, 12, 1000, 10)");
         database.ExecuteScript("UPDATE player_profiles SET created_utc = '2026-11-04T19:44:36Z' WHERE player_name = 'legacy';");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
@@ -172,7 +172,7 @@ public sealed class AttributeOriginMigrationTests
             SqliteSchemaBootstrapper.FormatUtc(Cutoff.AddSeconds(1)));
         database.ExecuteScript(
             $"UPDATE player_profiles SET created_utc = '{SqliteSchemaBootstrapper.FormatUtc(Cutoff.AddSeconds(-1))}' WHERE player_name = 'old';");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
@@ -196,7 +196,7 @@ public sealed class AttributeOriginMigrationTests
     {
         using MigrationTestDatabase database = V14With("('hero', 'Hero', 1000, 1000, 1000, 1000)");
         database.ExecuteScript("UPDATE player_profiles SET current_hp = 5050, max_hp = 5050 WHERE player_name = 'hero';");
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         database.Schema.EnsureSchema();
 

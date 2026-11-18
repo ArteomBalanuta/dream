@@ -92,16 +92,10 @@ internal sealed class MigrationTestDatabase : IDisposable
         command.ExecuteNonQuery();
     }
 
-    // The bootstrapper's own connections are pooled; release them so the file is closed.
-    //
-    // PROCESS-WIDE. Every caller of this reaches into every other test's pool. That was harmless
-    // while the heavy database classes ran alone in a DisableParallelization collection, but they
-    // are parallel now: closing the last connection to a WAL database checkpoints and truncates
-    // its -wal, so one test's teardown can reshape a concurrent neighbour's database under it.
-    // Dispose below therefore uses the targeted clear instead. This static remains only for the
-    // few call sites that have no database in scope; prefer SqlitePools.Release(db.Schema).
-    public static void ReleasePooledConnections() => SqliteConnection.ClearAllPools();
-
+    // There is deliberately no process-wide ReleasePooledConnections here any more. The
+    // bootstrapper's own connections are pooled; release them with SqlitePools.Release(db.Schema)
+    // or SqlitePools.Release(db.DatabasePath), which clears only this database's pool. See
+    // SqlitePools for why the process-wide clear is forbidden.
     public void Dispose()
     {
         // Only this database's pool: Schema.ConnectionString is a GUID temp directory, unique to

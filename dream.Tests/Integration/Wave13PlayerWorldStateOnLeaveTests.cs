@@ -61,7 +61,7 @@ public sealed class Wave13PlayerWorldStateOnLeaveTests(ITestOutputHelper output)
             rig.Host.Dispose();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         {
             await using Wave12DeltaActorLoopbackTests.Rig rig = await StartAsync(database);
             await rig.JoinAsync(Anchor);

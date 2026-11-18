@@ -25,21 +25,14 @@ public sealed class TerrainLockstepRestartTests(ITestOutputHelper output)
         {
         }
 
-        SqliteConnection.ClearAllPools();
-        foreach (string suffix in new[] { "", "-wal", "-shm" })
-        {
-            if (File.Exists(left.DatabasePath + suffix))
-            {
-                File.Copy(left.DatabasePath + suffix, right.DatabasePath + suffix);
-            }
-        }
+        DatabaseImageCopy.Seed(left.DatabasePath, right.DatabasePath);
 
         long previousOverrides = 0;
         for (int phase = 0; phase < PhaseTicks.Length; phase++)
         {
             int divergence = RunPhase(left, right, PhaseTicks[phase], out int compared, out int terrainRubble);
             Assert.True(divergence < 0, $"phase {phase + 1}: the servers diverged at tick {divergence}");
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(left.DatabasePath, right.DatabasePath);
             // DumpWorld includes the wave D terrain tables (overrides and chunks).
             string leftDump = DumpWorld(left.DatabasePath);
             Assert.Equal(leftDump, DumpWorld(right.DatabasePath));

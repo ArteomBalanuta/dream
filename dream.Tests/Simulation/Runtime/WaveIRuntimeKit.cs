@@ -122,8 +122,11 @@ internal static class WaveIRuntimeKit
     // checkpoint writer under a runtime host. Disposing it drains the writes and releases the world.
     public sealed class RealRun : IDisposable
     {
+        private readonly string _databasePath;
+
         public RealRun(MigrationTestDatabase db, string? world = null)
         {
+            _databasePath = db.DatabasePath;
             Host = ServerBootstrap.CreateRuntimeHost(
                 ServerBootstrap.CreatePersistenceBundle(
                     db.DatabasePath,
@@ -144,7 +147,7 @@ internal static class WaveIRuntimeKit
         {
             Assert.True(Runtime.PersistenceWrites?.Flush(TimeSpan.FromSeconds(30)) ?? true);
             Host.Dispose();
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqlitePools.Release(_databasePath);
         }
     }
 }

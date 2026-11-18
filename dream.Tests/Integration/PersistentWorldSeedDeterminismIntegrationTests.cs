@@ -73,7 +73,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
         }
 
         AssertScriptExercisedEverything(first);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         // A plain restart: the stored seed comes back, and the built cube comes back as it was
         // left. The primary hits it every tick from CubeAttackFrom to the end of the script, which
@@ -98,7 +98,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
             Assert.Contains(restarted.Runtime.Map.CaptureFracturePieces(), piece => piece.Cell == cell);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         // Restart again on a fresh world state (every world and player table emptied) but the same
         // seed and clock on its worlds row: the same script must replay with the same checksum every tick.
@@ -578,7 +578,7 @@ public class PersistentWorldSeedDeterminismIntegrationTests(ITestOutputHelper ou
 
         public void Dispose()
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(DatabasePath);
             try
             {
                 Directory.Delete(_rootDirectory, recursive: true);

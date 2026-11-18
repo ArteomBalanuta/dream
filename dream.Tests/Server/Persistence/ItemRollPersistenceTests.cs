@@ -27,7 +27,7 @@ public sealed class ItemRollPersistenceTests
     {
         MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('p1', 'P1'), ('p2', 'P2');");
         return db;
     }

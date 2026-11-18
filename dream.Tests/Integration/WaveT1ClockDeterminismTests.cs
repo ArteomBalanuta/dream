@@ -41,14 +41,7 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
             Assert.NotNull(bundle.SimulationSeed);
         }
 
-        SqliteConnection.ClearAllPools();
-        foreach (string suffix in new[] { "", "-wal", "-shm" })
-        {
-            if (File.Exists(left.DatabasePath + suffix))
-            {
-                File.Copy(left.DatabasePath + suffix, right.DatabasePath + suffix);
-            }
-        }
+        DatabaseImageCopy.Seed(left.DatabasePath, right.DatabasePath);
 
         const long rightPersisted = 7 * 115_200L + 50_000L;
         using (ServerPersistenceBundle bundle = right.OpenBundle())
@@ -56,7 +49,7 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
             new SqlitePersistenceCheckpointWriter(bundle.Schema).Write(PersistenceCheckpoint.Empty with { WorldTimeTicks = rightPersisted });
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         long leftFinal;
         long rightFinal;
         ServerPersistenceBundle rightBundle = right.OpenBundle();
@@ -101,7 +94,7 @@ public sealed class WaveT1ClockDeterminismTests(ITestOutputHelper output)
             Assert.Equal(rightPersisted - 0L, rightFinal - leftFinal);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(left.DatabasePath, right.DatabasePath);
         using (ServerPersistenceBundle reopened = left.OpenBundle())
         {
             Assert.Equal(leftFinal, reopened.WorldTimeTicks);

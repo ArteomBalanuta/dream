@@ -48,7 +48,7 @@ public sealed class WaveCTesterRubbleCellEdgeTests(ITestOutputHelper output)
                 }
             }
 
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(database.DatabasePath);
             PersistedIds ids = ReadIds(database.DatabasePath);
             foreach (long id in ids.AllObjects.Concat(ids.Origins))
             {
@@ -70,7 +70,7 @@ public sealed class WaveCTesterRubbleCellEdgeTests(ITestOutputHelper output)
         }
 
         // Quantify: the rows in the table versus what a restart puts in the cell.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds final = ReadIds(database.DatabasePath);
         using PersistentScriptedServer last = new(database.OpenBundle());
         int restoredInCell = last.Runtime.Map.CaptureFracturePieces().Count(piece => piece.Cell == cell);
@@ -93,7 +93,7 @@ public sealed class WaveCTesterRubbleCellEdgeTests(ITestOutputHelper output)
             Assert.True(server.BuiltCubeFractureTick > 0);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds afterFracture = ReadIds(database.DatabasePath);
         Assert.NotEmpty(afterFracture.Pieces);
 
@@ -107,7 +107,7 @@ public sealed class WaveCTesterRubbleCellEdgeTests(ITestOutputHelper output)
             output.WriteLine($"second run: rubble in the cell at start {rubbleStillThere}; cube placed on it {cubePlaced}; rubble after placement {server.Runtime.Map.TryGetRubbleAtCell(cell) != null}");
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds both = ReadIds(database.DatabasePath);
         output.WriteLine($"db after placing: cubes {both.Cubes.Count}, pieces {both.Pieces.Count}, origins {both.Origins.Count}");
 
@@ -123,7 +123,7 @@ public sealed class WaveCTesterRubbleCellEdgeTests(ITestOutputHelper output)
             output.WriteLine($"third run (restart): cube restored {cubeRestored}, rubble restored {rubbleRestored} ({restoredPieces} pieces); cube rows {both.Cubes.Count}, rubble rows {both.Pieces.Count}");
             Assert.Equal(both.Cubes.Count > 0, cubeRestored);
         }
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds afterRestart = ReadIds(database.DatabasePath);
         Assert.Equal(afterRestart.AllObjects.Count, afterRestart.AllObjects.Distinct().Count());
         Assert.Empty(afterRestart.Origins.Intersect(afterRestart.AllObjects));

@@ -104,7 +104,7 @@ public sealed class TerrainMeasurementTests(ITestOutputHelper output)
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            SqlitePools.Release(Path.Combine(work, "world.sqlite"));
             try
             {
                 Directory.Delete(work, recursive: true);
@@ -129,7 +129,7 @@ public sealed class TerrainMeasurementTests(ITestOutputHelper output)
         Dream.Server.Worlds.WorldRecord record = Dream.Tests.Integration.WorldBundles.OpenCatalog(database)
             .Create(new Dream.Server.Worlds.WorldCreateOptions("w10k", FloorSize, 4242));
         WorldSeeder.SeedTerrainOverrides(database.DatabasePath, record.Descriptor, Overrides);
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
 
         Stopwatch restore = Stopwatch.StartNew();
         Dream.Server.DedicatedServerHost host = Dream.Server.ServerBootstrap.CreateAuthoritativeHost(

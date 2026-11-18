@@ -23,7 +23,7 @@ public sealed class InventoryWriteFailureTests
     {
         MigrationTestDatabase db = new();
         db.Schema.EnsureSchema();
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(db.DatabasePath);
         db.ExecuteScript("INSERT INTO player_profiles (player_name, display_name) VALUES ('Alice', 'Alice');");
         return db;
     }
@@ -32,10 +32,12 @@ public sealed class InventoryWriteFailureTests
     private sealed class Run : IDisposable
     {
         private readonly ServerPersistenceBundle _bundle;
+        private readonly string _databasePath;
         private readonly PersistenceWriteQueue _writes = PersistenceWriteQueue.Background();
 
         public Run(MigrationTestDatabase db)
         {
+            _databasePath = db.DatabasePath;
             _bundle = ServerBootstrap.CreatePersistenceBundle(db.DatabasePath, MigrationTestDatabase.InitScriptPath);
             Inventory = new PlayerInventoryService(_bundle.World, _writes, new ObjectIdAllocator(_bundle.World.LoadNextObjectId()));
         }
@@ -55,7 +57,7 @@ public sealed class InventoryWriteFailureTests
         {
             _writes.Dispose();
             _bundle.Dispose();
-            SqliteConnection.ClearAllPools();
+            SqlitePools.Release(_databasePath);
         }
     }
 

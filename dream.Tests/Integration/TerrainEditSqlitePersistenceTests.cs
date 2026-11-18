@@ -45,7 +45,7 @@ public sealed class TerrainEditSqlitePersistenceTests
             Assert.True(livePieces > 0);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         long overrideId = Scalar(database.DatabasePath,
             $"SELECT object_id FROM terrain_cell_overrides WHERE world_id = 1 AND cell_x = {cell.X} AND cell_y = {cell.Y} AND cell_z = {cell.Z} AND kind = 0 AND cell_data IS NULL;");
         Assert.Equal(1L, Scalar(database.DatabasePath, "SELECT COUNT(*) FROM terrain_cell_overrides;"));
@@ -71,7 +71,7 @@ public sealed class TerrainEditSqlitePersistenceTests
         }
 
         // The restore rewrote nothing.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds afterRestart = ReadIds(database.DatabasePath);
         Assert.Equal(ids.Pieces, afterRestart.Pieces);
         Assert.Equal(ids.Origins, afterRestart.Origins);
@@ -104,7 +104,7 @@ public sealed class TerrainEditSqlitePersistenceTests
             rig.Bridge.PersistFracturePieces(record, cell);
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         long overrideId = Scalar(database.DatabasePath, "SELECT object_id FROM terrain_cell_overrides;");
         PersistedIds ids = ReadIds(database.DatabasePath);
         Assert.Empty(ids.Cubes);
@@ -153,7 +153,7 @@ public sealed class TerrainEditSqlitePersistenceTests
             }
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds before = ReadIds(database.DatabasePath);
         Assert.Equal(2, before.Origins.Count);
         long newest = before.Origins.Max();
@@ -173,7 +173,7 @@ public sealed class TerrainEditSqlitePersistenceTests
 
         (string _, string message) = Assert.Single(lines, line => line.Category == "server.persistence.orphan-rubble-pruned");
         Assert.Contains("count=1", message, StringComparison.Ordinal);
-        SqliteConnection.ClearAllPools();
+        SqlitePools.Release(database.DatabasePath);
         PersistedIds after = ReadIds(database.DatabasePath);
         Assert.Equal([newest], after.Origins);
         Assert.Single(after.Pieces);
