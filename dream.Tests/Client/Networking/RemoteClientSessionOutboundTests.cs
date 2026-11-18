@@ -18,16 +18,30 @@ public class RemoteClientSessionOutboundTests
         GatedTransportConnection connection = new();
         await using RemoteClientSession session = CreateSession(connection);
 
-        System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
         for (ulong sequence = 1; sequence <= 200; sequence++)
         {
             session.QueueCommandFrame(CreateCommand(sequence, jump: false));
         }
 
-        stopwatch.Stop();
-        Assert.True(stopwatch.ElapsedMilliseconds < 1000, $"Queueing took {stopwatch.ElapsedMilliseconds} ms.");
+        // Not blocking is asserted structurally, not with a stopwatch budget. The gate holds the
+        // writer inside the transport's SendAsync for up to 10 s, so if QueueCommandFrame waited
+        // on the transport the loop above could not have returned at all. What that leaves to
+        // prove is that it really is parked there and has completed nothing: the writer reached
+        // the transport, and not one of the 200 queued frames has been sent while the gate is
+        // held. The old "ElapsedMilliseconds < 1000" proved neither, and fired on a correct
+        // implementation whenever the parallel phase saturated the machine.
+        Assert.True(connection.FirstSendStarted.Wait(TimeSpan.FromSeconds(5)), "the writer never reached the transport");
+        lock (connection.Sent)
+        {
+            Assert.Empty(connection.Sent);
+        }
+
         connection.Release();
         Assert.True(await session.FlushOutboundAsync(TimeSpan.FromSeconds(5)));
+        lock (connection.Sent)
+        {
+            Assert.NotEmpty(connection.Sent);
+        }
     }
 
     // NETR-4: commands queued during a short stall are all sent, in order, one per tick; they no
