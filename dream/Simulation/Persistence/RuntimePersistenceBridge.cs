@@ -1404,13 +1404,44 @@ internal sealed partial class RuntimePersistenceBridge
         PersistedPlacedCube[] exactCellMatches = _persistedCubes.Values
             .Where(candidate => ToGeometryCellKey(candidate.CellPosition) == currentCell)
             .ToArray();
-        if (exactCellMatches.Length == 1)
+        if (exactCellMatches.Length == 1 && DescribesThisCube(exactCellMatches[0], cube))
         {
             persistedCube = exactCellMatches[0];
             return true;
         }
 
         return false;
+    }
+
+    // A cell is not a durable key for a cube's identity: a dynamic cube is pushed out of its cell
+    // without its row's CellPosition following (that only refreshes at the next checkpoint), and a
+    // restore-skipped row describes no live cube at all. Either way the cell match above would hand
+    // a brand-new placement another cube's ObjectId, owner and damaged health, so the row's own
+    // actor binding decides whether it really describes this cube:
+    //   * unbound: an orphan row whose id is only reserved (RestoreWorld's skip) - never adopt it.
+    //   * bound to a live cube that is not this one: that cube still owns the identity.
+    //   * bound to an actor with no record, or whose record's cube has left the map: the registry
+    //     link was lost and this is the repair the row exists for.
+    private bool DescribesThisCube(PersistedPlacedCube row, Cube cube)
+    {
+        if (!_objectIdentities.TryGetActorId(row.ObjectId, out int boundActorId))
+        {
+            return false;
+        }
+
+        // An "any" scan, so the answer cannot depend on _records' iteration order.
+        foreach (WorldObjectRecord record in _worldObjects.Records)
+        {
+            if (record.Actor.Id == boundActorId &&
+                record.SourceObject is Cube bound &&
+                !ReferenceEquals(bound, cube) &&
+                _host.Map.TryGetCellForCube(bound, out _))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private bool IsValidPersistenceOwnerName(string? ownerPlayerName)
