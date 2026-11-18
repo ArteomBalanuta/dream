@@ -536,13 +536,29 @@ public class ProtocolV2SharedSnapshotLoopbackIntegrationTests(ITestOutputHelper 
             await _stream.WriteAsync(_framer.Frame(payload));
         }
 
+        // Every condition this waits on is "a frame has arrived", and each is for a frame the server
+        // has ALREADY produced before the wait starts: the join reply goes out on the receive thread
+        // (this host does not defer joins), and a snapshot wait names a tick the test has already
+        // ticked and flushed. So nothing here needs the test to keep ticking while it waits, which is
+        // the trap WireLoopbackClient.WaitForAsync is; this is the same shape as that client's own
+        // WaitForCoreAsync, and it is bounded the same way.
+        //
+        // What it must not do is fail a wait that is merely slow. A flat 30 s of wall clock is the
+        // wrong measure under a loaded suite: frames can still be arriving one at a time while the
+        // budget runs out, and the test then reports a server that never sent what it did send.
+        // LoopbackDeadline measures the side the condition is read from - frames received by this
+        // client - so the wait fails once that side has gone QUIET for the window, which is the real
+        // failure (a wedged host, a socket that stopped delivering), and it is still capped by
+        // HardTimeout so a stuck test reports instead of hanging. No budget: no tick advances during
+        // these waits, so there is no second side to spend one on.
         private async Task WaitForAsync(Func<IReadOnlyList<Frame>, bool> condition, string what)
         {
-            DateTime deadline = DateTime.UtcNow + Timeout;
+            ProgressCounter[] arriving = [new($"frames received by {SessionId}", () => Frames.Count)];
+            LoopbackDeadline deadline = new(arriving);
             while (!condition(Frames))
             {
                 Assert.True(ReadFault == null, $"{SessionId} read loop faulted: {ReadFault}");
-                Assert.True(DateTime.UtcNow < deadline, $"{SessionId} never received {what}.");
+                deadline.AssertAlive(arriving, () => $"{what} on {SessionId}");
                 await Task.Delay(5);
             }
         }
