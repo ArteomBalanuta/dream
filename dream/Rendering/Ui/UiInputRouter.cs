@@ -7,7 +7,13 @@ namespace Dream.Rendering.Ui;
 public enum UiFeedback
 {
     Hover,
-    Click
+    Click,
+
+    // A coin changing hands at a vendor: a buy, or a drag that sold.
+    Coin,
+
+    // A refused interaction: a drag the shop will not take.
+    Refuse
 }
 
 // Immediate-mode input for the classic HUD. Panels call Button, Hovered, RightClicked and BeginDrag
@@ -53,6 +59,10 @@ public sealed class UiInputRouter : IUiInput
     public Action<UiFeedback>? LocalFeedback { get; set; }
 
     private void Notify(UiFeedback feedback) => (LocalFeedback ?? Feedback)?.Invoke(feedback);
+
+    // A panel asking for a sound the router cannot infer from a click, such as the coin of a
+    // completed sale or the refusal of a drop the shop will not take.
+    public void Emit(UiFeedback feedback) => Notify(feedback);
 
     public UiPointer Pointer => _pointer;
 

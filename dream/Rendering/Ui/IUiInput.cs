@@ -29,4 +29,10 @@ public interface IUiInput
 
     // The pointer this frame. Position is NaN when the input cannot tell where it is.
     UiPointer Pointer { get; }
+
+    // Ask for a feedback sound a click cannot imply (a coin, a refusal). A default no-op so the
+    // test fakes that implement this interface keep compiling, as IHudActions does.
+    void Emit(UiFeedback feedback)
+    {
+    }
 }
