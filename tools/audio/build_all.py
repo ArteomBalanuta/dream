@@ -42,6 +42,34 @@ PACK = (
 )
 assert len(PACK) == 30 and len(set(PACK)) == 30
 
+# Fizz guard for the pack's one-shots: energy above FIZZ_HZ must sit at least FIZZ_MAX_DB below the
+# 40 Hz..2 kHz body. Saturation and dense click-like grain clouds once put it at -8..-20 dB, which
+# plays as a crackle ("crisping") over hits, steps and growls.
+FIZZ_HZ = 8000.0
+FIZZ_MAX_DB = -30.0
+
+
+def fizz_db(mono: np.ndarray, sr: int) -> float:
+    power = np.abs(np.fft.rfft(mono)) ** 2
+    freqs = np.fft.rfftfreq(len(mono), 1.0 / sr)
+    body = float(power[(freqs > 40) & (freqs < 2000)].sum()) or 1e-18
+    return 10.0 * np.log10(float(power[freqs >= FIZZ_HZ].sum()) / body + 1e-18)
+
+
+# Crackle guard for loops: above 2 kHz a loop must be smooth noise or tones, not a stream of clicks.
+# Spikiness is the kurtosis of that band normalised by its own 5 ms envelope: smooth noise is ~3,
+# the old click-built wind rustle was 28.5.
+CRACKLE_MAX = 6.0
+
+
+def spikiness(mono: np.ndarray, sr: int) -> float:
+    spectrum = np.fft.rfft(mono)
+    spectrum[np.fft.rfftfreq(len(mono), 1.0 / sr) < 2000] = 0
+    high = np.fft.irfft(spectrum, len(mono))
+    k = max(1, int(sr * 0.005))
+    env = np.sqrt(np.convolve(high ** 2, np.ones(k) / k, "same")) + 1e-7
+    return float(np.mean((high / env) ** 4))
+
 
 def generate(out_root: Path) -> list[Path]:
     """Run every family build(), then delete any wav in out_root/{sfx,ambience,music} that no build() returned."""
@@ -92,6 +120,10 @@ def check(root: Path) -> list[str]:
             edge = seam / step
             if edge > 4.0:
                 problems.append(f"{rel}: loop seam jump {edge:.1f}x the typical step")
+            spiky = spikiness(mono, sr)
+            if spiky > CRACKLE_MAX:
+                problems.append(f"{rel}: spikiness {spiky:.1f} above 2 kHz (max {CRACKLE_MAX:.0f}; "
+                                f"it plays as crackle)")
             if not 4.0 <= seconds <= 40.0:
                 problems.append(f"{rel}: loop length {seconds:.1f}s outside 4..40 s")
         else:
@@ -100,6 +132,11 @@ def check(root: Path) -> list[str]:
                 problems.append(f"{rel}: one-shot edge {edge:.3f} is not silent (click risk)")
             if not 0.04 <= seconds <= 6.0:
                 problems.append(f"{rel}: length {seconds:.2f}s outside 0.04..6 s")
+        if rel in PACK and folder == "sfx":
+            fizz = fizz_db(mono, sr)
+            if fizz > FIZZ_MAX_DB:
+                problems.append(f"{rel}: fizz above {FIZZ_HZ:.0f} Hz is {fizz:.1f} dB vs the body "
+                                f"(max {FIZZ_MAX_DB:.0f} dB; it plays as crackle)")
         if peak > 0.97:
             problems.append(f"{rel}: peak {peak:.3f} too close to clipping")
         if peak < 0.2:

@@ -243,7 +243,7 @@ def _growl(name: str, hiss: bool) -> np.ndarray:
         _place(out, _growl_phrase(0.6, 66, 82, rng, sub=0.25, rough=0.5), 0.0)
         _place(out, _inhale(0.14, rng, 0.07), 0.6)
         _place(out, _growl_phrase(0.58, 90, 62, rng, sub=0.45, rough=0.6, formant_shift=1.04), 0.76)
-    out = soft_clip(out / (np.max(np.abs(out)) or 1.0), 1.8)
+    out = soft_clip(out / (np.max(np.abs(out)) or 1.0), 1.3)
     # Close in a damp wood/earth space: a few early reflections, short dark tail.
     ir = room_ir(0.25, rng, damp=1800, predelay=0.012, early=((0.009, 0.18), (0.021, 0.1)))
     wet = fir_convolve(out, ir)
@@ -380,11 +380,25 @@ FILES = {
 }
 
 
+# Highest frequency each wolf sound keeps (Hz). The final saturation and the growl's pulse rattle
+# leave fizz above this that reads as crackle; the howls are already dark with distance.
+_FIZZ_CAP = {
+    "wolf_howl_1": 8000.0, "wolf_howl_2": 8000.0, "wolf_howl_3": 8000.0,
+    "wolf_growl_1": 5500.0, "wolf_growl_2": 6000.0, "wolf_hurt": 7000.0, "wolf_death": 6500.0,
+}
+
+
+def _defizz(x: np.ndarray, name: str) -> np.ndarray:
+    """Steep low-pass at the sound's cap, then the usual peak, DC and edge treatment."""
+    peak = float(np.max(np.abs(x))) or 1.0
+    return finalize(lowpass(x, _FIZZ_CAP[name], 4), peak, 0.0003, 0.01)
+
+
 def build(out_root: Path) -> list[Path]:
     written: list[Path] = []
     sfx = out_root / "sfx"
     for name, fn in FILES.items():
         p = sfx / f"{name}.wav"
-        write_wav(p, fn(), SR)
+        write_wav(p, _defizz(fn(), name), SR)
         written.append(p)
     return written
