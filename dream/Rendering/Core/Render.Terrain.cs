@@ -101,10 +101,12 @@ public partial class Render : IWorldInstanceDrawTarget
 
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.Enable(EnableCap.DepthTest);
-        // Static terrain meshes are already hidden-face culled. Draw remaining
-        // exterior faces double-sided so clipped/edge cameras do not reveal
-        // collision-only "transparent" blocks.
-        GL.Disable(EnableCap.CullFace);
+        // Back-face culling is safe here: the static meshes are in world space (model = identity, no
+        // mirroring) and every face is wound counter-clockwise seen from outside. The terrain program has
+        // no alpha-mask variant, so nothing in this pass is a cutout, and the fixed isometric camera only
+        // ever sees the +X, +Y and +Z faces.
+        GL.Enable(EnableCap.CullFace);
+        GL.CullFace(TriangleFace.Back);
     }
 
     // The slot was resolved when the mesh was uploaded; this reads the cached material table.
@@ -141,6 +143,8 @@ public partial class Render : IWorldInstanceDrawTarget
 
     public static void EndStaticTerrainPass()
     {
+        // The passes after this one assume culling is off.
+        GL.Disable(EnableCap.CullFace);
         StaticMeshBuffer.EndBatchedDraws();
     }
 

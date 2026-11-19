@@ -258,6 +258,7 @@ public sealed class StaticTerrainTileArray : IDisposable
         GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
         GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureBaseLevel, 0);
         GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureMaxLevel, MipCount - 1);
+        TextureAnisotropy.Apply(TextureTarget.Texture2DArray);
         GL.BindTexture(TextureTarget.Texture2DArray, 0);
         GL.ActiveTexture(TextureUnit.Texture0);
         return handle;
