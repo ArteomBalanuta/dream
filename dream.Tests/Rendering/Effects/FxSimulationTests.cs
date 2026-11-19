@@ -485,9 +485,8 @@ public class FxSimulationTests
     }
 
     [Fact]
-    public void Held_Fire_Is_Drawn_Below_The_Light_Which_Sits_Above_The_Shoulder()
+    public void Held_Fire_Is_Drawn_On_The_Light()
     {
-        Assert.True(FxSimulation.HeldFxDrop < HeldLightAnchor.BodyUp);
         Assert.InRange(FxSimulation.DepthBiasHeld, 0.2f, 0.55f);
         Vector3 at = Camera + Front * 5f;
         FxSimulation simulation = new(1u);
@@ -497,12 +496,12 @@ public class FxSimulationTests
 
         FxInstance halo = Assert.Single(all, i => IsHalo(i));
         FxInstance flame = Assert.Single(all, i => IsFlame(i));
-        Assert.Equal(at.Y - FxSimulation.HeldFxDrop + 0.12f, halo.Position.Y, 1e-4f);
+        Assert.Equal(at.Y + 0.12f, halo.Position.Y, 1e-4f);
         Assert.Equal(at.X, halo.Position.X, 1e-4f);
         Assert.Equal((float)FxFrame.HaloCore, halo.Frame);
         Assert.Equal(FxSimulation.DepthBiasHeld, halo.DepthBias);
         Assert.InRange(halo.HalfSize, 0.55f, 0.85f);
-        Assert.Equal(at.Y - FxSimulation.HeldFxDrop + 0.1f, flame.Position.Y, 1e-4f);
+        Assert.Equal(at.Y + 0.1f, flame.Position.Y, 1e-4f);
         Assert.Equal(0.20f, flame.HalfSize, 1e-5f);
         Assert.Equal(0.55f, flame.DepthBias);
         Assert.Equal(0u, flame.Color >> 24);
