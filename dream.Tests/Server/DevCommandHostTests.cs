@@ -267,6 +267,29 @@ public sealed class DevCommandHostTests
     }
 
     [Fact]
+    public void Give_FixedItem_EmptyWallet_FullBag_LeavesTheWalletAtZero()
+    {
+        using Fixture f = new(allowed: true, Loopback);
+        Assert.Equal(0, f.Runtime.InventoryService.GoldOf(f.CharacterKey));
+
+        string reply = "";
+        for (int i = 0; i < 40 && !reply.Contains("bag is full", StringComparison.Ordinal); i++)
+        {
+            reply = Assert.Single(f.Dev("give tool.torch 20"));
+            Assert.Equal(0, f.Runtime.InventoryService.GoldOf(f.CharacterKey));
+        }
+
+        Assert.Contains("bag is full", reply, StringComparison.Ordinal);
+        int held = f.Items("tool.torch").Count;
+
+        string again = Assert.Single(f.Dev("give tool.torch"));
+
+        Assert.Contains("gave 0 of 1", again, StringComparison.Ordinal);
+        Assert.Equal(0, f.Runtime.InventoryService.GoldOf(f.CharacterKey));
+        Assert.Equal(held, f.Items("tool.torch").Count);
+    }
+
+    [Fact]
     public void Give_UnknownItem_IsAnError_AndAFullBagStopsTheGrantAndSaysHowManyLanded()
     {
         using Fixture f = new(allowed: true, Loopback);

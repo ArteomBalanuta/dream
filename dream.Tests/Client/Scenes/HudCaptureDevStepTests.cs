@@ -129,4 +129,26 @@ public sealed class HudCaptureDevStepTests
         p.WaitForExit();
         Assert.True(p.ExitCode == 0, output);
     }
+
+    [Fact]
+    public void WholeLineRefusals_ArePinnedToTheServersActualReplies()
+    {
+        Assert.Equal(Dream.Server.DedicatedServerHost.DevCommandsOffText, HudCaptureDevStep.WholeLineOffText);
+        Assert.Equal(Dream.Server.DedicatedServerHost.DevUnavailableText, HudCaptureDevStep.WholeLineUnavailableText);
+        Assert.Equal(Dream.Server.DedicatedServerHost.DevTooManyText, HudCaptureDevStep.WholeLineTooManyText);
+        Assert.Contains(DevCommandText.MaxSubcommands.ToString(), HudCaptureDevStep.WholeLineTooManyText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ChatChannel.System, "[dev] error: Dev commands are off on this server.", true)]
+    [InlineData(ChatChannel.System, "[dev] error: Dev commands are not available.", true)]
+    [InlineData(ChatChannel.System, "[dev] error: Too many subcommands (at most 8); nothing was run.", true)]
+    [InlineData(ChatChannel.System, "[dev] error: Unknown item 'x'.", false)]
+    [InlineData(ChatChannel.System, "[dev] gave 1 tool.torch", false)]
+    [InlineData(ChatChannel.System, "[dev] error: Dev commands are off on this server. extra", false)]
+    [InlineData(ChatChannel.Say, "[dev] error: Dev commands are off on this server.", false)]
+    public void IsWholeLineRefusal_MatchesOnlyTheExactRefusals(ChatChannel channel, string text, bool expected)
+    {
+        Assert.Equal(expected, HudCaptureDevStep.IsWholeLineRefusal(channel, text));
+    }
 }

@@ -131,4 +131,27 @@ public class RunDirectoryPathsTests : IDisposable
         Assert.NotEqual("base-dir", root);
         Assert.Equal(Path.Combine("base-dir", "config", "player-profiles.db"), DataPaths.DatabasePath(data, "base-dir"));
     }
+
+    [Fact]
+    public void SchemaScriptAndMigrations_StayNextToTheExe_WhateverTheAssetRoot()
+    {
+        string source = SourceTree();
+        string root = AssetPaths.ResolveRoot(Env("DREAM_ASSET_ROOT", source), "base-dir", null);
+        Assert.Equal(Path.GetFullPath(source), root);
+
+        string script = AssetPaths.BundledConfig("base-dir", "player-profiles.init.sql");
+
+        Assert.Equal(Path.Combine("base-dir", "config", "player-profiles.init.sql"), script);
+        Assert.DoesNotContain(source, script);
+        string migrations = Path.Combine(Path.GetDirectoryName(script)!, "migrations");
+        Assert.StartsWith(Path.Combine("base-dir", "config"), migrations);
+    }
+
+    [Fact]
+    public void ServerDefaultSchemaScript_IsUnderTheBaseDirectory()
+    {
+        string script = Dream.Server.ServerBootstrap.DefaultSchemaScriptPath;
+
+        Assert.StartsWith(AppContext.BaseDirectory, script, StringComparison.OrdinalIgnoreCase);
+    }
 }

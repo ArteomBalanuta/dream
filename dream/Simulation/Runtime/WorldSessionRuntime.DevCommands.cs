@@ -208,8 +208,10 @@ public sealed partial class WorldSessionRuntime
     }
 
     // A free unrolled item: the vendor grant with a 1 gold price, funded by a borrowed gold piece when the
-    // wallet is empty and refunded on success, so the wallet ends where it began (an empty wallet that then
-    // fails on a full bag keeps the 1 gold). The caller has lifted the action budget.
+    // wallet is empty and refunded on success, so the wallet ends where it began. Nothing is borrowed unless
+    // the purchase will go through: with an empty wallet TryBuy is first probed (it refuses a failed-write
+    // inventory or an unknown kind before it looks at gold, and answers NotEnoughGold once those pass), and
+    // the bag is checked for room. The caller has lifted the action budget, so the purchase cannot throttle.
     private InventoryEquipOutcome GrantFixedItem(string characterKey, string itemKey)
     {
         if (!_inventory.Ensure(characterKey))
@@ -220,6 +222,17 @@ public sealed partial class WorldSessionRuntime
         bool borrowed = false;
         if (_inventory.GoldOf(characterKey) < 1)
         {
+            InventoryEquipOutcome probe = _inventory.TryBuy(characterKey, itemKey, 1);
+            if (probe != InventoryEquipOutcome.NotEnoughGold)
+            {
+                return probe;
+            }
+
+            if (!BagHasRoomFor(characterKey, itemKey))
+            {
+                return InventoryEquipOutcome.BackpackFull;
+            }
+
             if (!_inventory.TryAddGold(characterKey, 1))
             {
                 return InventoryEquipOutcome.StillLoading;
@@ -235,6 +248,26 @@ public sealed partial class WorldSessionRuntime
         }
 
         return outcome;
+    }
+
+    // True when the player's bag board has a free place for one of the item (held-back rows do not count).
+    internal bool BagHasRoomFor(string characterKey, string itemKey)
+    {
+        if (!ContentCatalog.Shipped.TryGetItem(itemKey, out ItemDefinition? definition))
+        {
+            return false;
+        }
+
+        BagBoard board = new();
+        foreach (InventorySlotSnapshot slot in _inventory.BuildSnapshot(characterKey).Slots)
+        {
+            if (slot.Item is InventoryItemSnapshot item && slot.SlotIndex < InventoryConstants.BackpackSlotCount)
+            {
+                board.TryPlace(slot.SlotIndex, BagGrid.FootprintOf(item.ItemKind));
+            }
+        }
+
+        return board.FirstFit(definition.Footprint) >= 0;
     }
 
     // radius 0 removes every live enemy; otherwise those within radius metres (flat distance) of the seat.

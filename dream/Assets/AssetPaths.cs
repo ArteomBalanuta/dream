@@ -12,7 +12,8 @@ public static class AssetPaths
     private static readonly Lazy<string> CachedRoot = new(
         () => ResolveRoot(Environment.GetEnvironmentVariable, AppContext.BaseDirectory, Console.Error.WriteLine));
 
-    // Read-only asset folders live here; DREAM_ASSET_ROOT moves them (intended: the source tree "dream" folder).
+    // Read-only asset folders live here; DREAM_ASSET_ROOT moves them (intended: the source tree "dream" folder),
+    // except the schema script and migrations (BundledConfig).
     // Writable state (database, desktop-client.txt) never follows it; see DataPaths.
     public static string RuntimeRoot => CachedRoot.Value;
 
@@ -65,6 +66,14 @@ public static class AssetPaths
     public static string Font(string fileName) => Path.Combine(FontsDirectory, fileName);
 
     public static string Config(string fileName) => Path.Combine(ConfigDirectory, fileName);
+
+    // Files tied to the compiled code (the schema script and the migrations next to it) always come from
+    // the executable's own config folder: DREAM_ASSET_ROOT must not let an older exe apply a work-in-progress
+    // migration from a source tree to the real database.
+    public static string BundledConfig(string fileName) => BundledConfig(AppContext.BaseDirectory, fileName);
+
+    internal static string BundledConfig(string baseDirectory, string fileName) =>
+        Path.Combine(baseDirectory, "config", fileName);
 
     // relativePath is under the ui directory, e.g. "hud/hud.json".
     public static string Ui(string relativePath) => Path.Combine(UiDirectory, relativePath);
