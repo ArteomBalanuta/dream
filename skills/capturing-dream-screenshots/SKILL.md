@@ -46,7 +46,7 @@ writes `NN-<step>.png` of the real back buffer, and closes itself. The full step
 
    Options: `-Env KEY=VALUE[,KEY=VALUE]` for extra variables, `-Bin <dir>` (default
    `artifacts\capture-bin\Release\net10.0`), `-OutRoot` (default `artifacts\captures`), `-DataDir <dir>` (default
-   `<OutRoot>\<Name>\data`, wiped first unless `-KeepData`; passed as `DREAM_DATA_DIR`), `-Seed <n>` (default 1;
+   `<OutRoot>\<Name>\data`, wiped first unless `-KeepData`; passed as `DREAM_DATA_DIR`; relative paths resolve against the shell's location; the wipe happens only for a folder under `-OutRoot` or one holding the `.dream-capture-data` marker this script wrote when it created it, and never for a drive root, the repo, the bin, your home folder or any ancestor of them, otherwise it refuses and asks for `-KeepData` or another folder), `-Seed <n>` (default 1;
    `DREAM_SIMULATION_SEED`), `-FromSource` (`DREAM_ASSET_ROOT=<repo>\dream`: edited JSON, atlases and shaders apply
    on the next launch with no rebuild), `-Serial` (wait for any running `dream.exe` first, the old behaviour),
    `-IdentityFile` (only when given), `-AllowDevErrors`, `-TimeoutSeconds` (300), `-WaitForIdleSeconds` (900, with

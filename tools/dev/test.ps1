@@ -87,43 +87,43 @@ $psi.Arguments = (($dotnetArgs | ForEach-Object { '"' + ($_ -replace '"', '\"') 
 
 $writer = New-Object System.IO.StreamWriter($log, $false, (New-Object System.Text.UTF8Encoding($false)))
 $writer.AutoFlush = $true
-$sync = [object]::new()
-$handler = {
-    if ($null -ne $EventArgs.Data) {
-        [System.Threading.Monitor]::Enter($Event.MessageData.Sync)
-        try {
-            $Event.MessageData.Writer.WriteLine($EventArgs.Data)
-            [Console]::WriteLine($EventArgs.Data)
-        } finally { [System.Threading.Monitor]::Exit($Event.MessageData.Sync) }
-    }
-}
-$state = [pscustomobject]@{ Writer = $writer; Sync = $sync }
 
 $proc = New-Object System.Diagnostics.Process
 $proc.StartInfo = $psi
-$subs = @(
-    Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -Action $handler -MessageData $state
-    Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -Action $handler -MessageData $state
-)
 
+# The main thread polls both streams with ReadLineAsync. No event handlers: those only run when the main thread
+# is idle, so they stall during the run and lose the tail. Every line reaches the log and the console as it is
+# produced, and the loop ends only when both streams reached end-of-stream (so the summary line is never lost).
 $watch = [System.Diagnostics.Stopwatch]::StartNew()
 $timedOut = $false
 try {
     [void]$proc.Start()
-    $proc.BeginOutputReadLine()
-    $proc.BeginErrorReadLine()
-    if (-not $proc.WaitForExit($TimeoutMinutes * 60 * 1000)) {
-        $timedOut = $true
-        Write-Host "timeout after $TimeoutMinutes min: killing the dotnet test process tree (pid $($proc.Id))"
-        & taskkill.exe /PID $proc.Id /T /F | Out-Null
-        [void]$proc.WaitForExit(15000)
-    } else {
-        $proc.WaitForExit()   # flush async readers
+    $readers = @($proc.StandardOutput, $proc.StandardError)
+    $pending = @($readers[0].ReadLineAsync(), $readers[1].ReadLineAsync())
+    $open = @($true, $true)
+    $deadline = $TimeoutMinutes * 60 * 1000
+    while ($open[0] -or $open[1]) {
+        $progress = $false
+        for ($i = 0; $i -lt 2; $i++) {
+            if (-not $open[$i] -or -not $pending[$i].IsCompleted) { continue }
+            $line = $pending[$i].Result
+            $progress = $true
+            if ($null -eq $line) { $open[$i] = $false; continue }
+            $writer.WriteLine($line)
+            [Console]::WriteLine($line)
+            $pending[$i] = $readers[$i].ReadLineAsync()
+        }
+        if (-not $timedOut -and $watch.ElapsedMilliseconds -gt $deadline) {
+            $timedOut = $true
+            Write-Host "timeout after $TimeoutMinutes min: killing the dotnet test process tree (pid $($proc.Id))"
+            & taskkill.exe /PID $proc.Id /T /F | Out-Null
+        }
+        if ($timedOut -and $watch.ElapsedMilliseconds -gt ($deadline + 15000)) { break }   # pipes held by an orphan: stop waiting
+        if (-not $progress) { Start-Sleep -Milliseconds 50 }
     }
+    [void]$proc.WaitForExit(15000)
 } finally {
     $watch.Stop()
-    Start-Sleep -Milliseconds 300
-    foreach ($s in $subs) { Unregister-Event -SubscriptionId $s.Id -ErrorAction SilentlyContinue }
     $writer.Flush()
     $writer.Dispose()
 }
