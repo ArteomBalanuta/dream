@@ -273,8 +273,8 @@ GEM_R_U, GEM_C_U = 24.0, 24.9   # the stone's radius and centre in its 50 u spri
 # keep the share of chroma that survives, knee where the highlight compression starts. The traced stone peaks at 1.00
 # with p99 0.99 and a ruby saturation near 1.0; what the grade leaves is measured in check_hud.
 GEM_GRADE = {
-    "hp": dict(cap=0.66, knee=0.28, keep=0.64, tint=(0.95, 0.58, 0.76), gain=1.9, core=(0.46, 0.50), glow=(0.24, 0.005, 0.032), hl=(0.36, 0.19, 0.18)),
-    "mp": dict(cap=0.60, knee=0.26, keep=0.48, tint=(0.86, 0.95, 1.00), gain=1.8, core=(0.54, 0.50), glow=(0.065, 0.14, 0.38), hl=(0.24, 0.31, 0.42)),
+    "hp": dict(cap=0.80, knee=0.34, keep=0.64, tint=(0.95, 0.58, 0.76), gain=1.85, core=(0.46, 0.50), glow=(0.19, 0.004, 0.028), hl=(0.36, 0.19, 0.18)),
+    "mp": dict(cap=0.50, knee=0.26, keep=0.48, tint=(0.86, 0.95, 1.00), gain=1.45, core=(0.54, 0.50), glow=(0.045, 0.10, 0.25), hl=(0.24, 0.31, 0.42)),
 }
 # glow is the candlelight that burns through the liquid (an sRGB add at the lit core, brighter where the fluid is thick
 # and along the thin lip of each clot); hl is the pale, wet, broken sheen on the upper-left glass. Neither may reach plastic:
@@ -407,11 +407,11 @@ def _grade_glass(kind: str, state: str, px: np.ndarray, cage: np.ndarray) -> np.
     if state == "empty":
         rgb = rgb * 0.30   # drained glass is soot-dark: the lit fluid is what shows the level (the C# gem test counts the pixels that differ)
     if state == "full":
-        body = 1.0 + 0.52 * (run - 0.5) - 0.62 * clots * (0.5 + 0.5 * run)
+        body = 1.0 + 0.52 * (run - 0.5) - 0.40 * clots * (0.5 + 0.5 * run)
         rgb = rgb * body[..., None]
         yy, xx = np.mgrid[0:GEM_PX, 0:GEM_PX].astype(np.float32)
         rpx = GEM_R_U * U.SCALE
-        d2 = ((xx - GEM_PX * g["core"][0]) ** 2 + (yy - GEM_PX * g["core"][1]) ** 2) / (0.78 * rpx) ** 2
+        d2 = ((xx - GEM_PX * g["core"][0]) ** 2 + (yy - GEM_PX * g["core"][1]) ** 2) / (0.95 * rpx) ** 2
         core = np.exp(-d2) * (0.55 + 0.80 * run)
         lip = clots * (1 - _smoothstep(0.74, 0.80, clot))
         glow = np.array(g["glow"], np.float32)
@@ -422,18 +422,18 @@ def _grade_glass(kind: str, state: str, px: np.ndarray, cage: np.ndarray) -> np.
         arc = _smoothstep(math.radians(46), math.radians(14), dang) * _smoothstep(0.50, 0.62, rad) * (1 - _smoothstep(0.80, 0.90, rad))
         broken = _smoothstep(0.50, 0.64, _noise_px(seed + ".wet", 1.1, octaves=2))
         rgb = rgb + (arc * broken * 0.85)[..., None] * np.array(g["hl"], np.float32)
-        rgb = rgb * (1 - 0.34 * _smoothstep(0.55, 1.0, rad))[..., None]   # the outer glass falls away: the lit part is a core, not the whole stone
+        rgb = rgb * (1 - 0.10 * _smoothstep(0.80, 1.0, rad))[..., None]   # the outer glass falls away: the lit part is a core, not the whole stone
     rim = 1 - _smoothstep(0.50, 0.97, forge.blur(a, 4.5 * U.SCALE))
     pit = _noise_px(seed + ".soot", 0.9, octaves=2)
     smudge = _noise_px(seed + ".smudge", 4.0)
-    soot = np.clip(0.80 * rim * (0.4 + 0.8 * smudge) + 0.5 * _smoothstep(0.66, 0.78, pit) * (0.35 + 0.65 * rim)
+    soot = np.clip(0.40 * rim * (0.4 + 0.8 * smudge) + 0.35 * _smoothstep(0.66, 0.78, pit) * (0.35 + 0.65 * rim)
                    + 0.35 * _smoothstep(0.55, 0.85, forge.blur(cage[..., 3], 2.2 * U.SCALE)), 0, 0.85)
     rgb = rgb * (1 - soot[..., None] * 0.80) + soot[..., None] * np.array((0.012, 0.011, 0.010), np.float32)
     crack = _cracks(seed, kind)
     shifted = np.roll(crack, (-1, -1), axis=(0, 1))
     rgb = rgb * (1 - 0.88 * crack[..., None]) + np.array(g["tint"], np.float32) * (np.clip(shifted - crack, 0, 1) * 0.16)[..., None]
     sh = np.roll(forge.blur(cage[..., 3], 1.7 * U.SCALE), (int(2.2 * U.SCALE), int(1.6 * U.SCALE)), axis=(0, 1))   # the cast shadow lands on the fluid beneath
-    rgb = rgb * (1 - 0.80 * sh[..., None])
+    rgb = rgb * (1 - 0.62 * sh[..., None])
     ca = cage[..., 3:4]
     rgb = rgb * (1 - ca) + cage[..., :3] * ca
     out8 = (np.clip(rgb, 0, 1) * 255 + 0.5).astype(np.uint8)

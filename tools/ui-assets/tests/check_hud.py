@@ -166,12 +166,12 @@ def check_gems(errs, S):
         fl = rgb / 255.0
         sat = (fl.max(axis=2) - fl.min(axis=2)) / np.maximum(fl.max(axis=2), 1e-6)
         iron = (sat < 0.30) & (luma(full) > 0.06) & (luma(full) < 0.6)
-        for label, m, need in (("oxidised body", body, 0.30), ("deep glass", deep, 0.22), ("iron cage", iron, 0.06)):   # SHARE of the stone, measured hp / mp: body 0.361 / 0.350, deep 0.411 / 0.280, iron 0.109 / 0.095
+        for label, m, need in (("oxidised body", body, 0.35), ("deep glass", deep, 0.30), ("iron cage", iron, 0.06)):   # SHARE of the stone, measured hp / mp: body 0.467 / 0.396, deep 0.328 / 0.338, iron 0.108 / 0.096
             if (m & ins).sum() < need * ins.sum():
                 errs.append(f"gem.{kind}.full: {label} cover {(m & ins).sum() / ins.sum():.3f} of the stone, want {need}")
         if (luma(full)[ins] > 0.80).mean() > 0.004:   # LUMA share over 0.80, measured 0.0017 / 0.0005 after the iteration-3 relight (0.0023 / 0.0003 before): no plastic hot spot survives
             errs.append(f"gem.{kind}.full: plastic highlights cover {(luma(full)[ins] > 0.80).mean():.4f} of the stone")
-        if np.percentile(fl.max(axis=2)[ins], 99) > 0.86:   # MAX-CHANNEL (not luma) p99, measured 0.800 / 0.824
+        if np.percentile(fl.max(axis=2)[ins], 99) > 0.86:   # MAX-CHANNEL (not luma) p99, measured 0.835 / 0.682
             errs.append(f"gem.{kind}.full: p99 channel {np.percentile(fl.max(axis=2)[ins], 99):.3f} over the 0.86 ceiling")
         # the glass alone (HSV S > 0.45; the near-neutral iron cage drags a whole-sprite mean down): lit through, still oxidised
         glass = ins & (sat > 0.45)
@@ -180,9 +180,12 @@ def check_gems(errs, S):
         # different sampling resolution. Keep the two apart, or a bound from one gets read against the
         # other and a fail looks like a comfortable pass - which is exactly what happened once here.
         gv = fl.max(axis=2)[glass]
-        if np.percentile(gv, 95) < 0.40:   # measured MAX-CHANNEL glass p95 0.737 / 0.749 (iteration 3); the C# ClassicHudGemTests is the real legibility contract
+        # measured MAX-CHANNEL glass p95 0.784 (hp) / 0.608 (mp). The real legibility contract is the
+        # C# ClassicHudGemTests, which counts the pixels differing between fill 0 and fill 1: measured
+        # 3050 (health) and 3025 (mana) against its floor of 2000.
+        if np.percentile(gv, 95) < 0.40:
             errs.append(f"gem.{kind}.full: glass p95 {np.percentile(gv, 95):.3f} under 0.40: the fluid is not lit")
-        if sat[glass].mean() < 0.70:   # measured 0.806 / 0.726
+        if sat[glass].mean() < 0.70:   # measured 0.802 / 0.722
             errs.append(f"gem.{kind}.full: glass saturation {sat[glass].mean():.3f} under 0.70")
         if np.percentile(sat[ins], 50) > 0.85:   # measured median saturation 0.76 / 0.70
             errs.append(f"gem.{kind}.full: median saturation {np.percentile(sat[ins], 50):.2f} is candy")
