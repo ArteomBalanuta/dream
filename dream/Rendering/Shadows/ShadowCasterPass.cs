@@ -105,7 +105,7 @@ public static class ShadowCasterPass
                     target.BeginFireTile(slot, face);
                     Matrix4 faceView = FireShadowAtlas.FaceView(fire.Position, face);
                     ViewFrustum frustum = ShadowCasterSelection.FireFaceFrustum(in faceView, in projection);
-                    ShadowCasterView view = new(in faceView, in projection, in frustum, focus);
+                    ShadowCasterView view = new(in faceView, in projection, in frustum, focus, fire.CarrierSeed);
                     int before = RenderCounters.DrawCalls;
                     target.DrawCasters(in view);
                     fireDraws += RenderCounters.DrawCalls - before;
@@ -135,7 +135,8 @@ public sealed class ShadowActorCasters
         AnimatedModel Model,
         AnimatedModelInstance Instance,
         Matrix4 ModelMatrix,
-        IReadOnlyDictionary<string, Matrix4>? Overrides);
+        IReadOnlyDictionary<string, Matrix4>? Overrides,
+        int OwnerActorId);
 
     private readonly List<Entry> _entries = new();
 
@@ -147,15 +148,22 @@ public sealed class ShadowActorCasters
         AnimatedModel model,
         AnimatedModelInstance instance,
         in Matrix4 modelMatrix,
-        IReadOnlyDictionary<string, Matrix4>? overrides = null)
+        IReadOnlyDictionary<string, Matrix4>? overrides = null,
+        int ownerActorId = 0)
     {
         if (!ShadowSettings.Enabled)
         {
             return;
         }
 
-        _entries.Add(new Entry(model, instance, modelMatrix, overrides));
+        _entries.Add(new Entry(model, instance, modelMatrix, overrides, ownerActorId));
     }
+
+    /// <summary>
+    /// Whether a recorded actor stays out of a view: the one that carries the view's fire. Owner 0 is "no owner" (enemies,
+    /// NPCs) and an exclusion of 0 is "none", so neither ever matches.
+    /// </summary>
+    public static bool IsExcluded(int ownerActorId, int excludeOwner) => excludeOwner != 0 && ownerActorId == excludeOwner;
 
     /// <summary>Draws the recorded actors the view accepts, depth only. Returns how many were drawn.</summary>
     public int Draw(Render render, in ShadowCasterView view)
@@ -170,6 +178,11 @@ public sealed class ShadowActorCasters
         for (int i = 0; i < _entries.Count; i++)
         {
             Entry entry = _entries[i];
+            if (IsExcluded(entry.OwnerActorId, view.ExcludeOwner))
+            {
+                continue;
+            }
+
             (Vector3 min, Vector3 max) = ShadowCasterSelection.ActorBounds(entry.ModelMatrix);
             if (!view.Accepts(min, max))
             {

@@ -40,6 +40,7 @@ public partial class PlayScene
         Player player = _runtime.Player;
         Camera camera = presentation.Camera;
         PushLocalAvatarInputs(player);
+        _render.LocalPlayers.HeldLightActorId = player.Combatant.Actor.Id;
         // The interpolated render pose (raw body in first person), so a third-person light rides
         // with the drawn model instead of stepping on prediction ticks.
         bool firstPerson = _settings.CameraViewMode == CameraViewMode.FirstPerson;
@@ -150,7 +151,8 @@ public partial class PlayScene
                 continue;
             }
 
-            Vector3 anchor = remoteFlames != null && remoteFlames.TryGetHeldFlameModelPoint(remote.ActorId, out Vector3 flame)
+            Vector3 anchor = remoteFlames != null && remoteFlames.TryGetHeldFlameModelPoint(
+                remote.ActorId, remote.SessionId, remote.Equipment, out Vector3 flame)
                 ? Vector3.TransformPosition(flame, PlayerRenderState.CreateModelMatrix(remote.Pose.Position, remote.Pose.Facing))
                 : HeldLightAnchor.Body(remote.Pose.Position, remote.Pose.Facing);
             if (HeldLightCatalog.TryCreate(remote.HeldLight, anchor, timeSeconds, remote.ActorId, out PointLight light))

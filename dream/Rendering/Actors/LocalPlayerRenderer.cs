@@ -58,12 +58,24 @@ public sealed class LocalPlayerRenderer : IDisposable
 
     public void ClearCasters() => _casters.Clear();
 
+    // The actor id the local player's held light carries as its flicker seed (PlayScene sets it each frame): the fire
+    // shadow pass keeps this body out of that light's own tiles. 0 until set, which excludes nothing.
+    public int HeldLightActorId { get; set; }
+
     // The flame of the held light in the model's own space, as the last Draw posed it; false when the last Draw
     // did not run (first person, model not loaded) or the figure holds no lit item.
     public bool TryGetHeldFlameModelPoint(out Vector3 modelPoint)
     {
         modelPoint = _flameModelPoint;
         return _hasFlame;
+    }
+
+    // Forgets the recorded flame point: called on frames Draw does not run (first person), so a later switch back to
+    // third person cannot place the light from a point recorded before the switch.
+    public void ClearHeldFlame()
+    {
+        _hasFlame = false;
+        _flameModelPoint = default;
     }
 
     // The animation frame the last Draw selected, and the raw travel-minus-facing delta it was
@@ -167,7 +179,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
         model.RenderPrepared(shader, instance, renderState.ModelMatrix, _layers.Overrides);
         model.EndRender();
-        _casters.Add(model, instance, renderState.ModelMatrix, _layers.Overrides);
+        _casters.Add(model, instance, renderState.ModelMatrix, _layers.Overrides, HeldLightActorId);
         _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
         _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, _layers, in equipment, renderState.ModelMatrix);
         if (flashing)

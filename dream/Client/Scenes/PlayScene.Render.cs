@@ -140,6 +140,11 @@ public partial class PlayScene
                 silhouette: isometric);
             localPlayerDrawMilliseconds = Stopwatch.GetElapsedTime(localPlayerDrawStart).TotalMilliseconds;
         }
+        else
+        {
+            // The figure is not drawn in first person: leaving it must not reuse the last third-person flame point.
+            _render.LocalPlayers.ClearHeldFlame();
+        }
 
         long remotePlayerDrawStart = Stopwatch.GetTimestamp();
         RemotePlayerRenderStats remoteRenderStats = _render.RemotePlayers.Draw(

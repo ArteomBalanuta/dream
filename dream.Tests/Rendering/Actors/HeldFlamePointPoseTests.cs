@@ -1,3 +1,4 @@
+using Dream.Client.Presentation;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Models;
 using OpenTK.Mathematics;
@@ -84,5 +85,24 @@ public class HeldFlamePointPoseTests
         Assert.True(HeldWeaponRenderer.TryGetFlameModelPoint(instance, layers, in lit, out _));
         Assert.False(HeldWeaponRenderer.TryGetFlameModelPoint(instance, layers, in none, out Vector3 p));
         Assert.Equal(Vector3.Zero, p);
+    }
+
+    // HeldLightAnchor.Body is what a frame with no recorded point falls back to: it has to sit near where the idle
+    // off-hand torch head really is (same hand height, same side), lowered and raised hold alike, for any facing.
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(1f)]
+    public void BodyAnchor_IsCloseToTheIdleOffHandFlame(float offHold)
+    {
+        (AnimatedModelInstance instance, PlayerPoseLayers layers) = Pose("idle", 0.01f, 0f, offHold);
+        PlayerEquipmentVisuals eq = new(MainHand: null, OffHand: Torch);
+        Vector3 flame = Flame(instance, layers, eq);
+        Vector3 position = new(3f, 1f, -2f);
+        foreach (Vector3 facing in new[] { Vector3.UnitX, -Vector3.UnitZ, new Vector3(1f, 0f, 1f), new Vector3(-2f, 0f, 1f) })
+        {
+            Vector3 world = Vector3.TransformPosition(flame, PlayerRenderState.CreateModelMatrix(position, facing));
+            Vector3 body = HeldLightAnchor.Body(position, facing);
+            Assert.True((world - body).Length < 0.2f, $"Body {body} is {(world - body).Length} m from the flame {world} ({facing})");
+        }
     }
 }

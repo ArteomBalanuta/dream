@@ -13,6 +13,10 @@ public struct FireShadowSlot
     public float Near;
     public float Far;
     public float Strength;
+
+    // The light's FlickerSeed; for a held light that is its carrier's actor id (0 for any other fire), and the caster
+    // pass keeps that actor out of this light's own tiles.
+    public int CarrierSeed;
 }
 
 [InlineArray(ShadowSettings.MaxCastingFireCount)]

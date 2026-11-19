@@ -146,7 +146,8 @@ public sealed class PlaySceneHeldLightsTests
 
     private sealed class FakeFlames(int actorId, Vector3 point) : IHeldFlamePointLookup
     {
-        public bool TryGetHeldFlameModelPoint(int id, out Vector3 modelPoint)
+        public bool TryGetHeldFlameModelPoint(
+            int id, string sessionId, in PlayerEquipmentVisuals equipment, out Vector3 modelPoint)
         {
             modelPoint = id == actorId ? point : Vector3.Zero;
             return id == actorId;
@@ -226,7 +227,8 @@ public sealed class PlaySceneHeldLightsTests
 
     private sealed class AlwaysFlames : IHeldFlamePointLookup
     {
-        public bool TryGetHeldFlameModelPoint(int actorId, out Vector3 modelPoint)
+        public bool TryGetHeldFlameModelPoint(
+            int actorId, string sessionId, in PlayerEquipmentVisuals equipment, out Vector3 modelPoint)
         {
             modelPoint = new Vector3(-0.3f, 1.7f, 0.5f);
             return true;

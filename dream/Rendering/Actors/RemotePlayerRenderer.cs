@@ -56,24 +56,18 @@ public sealed class RemotePlayerRenderer : IDisposable, IHeldFlamePointLookup
 
         public PlayerPoseLayers Layers { get; } = new();
 
-        // The held light's flame in model space, as the last draw posed it; valid only while FlameDrawSerial is
-        // the renderer's current draw (a player culled this frame keeps a stale point).
-        public bool HasFlame;
-
-        public Vector3 FlameModelPoint;
-
-        public int FlameDrawSerial;
+        // Where the held light burns; survives frames in which the player is not drawn (see HeldFlameRecord).
+        public HeldFlameRecord Flame { get; } = new();
     }
 
-    private int _drawSerial;
-
-    public bool TryGetHeldFlameModelPoint(int actorId, out Vector3 modelPoint)
+    // Lights are collected before Draw releases reassigned actor ids, so the record itself checks that the id still
+    // belongs to the session and the held items the point was recorded for.
+    public bool TryGetHeldFlameModelPoint(
+        int actorId, string sessionId, in PlayerEquipmentVisuals equipment, out Vector3 modelPoint)
     {
-        if (_animations.TryGetValue(actorId, out RemoteAnimationState? state) &&
-            state.HasFlame && state.FlameDrawSerial == _drawSerial)
+        if (_animations.TryGetValue(actorId, out RemoteAnimationState? state))
         {
-            modelPoint = state.FlameModelPoint;
-            return true;
+            return state.Flame.TryGet(sessionId, in equipment, out modelPoint);
         }
 
         modelPoint = Vector3.Zero;
@@ -92,7 +86,6 @@ public sealed class RemotePlayerRenderer : IDisposable, IHeldFlamePointLookup
     {
         // Recorded afresh below: a pruned or released player must not leave a ghost shadow.
         _casters.Clear();
-        _drawSerial++;
         PruneModelEntries(remotePlayers);
         ReleaseReassignedActors(remotePlayers);
         ReleaseFarModels(camera.Position, remotePlayers);
@@ -138,8 +131,8 @@ public sealed class RemotePlayerRenderer : IDisposable, IHeldFlamePointLookup
             _clipTracker.ApplyFrame(remotePlayer.ActorId, in frame, instance);
             instance.Update(deltaTime);
             animation.Layers.Update(instance, in frame);
-            animation.HasFlame = HeldWeaponRenderer.TryGetFlameModelPoint(instance, animation.Layers, in equipment, out animation.FlameModelPoint);
-            animation.FlameDrawSerial = _drawSerial;
+            bool hasFlame = HeldWeaponRenderer.TryGetFlameModelPoint(instance, animation.Layers, in equipment, out Vector3 flame);
+            animation.Flame.Record(remotePlayer.SessionId, in equipment, hasFlame, flame);
 
             Shader shader = _render.GetShader(renderState.ShaderName);
             bool flashing = frame.HitFlinch > 0.01f;
@@ -155,7 +148,7 @@ public sealed class RemotePlayerRenderer : IDisposable, IHeldFlamePointLookup
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
             model.RenderPrepared(shader, instance, renderState.ModelMatrix, animation.Layers.Overrides);
             model.EndRender();
-            _casters.Add(model, instance, renderState.ModelMatrix, animation.Layers.Overrides);
+            _casters.Add(model, instance, renderState.ModelMatrix, animation.Layers.Overrides, remotePlayer.ActorId);
             _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
             _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
             if (flashing)

@@ -1,6 +1,8 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
+using Dream.Simulation.Content;
+using Dream.Simulation.Inventory;
 
 namespace Dream.Tests.Rendering.Actors;
 
@@ -206,5 +208,29 @@ public class WeaponMeshCatalogTests
         Vector3 leftFace = Vector4.TransformRow(new Vector4(0f, 0f, 1f, 0f), HeldWeaponRenderer.CreateGrip(WeaponGrip.Shield, offHand: true)).Xyz;
         Assert.Equal(-1f, rightFace.X, 3);
         Assert.Equal(1f, leftFace.X, 3);
+    }
+
+    // Every item that casts a held light must have a flame point, or its light falls back to the fixed body anchor.
+    [Fact]
+    public void EveryShippedItemThatCastsAHeldLight_HasAFlamePoint()
+    {
+        List<string> lit = [];
+        List<string> missing = [];
+        foreach (ItemDefinition item in ContentCatalog.Shipped.Items)
+        {
+            if (item.HeldLight == HeldLightKind.None)
+            {
+                continue;
+            }
+
+            lit.Add(item.Key);
+            if (!WeaponMeshCatalog.TryGetFlamePoint(item.VisualId, out _))
+            {
+                missing.Add($"{item.Key} (visual {item.VisualId})");
+            }
+        }
+
+        Assert.NotEmpty(lit);
+        Assert.True(missing.Count == 0, $"lit items with no WeaponMeshCatalog flame point: {string.Join(", ", missing)}");
     }
 }
