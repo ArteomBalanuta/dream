@@ -38,6 +38,7 @@ public partial class Render
     // The CarrierActorId of each selected light, by list index (see LightSelection.SelectNearest).
     private readonly int[] _selectedLightCarriers = new int[LightList.MaxLights];
     private readonly float[] _selectedLightFlicker = new float[LightList.MaxLights];
+    private readonly Vector3[] _selectedLightWander = new Vector3[LightList.MaxLights];
 
     public LightCollector Lights { get; } = new();
 
@@ -87,6 +88,6 @@ public partial class Render
         }
 
         ViewFrustum frustum = ViewFrustum.FromViewAndProjection(view, _projection);
-        LightSelection.SelectNearestFaded(Lights.Lights, _debugPointLights, cameraPosition, in frustum, ref _selectedLights, _selectedLightCarriers, _selectedLightFlicker);
+        LightSelection.SelectNearestFaded(Lights.Lights, _debugPointLights, cameraPosition, in frustum, ref _selectedLights, _selectedLightCarriers, _selectedLightFlicker, _selectedLightWander);
     }
 }

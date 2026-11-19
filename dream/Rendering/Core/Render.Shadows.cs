@@ -67,7 +67,7 @@ public partial class Render
 
         float strength = ShadowCasterPass.Strength;
         ShadowFrame frame = BuildSunFrame(in _frameLighting, focus, strength, ShadowSettings.SunResolution);
-        FireShadowAtlas.FillSlots(in _selectedLights, focus, ShadowSettings.CastingFireCount, strength, ref frame, _selectedLightCarriers, _selectedLightFlicker);
+        FireShadowAtlas.FillSlots(in _selectedLights, focus, ShadowSettings.CastingFireCount, strength, ref frame, _selectedLightCarriers, _selectedLightFlicker, _selectedLightWander);
         SetShadowFrame(in frame);
         frame.WriteSunTo(ref _frameLighting);
 
