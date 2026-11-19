@@ -78,7 +78,7 @@ not fixed here: it would be a second global grade in the same wave as the first.
 new timer, against a 2.33 ms GPU total in a 6.94 ms frame. About 4.7% of GPU work for the HDR
 resolve, bright pass, two blurs and the shoulder.
 
-## The golden gate was broken, and it was not this wave
+## The golden gate was broken, it was not this wave, and the first fix was wrong
 
 The baselines were failing five of six scenes **on master before a line of this wave was written** —
 three equipment waves had landed without a re-record. They were re-recorded first (`96fc7b09`) to
@@ -86,20 +86,31 @@ give the wave a reference, and then kept failing.
 
 The diff was a long diagonal band across the ground: a **shadow edge**. `DREAM_TIME_OF_DAY` sets the
 world clock's *start* tick and the clock then runs, so the sun moves during the scene's own wait and
-two runs a few ticks apart have every shadow in a different place. The capture harness already had a
-`tod:` step that pins the *client* time of day, which is what `SkyModel` reads for the sun, so each
-scene now pins it. That alone took the spawn scenes to a clean pass and dropped wolf-staged's worst
-block from 0.1118 to 0.0531. The second cause was the dev chat panel, whose height depends on how
-many lines have arrived; its ignore box now starts at y 790 instead of 840.
+two runs a few ticks apart have every shadow in a different place. That diagnosis was right.
 
-The wave was **measured** against this rather than assumed innocent. Four runs of wolf-staged on one
-build, two with the chain and two without: pixels over the scene's own 0.2 threshold were 0.0206%
-(post on, run to run), 0.0157% (post off, run to run) and 0.0098% (on versus off). The chain's effect
-on that frame is *smaller than the scene's own noise*.
+**The fix applied here was not.** The capture harness has a `tod:` step that pins the *client* time
+of day, and each scene was given one — but `tod:` takes decimal **hours** in [0, 24) and these were
+written as minutes (`tod:720`, `tod:1320`). `TryParseTimeOfDay` rejects anything at or above 24, so
+the step never parsed and the sun was never pinned. The evidence was in the output the whole time
+and was not read: the re-recorded baselines kept their `04-snap` and `09-snap` numbering instead of
+shifting by one, which a step that actually ran would have caused. The measured improvement
+(wolf-staged's worst block 0.1118 → 0.0531) therefore belongs to the widened ignore box and to
+run-to-run variance, not to a pinned sun.
 
-After both fixes and a 10-run re-record: verify pass one clean on all six, pass two clean on five
-with wolf-staged 09-snap one marginal block over in the actor area. That scene spawns and kills a
-wolf; the residual is recorded rather than tuned away.
+Master's `integrate/gfx-quickwins` fixed it properly and in parallel: `tod:12` / `tod:22` in hours,
+plus `DREAM_FIRE_CLOCK=10` to pin the flicker and `DREAM_DAY_LENGTH_MINUTES=1440`. Master's scenes
+and baselines were taken wholesale at the merge and this branch's discarded.
+
+The second cause found here still stands: wolf-staged drives the world with `dev:` commands and the
+server echoes them into a panel whose height depends on how many lines have arrived, so its top edge
+moves between runs. Whether master's scenes need the wider ignore box is settled by the re-record
+below rather than assumed.
+
+The wave itself was **measured** against the gate rather than assumed innocent. Four runs of
+wolf-staged on one build, two with the post chain and two without: pixels over the scene's own 0.2
+threshold were 0.0206% (post on, run to run), 0.0157% (post off, run to run) and 0.0098% (on versus
+off). The chain's effect on that frame is *smaller than the scene's own run-to-run noise*, so the
+pipeline was not what the gate was catching. That measurement does not depend on the `tod:` mistake.
 
 ## Verification
 
