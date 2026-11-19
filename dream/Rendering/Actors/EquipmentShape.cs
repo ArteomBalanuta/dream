@@ -149,4 +149,15 @@ public enum EquipmentShape
     // every ridge, which is a value change every five pixels and survives the resolve. Like Panel it
     // is a sheet, so its Z is thickness plus camber and does not fill the box.
     Membrane,
+
+    // A CLOAK, as one part: one continuous sheet that widens as it falls, carries five soft vertical
+    // folds, and ends in a RAGGED hem - each fold bay stops at its own height with a vertical cut
+    // between. The five back items were six to eight separate Panel falls each, yawed apart and cut
+    // to different heights, which fixed one problem (three broad tiers buried the legs in a flat
+    // slab) by making another: from the game camera they read as loose grey rectangles floating
+    // behind the figure. This gives the same varied hem with the cloth still joined above it.
+    //
+    // A sheet like Panel and Membrane, so its Z is wall thickness plus camber and does not fill
+    // the box.
+    Drape,
 }

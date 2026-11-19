@@ -43,6 +43,7 @@ public class EquipmentShapeLibraryTests
         [EquipmentShape.Greave] = 260,
         [EquipmentShape.Lame] = 360,
         [EquipmentShape.Membrane] = 330,
+        [EquipmentShape.Drape] = 340,
     };
 
     // Not an assertion: an escape hatch. Set DREAM_SHAPE_DUMP to a directory and this writes every
@@ -256,6 +257,7 @@ public class EquipmentShapeLibraryTests
     [Theory]
     [InlineData(EquipmentShape.Panel)]
     [InlineData(EquipmentShape.Membrane)]
+    [InlineData(EquipmentShape.Drape)]
     public void ASheetIsASheetInZAndIsPinnedToWhatItReallyIs(EquipmentShape shape)
     {
         StaticWorldChunkMesh mesh = EquipmentShapeLibrary.Build(shape);

@@ -86,6 +86,9 @@ public static class EquipmentShapeLibrary
             case EquipmentShape.Membrane:
                 AppendMembrane(writer);
                 break;
+            case EquipmentShape.Drape:
+                AppendDrape(writer);
+                break;
             default:
                 AppendBox(writer);
                 break;
@@ -111,7 +114,7 @@ public static class EquipmentShapeLibrary
         writer.FitToUnitBox(
             fitX: true,
             fitY: shape is not EquipmentShape.Ring,
-            fitZ: shape is not (EquipmentShape.Panel or EquipmentShape.Membrane));
+            fitZ: shape is not (EquipmentShape.Panel or EquipmentShape.Membrane or EquipmentShape.Drape));
 
         return writer.ToMesh();
     }
@@ -1001,6 +1004,163 @@ public static class EquipmentShapeLibrary
         Vector3 position = new(x, MembraneY(x, v), MembraneSurface(x) + (side * halfThickness));
         Vector3 normal = Vector3.Normalize(new Vector3(-slope * side, 0f, side));
         return (position, normal, Uv(u, texV));
+    }
+
+    // A CLOAK, as one part.
+    //
+    // The five back items were built out of six to eight narrow Panel falls each, yawed apart and
+    // cut to different heights. That was a deliberate fix for a real problem - three broad tiers
+    // buried the legs in one flat dark slab - but it traded a slab for debris: with a gap between
+    // every fall and no surface shared across them, the set reads from the game camera as a handful
+    // of grey rectangles floating behind the figure, which is exactly the complaint the whole wave
+    // is about.
+    //
+    // Drape is the shape that does both jobs at once. It is ONE continuous sheet, so there are no
+    // gaps; it WIDENS as it falls, from 0.60 across at the collar to the full box at the hem, so it
+    // hangs rather than hanging straight down; it carries five soft vertical FOLDS, smooth-normalled
+    // because cloth creases softly where plate steps hard; and its hem is RAGGED - each fold bay
+    // ends at its own height with a vertical cut between, which is the varied hem the six separate
+    // falls were faking, in one part and with the cloth still joined above it.
+    //
+    // Like Panel and Membrane it is a sheet: its Z is wall thickness plus camber and is left
+    // unfitted, so it stays a thin thing standing off the back.
+    private static void AppendDrape(MeshWriter writer)
+    {
+        const int bays = 5;
+        const int perBay = 2;
+        const int rows = 5;
+        const float halfThickness = 0.05f;
+
+        // Ragged, but not random: the longest fall is at the centre and the shortest at the edges,
+        // so the hem reads as a cloak hanging from a yoke rather than as a torn rag.
+        ReadOnlySpan<float> hem = [-0.34f, -0.46f, -0.50f, -0.42f, -0.30f];
+
+        for (int b = 0; b < bays; b++)
+        {
+            float bottom = hem[b];
+            for (int c = 0; c < perBay; c++)
+            {
+                int column = (b * perBay) + c;
+                float s0 = -1f + (2f * column / (bays * perBay));
+                float s1 = -1f + (2f * (column + 1) / (bays * perBay));
+                float u0 = (float)column / (bays * perBay);
+                float u1 = (float)(column + 1) / (bays * perBay);
+
+                for (int j = 0; j < rows; j++)
+                {
+                    float y0 = bottom + ((0.5f - bottom) * j / rows);
+                    float y1 = bottom + ((0.5f - bottom) * (j + 1) / rows);
+                    float v0 = (float)j / rows;
+                    float v1 = (float)(j + 1) / rows;
+
+                    for (int side = 0; side < 2; side++)
+                    {
+                        bool front = side == 0;
+                        SmoothQuad(
+                            writer,
+                            DrapeVertex(s0, y0, front, u0, 1f - v0),
+                            DrapeVertex(s1, y0, front, u1, 1f - v0),
+                            DrapeVertex(s1, y1, front, u1, 1f - v1),
+                            DrapeVertex(s0, y1, front, u0, 1f - v1));
+                    }
+                }
+
+                // The hem of this column, and the collar edge above it.
+                FlatQuad(
+                    writer,
+                    DrapePoint(s0, bottom, -halfThickness),
+                    DrapePoint(s1, bottom, -halfThickness),
+                    DrapePoint(s1, bottom, halfThickness),
+                    DrapePoint(s0, bottom, halfThickness),
+                    new Vector3(0f, -1f, 0f));
+                FlatQuad(
+                    writer,
+                    DrapePoint(s0, 0.5f, halfThickness),
+                    DrapePoint(s1, 0.5f, halfThickness),
+                    DrapePoint(s1, 0.5f, -halfThickness),
+                    DrapePoint(s0, 0.5f, -halfThickness),
+                    new Vector3(0f, 1f, 0f));
+            }
+        }
+
+        // The vertical cut between two bays whose hems differ: without it the sheet has a hole at
+        // every step in the hem, and a hole in a cloak is the one thing the camera never forgives.
+        for (int b = 0; b + 1 < bays; b++)
+        {
+            float lower = MathF.Min(hem[b], hem[b + 1]);
+            float upper = MathF.Max(hem[b], hem[b + 1]);
+            if (upper - lower < 1e-5f)
+            {
+                continue;
+            }
+
+            float s = -1f + (2f * (b + 1) / bays);
+            float outward = hem[b] < hem[b + 1] ? 1f : -1f;
+            FlatQuad(
+                writer,
+                DrapePoint(s, lower, -halfThickness),
+                DrapePoint(s, upper, -halfThickness),
+                DrapePoint(s, upper, halfThickness),
+                DrapePoint(s, lower, halfThickness),
+                new Vector3(outward, 0f, 0f));
+        }
+
+        // The two long edges.
+        for (int edge = 0; edge < 2; edge++)
+        {
+            float s = edge == 0 ? -1f : 1f;
+            float bottom = edge == 0 ? hem[0] : hem[bays - 1];
+            for (int j = 0; j < rows; j++)
+            {
+                float y0 = bottom + ((0.5f - bottom) * j / rows);
+                float y1 = bottom + ((0.5f - bottom) * (j + 1) / rows);
+                FlatQuad(
+                    writer,
+                    DrapePoint(s, y0, -halfThickness),
+                    DrapePoint(s, y1, -halfThickness),
+                    DrapePoint(s, y1, halfThickness),
+                    DrapePoint(s, y0, halfThickness),
+                    new Vector3(s, 0f, 0f));
+            }
+        }
+    }
+
+    // How far the cloth reaches either side at this height: 0.30 at the collar, 0.50 at the hem.
+    private static float DrapeHalfWidth(float y) => 0.30f + (0.20f * (0.5f - y));
+
+    // The mid-surface in Z: a camber toward -Z so the cloth wraps the back, plus five soft folds.
+    private static float DrapeSurface(float s) =>
+        (-0.14f * (1f - (s * s))) + (0.045f * MathF.Cos(MathF.PI * 2.5f * (s + 1f)));
+
+    private static float DrapeSurfaceSlope(float s) =>
+        (0.28f * s) - (0.045f * MathF.PI * 2.5f * MathF.Sin(MathF.PI * 2.5f * (s + 1f)));
+
+    private static Vector3 DrapePoint(float s, float y, float offset) =>
+        new(DrapeHalfWidth(y) * s, y, DrapeSurface(s) + offset);
+
+    // The normal comes from the two tangents of the surface, because the sheet varies along BOTH
+    // axes here - the width is a function of height - and a normal taken from the width alone leans
+    // the wrong way near the hem.
+    private static (Vector3 Position, Vector3 Normal, Vector2 Uv) DrapeVertex(
+        float s,
+        float y,
+        bool front,
+        float u,
+        float v)
+    {
+        const float halfThickness = 0.05f;
+        float width = DrapeHalfWidth(y);
+        float slope = DrapeSurfaceSlope(s);
+        Vector3 alongS = new(width, 0f, slope);
+        Vector3 alongY = new(-0.20f * s, 1f, 0f);
+        Vector3 normal = Vector3.Normalize(Vector3.Cross(alongS, alongY));
+        float side = front ? -1f : 1f;
+        if (front)
+        {
+            normal = -normal;
+        }
+
+        return (DrapePoint(s, y, side * halfThickness), normal, Uv(u, v));
     }
 
     // ---- shared geometry helpers ----------------------------------------

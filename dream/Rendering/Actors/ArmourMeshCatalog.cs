@@ -245,6 +245,7 @@ public static class ArmourMeshCatalog
         const EquipmentShape Gem = EquipmentShape.Gem;
         const EquipmentShape Panel = EquipmentShape.Panel;
         const EquipmentShape Horn = EquipmentShape.Horn;
+        const EquipmentShape Drape = EquipmentShape.Drape;
         const EquipmentShape Flare = EquipmentShape.Flare;
         const EquipmentShape Pauldron = EquipmentShape.Pauldron;
         const EquipmentShape Cuirass = EquipmentShape.Cuirass;
@@ -708,11 +709,9 @@ public static class ArmourMeshCatalog
         Add("worn.back.travel-cloak", ArmourMount.Back,
             Box(0f, 0.84f, -0.22f, 0.38f, 0.10f, 0.06f, Leather, shape: Panel),
             Box(0f, 0.74f, -0.22f, 0.30f, 0.05f, 0.06f, Leather, shape: BevelBox),
-            Box(0f, 0.56f, -0.26f, 0.30f, 0.36f, 0.06f, Ash, pitch: 3f, shape: Panel),
-            Box(0.20f, 0.26f, -0.30f, 0.20f, 0.40f, 0.06f, Ash, pitch: 6f, yaw: 18f, shape: Panel),
-            Box(-0.20f, 0.26f, -0.30f, 0.20f, 0.40f, 0.06f, Cold, pitch: 6f, yaw: -18f, shape: Panel),
-            Box(0.155f, 0.06f, -0.34f, 0.18f, 0.28f, 0.06f, Ash, pitch: 10f, yaw: 12f, shape: Panel),
-            Box(-0.155f, 0.10f, -0.34f, 0.18f, 0.20f, 0.06f, Cold, pitch: 10f, yaw: -12f, shape: Panel),
+            Box(0f, 0.58f, -0.22f, 0.40f, 0.34f, 0.06f, Ash, pitch: 3f, shape: Drape),
+            Box(0f, 0.33f, -0.28f, 0.60f, 0.82f, 0.07f, Ash, pitch: 5f, shape: Drape),
+            Box(0f, 0.46f, -0.335f, 0.50f, 0.44f, 0.06f, Cold, pitch: 7f, shape: Drape),
             Box(0f, 0.90f, -0.17f, 0.10f, 0.04f, 0.08f, Steel, shape: BevelBox),
             Box(0f, 0.90f, -0.14f, 0.07f, 0.07f, 0.07f, Gilt, pitch: 90f, shape: Ring));
 
@@ -723,13 +722,9 @@ public static class ArmourMeshCatalog
         // so the hem steps instead of running straight across and the legs show between and below the falls.
         // Above it all a raised standing collar (not a hood) with a bone rim, and a clasp bar at the throat.
         Add("worn.back.hooded-cloak", ArmourMount.Back,
-            Box(0f, 0.62f, -0.22f, 0.32f, 0.60f, 0.06f, Ash, pitch: 2f, shape: Panel),
-            Box(0.185f, 0.12f, -0.26f, 0.22f, 0.44f, 0.06f, Cold, pitch: 5f, yaw: 16f, shape: Panel),
-            Box(-0.185f, 0.12f, -0.26f, 0.22f, 0.44f, 0.06f, Ash, pitch: 5f, yaw: -16f, shape: Panel),
-            Box(0.16f, -0.18f, -0.30f, 0.20f, 0.42f, 0.06f, Ash, pitch: 8f, yaw: 12f, shape: Panel),
-            Box(-0.16f, -0.10f, -0.30f, 0.20f, 0.34f, 0.06f, Cold, pitch: 8f, yaw: -12f, shape: Panel),
-            Box(0.125f, -0.25f, -0.34f, 0.17f, 0.36f, 0.06f, Ash, pitch: 12f, yaw: 8f, shape: Panel),
-            Box(-0.125f, -0.30f, -0.34f, 0.17f, 0.28f, 0.06f, Cold, pitch: 12f, yaw: -8f, shape: Panel),
+            Box(0f, 0.62f, -0.22f, 0.40f, 0.42f, 0.06f, Ash, pitch: 2f, shape: Drape),
+            Box(0f, 0.22f, -0.28f, 0.64f, 1.26f, 0.07f, Ash, pitch: 4f, shape: Drape),
+            Box(0f, 0.40f, -0.335f, 0.52f, 0.64f, 0.06f, Cold, pitch: 6f, shape: Drape),
             Box(0f, 1.00f, -0.22f, 0.34f, 0.30f, 0.06f, Ash, pitch: -10f, shape: Panel),
             Box(0f, 1.175f, -0.22f, 0.24f, 0.03f, 0.06f, Bone, shape: Ring),
             Box(0f, 0.86f, -0.17f, 0.26f, 0.05f, 0.07f, Iron, shape: BevelBox));
@@ -743,9 +738,9 @@ public static class ArmourMeshCatalog
             Box(-0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: 18f, shape: Panel),
             Box(0f, 0.66f, -0.10f, 0.66f, 0.10f, 0.36f, Ash, shape: Panel),
             Box(0f, 0.905f, -0.08f, 0.26f, 0.03f, 0.22f, Bone, shape: Ring),
-            Box(0f, 0.40f, -0.22f, 0.32f, 0.44f, 0.06f, Cold, pitch: 3f, shape: Panel),
-            Box(-0.175f, 0.08f, -0.26f, 0.24f, 0.36f, 0.06f, Ash, pitch: 6f, yaw: -14f, shape: Panel),
-            Box(0.185f, 0.12f, -0.30f, 0.26f, 0.28f, 0.06f, Cold, pitch: 8f, yaw: 14f, shape: Panel),
+            Box(0f, 0.46f, -0.22f, 0.40f, 0.30f, 0.06f, Cold, pitch: 3f, shape: Drape),
+            Box(0f, 0.26f, -0.28f, 0.62f, 0.70f, 0.07f, Cold, pitch: 5f, shape: Drape),
+            Box(0f, 0.40f, -0.335f, 0.50f, 0.36f, 0.06f, Ash, pitch: 7f, shape: Drape),
             Box(0.34f, 0.74f, -0.06f, 0.07f, 0.07f, 0.07f, Iron, roll: -40f, shape: Spike),
             Box(-0.34f, 0.74f, -0.06f, 0.07f, 0.07f, 0.07f, Iron, roll: 40f, shape: Spike));
 
@@ -760,13 +755,11 @@ public static class ArmourMeshCatalog
         Add("worn.back.sorcerer-mantle", ArmourMount.Back,
             Box(0f, 0.86f, -0.12f, 0.40f, 0.34f, 0.09f, Indigo, pitch: -90f, shape: Pauldron),
             Box(0f, 0.88f, -0.16f, 0.22f, 0.04f, 0.07f, Steel, shape: BevelBox),
-            Box(0f, 0.72f, -0.22f, 0.30f, 0.44f, 0.06f, Cold, pitch: 2f, shape: Panel),
-            Box(0.135f, 0.30f, -0.28f, 0.24f, 0.46f, 0.06f, Cold, pitch: 5f, yaw: 8f, shape: Panel),
-            Box(-0.135f, 0.30f, -0.28f, 0.24f, 0.46f, 0.06f, Cold, pitch: 5f, yaw: -8f, shape: Panel),
-            Box(0.115f, -0.14f, -0.34f, 0.21f, 0.42f, 0.06f, Cold, pitch: 8f, yaw: 5f, shape: Panel),
-            Box(-0.115f, -0.14f, -0.34f, 0.21f, 0.42f, 0.06f, Cold, pitch: 8f, yaw: -5f, shape: Panel),
-            Box(0f, -0.30f, -0.31f, 0.44f, 0.05f, 0.06f, Gilt, shape: Panel),
-            Box(0f, 0.79f, -0.19f, 0.26f, 0.03f, 0.06f, Gilt, shape: Ring));
+            Box(0f, 0.58f, -0.20f, 0.36f, 0.36f, 0.06f, Cold, pitch: 2f, shape: Drape),
+            Box(0f, 0.215f, -0.25f, 0.52f, 1.06f, 0.07f, Cold, pitch: 4f, shape: Drape),
+            Box(0f, 0.44f, -0.30f, 0.44f, 0.46f, 0.06f, Indigo, pitch: 6f, shape: Drape),
+            Box(0f, -0.30f, -0.34f, 0.44f, 0.05f, 0.06f, Gilt, shape: Panel),
+            Box(0f, 0.79f, -0.17f, 0.26f, 0.03f, 0.06f, Gilt, shape: Ring));
 
         // Not cloth, and not two flat violet quads either: a DARK IRON SPAR FRAME - a long leading spar laid
         // along the top of each wing and a shorter rib under it - carrying a smaller arcane membrane inside.

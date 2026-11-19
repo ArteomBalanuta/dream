@@ -890,20 +890,46 @@ public class ArmourMeshCatalogTests
     }
 
     [Theory]
-    [InlineData("worn.back.hooded-cloak", 3)]
-    [InlineData("worn.back.grave-mantle", 2)]
-    public void LongCloaks_HaveAScallopedHem(string id, int minFolds)
+    [InlineData("worn.back.hooded-cloak")]
+    [InlineData("worn.back.grave-mantle")]
+    [InlineData("worn.back.travel-cloak")]
+    [InlineData("worn.back.sorcerer-mantle")]
+    public void EveryCloak_HasARaggedHem(string id)
     {
-        // The hem is several side-by-side boxes whose bottoms differ, so the lower outline steps
-        // instead of running as one straight line. Folds are the boxes reaching the lowest tier.
-        (Vector3 min, _) = Union(Model(id));
-        float[] bottoms = [.. Model(id).Parts
-            .Where(p => p.Center.Z <= CloakPanelZ && PartBounds(p).Item1.Y < min.Y + 0.25f)
-            .Select(p => MathF.Round(PartBounds(p).Item1.Y, 2))];
-        Assert.True(bottoms.Length >= minFolds, $"{id} has {bottoms.Length} hem boxes");
-        Assert.True(bottoms.Distinct().Count() >= minFolds, $"{id} hem bottoms are level");
-        Assert.True(bottoms.Max() - bottoms.Min() >= 0.05f, $"{id} hem steps only {bottoms.Max() - bottoms.Min()}");
+        // The hem must STEP rather than run as one straight line across the figure. That has not
+        // changed; where it lives has. It used to be several side-by-side boxes cut to different
+        // heights, and that worked in the sense the test measured and failed in the engine: with a
+        // gap between every fall and no surface shared across them, the set read as loose grey
+        // rectangles floating behind the figure rather than as cloth. The step is now inside the
+        // Drape mesh, whose five fold bays each end at their own height - a ragged hem across 0.20
+        // of the part's own height - so the cloth stays joined above it.
+        //
+        // So what is asserted is that the lowest-hanging cloth IS a Drape and is deep enough for its
+        // hem step to clear a screen pixel, plus the old rule that the falls hang at more than one
+        // depth. A hem step the player cannot see is the failure this catches, exactly as before.
+        ArmourModel model = Model(id);
+        (Vector3 unionMin, _) = Union(model);
+
+        ArmourPart[] falls = [.. model.Parts.Where(p => p.Shape == EquipmentShape.Drape)];
+        Assert.True(falls.Length >= 3, $"{id} hangs {falls.Length} falls; a cloak is layered");
+
+        ArmourPart lowest = falls.OrderBy(p => PartBounds(p).Item1.Y).First();
+        Assert.True(
+            PartBounds(lowest).Item1.Y <= unionMin.Y + 0.02f,
+            $"{id}: the lowest thing in the piece is not one of its falls");
+
+        // DrapeHemRaggedness is the fraction of the unit shape's height between its longest fold bay
+        // and its shortest. Times the part's own Size.Y it is the hem step in engine units, and
+        // PixelUnits is one screen pixel at the shipped zoom.
+        float step = lowest.Size.Y * DrapeHemRaggedness;
+        Assert.True(
+            step >= 2f * PixelUnits,
+            $"{id} hem steps {step}, under two pixels ({2f * PixelUnits})");
     }
+
+    // EquipmentShapeLibrary.AppendDrape hangs its five fold bays at -0.34, -0.46, -0.50, -0.42 and
+    // -0.30 in the unit frame, so the ragged hem spans 0.20 of the shape's height.
+    private const float DrapeHemRaggedness = 0.20f;
 
     // The knee, in the torso frame the Back mount is authored in: the leg pieces put their knee cop at
     // y -0.42..-0.45, so this is where the leg's own silhouette starts to matter most.
