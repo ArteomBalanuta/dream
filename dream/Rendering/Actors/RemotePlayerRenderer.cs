@@ -11,7 +11,7 @@ using Dream.Simulation.World;
 namespace Dream.Rendering.Actors;
 
 
-public sealed class RemotePlayerRenderer : IDisposable
+public sealed class RemotePlayerRenderer : IDisposable, IHeldFlamePointLookup
 {
     // Model streaming: a remote player's animation instance handle is requested once the player is
     // within ModelRequestDistance (render distance plus a margin, so it is usually ready before it
@@ -55,6 +55,29 @@ public sealed class RemotePlayerRenderer : IDisposable
         public PlayerAnimationStateMachine Machine { get; } = new();
 
         public PlayerPoseLayers Layers { get; } = new();
+
+        // The held light's flame in model space, as the last draw posed it; valid only while FlameDrawSerial is
+        // the renderer's current draw (a player culled this frame keeps a stale point).
+        public bool HasFlame;
+
+        public Vector3 FlameModelPoint;
+
+        public int FlameDrawSerial;
+    }
+
+    private int _drawSerial;
+
+    public bool TryGetHeldFlameModelPoint(int actorId, out Vector3 modelPoint)
+    {
+        if (_animations.TryGetValue(actorId, out RemoteAnimationState? state) &&
+            state.HasFlame && state.FlameDrawSerial == _drawSerial)
+        {
+            modelPoint = state.FlameModelPoint;
+            return true;
+        }
+
+        modelPoint = Vector3.Zero;
+        return false;
     }
 
     public RemotePlayerRenderer(Render render)
@@ -69,6 +92,7 @@ public sealed class RemotePlayerRenderer : IDisposable
     {
         // Recorded afresh below: a pruned or released player must not leave a ghost shadow.
         _casters.Clear();
+        _drawSerial++;
         PruneModelEntries(remotePlayers);
         ReleaseReassignedActors(remotePlayers);
         ReleaseFarModels(camera.Position, remotePlayers);
@@ -114,6 +138,8 @@ public sealed class RemotePlayerRenderer : IDisposable
             _clipTracker.ApplyFrame(remotePlayer.ActorId, in frame, instance);
             instance.Update(deltaTime);
             animation.Layers.Update(instance, in frame);
+            animation.HasFlame = HeldWeaponRenderer.TryGetFlameModelPoint(instance, animation.Layers, in equipment, out animation.FlameModelPoint);
+            animation.FlameDrawSerial = _drawSerial;
 
             Shader shader = _render.GetShader(renderState.ShaderName);
             bool flashing = frame.HitFlinch > 0.01f;

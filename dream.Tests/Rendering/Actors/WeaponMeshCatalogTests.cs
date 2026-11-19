@@ -34,6 +34,36 @@ public class WeaponMeshCatalogTests
         Assert.NotSame(WeaponMeshCatalog.Resolve("held.unknown"), model);
     }
 
+    [Theory]
+    [InlineData("held.tool.torch", WeaponMaterial.Ember)]
+    [InlineData("held.tool.lantern", WeaponMaterial.Ember)]
+    [InlineData("held.gear.ward-lantern", WeaponMaterial.Arcane)]
+    public void TheFlamePoint_LiesInsideAFlamePartOfItsOwnModel(string id, WeaponMaterial flameMaterial)
+    {
+        Assert.True(WeaponMeshCatalog.TryGetFlamePoint(id, out Vector3 point));
+
+        bool inside = WeaponMeshCatalog.Resolve(id).Parts
+            .Where(p => p.Material == flameMaterial)
+            .Any(p =>
+            {
+                Vector3 local = Vector3.TransformPosition(point, p.ToMatrix().Inverted());
+                return MathF.Abs(local.X) <= 0.5f + 1e-4f && MathF.Abs(local.Y) <= 0.5f + 1e-4f && MathF.Abs(local.Z) <= 0.5f + 1e-4f;
+            });
+        Assert.True(inside, $"{id}: flame point {point} is in none of its {flameMaterial} boxes");
+    }
+
+    [Theory]
+    [InlineData("held.tool.blade")]
+    [InlineData("held.weapon.sword")]
+    [InlineData("held.shield.kite")]
+    [InlineData("held.unknown")]
+    [InlineData(null)]
+    public void NonLightItems_HaveNoFlamePoint(string? id)
+    {
+        Assert.False(WeaponMeshCatalog.TryGetFlamePoint(id, out Vector3 point));
+        Assert.Equal(Vector3.Zero, point);
+    }
+
     [Fact]
     public void NoTwoItemsShareAShape()
     {

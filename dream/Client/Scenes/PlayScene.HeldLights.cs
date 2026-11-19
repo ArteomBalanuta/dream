@@ -42,13 +42,25 @@ public partial class PlayScene
         PushLocalAvatarInputs(player);
         // The interpolated render pose (raw body in first person), so a third-person light rides
         // with the drawn model instead of stepping on prediction ticks.
+        bool firstPerson = _settings.CameraViewMode == CameraViewMode.FirstPerson;
+        bool hasFlame = false;
+        Vector3 flameModelPoint = default;
+        if (!firstPerson)
+        {
+            hasFlame = _render.LocalPlayers.TryGetHeldFlameModelPoint(out flameModelPoint);
+        }
+
         LocalHeldLight local = new(
             player.Combatant.Health.IsAlive ? _localHeldLight : HeldLightKind.None,
             player.Combatant.Actor.Id,
-            _settings.CameraViewMode == CameraViewMode.FirstPerson,
+            firstPerson,
             _runtime.LocalRenderPose.Position,
-            _runtime.LocalRenderPose.Facing);
-        AddHeldLights(lights, in local, camera.Position, camera.Front, camera.Right, camera.Up, remotePlayers, _clientPresentationTimeSeconds);
+            _runtime.LocalRenderPose.Facing,
+            hasFlame,
+            flameModelPoint);
+        AddHeldLights(
+            lights, in local, camera.Position, camera.Front, camera.Right, camera.Up, remotePlayers,
+            _clientPresentationTimeSeconds, _render.RemotePlayers);
     }
 
     // Hands the local avatar renderer this frame's held items and animation events: a swing when the
@@ -94,7 +106,10 @@ public partial class PlayScene
         int ActorId,
         bool FirstPerson,
         Vector3 BodyPosition,
-        Vector3 BodyFacing);
+        Vector3 BodyFacing,
+        // The flame of the held item in the model's own space, from the last local draw (third person only).
+        bool HasFlame = false,
+        Vector3 FlameModelPoint = default);
 
     // Adds one light per lit player: the local one (anchored to the camera in first person, to the
     // body in third person) and each living remote player whose HeldLight is not None. Static, with
@@ -107,13 +122,19 @@ public partial class PlayScene
         Vector3 cameraRight,
         Vector3 cameraUp,
         IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
-        double timeSeconds)
+        double timeSeconds,
+        IHeldFlamePointLookup? remoteFlames = null)
     {
         if (local.Kind != HeldLightKind.None)
         {
+            // Third person: the flame of the item in the animated hand when the last draw posed one, else the
+            // fixed body anchor.
             Vector3 anchor = local.FirstPerson
                 ? HeldLightAnchor.FirstPerson(cameraPosition, cameraFront, cameraRight, cameraUp)
-                : HeldLightAnchor.Body(local.BodyPosition, local.BodyFacing);
+                : local.HasFlame
+                    ? Vector3.TransformPosition(
+                        local.FlameModelPoint, PlayerRenderState.CreateModelMatrix(local.BodyPosition, local.BodyFacing))
+                    : HeldLightAnchor.Body(local.BodyPosition, local.BodyFacing);
             if (HeldLightCatalog.TryCreate(local.Kind, anchor, timeSeconds, local.ActorId, out PointLight light))
             {
                 lights.Add(in light);
@@ -129,7 +150,9 @@ public partial class PlayScene
                 continue;
             }
 
-            Vector3 anchor = HeldLightAnchor.Body(remote.Pose.Position, remote.Pose.Facing);
+            Vector3 anchor = remoteFlames != null && remoteFlames.TryGetHeldFlameModelPoint(remote.ActorId, out Vector3 flame)
+                ? Vector3.TransformPosition(flame, PlayerRenderState.CreateModelMatrix(remote.Pose.Position, remote.Pose.Facing))
+                : HeldLightAnchor.Body(remote.Pose.Position, remote.Pose.Facing);
             if (HeldLightCatalog.TryCreate(remote.HeldLight, anchor, timeSeconds, remote.ActorId, out PointLight light))
             {
                 lights.Add(in light);

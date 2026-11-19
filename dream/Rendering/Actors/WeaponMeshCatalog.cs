@@ -90,6 +90,28 @@ public static class WeaponMeshCatalog
         return visualId != null && Models.TryGetValue(visualId, out WeaponModel? model) ? model : Generic;
     }
 
+    // Where the flame of a light-casting held item burns, in the item's own frame (before the grip and the
+    // item scale): the held light is anchored here so it rides the item the hand actually carries. An explicit
+    // table, one row per lit item; false for every other id.
+    public static bool TryGetFlamePoint(string? visualId, out Vector3 itemPoint)
+    {
+        switch (visualId)
+        {
+            case "held.tool.torch":
+                itemPoint = new Vector3(0f, 0.62f, 0f);
+                return true;
+            case "held.tool.lantern":
+                itemPoint = Vector3.Zero;
+                return true;
+            case "held.gear.ward-lantern":
+                itemPoint = new Vector3(0f, -0.02f, 0f);
+                return true;
+            default:
+                itemPoint = Vector3.Zero;
+                return false;
+        }
+    }
+
     public static bool IsKnown(string visualId) => visualId != null && Models.ContainsKey(visualId);
 
     public static bool IsShield(string? visualId) =>

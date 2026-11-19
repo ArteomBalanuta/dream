@@ -38,6 +38,8 @@ public sealed class LocalPlayerRenderer : IDisposable
     private AnimatedModelInstanceHandle? _model;
     private Matrix4 _lastModelMatrix = Matrix4.Identity;
     private bool _hasDrawn;
+    private bool _hasFlame;
+    private Vector3 _flameModelPoint;
     private bool _disposed;
 
     public LocalPlayerRenderer(Render render)
@@ -56,6 +58,14 @@ public sealed class LocalPlayerRenderer : IDisposable
 
     public void ClearCasters() => _casters.Clear();
 
+    // The flame of the held light in the model's own space, as the last Draw posed it; false when the last Draw
+    // did not run (first person, model not loaded) or the figure holds no lit item.
+    public bool TryGetHeldFlameModelPoint(out Vector3 modelPoint)
+    {
+        modelPoint = _flameModelPoint;
+        return _hasFlame;
+    }
+
     // The animation frame the last Draw selected, and the raw travel-minus-facing delta it was
     // selected from. The capture's status line logs them (acceptance M6): without this the chosen
     // clip is nowhere in the output, so "the state machine selects by C2" could only be DERIVED
@@ -69,6 +79,7 @@ public sealed class LocalPlayerRenderer : IDisposable
     public void Draw(LocalPlayerPresentationState localPlayer, Camera camera, float deltaTime, bool silhouette = false)
     {
         _casters.Clear();
+        _hasFlame = false;
         if (_disposed)
         {
             return;
@@ -119,6 +130,7 @@ public sealed class LocalPlayerRenderer : IDisposable
         _clipTracker.ApplyFrame(LocalActorId, in frame, instance);
         instance.Update(deltaTime);
         _layers.Update(instance, in frame);
+        _hasFlame = HeldWeaponRenderer.TryGetFlameModelPoint(instance, _layers, in equipment, out _flameModelPoint);
 
         Shader shader = _render.GetShader(renderState.ShaderName);
         if (silhouette)
