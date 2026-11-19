@@ -66,10 +66,10 @@ const float ActorDirectScale = 0.75;
 // How hard a highlight is allowed to be, in one place. The sum is added before dreamExpose, so a
 // real highlight is exposed with everything else and is allowed to clip to white - a highlight is
 // supposed to be the brightest thing in frame - while a grazing one stays a value, not a flare.
-const float EquipSpecularStrength = 0.55;
+const float EquipSpecularStrength = 0.30;
 // The fresnel edge sheen rides much lower: at 28 px across it is there to separate a helm's rim
 // from the head behind it, not to outline the piece.
-const float EquipFresnelStrength = 0.10;
+const float EquipFresnelStrength = 0.08;
 // Mirrors EquipmentSurface.MinRoughness. A narrower lobe than this aliases at the shipped zoom.
 const float EquipMinRoughness = 0.18;
 const float EquipMaxShininess = 512.0;
@@ -94,22 +94,34 @@ float dreamEquipNoise(vec3 p) {
     return mix(mix(n00, n10, f.y), mix(n01, n11, f.y), f.z);
 }
 
-// The wear field: three octaves at about 11, 38 and 72 cycles per world metre, so the coarse one
-// reads as dents and the fine ones as hammer dimples and pitting. Roughly centred on 0.5.
+// The wear field: three octaves at about 4, 11 and 26 cycles per world metre. The frequencies are
+// chosen against the PIXEL RATE, not against the metre. A worn piece is roughly 0.25 m across and
+// about 12 px wide at the shipped isometric zoom, so one pixel spans ~0.02 m: an octave at 38 or 72
+// cycles per metre puts one or two full cycles INSIDE a pixel and averages away to a flat grey,
+// which is exactly what the first in-engine pass of this wave showed. At 4 and 11 cycles the coarse
+// octaves read as dents, soot and scuffing across a few pixels, which is the point. Centred near 0.5.
 float dreamEquipGrain(vec3 worldPos) {
-    float n = dreamEquipNoise(worldPos * 38.0) * 0.55;
-    n += dreamEquipNoise(worldPos * 11.0) * 0.32;
-    n += dreamEquipNoise(worldPos * 72.0) * 0.13;
+    float n = dreamEquipNoise(worldPos * 11.0) * 0.52;
+    n += dreamEquipNoise(worldPos * 4.0) * 0.33;
+    n += dreamEquipNoise(worldPos * 26.0) * 0.15;
     return clamp(n, 0.0, 1.0);
 }
 
-// One Blinn-Phong lobe against a directional light. toLight points TOWARD the light, viewDir TOWARD
-// the eye; the result still has to be multiplied by the light's colour and intensity.
+// The NORMALISED Blinn-Phong lobe: (shininess + 8) / (8 pi) keeps the energy under the lobe constant
+// as it widens. Without it a rough material (leather at roughness 0.8 resolves to a shininess of
+// about 2.5) gets a lobe nearly as wide as the diffuse term AT FULL AMPLITUDE, which is not a
+// highlight at all - it is a second diffuse light, and it washed the whole figure to cream on the
+// first in-engine pass of this wave. Normalised, a rough surface gets a dim broad sheen and a
+// polished one a tight bright glint, which is the distinction the material table is for.
+const float EquipLobeNormalisation = 1.0 / (8.0 * 3.14159265);
+
+// One lobe against a directional light. toLight points TOWARD the light, viewDir TOWARD the eye;
+// the result still has to be multiplied by the light's colour and intensity.
 vec3 dreamEquipLobe(vec3 n, vec3 viewDir, vec3 toLight, float shininess, vec3 f0) {
     float ndl = max(dot(n, toLight), 0.0);
     if (ndl <= 0.0) { return vec3(0.0); }
     vec3 h = normalize(toLight + viewDir);
-    float spec = pow(max(dot(n, h), 0.0), shininess);
+    float spec = pow(max(dot(n, h), 0.0), shininess) * ((shininess + 8.0) * EquipLobeNormalisation);
     vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - max(dot(h, viewDir), 0.0), 5.0);
     return fresnel * (ndl * spec);
 }
@@ -145,7 +157,7 @@ void main()
 
         // Surface grain. The modulation is mostly DOWNWARD, so a piece gets pitted, not brighter.
         float wear = dreamEquipGrain(fragPos);
-        float wearAlbedo = mix(1.0 - 0.22 * grain, 1.0 + 0.05 * grain, wear);
+        float wearAlbedo = mix(1.0 - 0.34 * grain, 1.0 + 0.07 * grain, wear);
         // `lit` above is albedo * max(G, floor) and is LINEAR in the albedo, so scaling it here is
         // exactly the same thing as modulating the albedo before the floor clamp - and because it
         // scales both terms, the floor still holds and a dark piece can never go black.
@@ -169,7 +181,7 @@ void main()
 
         // Fresnel edge sheen: the sky caught on a rim. Metal takes most of it, leather a little.
         float rim = pow(1.0 - max(dot(n, v), 0.0), 5.0);
-        spec += uAmbientSky.rgb * (rim * (0.25 + 0.75 * metallic) * EquipFresnelStrength);
+        spec += uAmbientSky.rgb * (rim * (0.10 + 0.90 * metallic) * EquipFresnelStrength);
 
         // Before dreamExpose, so a highlight is exposed with everything else and may clip to white.
         lit += spec * EquipSpecularStrength;

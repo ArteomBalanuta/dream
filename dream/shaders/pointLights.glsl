@@ -50,7 +50,10 @@ vec3 dreamPointSpecular(vec3 n, vec3 fragPos, vec3 viewDir, float shininess, vec
         float ndl = max(dot(n, l), 0.0);
         if (ndl <= 0.0) { continue; } // a light behind the surface makes no highlight
         vec3 h = normalize(l + viewDir);
-        float spec = pow(max(dot(n, h), 0.0), shininess);
+        // Normalised exactly as the directional lobe in enemyFragment.glsl: the energy under the
+        // lobe stays constant as roughness widens it, so a rough piece gets a dim sheen from a
+        // torch and a polished one a tight glint, instead of both getting a second diffuse light.
+        float spec = pow(max(dot(n, h), 0.0), shininess) * ((shininess + 8.0) / (8.0 * 3.14159265));
         vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - max(dot(h, viewDir), 0.0), 5.0);
         sum += uPointLightColor[i].rgb * fresnel * (f * ndl * spec) * dreamFireVisibility(i, fragPos, n);
     }
