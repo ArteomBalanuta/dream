@@ -1562,6 +1562,153 @@ def icon_grave_mantle(s):
     _cloak(s, M(CLOTH, c="#2A1A1E", gloss=10), M(BONE, c="#8A8070", metal=0.2), False)
 
 
+# royal sorcerer regalia ---------------------------------------------------------------
+
+# enamelled plate: a deep indigo glaze fired over steel, so it keeps a metal's reflection under a dark colour
+ENAMEL = dict(c="#2B2B52", metal=0.8, gloss=110, spec=1.25, mott=0.08, tint=0.4)
+DEEP_ENAMEL = M(ENAMEL, c="#1B1B36", gloss=90, spec=1.0)
+TRIM_GOLD = M(GOLD, c="#E8A82A", spec=1.35)
+SORC_GEM = gemstone("#6E4AC8", 0.25)
+
+
+def icon_sorcerer_crown(s):
+    s.place(0, 1.0)
+    cx = s.fw / 2
+    # five spikes fanning out of the brow, drawn first so the band laps over their roots
+    for deg, ln, half in ((-62, 10.5, 1.7), (-31, 12.0, 1.9), (0, 12.5, 2.1), (31, 12.0, 1.9), (62, 10.5, 1.7)):
+        a = math.radians(deg)
+        d = (math.sin(a), -math.cos(a))
+        bx, by = cx + d[0] * 8.2, 19.0 + d[1] * 8.2
+        tx, ty = cx + d[0] * (8.2 + ln), 19.0 + d[1] * (8.2 + ln)
+        n = (-d[1] * half, d[0] * half)
+        s.poly([(bx - n[0], by - n[1]), (bx + n[0], by + n[1]), (tx, ty)], TRIM_GOLD,
+               bevel=1.2, prof="chamfer", slope=0.9, thick=(0.3, 0.4), cast=0.6)
+    # hood: a cowl that comes to a point, enamelled over the skull
+    hood = cr([(cx - 11.4, 31), (cx - 12, 20), (cx - 7.4, 12), (cx, 9.0), (cx + 7.4, 12), (cx + 12, 20),
+               (cx + 11.4, 31), (cx + 6.4, 36.4), (cx - 6.4, 36.4)], 6, True)
+    s.poly(hood, ENAMEL, bevel=11, prof="round", slope=0.7, thick=(0.6, 0.8))
+    # the mask face is a void; nothing of the wearer shows
+    s.poly([(cx - 8.4, 18.8), (cx + 8.4, 18.8), (cx + 7, 30.6), (cx, 33.4), (cx - 7, 30.6)],
+           M(BLACK, c="#090A10"), prof="flat", cast=0.6)
+    # gold brow band
+    s.poly(cr([(cx - 12, 17.6), (cx, 14.8), (cx + 12, 17.6)], 6) + cr([(cx + 11.6, 21.6), (cx, 19), (cx - 11.6, 21.6)], 6),
+           M(GOLD, c="#F0B63C"), bevel=1.4, thick=(0.3, 0.5), cast=0.7)
+    # nasal bar and the filigree running off it
+    s.poly([(cx - 1.4, 19.8), (cx + 1.4, 19.8), (cx + 1.0, 30.6), (cx - 1.0, 30.6)], TRIM_GOLD,
+           bevel=0.9, prof="chamfer", slope=0.8, thick=(0.3, 0.4))
+    # the eyes are two slits cut either side of the nasal, lit from within
+    for side in (1, -1):
+        s.poly([(cx + side * 2.6, 21.6), (cx + side * 7.2, 20.8), (cx + side * 7.0, 23.2), (cx + side * 2.8, 23.8)],
+               M(SORC_GEM, gloss=120, spec=1.0, emis=0.2), prof="flat", cast=0.3)
+    s.groove(cr([(cx, 9.8), (cx, 14.8)], 2), w=0.7, depth=-0.6, clip=False)
+    s.rivets([(cx - 9.6, 19.4), (cx + 9.6, 19.4)], 0.8, PALE_GOLD)
+
+
+def icon_sorcerer_regalia(s):
+    s.place(0, 1.0)
+    cx = s.fw / 2
+    half = cr(torso(cx=cx, top=6.4, bottom=34.4, sh=11.6, waist=8.2), 4)
+    s.poly(sym(half, cx), ENAMEL, bevel=9.5, prof="pillow", slope=0.6, thick=(0.6, 0.7), bump=(0.8, 0.25))
+    s.groove([(cx, 20), (cx, 32)], w=0.8, depth=0.7)
+    for side in (1, -1):
+        s.groove(cr([(cx + side * 3.4, 13.4), (cx + side * 6.8, 20), (cx + side * 6.2, 30)], 4), w=0.7, depth=0.6, dark=0.55)
+    s.poly([(cx - 9.6, 31.6), (cx + 9.6, 31.6), (cx + 9.2, 34.6), (cx - 9.2, 34.6)], TRIM_GOLD,
+           bevel=1.2, thick=(0.3, 0.5), cast=0.6)
+    # high collar, flared open behind the neck
+    for side in (1, -1):
+        s.poly([(cx + side * 1.6, 11.4), (cx + side * 3.0, 3.4), (cx + side * 9.4, -0.6),
+                (cx + side * 8.2, 5.8), (cx + side * 5.8, 11.8)],
+               M(GOLD, c="#D29826"), bevel=2.0, prof="chamfer", slope=0.8, thick=(0.4, 0.5), cast=0.7)
+    # swept pauldrons: two enamelled lames and a gold sweep off each
+    for side in (1, -1):
+        px = cx + side * 11.8
+        s.ellipse(px, 12.0, 7.0, 4.8, DEEP_ENAMEL, bevel=4.4, deg=side * 20, thick=(0.4, 0.5), cast=0.7)
+        s.ellipse(px, 9.8, 7.4, 4.6, ENAMEL, bevel=4.4, deg=side * 14, thick=(0.4, 0.6), cast=0.75)
+        s.poly([(px + side * 1.6, 6.4), (px + side * 4.8, 8.0), (px + side * 9.6, 1.6)], TRIM_GOLD,
+               bevel=1.0, prof="chamfer", slope=0.9, thick=(0.3, 0.4))
+        s.stroke(cr([(px - 6.0, 12.6), (px, 14.2), (px + 6.0, 12.6)], 4), 1.0, TRIM_GOLD, cast=0.5)
+    # the stone at the sternum is the only light the set carries
+    s.ring(cx, 17.4, 3.8, 4.2, 1.1, TRIM_GOLD, bevel=0.8, thick=(0.3, 0.4), cast=0.6)
+    s.cut(cx, 17.4, 2.5, 2.8, SORC_GEM, n=6)
+
+
+def icon_sorcerer_gauntlets(s):
+    s.place(16, 0.95, (20, 20))
+    for x, tip in ((12.4, 9.4), (16.8, 6.8), (21.2, 7.2), (25.4, 10.6)):
+        s.stroke([(x, 22), (x, tip)], 3.6, ENAMEL, cast=0.7)
+        s.groove([(x - 1.7, tip + 4.2), (x + 1.7, tip + 4.2)], w=0.45, depth=0.55, dark=0.45)
+    s.stroke(cr([(10.6, 27), (7, 22), (6.6, 16.8)], 4), 4.0, ENAMEL, width_end=2.8, cast=0.7)
+    s.poly([(10.4, 20), (28.4, 20), (28, 31.6), (11, 31.6)], ENAMEL, bevel=6, prof="pillow", slope=0.5,
+           thick=(0.4, 0.5), cast=0.7)
+    s.poly([(10.6, 19.2), (28.6, 19.2), (28.4, 22.2), (10.9, 22.2)], TRIM_GOLD, bevel=1.0, thick=(0.3, 0.4), cast=0.6)
+    s.groove([(13, 26.6), (27, 26.6)], w=0.5, depth=0.55, dark=0.45)
+    # flared cuff, bordered in gold
+    s.poly([(9.2, 30.8), (29.6, 30.8), (31.4, 39.4), (8.0, 39.4)], DEEP_ENAMEL, bevel=2.0, thick=(0.4, 0.5), cast=0.7)
+    s.poly([(8.3, 38.2), (31.2, 38.2), (31.8, 41.2), (7.5, 41.2)], TRIM_GOLD, bevel=1.0, thick=(0.3, 0.4), cast=0.5)
+    # spikes along the outer forearm
+    for x, y, ln in ((29.4, 31.6, 5.6), (30.2, 35.0, 6.2), (31.0, 38.4, 5.6)):
+        s.poly([(x, y - 1.5), (x, y + 1.5), (x + ln, y + 0.6)], TRIM_GOLD,
+               bevel=0.9, prof="chamfer", slope=0.9, thick=(0.3, 0.4), cast=0.6)
+    s.rivets([(14.0, 20.7), (20.0, 20.7), (26.0, 20.7)], 0.6, PALE_GOLD)
+
+
+def icon_sorcerer_greaves(s):
+    s.place(0, 1.0)
+    cx = s.fw / 2
+    for side in (-1, 1):
+        x = cx + side * 6.8
+        leg = cr([(x - 4.4, 4.4), (x + 4.4, 4.4), (x + 4.0, 20), (x + 3.4, 35.2), (x - 3.4, 35.2), (x - 4.0, 20)], 4, True)
+        s.poly(leg, ENAMEL, bevel=4.4, prof="round", slope=0.62, thick=(0.4, 0.5), bump=(0.8, 0.22))
+        # the knee cap comes to a point over the shin
+        s.poly([(x - 4.8, 15.6), (x, 10.0), (x + 4.8, 15.6), (x + 3.4, 18.8), (x - 3.4, 18.8)], TRIM_GOLD,
+               bevel=2.0, prof="chamfer", slope=0.8, thick=(0.4, 0.5), cast=0.7)
+        for y in (24, 28.4):
+            s.groove([(x - 3.5, y), (x + 3.5, y)], w=0.5, depth=0.5)
+        s.poly([(x - 3.8, 32.8), (x + 3.8, 32.8), (x + 3.5, 35.4), (x - 3.5, 35.4)], TRIM_GOLD, bevel=0.9, cast=0.5)
+    s.poly([(cx - 12.2, 2.2), (cx + 12.2, 2.2), (cx + 11.6, 7.0), (cx - 11.6, 7.0)], DEEP_ENAMEL,
+           bevel=1.2, thick=(0.3, 0.4), cast=0.7)
+    s.poly([(cx - 12.4, 1.4), (cx + 12.4, 1.4), (cx + 12.2, 3.2), (cx - 12.2, 3.2)], TRIM_GOLD, bevel=0.7, cast=0.4)
+    s.ellipse(cx, 4.8, 2.2, 2.2, TRIM_GOLD, bevel=1.8, thick=(0.2, 0.3), cast=0.6)
+
+
+def icon_sorcerer_sabatons(s):
+    """One enamelled boot in side profile, the gold toe cap drawn long and pointed."""
+    s.place(0, 0.95, (20, 20))
+    sole = M(BLACK, c="#191624", metal=0.2)
+    s.poly([(17, 33.8), (26.4, 33.8), (26.6, 38.2), (18, 38.2)], sole, bevel=0.8, thick=(0.2, 0.4))
+    s.poly([(-1.4, 34.2), (18, 34.2), (18, 36.6), (0.2, 36.4)], sole, bevel=0.7, thick=(0.2, 0.4))
+    shaft = cr([(11.0, 5.0), (23.8, 4.2), (25.2, 13), (23.4, 23), (25.6, 30), (25.6, 34.8), (13, 34.8),
+                (12.6, 23), (12.2, 13)], 5, True)
+    s.poly(shaft, ENAMEL, bevel=6, slope=0.55, thick=(0.4, 0.5), bump=(0.8, 0.22))
+    foot = cr([(15.6, 21), (9.4, 25.2), (3.4, 29.4), (-1.6, 32.4), (-3.4, 34.2), (-1.2, 35.4), (15.8, 35.4)], 6, True)
+    s.poly(foot, ENAMEL, bevel=5.4, slope=0.6, thick=(0.3, 0.4), cast=0.75)
+    for pts in ([(10.8, 24.6), (12.4, 29.6), (11.6, 35.0)], [(6.0, 27.6), (7.6, 31.4), (7.0, 35.0)]):
+        s.groove(cr(pts, 4), w=0.55, depth=0.55, dark=0.45)
+    s.groove(cr([(12.6, 19.4), (18, 20.4), (23.6, 19.4)], 4), w=0.6, depth=0.55, dark=0.45, clip=False)
+    toe = cr([(6.2, 27.4), (0.6, 31.2), (-6.6, 34.2), (-2.0, 36.2), (4.4, 33.8)], 5, True)
+    s.poly(toe, TRIM_GOLD, bevel=2.0, prof="chamfer", slope=0.8, thick=(0.3, 0.4), cast=0.7)
+    # flared top, bordered in gold
+    s.poly([(9.6, 2.6), (25.0, 1.2), (25.8, 6.8), (10.6, 8.2)], DEEP_ENAMEL, bevel=1.5, thick=(0.3, 0.4), cast=0.7)
+    s.poly([(9.4, 1.8), (25.0, 0.4), (25.2, 2.6), (9.6, 4.0)], TRIM_GOLD, bevel=0.7, cast=0.4)
+    s.ellipse(18.6, 26.4, 2.2, 2.2, TRIM_GOLD, bevel=1.8, thick=(0.2, 0.3), cast=0.7)
+
+
+def icon_sorcerer_mantle(s):
+    s.place(0, 1.0)
+    cx = s.fw / 2
+    half = cr([(cx + 5.4, 4), (cx + 11.6, 8), (cx + 15.4, 20), (cx + 17.6, 35), (cx + 9, 33), (cx, 37.6)], 5)
+    s.poly(sym(half, cx), M(CLOTH, c="#1F2142", gloss=14, metal=0.1), bevel=7, prof="pillow", slope=0.55,
+           thick=(0.6, 0.8), bump=(0.8, 0.3))
+    for dx in (-9.6, -4.6, 4.6, 9.6):
+        s.groove(cr([(cx + dx * 0.5, 10), (cx + dx, 22), (cx + dx * 1.12, 32)], 4), w=0.9, depth=0.7, dark=0.65)
+    border = (cr([(cx - 17.6, 30.6), (cx - 9, 28.6), (cx, 33.2), (cx + 9, 28.6), (cx + 17.6, 30.6)], 6)
+              + cr([(cx + 17.6, 35), (cx + 9, 33), (cx, 37.6), (cx - 9, 33), (cx - 17.6, 35)], 6))
+    s.poly(border, TRIM_GOLD, bevel=1.2, thick=(0.3, 0.5), cast=0.6)
+    s.poly(cr([(cx - 7.4, 3.4), (cx, 0.8), (cx + 7.4, 3.4), (cx + 5.8, 9.4), (cx, 11.2), (cx - 5.8, 9.4)], 5, True),
+           M(GOLD, c="#D29826"), bevel=3.0, thick=(0.4, 0.5), cast=0.7)
+    s.cut(cx, 6.2, 2.0, 2.2, SORC_GEM, n=6)
+
+
 def _flask(s, liquid, glow_c):
     cx = s.fw / 2
     glass_m = M(BONE, c="#9AA4AA", metal=0.2, gloss=160, spec=1.6, mott=0.04, tint=0.1)
@@ -1731,6 +1878,12 @@ CATALOGUE_ICONS = {
     "gear.blood-ring": (1, 1, icon_blood_ring),
     "gear.hooded-cloak": (3, 2, icon_hooded_cloak),
     "gear.grave-mantle": (3, 2, icon_grave_mantle),
+    "gear.sorcerer-crown": (2, 2, icon_sorcerer_crown),
+    "gear.sorcerer-regalia": (2, 2, icon_sorcerer_regalia),
+    "gear.sorcerer-gauntlets": (2, 2, icon_sorcerer_gauntlets),
+    "gear.sorcerer-greaves": (2, 2, icon_sorcerer_greaves),
+    "gear.sorcerer-sabatons": (2, 2, icon_sorcerer_sabatons),
+    "gear.sorcerer-mantle": (3, 2, icon_sorcerer_mantle),
     "consumable.weak-heal": (1, 1, icon_potion_weak_heal),
     "consumable.minor-heal": (1, 1, icon_potion_minor_heal),
     "consumable.greater-heal": (1, 1, icon_potion_greater_heal),
