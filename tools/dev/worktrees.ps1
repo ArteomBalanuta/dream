@@ -8,16 +8,21 @@
   -CleanBuildOutput  deletes dream/bin, dream/obj, dream.Tests/bin, dream.Tests/obj and artifacts/*-bin
                      in each worktree, except the current worktree, the main worktree, locked worktrees, and any
                      worktree with a dream.exe, dotnet, MSBuild node, VBCSCompiler or testhost process whose
-                     path or command line mentions it (the worktree shows as 'running').
+                     executable path or command line mentions it (the worktree shows as 'running'), any worktree
+                     whose dream/obj or dream.Tests/obj changed in the last 10 minutes ('building'), and any
+                     worktree touched in the last -MinIdleHours ('recent').
   -RemoveMerged      runs `git worktree remove` (never --force) for worktrees whose branch is merged into
                      the base branch AND have at least one commit of their own (a fresh branch that never
                      moved off its creation commit is 'fresh', not merged) AND are clean AND not locked and
-                     not busy; never the main or current one.
+                     not busy and not recent; never the main or current one.
                      Asks before each removal unless -Yes.
   Never deletes branches and never uses git stash.
 
 .PARAMETER Base
   The branch "merged" is measured against. Default master.
+.PARAMETER MinIdleHours
+  A worktree whose HEAD reflog, index or any tracked file changed within this many hours is 'recent' and is
+  never cleaned or removed (a just-reset swarm worktree looks merged but is in use). Default 6.
 .PARAMETER Repo
   Any path inside the repo to inspect. Default: the current directory.
 #>
@@ -27,6 +32,7 @@ param(
     [switch]$RemoveMerged,
     [switch]$Yes,
     [string]$Base = 'master',
+    [double]$MinIdleHours = 6,
     [string]$Repo = (Get-Location).Path
 )
 
@@ -102,6 +108,42 @@ function Test-RunningIn {
     return $false
 }
 
+function Test-RecentBuildActivity {
+    # True when any file under dream/obj or dream.Tests/obj changed in the last 10 minutes: a build is probably
+    # running there even if no process command line names the path (MSBuild node reuse, VBCSCompiler).
+    param([string]$Root)
+    $cut = (Get-Date).AddMinutes(-10)
+    foreach ($rel in 'dream/obj', 'dream.Tests/obj') {
+        $p = Join-Path $Root $rel
+        if (-not (Test-Path -LiteralPath $p -PathType Container)) { continue }
+        try {
+            foreach ($f in [System.IO.Directory]::EnumerateFiles($p, '*', [System.IO.SearchOption]::AllDirectories)) {
+                try { if ([System.IO.File]::GetLastWriteTime($f) -gt $cut) { return $true } } catch { }
+            }
+        } catch { }
+    }
+    return $false
+}
+
+function Test-RecentlyTouched {
+    # True when the worktree's HEAD reflog, index or any tracked file changed within $Hours. Stops at the first hit.
+    param([string]$Root, [double]$Hours)
+    $cut = (Get-Date).AddHours(-$Hours)
+    $gitDir = (Invoke-Git $Root @('rev-parse', '--absolute-git-dir'))[0]
+    if ($gitDir) {
+        foreach ($rel in 'logs/HEAD', 'index') {
+            $f = Join-Path $gitDir $rel
+            if ((Test-Path -LiteralPath $f -PathType Leaf) -and ([System.IO.File]::GetLastWriteTime($f) -gt $cut)) { return $true }
+        }
+    }
+    foreach ($rel in (Invoke-Git $Root @('ls-files'))) {
+        if (-not $rel) { continue }
+        $f = Join-Path $Root $rel
+        try { if ([System.IO.File]::GetLastWriteTime($f) -gt $cut) { return $true } } catch { }
+    }
+    return $false
+}
+
 $top = (Invoke-Git $Repo @('rev-parse', '--show-toplevel'))[0]
 if (-not $top) { Write-Error "Not inside a git repository: $Repo"; exit 1 }
 $current = Get-NormalPath $top
@@ -155,17 +197,24 @@ foreach ($e in $entries) {
     if ($merged -and -not (Test-BranchAdvanced $Repo $e.Branch)) { $merged = $false; $fresh = $true }
     $dirty = $false
     if ($exists -and -not $e.Bare) {
-        $status = Invoke-Git $path @('status', '--porcelain')
+        $status = Invoke-Git $path @('--no-optional-locks', 'status', '--porcelain')
         $dirty = (@($status | Where-Object { $_ }).Count -gt 0)
     }
     $dirs = if ($exists) { Get-BuildOutputDirs $path } else { @() }
+    $building = $false
+    $recent = $false
+    if ($exists -and -not $isMain -and -not ($path -ieq $current) -and -not $e.Bare) {
+        $building = Test-RecentBuildActivity $path
+        $recent = Test-RecentlyTouched $path $MinIdleHours
+    }
     $bytes = 0L
     foreach ($d in $dirs) { $bytes += Get-DirectoryBytes $d }
     $rows.Add([pscustomobject]@{
         Path = $path; Branch = $e.Branch; IsMain = $isMain; IsCurrent = ($path -ieq $current)
         Merged = $merged; Fresh = $fresh; Dirty = $dirty; Locked = $e.Locked; Prunable = $e.Prunable
         Exists = $exists; Bytes = $bytes; BuildDirs = $dirs
-        Busy = ($exists -and (Test-RunningIn $path $running))
+        Running = ($exists -and (Test-RunningIn $path $running)); Building = $building; Recent = $recent
+        Busy = ($exists -and (Test-RunningIn $path $running)) -or $building -or $recent
     })
 }
 
@@ -178,7 +227,9 @@ foreach ($r in $rows) {
     if ($r.Dirty) { $flags += 'dirty' }
     if ($r.Locked) { $flags += 'locked' }
     if ($r.Prunable) { $flags += 'prunable' }
-    if ($r.Busy) { $flags += 'running' }
+    if ($r.Running) { $flags += 'running' }
+    if ($r.Building) { $flags += 'building' }
+    if ($r.Recent) { $flags += 'recent' }
     Write-Host ("{0,10}  {1,-28} [{2}]  {3}" -f (Format-Size $r.Bytes), $r.Branch, ($flags -join ','), $r.Path)
 }
 
@@ -188,7 +239,7 @@ $removable = @($rows | Where-Object { $_.Merged -and -not $_.Dirty -and -not $_.
 $cleanable = @($rows | Where-Object { -not $_.IsMain -and -not $_.IsCurrent -and -not $_.Busy -and -not $_.Locked -and $_.Bytes -gt 0 })
 $cleanBytes = ($cleanable | Measure-Object -Property Bytes -Sum).Sum
 Write-Host ''
-Write-Host ("totals: {0} worktrees, build output {1}, merged {2}, dirty {3}, locked {4}, prunable {5}, running {6}" -f `
+Write-Host ("totals: {0} worktrees, build output {1}, merged {2}, dirty {3}, locked {4}, prunable {5}, busy {6}" -f `
     $rows.Count, (Format-Size ([long]$total)), $mergedCount, @($rows | Where-Object Dirty).Count, `
     @($rows | Where-Object Locked).Count, @($rows | Where-Object Prunable).Count, @($rows | Where-Object Busy).Count)
 Write-Host ("cleanable with -CleanBuildOutput: {0} in {1} worktrees; removable with -RemoveMerged: {2}" -f `
@@ -199,7 +250,7 @@ if ($CleanBuildOutput) {
     foreach ($r in $rows) {
         if ($r.IsMain -or $r.IsCurrent) { continue }
         if ($r.Locked) { Write-Host "skip (locked): $($r.Path)"; continue }
-        if ($r.Busy) { Write-Host "skip (dream/dotnet/MSBuild/testhost running): $($r.Path)"; continue }
+        if ($r.Busy) { Write-Host "skip (running, building or recently touched): $($r.Path)"; continue }
         foreach ($d in $r.BuildDirs) {
             $size = Get-DirectoryBytes $d
             try {
@@ -216,7 +267,7 @@ if ($CleanBuildOutput) {
 if ($RemoveMerged) {
     foreach ($r in $removable) {
         if ($r.Locked) { Write-Host "skip (locked): $($r.Path)"; continue }
-        if ($r.Busy) { Write-Host "skip (running): $($r.Path)"; continue }
+        if ($r.Busy) { Write-Host "skip (running, building or recently touched): $($r.Path)"; continue }
         $go = $Yes
         if (-not $go) {
             $answer = Read-Host "Remove worktree $($r.Path) (branch $($r.Branch))? [y/N]"

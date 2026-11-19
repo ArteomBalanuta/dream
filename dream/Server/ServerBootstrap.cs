@@ -397,20 +397,24 @@ public static class ServerBootstrap
     }
 
     // Dev commands are allowed to loopback connections only, but a same-machine tunnel or proxy (playit,
-    // ngrok, an nginx stream) makes every remote player look like 127.0.0.1. So dev commands on a server
-    // that is not bound to loopback is worth a loud line at start. Null when there is nothing to say.
+    // ngrok, an nginx stream) makes every remote player look like 127.0.0.1, and such a tunnel forwards to a
+    // loopback bind just as readily as to a wide one. So dev commands on a dedicated server always get a loud
+    // line at start, with extra wording when the bind is not loopback. Null when dev commands are off.
     internal static string? DevCommandsExposureWarning(bool devCommandsAllowed, IPAddress bindAddress)
     {
         ArgumentNullException.ThrowIfNull(bindAddress);
-        if (!devCommandsAllowed || IPAddress.IsLoopback(bindAddress))
+        if (!devCommandsAllowed)
         {
             return null;
         }
 
-        return $"WARNING: {DevCommandsEnvironmentVariable}=1 on a server bound to {bindAddress}, which is not loopback. " +
+        string bind = IPAddress.IsLoopback(bindAddress)
+            ? $"a server bound to {bindAddress}"
+            : $"a server bound to {bindAddress}, which is not loopback";
+        return $"WARNING: {DevCommandsEnvironmentVariable}=1 on {bind}. " +
             "Dev commands (spawn, give, teleport, heal) are limited to loopback connections, but a tunnel or proxy " +
             "running on this machine (playit, ngrok, nginx stream) makes every remote player arrive from 127.0.0.1 and so " +
-            "able to use them. Leave dev commands off on any server reachable through a tunnel or proxy.";
+            "able to use them, even when the server itself is bound to loopback. Leave dev commands off on any server reachable through a tunnel or proxy.";
     }
 
     // host:port, with an IPv6 address in brackets.

@@ -937,6 +937,41 @@ internal sealed partial class PlayerInventoryService
         return true;
     }
 
+    // Takes amount gold back out of a loaded wallet (the dev grant's borrowed piece when the grant did not
+    // go through). False when the inventory is not loaded or the wallet holds less. The same wallet write
+    // TryBuy queues for its debit.
+    internal bool TryRemoveGold(string player, long amount)
+    {
+        if (amount <= 0 || !_slotsByPlayer.ContainsKey(player))
+        {
+            return false;
+        }
+
+        long current = GoldOf(player);
+        if (current < amount)
+        {
+            return false;
+        }
+
+        _goldByPlayer[player] = current - amount;
+        NoteWriteQueued(player);
+        EnqueueWorldWrite(world => world.ApplyWalletDelta(player, -amount));
+        return true;
+    }
+
+    // True when the bag board has a free place for one unrolled item of the kind, judged by the same board
+    // TryBuy places into (BuildBoard over the slot map, the definition's Footprint). Read-only.
+    internal bool HasRoomFor(string player, string itemKind)
+    {
+        if (!_slotsByPlayer.TryGetValue(player, out Dictionary<int, long>? slots)
+            || !ContentCatalog.Shipped.TryGetItem(itemKind, out ItemDefinition? definition))
+        {
+            return false;
+        }
+
+        return BuildBoard(slots).FirstFit(definition.Footprint) >= 0;
+    }
+
     // Fills the loadout with the modifiers of what the player has equipped, per slot. A rolled item's
     // modifiers replace its definition's (H-D4). A kind the catalog no longer knows, a slot the item
     // may not occupy and a damaged roll give no modifiers: the row stays and is inert, nothing throws.

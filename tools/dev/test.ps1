@@ -82,6 +82,7 @@ $psi.WorkingDirectory = $repo
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
+$psi.EnvironmentVariables['DOTNET_CLI_UI_LANGUAGE'] = 'en'   # keep the summary line parseable
 # Arguments string (ArgumentList does not exist on Windows PowerShell 5.1); every part is quoted.
 $psi.Arguments = (($dotnetArgs | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join ' ')
 
@@ -96,6 +97,7 @@ $proc.StartInfo = $psi
 # produced, and the loop ends only when both streams reached end-of-stream (so the summary line is never lost).
 $watch = [System.Diagnostics.Stopwatch]::StartNew()
 $timedOut = $false
+$exitedAt = $null
 try {
     [void]$proc.Start()
     $readers = @($proc.StandardOutput, $proc.StandardError)
@@ -113,7 +115,13 @@ try {
             [Console]::WriteLine($line)
             $pending[$i] = $readers[$i].ReadLineAsync()
         }
-        if (-not $timedOut -and $watch.ElapsedMilliseconds -gt $deadline) {
+        # A grandchild (MSBuild node reuse, VBCSCompiler) can hold the inherited pipe handles after dotnet exits, so EOF
+        # never comes. Once the process has exited, give the pipes 5 s to drain, then stop reading.
+        if ($proc.HasExited) {
+            if ($null -eq $exitedAt) { $exitedAt = $watch.ElapsedMilliseconds }
+            elseif (-not $progress -and $watch.ElapsedMilliseconds -gt ($exitedAt + 5000)) { break }
+        }
+        if (-not $timedOut -and -not $proc.HasExited -and $watch.ElapsedMilliseconds -gt $deadline) {
             $timedOut = $true
             Write-Host "timeout after $TimeoutMinutes min: killing the dotnet test process tree (pid $($proc.Id))"
             & taskkill.exe /PID $proc.Id /T /F | Out-Null
