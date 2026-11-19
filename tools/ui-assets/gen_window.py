@@ -293,6 +293,23 @@ def fracture_zone(kind: str, X, Y) -> np.ndarray:
     return zone.astype(F32)
 
 
+# The slab's tone curve. Above the knee the albedo is compressed; below it soot is let run deep.
+# These were magic numbers inline until the slab was measured and found to be the brightest surface in
+# the HUD: p99 max channel 0.545, with a tenth of its pixels above 0.42. The engine multiplies UI albedo
+# by up to ~2.17x with no tonemap, so 0.545 x 2.17 = 1.18 and that tenth clipped to white on screen -
+# which is what made the window read as pale paper rather than soot-darkened stone.
+#
+# The knee slope is NOT the lever that fixed it, despite being the obvious suspect. Measured: dropping
+# it 0.40 -> 0.20 moved p99 max channel only 0.545 -> 0.514, because most of the slab's final value
+# comes from the render chain's lighting, not from this albedo map. SLAB_RENDER's exposure is the lever;
+# see the note there. The slope is lowered to 0.25 as a secondary trim because it works on the extreme
+# tail specifically (p99.9 max 0.639 -> 0.584 at constant exposure), which is the part that blows out
+# hardest. Do not reach for it again expecting a brightness control; reach for exposure.
+SLAB_KNEE = -0.75
+SLAB_KNEE_SLOPE = 0.25
+SLAB_SHADOW_SLOPE = 2.20
+
+
 def slab_tone(kind: str, X, Y, period=(None, None)):
     """Log albedo multiplier and the composition value map as functions of absolute position. Soft patches with
     fractal edges (domain-warped pink noise), a pool of torch light, soot in the corners and along the frame."""
@@ -307,7 +324,8 @@ def slab_tone(kind: str, X, Y, period=(None, None)):
     zone = fracture_zone(kind, X, Y)
     lnum = -0.84 + 1.05 * big + 0.30 * small + 0.26 * mid + 0.30 * zone
     # lit stone is held back and soot is let run deep: pale patches read as marble next to black wells
-    lnum = np.where(lnum > -0.75, -0.75 + 0.40 * (lnum + 0.75), -0.75 + 2.20 * (lnum + 0.75))
+    lnum = np.where(lnum > SLAB_KNEE, SLAB_KNEE + SLAB_KNEE_SLOPE * (lnum - SLAB_KNEE),
+                    SLAB_KNEE + SLAB_SHADOW_SLOPE * (lnum - SLAB_KNEE))
     de = np.minimum(np.minimum(X, SLAB_W - X), np.minimum(Y, H - Y))
     pool = np.exp(-(((X - 62) / 78) ** 2 + ((Y - 0.34 * H) / (0.34 * H)) ** 2))
     vm = (0.10 + 0.90 * rise(de, 0.0, 24.0)) * (0.62 + 0.55 * pool) * (0.74 + 0.26 * rise(Y, 0.0, 40.0))
@@ -380,7 +398,16 @@ def slab_author(kind: str, x0: float, y0: float, x1: float, y1: float, margin: f
     return r, vm
 
 
-SLAB_RENDER = dict(wear=0.12, grime=0.30, rust=0.10, dust=0.10, exposure=1.70)
+# exposure is the slab's brightness contract. It was 1.70, which put p99 max channel at 0.545 - well
+# into the range the engine's ~2.17x no-tonemap albedo multiply clips to white. 1.15 lands it at 0.4118
+# on both slabs, with the share of pixels over 0.42 falling 10.5% -> 0.7%.
+#
+# Darkening a surface lowers its ABSOLUTE luma std and band energy, so the old SLAB floors in
+# check_art.py (std 0.13, band4 0.025) fought this change: they are magnitude measures, and they would
+# have failed a correctly darkened slab. They are now relative to the mean, which is what "the stone
+# still has texture" actually means. Measured here: std/mean 0.569 -> 0.604, band4/mean 0.111 -> 0.121.
+# The stone did not go flat; it went into shadow, which is the whole point.
+SLAB_RENDER = dict(wear=0.12, grime=0.30, rust=0.10, dust=0.10, exposure=1.15)
 
 
 def render_slab_region(kind: str, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:

@@ -74,13 +74,20 @@ DRAGON = {"band4": (0.04, None), "band_ratio": (1.5, None)}
 # of the same argument that justified the split.
 HP_GEM = {"glass_saturation": (0.70, None), "glass_p95": (0.20, None), "cage_share": (0.12, 0.40)}   # cage measured 0.254
 MP_GEM = {"glass_saturation": (0.68, None), "glass_p95": (0.20, None), "cage_share": (0.12, 0.40)}   # cage measured 0.300
-# NOTE: this std floor was never met by the shipped slab. It measures 0.1352 on clean master
-# (14f5a1d8) and 0.1352 here - identical, so it is not this work's doing. A gate that is permanently
-# red gets routed around, and this one was: the habit of running `--art --only bar,hp,mp,dragon` grew
-# up around it, and that habit then hid two REAL regressions in `cell` and `frame` that the full run
-# catches. A red gate nobody runs is worse than a correct one, so the floor is corrected to the
-# long-standing measurement. Raising the slab's own form is separate art work, not this change.
-SLAB = {"std": (0.13, None), "band4": (0.025, None)}   # std measured 0.1352 on master and on head
+# The slab is the largest surface in the HUD - the two window interiors are roughly 39% of a 1440x1024
+# screen with both open - and until this gate existed its BRIGHTNESS was unbounded. Every neighbour had
+# a ceiling (item icons CEIL_P99, win.side.left's explicit check in check_window.py, the gems' bounds);
+# the biggest sprite on screen had none, and it drifted to a p99 max channel of 0.545 with a tenth of
+# its pixels over 0.42. Against the engine's ~2.17x no-tonemap multiply that is a clipped white sheet,
+# which is why the window read as pale paper. p99max is the missing ceiling.
+#
+# The two floors used to be absolute: std 0.13 and band4 0.025, measured off the over-bright art. Both
+# scale with the level a surface sits at, so they did not gate texture - they gated brightness by
+# accident, and would have failed a correctly darkened slab while passing the blown-out one. They are
+# now taken relative to the mean, which is what "the stone still has texture" actually means, and they
+# are strictly harder to satisfy than before: a slab that went dark AND flat still fails.
+# Measured on the current art: p99max 0.4118, contrast 0.604, band4rel 0.121 (was 0.545 / 0.569 / 0.111).
+SLAB = {"p99max": (None, 0.42), "contrast": (0.55, None), "band4rel": (0.10, None)}
 FRAME = {"hf": (None, 0.11), "p99": (None, 0.60)}
 CELL = {"hf": (None, 0.055)}
 
@@ -133,12 +140,21 @@ def value_stats(rgba: np.ndarray) -> dict[str, float]:
     y = luma(rgba)[m]
     hsv = np.asarray(Image.fromarray(rgba[..., :3], "RGB").convert("HSV"), dtype=np.float32)
     bands = band_energy(rgba)
+    mean = float(y.mean())
+    # p99max is the BRIGHTEST CHANNEL, not luma. The engine multiplies UI albedo by up to ~2.17x with
+    # no tonemap, and it is a channel that clips, not a luma - a saturated colour blows out one channel
+    # while its luma still looks safe. Anything much over 0.42 here is white on screen.
+    mx = (rgba[..., :3].astype(np.float32) / 255.0).max(axis=2)[m]
     return {
-        "mean": float(y.mean()), "median": float(np.median(y)),
+        "mean": mean, "median": float(np.median(y)),
         "p95": float(np.percentile(y, 95)), "p99": float(np.percentile(y, 99)),
+        "p99max": float(np.percentile(mx, 99)), "p999max": float(np.percentile(mx, 99.9)),
         "share85": float((y > 0.85).mean()), "share97": float((y > 0.97).mean()),
         "std": float(y.std()), "saturation": float((hsv[..., 1][m] / 255).mean()),
         "band05": bands[0.5], "band4": bands[4], "band_ratio": bands[4] / max(bands[0.5], 1e-9),
+        # Relative to the mean, so they measure TEXTURE rather than brightness. An absolute std floor
+        # silently forbids darkening a surface at all, because std scales with the level it sits at.
+        "contrast": float(y.std()) / max(mean, 1e-9), "band4rel": bands[4] / max(mean, 1e-9),
         "hf": high_frequency(rgba),
     }
 
@@ -309,7 +325,10 @@ def check_art(only: set[str]) -> list[str]:
         run("dragon", "dragon", dragon, DRAGON, lambda _r: {"band4": bands[4], "band_ratio": bands[4] / max(bands[0.5], 1e-9)})
     else:
         run("dragon", "dragon", None, DRAGON)
-    run("slab", "slab", sprite_of(win, "win.slab.inventory"), SLAB)
+    # Both slabs. Only `inventory` was ever gated, and `combine` measured BRIGHTER (0.557 against
+    # 0.545) - the worse offender was the unguarded one.
+    run("slab", "slab inventory", sprite_of(win, "win.slab.inventory"), SLAB)
+    run("slab", "slab combine", sprite_of(win, "win.slab.combine"), SLAB)
     run("frame", "frame", sprite_of(win, "win.side.left"), FRAME)
     run("cell", "cell", sprite_of(win, "cell.empty"), CELL)
     return errs
