@@ -22,12 +22,13 @@ public sealed class MeleeArcSwingContentTests
     }
 
     [Fact]
-    public void TheActiveWindow_IsEvenAndAtLeastThreeTicks_SoItHasAKeyedMidpointAndAThirdsPair()
+    public void TheActiveWindow_IsAWholeNumberOfSixths_SoItsMidpointAndThirdsAreWholeTicks()
     {
         Assert.True(MeleeArcSwing.ActiveTicks % 2 == 0,
             "the clip keys the window's midpoint, which is only on a whole tick when the window is even");
-        Assert.True(MeleeArcSwing.ActiveTicks >= 3,
-            "the cut is measured at the window's thirds, which need at least three ticks to be distinct keys");
+        Assert.True(MeleeArcSwing.ActiveTicks >= 3, "the window's thirds need at least three ticks to be distinct");
+        Assert.True(MeleeArcSwing.ActiveTicks % 6 == 0,
+            "the clip is measured at the window's thirds and midpoint, which are whole ticks only when ActiveTicks is a multiple of 6");
     }
 
     [Fact]
