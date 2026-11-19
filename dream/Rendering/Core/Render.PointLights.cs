@@ -31,6 +31,8 @@ public partial class Render
 
     // The frame's selected world-space lights, kept for diagnostics and tests of the wiring.
     private LightList _selectedLights;
+    // The CarrierActorId of each selected light, by list index (see LightSelection.SelectNearest).
+    private readonly int[] _selectedLightCarriers = new int[LightList.MaxLights];
 
     public LightCollector Lights { get; } = new();
 
@@ -78,6 +80,6 @@ public partial class Render
         }
 
         ViewFrustum frustum = ViewFrustum.FromViewAndProjection(view, _projection);
-        LightSelection.SelectNearest(Lights.Lights, _debugPointLights, cameraPosition, in frustum, ref _selectedLights);
+        LightSelection.SelectNearest(Lights.Lights, _debugPointLights, cameraPosition, in frustum, ref _selectedLights, _selectedLightCarriers);
     }
 }

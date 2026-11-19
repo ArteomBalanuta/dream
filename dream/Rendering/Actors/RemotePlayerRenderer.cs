@@ -11,7 +11,7 @@ using Dream.Simulation.World;
 namespace Dream.Rendering.Actors;
 
 
-public sealed class RemotePlayerRenderer : IDisposable
+public sealed class RemotePlayerRenderer : IDisposable, IHeldFlamePointLookup
 {
     // Model streaming: a remote player's animation instance handle is requested once the player is
     // within ModelRequestDistance (render distance plus a margin, so it is usually ready before it
@@ -55,6 +55,23 @@ public sealed class RemotePlayerRenderer : IDisposable
         public PlayerAnimationStateMachine Machine { get; } = new();
 
         public PlayerPoseLayers Layers { get; } = new();
+
+        // Where the held light burns; survives frames in which the player is not drawn (see HeldFlameRecord).
+        public HeldFlameRecord Flame { get; } = new();
+    }
+
+    // Lights are collected before Draw releases reassigned actor ids, so the record itself checks that the id still
+    // belongs to the session and the held items the point was recorded for.
+    public bool TryGetHeldFlameModelPoint(
+        int actorId, string sessionId, in PlayerEquipmentVisuals equipment, out Vector3 modelPoint)
+    {
+        if (_animations.TryGetValue(actorId, out RemoteAnimationState? state))
+        {
+            return state.Flame.TryGet(sessionId, in equipment, out modelPoint);
+        }
+
+        modelPoint = Vector3.Zero;
+        return false;
     }
 
     public RemotePlayerRenderer(Render render)
@@ -114,6 +131,8 @@ public sealed class RemotePlayerRenderer : IDisposable
             _clipTracker.ApplyFrame(remotePlayer.ActorId, in frame, instance);
             instance.Update(deltaTime);
             animation.Layers.Update(instance, in frame);
+            bool hasFlame = HeldWeaponRenderer.TryGetFlameModelPoint(instance, animation.Layers, in equipment, out Vector3 flame);
+            animation.Flame.Record(remotePlayer.SessionId, in equipment, hasFlame, flame);
 
             Shader shader = _render.GetShader(renderState.ShaderName);
             bool flashing = frame.HitFlinch > 0.01f;
@@ -129,7 +148,7 @@ public sealed class RemotePlayerRenderer : IDisposable
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
             model.RenderPrepared(shader, instance, renderState.ModelMatrix, animation.Layers.Overrides);
             model.EndRender();
-            _casters.Add(model, instance, renderState.ModelMatrix, animation.Layers.Overrides);
+            _casters.Add(model, instance, renderState.ModelMatrix, animation.Layers.Overrides, remotePlayer.ActorId);
             _heldWeapons.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
             _wornArmour.Draw(shader, camera, _render.ProjectionMatrix, instance, animation.Layers, in equipment, renderState.ModelMatrix);
             if (flashing)

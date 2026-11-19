@@ -109,6 +109,52 @@ public sealed class PlaySceneHeldLightsTests
     }
 
     [Fact]
+    public void ThirdPerson_WithAFlamePoint_AnchorsTheLocalLightToTheFlame()
+    {
+        LightCollector lights = new();
+        Vector3 body = new(5f, 1f, 5f);
+        Vector3 facing = Vector3.UnitX;
+        Vector3 flameModelPoint = new(0.4f, 1.9f, 0.2f);
+        PlayScene.LocalHeldLight local = new(
+            HeldLightKind.Torch, ActorId: 1, FirstPerson: false, body, facing, HasFlame: true, FlameModelPoint: flameModelPoint);
+
+        PlayScene.AddHeldLights(lights, in local, CameraPosition, CameraFront, CameraRight, CameraUp, [], timeSeconds: 1.0);
+
+        Assert.Equal(1, lights.Count);
+        Vector3 expected = Vector3.TransformPosition(flameModelPoint, PlayerRenderState.CreateModelMatrix(body, facing));
+        AssertWithinTheFlameWander(expected, lights.Lights[0].Position);
+    }
+
+    [Fact]
+    public void RemotePlayer_WithAFlamePoint_AnchorsItsLightToTheFlame_AndWithoutOneToTheBody()
+    {
+        RemotePlayerPresentationState hit = Remote(2, new Vector3(10f, 0f, 3f), HeldLightKind.Torch);
+        RemotePlayerPresentationState miss = Remote(3, new Vector3(20f, 0f, 3f), HeldLightKind.Lantern);
+        Vector3 flameModelPoint = new(-0.3f, 1.7f, 0.5f);
+        FakeFlames flames = new(hit.ActorId, flameModelPoint);
+        LightCollector lights = new();
+        PlayScene.LocalHeldLight none = new(HeldLightKind.None, ActorId: 1, FirstPerson: true, Vector3.Zero, -Vector3.UnitZ);
+
+        PlayScene.AddHeldLights(
+            lights, in none, CameraPosition, CameraFront, CameraRight, CameraUp, [hit, miss], timeSeconds: 1.0, remoteFlames: flames);
+
+        Assert.Equal(2, lights.Count);
+        Vector3 expected = Vector3.TransformPosition(flameModelPoint, PlayerRenderState.CreateModelMatrix(hit.Pose.Position, hit.Pose.Facing));
+        AssertWithinTheFlameWander(expected, lights.Lights[0].Position);
+        Assert.Equal(HeldLightAnchor.Body(miss.Pose.Position, miss.Pose.Facing), lights.Lights[1].Position);
+    }
+
+    private sealed class FakeFlames(int actorId, Vector3 point) : IHeldFlamePointLookup
+    {
+        public bool TryGetHeldFlameModelPoint(
+            int id, string sessionId, in PlayerEquipmentVisuals equipment, out Vector3 modelPoint)
+        {
+            modelPoint = id == actorId ? point : Vector3.Zero;
+            return id == actorId;
+        }
+    }
+
+    [Fact]
     public void NoHeldLight_AddsNothing()
     {
         LightCollector lights = new();
@@ -153,6 +199,43 @@ public sealed class PlaySceneHeldLightsTests
     }
 
     [Fact]
+    public void CollectingHeldLights_WithFlamePoints_AllocatesNothingPerFrame()
+    {
+        LightCollector lights = new();
+        PlayScene.LocalHeldLight local = new(
+            HeldLightKind.Torch, ActorId: 1, FirstPerson: false, Vector3.Zero, -Vector3.UnitZ,
+            HasFlame: true, FlameModelPoint: new Vector3(0.4f, 1.9f, 0.2f));
+        List<RemotePlayerPresentationState> remoteList = [];
+        for (int i = 0; i < 8; i++)
+        {
+            remoteList.Add(Remote(10 + i, new Vector3(i, 0f, -i), i % 2 == 0 ? HeldLightKind.Torch : HeldLightKind.Lantern));
+        }
+
+        IReadOnlyList<RemotePlayerPresentationState> remotes = remoteList;
+        IHeldFlamePointLookup flames = new AlwaysFlames();
+        double time = 0.0;
+
+        AllocationAssert.AtMost(0, () =>
+        {
+            lights.Clear();
+            time += 1.0 / 60.0;
+            PlayScene.AddHeldLights(lights, in local, CameraPosition, CameraFront, CameraRight, CameraUp, remotes, time, flames);
+        }, iterations: 1000);
+
+        Assert.Equal(9, lights.Count);
+    }
+
+    private sealed class AlwaysFlames : IHeldFlamePointLookup
+    {
+        public bool TryGetHeldFlameModelPoint(
+            int actorId, string sessionId, in PlayerEquipmentVisuals equipment, out Vector3 modelPoint)
+        {
+            modelPoint = new Vector3(-0.3f, 1.7f, 0.5f);
+            return true;
+        }
+    }
+
+    [Fact]
     public void TheGalleryKey_DressesTheRemotePlayers_WithoutChangingTheirLights()
     {
         string? key = PlayScene.LoopbackGalleryVisualKey(0f, shieldOffset: 2);
@@ -183,5 +266,37 @@ public sealed class PlaySceneHeldLightsTests
             MaxHealth: 100,
             IsAlive: isAlive,
             HeldLight: heldLight);
+    }
+
+    [Fact]
+    public void TheCarrierIdIsTheServerIdForTheLocalPlayer_AndNeverCollidesWithARemote()
+    {
+        // The client registry id is 1 on every client, the same number as the first-joined remote player. The local light
+        // carries the server id the scene passes in, so the remote with id 1 is not the local carrier.
+        LightCollector lights = new();
+        PlayScene.LocalHeldLight local = new(
+            HeldLightKind.Torch, ActorId: 1, FirstPerson: false, Vector3.Zero, -Vector3.UnitZ, CarrierActorId: 7);
+        RemotePlayerPresentationState[] remotes = [Remote(1, new Vector3(10f, 0f, 0f), HeldLightKind.Torch)];
+
+        PlayScene.AddHeldLights(lights, in local, CameraPosition, CameraFront, CameraRight, CameraUp, remotes, timeSeconds: 3.0);
+
+        Assert.Equal(2, lights.Count);
+        Assert.Equal(7, lights.Lights[0].CarrierActorId);
+        Assert.Equal(1, lights.Lights[1].CarrierActorId);
+        Assert.NotEqual(lights.Lights[0].CarrierActorId, lights.Lights[1].CarrierActorId);
+    }
+
+    [Fact]
+    public void ALocalCarrierOfZeroExcludesNobody()
+    {
+        // Before the join list names the local actor the scene passes 0: no exclusion rather than a colliding key.
+        LightCollector lights = new();
+        PlayScene.LocalHeldLight local = new(HeldLightKind.Torch, ActorId: 1, FirstPerson: false, Vector3.Zero, -Vector3.UnitZ);
+
+        PlayScene.AddHeldLights(
+            lights, in local, CameraPosition, CameraFront, CameraRight, CameraUp, Array.Empty<RemotePlayerPresentationState>(), timeSeconds: 3.0);
+
+        Assert.Equal(1, lights.Count);
+        Assert.Equal(0, lights.Lights[0].CarrierActorId);
     }
 }
