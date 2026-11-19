@@ -55,8 +55,8 @@ def tone_limits(noise_dev: np.ndarray) -> np.ndarray:
     return np.maximum(TONE_FLOOR, TONE_MULTIPLIER * np.asarray(noise_dev, dtype=np.float64))
 
 
-def block_limits(noise_blocks: np.ndarray) -> np.ndarray:
-    return np.maximum(BLOCK_FLOOR, BLOCK_MULTIPLIER * noise_blocks)
+def block_limits(noise_blocks: np.ndarray, floor: float = BLOCK_FLOOR, k: float = BLOCK_MULTIPLIER) -> np.ndarray:
+    return np.maximum(floor, k * noise_blocks)
 
 
 def load_scene(scene: str) -> dict:
@@ -67,6 +67,8 @@ def load_scene(scene: str) -> dict:
     data.setdefault("pixelThreshold", 0.08)
     data.setdefault("maxFraction", 0.002)
     data.setdefault("ignore", [])
+    data.setdefault("blockFloor", BLOCK_FLOOR)  # per-scene block floor and multiplier: a deterministic scene
+    data.setdefault("blockMultiplier", BLOCK_MULTIPLIER)  # (no wolf, no damage numbers) can afford tighter ones
     data["name"] = path.stem
     return data
 
@@ -236,7 +238,7 @@ def compare(actual_dir: Path, scene: dict, baselines: Path = BASELINES, out_root
         tone_dev = tone_deviation(tone_stats(a_img, ignore), tone_stats(b_img, ignore))
         t_i = int(np.argmax(tone_dev / tone_limit))
 
-        b_limit = block_limits(block_noise[step])
+        b_limit = block_limits(block_noise[step], float(scene.get("blockFloor", BLOCK_FLOOR)), float(scene.get("blockMultiplier", BLOCK_MULTIPLIER)))
         bd = block_diff(a_img, b_img, ignore)
         if bd.shape != b_limit.shape:
             results.append((False, f"FAIL {name} {step} - block grid mismatch {bd.shape} vs {b_limit.shape} (re-record)"))
@@ -344,7 +346,7 @@ def study(dirs: list[Path], scene: dict) -> None:
             if m.any():
                 need["tone"] = max(need["tone"], float((dev[m] / np.maximum(n["tone"][m], 1e-9)).max()))
             bd = block_diff(frames[h], med, ignore)
-            m = bd > BLOCK_FLOOR
+            m = bd > float(scene.get("blockFloor", BLOCK_FLOOR))
             if m.any():
                 need["block"] = max(need["block"], float((bd[m] / np.maximum(n["blocks"][m], 1e-9)).max()))
             peak["block"] = max(peak["block"], float(bd.max()))
