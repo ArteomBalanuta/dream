@@ -95,7 +95,7 @@ public static class FireShadowAtlas
     /// A light with no score still takes a free slot (the score is a ranking, not a threshold): it is a visible light the
     /// camera selected, and over-lighting an unshadowed pool is the failure the design wants to avoid.
     /// </summary>
-    public static int SelectSlots(in LightList list, Vector3 focus, int maxSlots, Span<int> slots, ReadOnlySpan<float> flicker = default)
+    public static int SelectSlots(in LightList list, Vector3 focus, int maxSlots, Span<int> slots, ReadOnlySpan<float> flicker = default, ReadOnlySpan<Vector3> wander = default)
     {
         int capacity = Math.Min(Math.Min(maxSlots, slots.Length), ShadowSettings.MaxCastingFireCount);
         int available = Math.Clamp(list.Count, 0, LightList.MaxLights);
@@ -112,12 +112,13 @@ public static class FireShadowAtlas
             // Rank by the STEADY light: the producer's flicker multiplier is divided back out of the colour, and the radius
             // it breathes with (FireFlicker.RadiusScaleOf, the one formula the producers use) out of the radius, because the
             // windowed falloff is far more radius-sensitive than colour-sensitive near the edge. The flame's positional
-            // wander (<= FireFlicker.OffsetLateral / OffsetVertical) is deliberately NOT undone: the list does not carry
-            // the offset, it is slow, and FireShadowSteadyRankTests measures its score swing and bounds it.
+            // wander is undone too: the producer's offset (wander[i], zero when absent) is subtracted, so the score is measured from
+            // the fire's resting position. The slot itself still uses the wandering position.
             bool valid = i < flicker.Length && float.IsFinite(flicker[i]) && flicker[i] > 0f;
             float steady = valid ? 1f / flicker[i] : 1f;
             float radius = valid ? positionRadius.W / FireFlicker.RadiusScaleOf(flicker[i]) : positionRadius.W;
-            float score = Score(list.Color[i].Xyz * steady, positionRadius.Xyz, radius, focus);
+            Vector3 rest = positionRadius.Xyz - (i < wander.Length ? wander[i] : Vector3.Zero);
+            float score = Score(list.Color[i].Xyz * steady, rest, radius, focus);
             if (!float.IsFinite(score))
             {
                 continue;
@@ -162,10 +163,11 @@ public static class FireShadowAtlas
         float strength,
         ref ShadowFrame frame,
         ReadOnlySpan<int> carriers = default,
-        ReadOnlySpan<float> flicker = default)
+        ReadOnlySpan<float> flicker = default,
+        ReadOnlySpan<Vector3> wander = default)
     {
         Span<int> chosen = stackalloc int[ShadowSettings.MaxCastingFireCount];
-        int count = SelectSlots(in list, focus, maxSlots, chosen, flicker);
+        int count = SelectSlots(in list, focus, maxSlots, chosen, flicker, wander);
         Span<FireShadowSlot> fires = frame.Fires;
         for (int s = 0; s < count; s++)
         {

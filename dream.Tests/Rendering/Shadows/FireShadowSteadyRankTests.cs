@@ -16,9 +16,9 @@ public class FireShadowSteadyRankTests
     private const float BaseRadius = 10f;
     private static readonly Vector3 Focus = new(0f, 0f, -10f);
 
-    // Distance / radius of each fire. The contested pair is 0.75 vs 0.80: windowed falloff is 1.57x apart there, more than the
-    // positional wander can close (see Wander_ScoreSwing_IsBounded) but far less than the radius flicker swing (-62% / +76%).
-    private static readonly float[] Ratios = { 0.5f, 0.6f, 0.7f, 0.75f, 0.8f };
+    // Distance / radius of each fire. The contested pair is 0.75 vs 0.755: their resting scores are within 5% of each other,
+    // far inside the swing the positional wander (<= 0.12 m) and the radius flicker (-62% / +76%) put on an unsteady score.
+    private static readonly float[] Ratios = { 0.5f, 0.6f, 0.7f, 0.75f, 0.755f };
 
     private static PointLight[] Fires(double clock)
     {
@@ -31,23 +31,23 @@ public class FireShadowSteadyRankTests
             int seed = FireFlicker.SeedFor(basePosition);
             FireFlickerSample sample = FireFlicker.Sample(FireFlickerKind.Brazier, basePosition, clock, seed);
             lights[i] = new PointLight(
-                basePosition + sample.Offset, BaseRadius * sample.RadiusScale, new Vector3(1f, 0.6f, 0.3f) * sample.Intensity, seed, 0, sample.Intensity);
+                basePosition + sample.Offset, BaseRadius * sample.RadiusScale, new Vector3(1f, 0.6f, 0.3f) * sample.Intensity, seed, 0, sample.Intensity, sample.Offset);
         }
 
         return lights;
     }
 
-    private static LightList Select(PointLight[] lights, int[] carriers, float[] flicker)
+    private static LightList Select(PointLight[] lights, int[] carriers, float[] flicker, Vector3[] wander)
     {
         Matrix4 view = Matrix4.LookAt(Vector3.Zero, -Vector3.UnitZ, Vector3.UnitY);
         Matrix4 projection = Matrix4.CreatePerspectiveFieldOfView(1.6f, 1f, 0.1f, 100f);
         ViewFrustum frustum = ViewFrustum.FromViewProjection(view * projection);
         LightList list = default;
-        LightSelection.SelectNearest(lights, ReadOnlySpan<PointLight>.Empty, Vector3.Zero, in frustum, ref list, carriers, flicker);
+        LightSelection.SelectNearest(lights, ReadOnlySpan<PointLight>.Empty, Vector3.Zero, in frustum, ref list, carriers, flicker, wander);
         return list;
     }
 
-    private static LightList ToList(PointLight[] lights, float[] flicker)
+    private static LightList ToList(PointLight[] lights, float[] flicker, Vector3[] wander)
     {
         LightList list = default;
         list.Count = lights.Length;
@@ -56,17 +56,19 @@ public class FireShadowSteadyRankTests
             list.PositionRadius[i] = new Vector4(lights[i].Position, lights[i].Radius);
             list.Color[i] = new Vector4(lights[i].Color, 0f);
             flicker[i] = lights[i].Flicker;
+            wander[i] = lights[i].Wander;
         }
 
         return list;
     }
 
-    private static int RealSet(PointLight[] lights)
+    private static int RealSet(PointLight[] lights, bool withWander = true)
     {
         float[] flicker = new float[LightList.MaxLights];
-        LightList list = ToList(lights, flicker);
+        Vector3[] wander = new Vector3[LightList.MaxLights];
+        LightList list = ToList(lights, flicker, wander);
         Span<int> chosen = stackalloc int[ShadowSettings.MaxCastingFireCount];
-        int count = FireShadowAtlas.SelectSlots(in list, Focus, 4, chosen, flicker);
+        int count = FireShadowAtlas.SelectSlots(in list, Focus, 4, chosen, flicker, withWander ? wander : default);
         int mask = 0;
         for (int s = 0; s < count; s++)
         {
@@ -85,7 +87,7 @@ public class FireShadowSteadyRankTests
             PointLight l = lights[i];
             Vector3 color = steadyColour ? l.Color / l.Flicker : l.Color;
             float radius = steadyRadius ? l.Radius / FireFlicker.RadiusScaleOf(l.Flicker) : l.Radius;
-            scored[i] = (FireShadowAtlas.Score(color, l.Position, radius, Focus), i);
+            scored[i] = (FireShadowAtlas.Score(color, l.Position - l.Wander, radius, Focus), i);
         }
 
         Array.Sort(scored, (x, y) => y.Score.CompareTo(x.Score));
@@ -126,7 +128,7 @@ public class FireShadowSteadyRankTests
     [Fact]
     public void SteadyRanking_PicksTheSameSetAtEveryClockSample()
     {
-        HashSet<int> sets = Sets(RealSet);
+        HashSet<int> sets = Sets(l => RealSet(l));
         Assert.Single(sets);
         // The four fires nearest their own centre: ratios 0.5, 0.6, 0.7, 0.75.
         Assert.Equal(0b01111, sets.Single());
@@ -156,27 +158,19 @@ public class FireShadowSteadyRankTests
         }
     }
 
-    // The flame's positional wander is accepted, not carried (the list has no offset). Its worst-case effect on a score is
-    // bounded here, along the radial direction, at the distance/radius values that matter.
     [Fact]
-    public void Wander_ScoreSwing_IsBounded()
+    public void RankingWithoutTheWanderSpan_ChangesTheSet_SyntheticNegative()
     {
-        const float bound = 0.25f;
-        foreach (float ratio in new[] { 0.6f, 0.7f, 0.8f })
-        {
-            float d = ratio * BaseRadius;
-            float steady = FireShadowAtlas.WindowedFalloff(d, BaseRadius);
-            foreach (float delta in new[] { FireFlicker.OffsetLateral, -FireFlicker.OffsetLateral })
-            {
-                float moved = FireShadowAtlas.WindowedFalloff(d + delta, BaseRadius);
-                Assert.True(MathF.Abs(moved - steady) / steady < bound, $"ratio {ratio} delta {delta}: {moved} vs {steady}");
-            }
-        }
+        Assert.True(Sets(l => RealSet(l, withWander: false)).Count > 1,
+            "ranking from the wandering position must swap a near tie; the gate cannot fail otherwise");
+    }
 
-        // And the bound is not vacuous: the 0.75 vs 0.80 pair stays ordered at the worst wander on both.
-        float near = FireShadowAtlas.WindowedFalloff((0.75f * BaseRadius) + FireFlicker.OffsetLateral, BaseRadius);
-        float far = FireShadowAtlas.WindowedFalloff((0.80f * BaseRadius) - FireFlicker.OffsetLateral, BaseRadius);
-        Assert.True(near > far);
+    [Fact]
+    public void NearTiedFires_AreWithinFivePercentAtRest()
+    {
+        float a = FireShadowAtlas.WindowedFalloff(0.75f * BaseRadius, BaseRadius);
+        float b = FireShadowAtlas.WindowedFalloff(0.755f * BaseRadius, BaseRadius);
+        Assert.True(MathF.Abs(a - b) / a < 0.05f, $"{a} vs {b}");
     }
 
     [Fact]
@@ -234,18 +228,20 @@ public class FireShadowSteadyRankTests
             // Farther lights first, so every insertion shifts the kept ones.
             float z = -(2f + ((candidates - i) * 0.5f));
             float flicker = 0.7f + (i * 0.02f);
-            lights[i] = new PointLight(new Vector3(0f, 0f, z), 1f, new Vector3(i + 1f, 0f, 0f) * flicker, 0, 100 + i, flicker);
+            lights[i] = new PointLight(new Vector3(0f, 0f, z), 1f, new Vector3(i + 1f, 0f, 0f) * flicker, 0, 100 + i, flicker, new Vector3(i, 0f, 0f));
         }
 
         int[] carriers = new int[LightList.MaxLights];
         float[] flickers = new float[LightList.MaxLights];
-        LightList list = Select(lights, carriers, flickers);
+        Vector3[] wanders = new Vector3[LightList.MaxLights];
+        LightList list = Select(lights, carriers, flickers, wanders);
         Assert.Equal(LightList.MaxLights, list.Count);
         for (int k = 0; k < list.Count; k++)
         {
             int i = carriers[k] - 100;
             Assert.Equal(0.7f + (i * 0.02f), flickers[k]);
             Assert.Equal((i + 1f) * flickers[k], list.Color[k].X, 3);
+            Assert.Equal(new Vector3(i, 0f, 0f), wanders[k]);
         }
 
         ShadowFrame frame = default;
