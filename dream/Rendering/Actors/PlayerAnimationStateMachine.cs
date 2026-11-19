@@ -354,6 +354,9 @@ public sealed class PlayerAnimationStateMachine
         {
             _lastSkillSwingSerial = inputs.SkillSwingSerial;
             _cleaveLeft = CleaveSeconds;
+            // The cut drives the sword arm itself: the held-arm overlay is let go at once, not blended out over the
+            // first ~0.15 s of a 0.47 s swing, so the arm is not pinned while the clip has already started.
+            _mainArm = 0f;
             _attackLeft = 0f;
             _oneShotSerial++;
         }
