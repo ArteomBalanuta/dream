@@ -113,4 +113,40 @@ public enum EquipmentShape
     // direction comes from flares at the ends of things - cuffs, boot tops, hems - and that flare is
     // most of what separates armour from clothing in a silhouette 28 pixels wide.
     Flare,
+
+    // ---- pass 4: the profiled shells -------------------------------------
+    //
+    // Plate, the workhorse, is a CYLINDER: one radius and one sweep from rim to rim. Wrapped round a
+    // forearm that is right; used as a shoulder cap or a chest it gives a slab, because the eye reads
+    // a constant section as an extruded shape however curved its ends are. The four shells below are
+    // Plate with a RING TABLE - radius, sweep and centre varying per ring - which is the technique the
+    // low-poly armour generator skill is built on. Each one opens toward -Z exactly as Plate does, so
+    // the Plate rule holds: to CAP something, turn the opening downward with pitch -90.
+
+    // A shoulder cap: nearly closed and wide at the top, swelling to its widest a third of the way
+    // down, then tucking IN and opening out at the hem, so it throws a shadow under itself and sits
+    // ON the shoulder instead of boxing it. This is the pauldron shape; Plate was never one.
+    Pauldron,
+
+    // A torso: an hourglass with an ELLIPTICAL section - wide chest, pinched waist, flared fauld,
+    // and shallower front-to-back than it is wide, because a body is. A cuirass built as a Plate is
+    // a barrel.
+    Cuirass,
+
+    // A limb shell that TAPERS and LEANS: wide at +Y (the knee, the elbow), narrow at -Y, with the
+    // centre walking toward +Z as it falls. A greave, a bracer, a vambrace, a boot shaft. A tube
+    // reads as a pipe; the taper and the lean are the fix.
+    Greave,
+
+    // Three stacked lames with hard steps between them, each standing a little further out than the
+    // one below: a fauld, a tasset, a couter, a gorget. At the shipped zoom what reads is three
+    // value steps in a row, and that is what layered plate looks like from the game camera.
+    Lame,
+
+    // A RIBBED sheet: a wing, a fin, a tattered banner. Panel is a cloth sheet whose whole surface
+    // variation is one gentle bulge, which at twenty pixels across is one value - that is why the
+    // gossamer wings read flat. Membrane runs four ribs along its length with the normal split at
+    // every ridge, which is a value change every five pixels and survives the resolve. Like Panel it
+    // is a sheet, so its Z is thickness plus camber and does not fill the box.
+    Membrane,
 }

@@ -33,6 +33,16 @@ public class EquipmentShapeLibraryTests
         [EquipmentShape.Crescent] = 180,
         [EquipmentShape.Gem] = 60,
         [EquipmentShape.Panel] = 160,
+
+        // The pass-4 profiled shells. An arc shell of S segments and R rings costs
+        // (R - 1) * 2 * (S + 1) * 2 for the walls plus 4 * S for the two strip rims, so the ring
+        // table is what the budget is really buying: Cuirass has six rings because an hourglass
+        // needs a waist AND two flares, Lame has eight because three steps need two rings each.
+        [EquipmentShape.Pauldron] = 260,
+        [EquipmentShape.Cuirass] = 300,
+        [EquipmentShape.Greave] = 260,
+        [EquipmentShape.Lame] = 360,
+        [EquipmentShape.Membrane] = 330,
     };
 
     public static IEnumerable<object[]> EveryShape() =>
@@ -182,6 +192,10 @@ public class EquipmentShapeLibraryTests
     [InlineData(EquipmentShape.Crescent, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
     [InlineData(EquipmentShape.Horn, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
     [InlineData(EquipmentShape.Flare, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Pauldron, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Cuirass, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Greave, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Lame, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
     public void AShapeThatFillsItsBoxReallyFillsIt(
         EquipmentShape shape, float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
     {
@@ -196,13 +210,15 @@ public class EquipmentShapeLibraryTests
         Assert.Equal(maxZ, max.Z, 2);
     }
 
-    // Panel is a sheet: it fills X and Y, and its Z is the wall thickness plus the bulge that gives
-    // cloth its run of light, so it is left unfitted and sits slightly toward -Z. Pinned exactly,
-    // because a silent change here moves every cloak, tabard and wing off the body.
-    [Fact]
-    public void ThePanelIsASheetInZAndIsPinnedToWhatItReallyIs()
+    // Panel and Membrane are sheets: they fill X and Y, and their Z is the wall thickness plus the
+    // camber that gives cloth its run of light, so it is left unfitted and sits slightly toward -Z.
+    // Pinned here because a silent change moves every cloak, tabard and wing off the body.
+    [Theory]
+    [InlineData(EquipmentShape.Panel)]
+    [InlineData(EquipmentShape.Membrane)]
+    public void ASheetIsASheetInZAndIsPinnedToWhatItReallyIs(EquipmentShape shape)
     {
-        StaticWorldChunkMesh mesh = EquipmentShapeLibrary.Build(EquipmentShape.Panel);
+        StaticWorldChunkMesh mesh = EquipmentShapeLibrary.Build(shape);
         (Vector3 min, Vector3 max) = Extents(mesh);
 
         Assert.Equal(-0.50f, min.X, 2);

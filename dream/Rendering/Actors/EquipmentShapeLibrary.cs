@@ -71,6 +71,21 @@ public static class EquipmentShapeLibrary
             case EquipmentShape.Flare:
                 AppendFlare(writer);
                 break;
+            case EquipmentShape.Pauldron:
+                AppendPauldron(writer);
+                break;
+            case EquipmentShape.Cuirass:
+                AppendCuirass(writer);
+                break;
+            case EquipmentShape.Greave:
+                AppendGreave(writer);
+                break;
+            case EquipmentShape.Lame:
+                AppendLame(writer);
+                break;
+            case EquipmentShape.Membrane:
+                AppendMembrane(writer);
+                break;
             default:
                 AppendBox(writer);
                 break;
@@ -96,7 +111,7 @@ public static class EquipmentShapeLibrary
         writer.FitToUnitBox(
             fitX: true,
             fitY: shape is not EquipmentShape.Ring,
-            fitZ: shape is not EquipmentShape.Panel);
+            fitZ: shape is not (EquipmentShape.Panel or EquipmentShape.Membrane));
 
         return writer.ToMesh();
     }
@@ -707,6 +722,254 @@ public static class EquipmentShapeLibrary
         float slope = PanelSlope(x);
         float side = front ? -1f : 1f;
         Vector3 position = new(x, y, PanelSurface(x) + (side * halfThickness));
+        Vector3 normal = Vector3.Normalize(new Vector3(-slope * side, 0f, side));
+        return (position, normal, Uv(u, v));
+    }
+
+    // ---- pass 4: profiled shells ----------------------------------------
+    //
+    // Plate is the workhorse of the catalogue and it is a CYLINDER: one radius, one sweep, three
+    // rings at 0.96 / 1.00 / 0.96. Wrapped round a limb that reads fine, but used as a shoulder cap
+    // or a chest it gives the slab that the reference sets never have - the eye reads a constant
+    // section as an extruded shape however curved its ends are.
+    //
+    // The four shapes below are all the same construction with a different ring table: an open arc
+    // about +Z whose RADIUS, SWEEP and CENTRE vary per ring. That is the one technique the low-poly
+    // armour generator skill is built on (its loft(centers, radii, angles)), expressed in the unit
+    // frame this catalogue uses. A varying radius is what makes a pauldron swell and tuck; a varying
+    // sweep is what makes it close round the top of the arm and open at the hem; a moving centre is
+    // what makes a greave lean forward over the shin instead of standing as a pipe.
+    //
+    // All of them are fitted to the unit box afterwards, exactly as Plate is, so a part's authored
+    // Size is still its real extent and any of them is a drop-in for a Plate.
+
+    // A shoulder cap: wide and nearly closed at the top where it caps the deltoid, swelling to its
+    // widest at a third of the way down, then tucking IN and opening out at the hem. The profile is
+    // the difference between a pauldron and a bucket - a shell whose bottom rim is narrower than its
+    // belly throws a shadow under itself and reads as a cap sitting ON a shoulder.
+    //
+    // Unrotated the opening faces -Z like Plate's, so the same rule applies: to cap a shoulder,
+    // pitch it -90 so the opening turns downward. See EquipmentShape.cs.
+    private static void AppendPauldron(MeshWriter writer)
+    {
+        ReadOnlySpan<float> heights = [-0.5f, -0.22f, 0.06f, 0.32f, 0.5f];
+        ReadOnlySpan<float> radiusX = [0.44f, 0.50f, 0.47f, 0.37f, 0.26f];
+        ReadOnlySpan<float> radiusZ = [0.42f, 0.50f, 0.48f, 0.40f, 0.30f];
+        ReadOnlySpan<float> sweeps = [250f, 238f, 224f, 206f, 190f];
+        ReadOnlySpan<float> offsetZ = [0.02f, 0f, -0.01f, -0.02f, -0.03f];
+        AppendArcShell(writer, 11, heights, radiusX, radiusZ, sweeps, offsetZ, 0.13f);
+    }
+
+    // A torso: an HOURGLASS, which is the second of the six things a worn piece is judged on. Wide
+    // across the chest, pinched at the waist, flared again over the hips, and the section is an
+    // ELLIPSE - a body is wider across than it is deep, so rz stays well under rx and the chest does
+    // not read as a barrel. The sweep widens toward the hem so the fauld stands off the thighs.
+    private static void AppendCuirass(MeshWriter writer)
+    {
+        ReadOnlySpan<float> heights = [-0.5f, -0.3f, -0.06f, 0.2f, 0.42f, 0.5f];
+        ReadOnlySpan<float> radiusX = [0.46f, 0.50f, 0.38f, 0.47f, 0.50f, 0.47f];
+        ReadOnlySpan<float> radiusZ = [0.36f, 0.39f, 0.29f, 0.36f, 0.38f, 0.35f];
+        ReadOnlySpan<float> sweeps = [255f, 250f, 240f, 236f, 232f, 228f];
+        ReadOnlySpan<float> offsetZ = [0.01f, 0f, 0f, 0.01f, 0.02f, 0.02f];
+        AppendArcShell(writer, 11, heights, radiusX, radiusZ, sweeps, offsetZ, 0.12f);
+    }
+
+    // A limb shell that TAPERS: a greave, a bracer, a vambrace, a boot shaft. Wide at the +Y end
+    // (the knee or the elbow), narrow at the -Y end, and the centre walks toward +Z as it falls, so
+    // the piece leans over the front of the limb the way a real greave does. A tube reads as a pipe;
+    // the taper and the lean are the whole fix.
+    private static void AppendGreave(MeshWriter writer)
+    {
+        ReadOnlySpan<float> heights = [-0.5f, -0.2f, 0.12f, 0.38f, 0.5f];
+        ReadOnlySpan<float> radiusX = [0.29f, 0.35f, 0.44f, 0.50f, 0.48f];
+        ReadOnlySpan<float> radiusZ = [0.30f, 0.36f, 0.45f, 0.50f, 0.47f];
+        ReadOnlySpan<float> sweeps = [238f, 234f, 230f, 226f, 222f];
+        ReadOnlySpan<float> offsetZ = [0.06f, 0.04f, 0.01f, -0.01f, -0.02f];
+        AppendArcShell(writer, 11, heights, radiusX, radiusZ, sweeps, offsetZ, 0.12f);
+    }
+
+    // Layered lames with visible steps - the sixth of the six things a worn piece is judged on, and
+    // the one no single shape gave before. Three short arc bands stacked up +Y, each one standing a
+    // little further out than the one below, with a hard rim between them. At 20 pixels what reads
+    // is three value steps in a row, which is what a fauld, a tasset, a couter or a gorget looks
+    // like from the game camera.
+    private static void AppendLame(MeshWriter writer)
+    {
+        ReadOnlySpan<float> heights = [-0.5f, -0.34f, -0.3f, -0.08f, -0.04f, 0.2f, 0.24f, 0.5f];
+        ReadOnlySpan<float> radiusX = [0.36f, 0.40f, 0.41f, 0.45f, 0.46f, 0.49f, 0.50f, 0.46f];
+        ReadOnlySpan<float> radiusZ = [0.36f, 0.40f, 0.41f, 0.45f, 0.46f, 0.49f, 0.50f, 0.46f];
+        ReadOnlySpan<float> sweeps = [232f, 232f, 230f, 230f, 228f, 228f, 226f, 226f];
+        ReadOnlySpan<float> offsetZ = [0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f];
+        bool[] hardRing = [false, true, true, true, true, true, true, false];
+        AppendArcShell(writer, 10, heights, radiusX, radiusZ, sweeps, offsetZ, 0.11f, hardRing);
+    }
+
+    // The shared construction: an open arc about +Z, swept sweepDegrees and centred on +Z, with an
+    // outer wall at (radiusX, radiusZ) and an inner wall one wall thinner, closed top and bottom
+    // with a strip so the shell is a solid and not a sheet. Rings run -Y to +Y.
+    //
+    // The lip corners are hard so the shell has an edge; everything else is smooth, which is what
+    // makes the varying radius read as a curve rather than as facets.
+    private static void AppendArcShell(
+        MeshWriter writer,
+        int segments,
+        ReadOnlySpan<float> heights,
+        ReadOnlySpan<float> radiusX,
+        ReadOnlySpan<float> radiusZ,
+        ReadOnlySpan<float> sweepDegrees,
+        ReadOnlySpan<float> offsetZ,
+        float wall,
+        bool[]? hardRing = null)
+    {
+        int points = (segments + 1) * 2;
+        Vector3[][] rings = new Vector3[heights.Length][];
+        for (int i = 0; i < heights.Length; i++)
+        {
+            float sweep = sweepDegrees[i] * (MathF.PI / 180f);
+            float outerX = radiusX[i];
+            float outerZ = radiusZ[i];
+
+            // Never let the inner wall cross the axis: a shell thinner than its own wall would turn
+            // inside out, and the winding gate would catch it only on the ring it happened on.
+            float innerX = MathF.Max(outerX - wall, outerX * 0.25f);
+            float innerZ = MathF.Max(outerZ - wall, outerZ * 0.25f);
+
+            Vector3[] ring = new Vector3[points];
+            for (int s = 0; s <= segments; s++)
+            {
+                float angle = (-sweep * 0.5f) + (sweep * s / segments);
+                float sin = MathF.Sin(angle);
+                float cos = MathF.Cos(angle);
+                ring[s] = new Vector3(outerX * sin, heights[i], offsetZ[i] + (outerZ * cos));
+                ring[points - 1 - s] = new Vector3(innerX * sin, heights[i], offsetZ[i] + (innerZ * cos));
+            }
+
+            rings[i] = ring;
+        }
+
+        FitRingsToUnitBox(rings, fitX: true, fitZ: true);
+
+        bool[] hardPoint = Repeat(points, false);
+        hardPoint[0] = true;
+        hardPoint[segments] = true;
+        hardPoint[segments + 1] = true;
+        hardPoint[points - 1] = true;
+
+        AppendTube(writer, rings, hardRing, hardPoint, TubeCap.Strip, TubeCap.Strip);
+    }
+
+    // A ribbed membrane: a wing, a tattered banner, a fin. Panel is a cloth sheet with a gentle
+    // bulge, and at this zoom a bulge of a tenth of a unit over a part twenty pixels wide is one
+    // value - which is why the gossamer wings read FLAT. This is the fix, and it is a frequency fix
+    // rather than an amplitude one: four RIBS run the length of the sheet, each a narrow ridge
+    // standing proud of the membrane between them, with the normal split at every ridge line. Four
+    // ribs across twenty pixels is a rib every five pixels, which survives MSAA; a dozen would not.
+    //
+    // Like Panel this is a sheet, so Z is thickness plus camber and is left unfitted.
+    private static void AppendMembrane(MeshWriter writer)
+    {
+        const int ribs = 4;
+        const int columns = ribs * 3;
+        const int rows = 5;
+        const float halfThickness = 0.045f;
+
+        for (int i = 0; i < columns; i++)
+        {
+            float x0 = -0.5f + ((float)i / columns);
+            float x1 = -0.5f + ((float)(i + 1) / columns);
+            float u0 = (float)i / columns;
+            float u1 = (float)(i + 1) / columns;
+
+            // A ridge line every third column: split the normal there so the rib has an edge.
+            bool ridgeLeft = i % 3 == 0;
+            bool ridgeRight = (i + 1) % 3 == 0;
+
+            for (int j = 0; j < rows; j++)
+            {
+                float y0 = -0.5f + ((float)j / rows);
+                float y1 = -0.5f + ((float)(j + 1) / rows);
+                float v0 = (float)j / rows;
+                float v1 = (float)(j + 1) / rows;
+
+                for (int side = 0; side < 2; side++)
+                {
+                    bool front = side == 0;
+                    SmoothQuad(
+                        writer,
+                        MembraneVertex(x0, y0, front, u0, v0, ridgeLeft),
+                        MembraneVertex(x1, y0, front, u1, v0, ridgeRight),
+                        MembraneVertex(x1, y1, front, u1, v1, ridgeRight),
+                        MembraneVertex(x0, y1, front, u0, v1, ridgeLeft));
+                }
+            }
+        }
+
+        // The rim, closed all the way round so the membrane is a solid sheet with an edge.
+        for (int i = 0; i < columns; i++)
+        {
+            float x0 = -0.5f + ((float)i / columns);
+            float x1 = -0.5f + ((float)(i + 1) / columns);
+            for (int edge = 0; edge < 2; edge++)
+            {
+                float y = edge == 0 ? -0.5f : 0.5f;
+                Vector3 outward = new(0f, y * 2f, 0f);
+                FlatQuad(
+                    writer,
+                    new Vector3(x0, y, MembraneSurface(x0) - halfThickness),
+                    new Vector3(x1, y, MembraneSurface(x1) - halfThickness),
+                    new Vector3(x1, y, MembraneSurface(x1) + halfThickness),
+                    new Vector3(x0, y, MembraneSurface(x0) + halfThickness),
+                    outward);
+            }
+        }
+
+        for (int j = 0; j < rows; j++)
+        {
+            float y0 = -0.5f + ((float)j / rows);
+            float y1 = -0.5f + ((float)(j + 1) / rows);
+            for (int edge = 0; edge < 2; edge++)
+            {
+                float x = edge == 0 ? -0.5f : 0.5f;
+                float z = MembraneSurface(x);
+                Vector3 outward = new(x * 2f, 0f, 0f);
+                FlatQuad(
+                    writer,
+                    new Vector3(x, y0, z - halfThickness),
+                    new Vector3(x, y1, z - halfThickness),
+                    new Vector3(x, y1, z + halfThickness),
+                    new Vector3(x, y0, z + halfThickness),
+                    outward);
+            }
+        }
+    }
+
+    // The membrane's mid-surface: a strong camber toward -Z plus a rib ripple. The ripple is a
+    // cosine of four periods across the width, so the ridges land on the columns the normals are
+    // split at.
+    private static float MembraneSurface(float x)
+    {
+        float camber = -0.16f * (1f - (4f * x * x));
+        float ripple = 0.055f * MathF.Cos(MathF.Tau * 4f * (x + 0.5f));
+        return camber + ripple;
+    }
+
+    private static float MembraneSlope(float x) =>
+        (1.28f * x) - (0.055f * MathF.Tau * 4f * MathF.Sin(MathF.Tau * 4f * (x + 0.5f)));
+
+    // ridge flattens the slope used for the normal at a ridge line, so the two facets that meet
+    // there get normals that differ instead of averaging into one smooth hump.
+    private static (Vector3 Position, Vector3 Normal, Vector2 Uv) MembraneVertex(
+        float x,
+        float y,
+        bool front,
+        float u,
+        float v,
+        bool ridge)
+    {
+        const float halfThickness = 0.045f;
+        float slope = ridge ? MembraneSlope(x) * 0.25f : MembraneSlope(x);
+        float side = front ? -1f : 1f;
+        Vector3 position = new(x, y, MembraneSurface(x) + (side * halfThickness));
         Vector3 normal = Vector3.Normalize(new Vector3(-slope * side, 0f, side));
         return (position, normal, Uv(u, v));
     }
