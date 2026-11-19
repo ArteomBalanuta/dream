@@ -112,9 +112,10 @@ public sealed class FxSimulation
     // A segment is born when the blade passes its start and is gone this long after: twice the swing, so the tail
     // end has faded while the tip is still being laid.
     internal const float TrailLife = 2f * MeleeArcSwing.ActiveSeconds;
-    // Half-sizes in authored metres, like FxBladeTrailGeometry; WorldMetresPerAuthoredMetre makes them world sizes.
-    private const float TrailStartHalfSize = 0.26f;
-    private const float TrailEndHalfSize = 0.10f;
+    // Half-sizes in authored metres, like FxBladeTrailGeometry; WorldMetresPerAuthoredMetre (~0.63) makes them world
+    // sizes of about 0.26 m at birth and 0.10 m at death, so the white band stays bold beside the small figure.
+    private const float TrailStartHalfSize = 0.41f;
+    private const float TrailEndHalfSize = 0.16f;
     // Each segment's quad is stretched to this many times the chord it spans, so neighbours overlap.
     private const float TrailOverlap = 1.5f;
     private const float TrailDepthBias = 0.5f;
