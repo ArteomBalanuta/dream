@@ -77,6 +77,12 @@ public class VSyncSettingsTests
         Assert.False(VSyncSettings.IsCaptureRun(_ => null));
     }
 
+    [Fact]
+    public void IsCaptureRun_MenuFlowZeroIsNotACaptureRun()
+    {
+        Assert.False(VSyncSettings.IsCaptureRun(name => name == "DREAM_MENU_FLOW" ? "0" : null));
+    }
+
     [Theory]
     [InlineData(VSyncMode.Off, true, 0)]
     [InlineData(VSyncMode.Off, false, 0)]
@@ -106,9 +112,48 @@ public class VSyncSettingsTests
         }
 
         string source = File.ReadAllText(Path.Combine(dir, "dream", "Application", "Game.cs"));
-        Assert.Contains("VSync = VSyncMode.Off;", source);
-        Assert.DoesNotContain("VSync = VSyncMode.Adaptive", source);
-        Assert.Contains("GLFW.SwapInterval(VSyncSettings.SwapInterval(", source);
+        Assert.Null(PacingViolation(source));
+
+        // Synthetic negatives: each pattern must be able to fail on a mutated copy.
+        Assert.NotNull(PacingViolation(source.Replace("VSync = VSyncMode.Off;", "VSync = VSyncMode.Adaptive;")));
+        Assert.NotNull(PacingViolation(source.Replace("VSync = VSyncMode.Off;", "VSync = mode;")));
+        Assert.NotNull(PacingViolation(source.Replace("VSync = VSyncMode.Off;", "// removed")));
+        const string swapCall = "GLFW.SwapInterval(VSyncSettings.SwapInterval(mode, AdaptiveSyncSupported()));";
+        Assert.Contains(swapCall, source);
+        string swapFirst = source.Replace("VSync = VSyncMode.Off;", "// moved").Replace(swapCall, swapCall + " VSync = VSyncMode.Off;");
+        Assert.NotNull(PacingViolation(swapFirst));
+    }
+
+    // Null when ApplyFramePacing sets OpenTK's VSync to the Off literal before the direct swap interval,
+    // and nothing else assigns VSync anywhere in the file.
+    private static string? PacingViolation(string source)
+    {
+        int start = source.IndexOf("void ApplyFramePacing(", StringComparison.Ordinal);
+        if (start < 0)
+        {
+            return "ApplyFramePacing not found";
+        }
+
+        int end = source.IndexOf("\n    }", start, StringComparison.Ordinal);
+        string body = source.Substring(start, end < 0 ? source.Length - start : end - start);
+        int off = body.IndexOf("VSync = VSyncMode.Off;", StringComparison.Ordinal);
+        int swap = body.IndexOf("GLFW.SwapInterval(", StringComparison.Ordinal);
+        if (off < 0 || swap < 0 || off >= swap)
+        {
+            return "VSync = Off must come before GLFW.SwapInterval inside ApplyFramePacing";
+        }
+
+        if (!body.Contains("GLFW.SwapInterval(VSyncSettings.SwapInterval(", StringComparison.Ordinal))
+        {
+            return "the swap interval must come from VSyncSettings.SwapInterval";
+        }
+
+        if (System.Text.RegularExpressions.Regex.IsMatch(source, @"\bVSync\s*=(?!\s*VSyncMode\.Off;)"))
+        {
+            return "VSync is assigned something other than the Off literal";
+        }
+
+        return null;
     }
 
     [Fact]

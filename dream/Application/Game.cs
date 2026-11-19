@@ -585,8 +585,8 @@ public class Game : GameWindow
         RunMenuFlowStep();
         Stopwatch swapStopwatch = Stopwatch.StartNew();
         SwapBuffers();
-        RenderDocHook.OnFrameEnd(_renderedFrames++);
         swapStopwatch.Stop();
+        RenderDocHook.OnFrameEnd(_renderedFrames++);
         frameStopwatch.Stop();
         _playScene?.ReportPresentedFramePerformance(
             frameStopwatch.Elapsed.TotalMilliseconds,

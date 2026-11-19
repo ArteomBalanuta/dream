@@ -44,8 +44,17 @@ public class GlContextVersionTests
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(source, @"catch \(GLFWException"));
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(source, @"new Game\("));
         Assert.Matches(@"using var game = new Game\(version\);", source);
-        Assert.DoesNotMatch(@"try\s*\{\s*(created = )?new Game", source);
+        Assert.False(GameConstructedInsideTry(source));
+
+        // Synthetic negatives: the check must trip when the constructor moves into a try.
+        Assert.True(GameConstructedInsideTry(source.Replace(
+            "using var game = new Game(version);", "try { using var game = new Game(version); } catch (GLFWException) { }")));
+        Assert.True(GameConstructedInsideTry(source.Replace(
+            "using var game = new Game(version);", "Game? created; try { created = new Game(version); } catch (Exception) { throw; }")));
     }
+
+    private static bool GameConstructedInsideTry(string source) =>
+        System.Text.RegularExpressions.Regex.IsMatch(source, @"try\s*\{[^}]*new Game\(");
 
     [Fact]
     public void SelectContextVersion_FallsBackOnlyOnGlfwException_AndLogsTheRealMessage()
