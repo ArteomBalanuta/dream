@@ -11,7 +11,8 @@ public enum FxParticleKind : byte
     Flash,
     Arc,
     Bolt,
-    Ring
+    Ring,
+    Trail
 }
 
 // One live particle. Color is premultiplied RGBA at full strength; the fade over its life scales
@@ -36,6 +37,8 @@ public struct FxParticle
     public float Sway;
     // A spark or ember that carries its own colour: skips the orange heat ramp.
     public bool Plain;
+    // The world half-chord a Trail segment spans, centre to either end; zero for every other kind.
+    public Vector3 Axis;
     public Vector4 Color;
 }
 

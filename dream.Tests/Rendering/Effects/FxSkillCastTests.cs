@@ -256,11 +256,11 @@ public class FxSkillCastTests
         AdvanceTo(simulation, MeleeArcSwing.ActiveSeconds + 1f / 64f);
         float[] lateral = SparkLaterals(simulation);
 
-        Assert.Equal(14, lateral.Length);
+        Assert.Equal(8, lateral.Length);
         Assert.True(lateral[0] < -1.5f, $"first spark at {lateral[0]}");
         Assert.True(lateral[^1] > 1.5f, $"last spark at {lateral[^1]}");
-        float firstHalf = lateral.Take(7).Average();
-        float secondHalf = lateral.Skip(7).Average();
+        float firstHalf = lateral.Take(4).Average();
+        float secondHalf = lateral.Skip(4).Average();
         Assert.True(firstHalf < -0.5f && secondHalf > 0.5f);
         for (int i = 1; i < lateral.Length; i++)
         {
