@@ -300,6 +300,66 @@ The first-person rig now resolves viewmodel poses through `ViewModelPoseResolver
 
 `ViewModelRenderer` consumes the resolved pose directly, including a viewmodel-specific FOV. This keeps the projection and transform tuning runtime-adjustable without moving pose composition into `Render.cs`.
 
+## Scene Post Pass
+
+Everything in the world — terrain, props, actors, the sky, the boundary mist, the effects, the
+collision debug draw and the first-person view model — is drawn into an offscreen **RGBA16F** target
+(`Rendering/Post/SceneTarget.cs`) and resolved onto the window by a three-program chain
+(`Rendering/Post/PostChain.cs`) before the HUD. The HUD and the ImGui overlay are drawn *after* the
+resolve, straight to the default framebuffer, because they are authored in display values and must
+not be rolled off.
+
+### Why it exists
+
+Before it, the renderer had exactly one framebuffer object — the shadow map — and every channel was
+hard-clipped at 1.0. That clip is the reason the art is held to an albedo ceiling of 0.42: 0.42 x
+the peak gain of about 2.2 beside a brazier is 0.924, so the *diffuse* term alone nearly filled the
+budget and a specular lobe, an equipment rim or an emissive on top of it landed on a flat white
+patch. Measured on a night capture, the fraction of saturated pixels in the world area fell from
+0.20% to 0.0001% when the pass was added.
+
+### The curve
+
+`dream/shaders/postTone.glsl` holds the single definition, shared by the bright pass and the resolve
+so the bloom can only ever take the light the shoulder is about to compress.
+
+- **Identity below the knee (0.80).** This is what makes the pass safe to add to a calibrated
+  renderer: almost every pixel in a frame comes through bit for bit, and only the top end moves.
+- **C1 continuous** — the slope at the knee is exactly 1, so there is no seam or band.
+- **Monotonic and asymptotic to 1.0**, so nothing clips however bright it gets.
+- Applied to the **max channel**, scaling the colour, not per channel: a per-channel curve slides a
+  highlight toward white, and this art direction is built on coloured light.
+
+`PostSettings.Rolloff` mirrors it in C# and `PostToneContractTests` pins all of that, including that
+the C# copy of the knee still matches the number in the GLSL.
+
+### The bloom
+
+The bright pass writes `dreamToneOverflow` — the part of a pixel above the knee, in the pixel's own
+colour — at a quarter resolution, and a pixel below the knee returns **exactly zero**. A dark frame
+therefore produces a black bloom and the glow cannot lift a shadow; that is a property of the
+threshold, not a tuning choice. Two separable 5-tap passes (linear-sampled, so six fetches for the
+reach of eighteen) blur it, and the resolve adds it back **before** the shoulder, so the glow rolls
+off with the light that made it instead of being the one thing in the frame that can still clip.
+`DREAM_BLOOM` scales it; `DREAM_POST=0` takes the whole chain out.
+
+### Two things that changed with it
+
+- **MSAA resolves in float.** An offscreen target does not inherit the window's multisampling, so the
+  scene draws into a multisampled renderbuffer pair carrying the granted sample count and is blitted
+  down (the only way to resolve in a 3.3 core profile). Samples are averaged **unclamped**: an edge
+  next to something overbright used to average a clamped 1.0 and now averages the real value, which
+  is brighter and more correct. This is most of what a golden compare sees.
+- **There is still no gamma step, deliberately.** This engine's shaders write display-referred
+  values; the whole catalogue was authored by eye against the monitor. An encode here would move
+  every pixel in the game and mean nothing but a global brightness change.
+
+### Failure is never fatal
+
+An incomplete framebuffer, a shader that will not build, or `DREAM_POST=0` leaves the chain null and
+the frame is drawn exactly as it was before the pass existed — the OpenGL 3.3 fallback. Both the
+scene target and the bloom targets check `GL.CheckFramebufferStatus` and report rather than throw.
+
 ## HUD Rendering
 
 There are two HUD surfaces. The classic sprite HUD is the default; the ImGui HUD described after it is the automatic fallback and the admin view (F3). Settings, the Build panel and the startup menu stay ImGui on both. The switches are in `docs/configuration.md`.
