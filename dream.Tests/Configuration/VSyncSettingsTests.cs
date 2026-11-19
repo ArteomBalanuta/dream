@@ -122,6 +122,10 @@ public class VSyncSettingsTests
         Assert.Contains(swapCall, source);
         string swapFirst = source.Replace("VSync = VSyncMode.Off;", "// moved").Replace(swapCall, swapCall + " VSync = VSyncMode.Off;");
         Assert.NotNull(PacingViolation(swapFirst));
+
+        // Negatives that keep the Off literal in place, so the two later checks are shown to be able to fail on their own.
+        Assert.Contains("assigned something other", PacingViolation(source.Replace(swapCall, swapCall + " VSync = VSyncMode.On;")));
+        Assert.Contains("must come from VSyncSettings", PacingViolation(source.Replace(swapCall, "GLFW.SwapInterval(1);")));
     }
 
     // Null when ApplyFramePacing sets OpenTK's VSync to the Off literal before the direct swap interval,

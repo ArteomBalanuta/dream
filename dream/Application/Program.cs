@@ -173,7 +173,15 @@ public static class Program
     private static void ProbeContext(Version version)
     {
         string? recorded = null;
-        GLFWProvider.SetErrorCallback((error, description) => recorded ??= $"{error}: {description}");
+        ErrorCode recordedCode = ErrorCode.NoError;
+        GLFWProvider.SetErrorCallback((error, description) =>
+        {
+            if (recorded == null)
+            {
+                recorded = $"{error}: {description}";
+                recordedCode = error;
+            }
+        });
         try
         {
             using NativeWindow probe = new(new NativeWindowSettings
@@ -189,9 +197,10 @@ public static class Program
 #endif
             });
         }
-        catch (Exception ex) when (recorded != null && ex is not GLFWException)
+        catch (Exception ex) when (recorded != null && ex is not (GLFWException or OutOfMemoryException))
         {
-            throw new GLFWException(recorded);
+            // GLFWException has no inner-exception constructor, so the caught exception's detail goes in the message.
+            throw new GLFWException($"{recorded} ({ex.GetType().Name}: {ex.Message})", recordedCode);
         }
         finally
         {
@@ -201,7 +210,7 @@ public static class Program
 
         if (recorded != null)
         {
-            throw new GLFWException(recorded);
+            throw new GLFWException(recorded, recordedCode);
         }
     }
 
