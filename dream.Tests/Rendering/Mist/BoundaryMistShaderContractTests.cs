@@ -95,7 +95,7 @@ public class BoundaryMistShaderContractTests
 
         AssertIncludedAfterLighting(code);
         Assert.Contains(
-            "FragColor = texture(uAtlas, vUv) * vColor * dreamFogTransmittance(vWorldPos) * (1.0 - dreamBoundaryOpacity(vWorldPos));",
+            "FragColor = emitted * dreamFogTransmittance(vWorldPos) * (1.0 - dreamBoundaryOpacity(vWorldPos));",
             code);
     }
 
