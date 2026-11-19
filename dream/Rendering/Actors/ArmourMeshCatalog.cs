@@ -38,7 +38,9 @@ public readonly record struct ArmourPart(
     Vector3 Size,
     ArmourMaterial Material,
     float PitchDegrees = 0f,
-    float RollDegrees = 0f)
+    float RollDegrees = 0f,
+    EquipmentShape Shape = EquipmentShape.Box,
+    float YawDegrees = 0f)
 {
     // Local box (unit cube) to node space, for row vectors.
     public Matrix4 ToMatrix()
@@ -52,6 +54,11 @@ public readonly record struct ArmourPart(
         if (RollDegrees != 0f)
         {
             matrix *= Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(RollDegrees));
+        }
+
+        if (YawDegrees != 0f)
+        {
+            matrix *= Matrix4.CreateRotationY(MathHelper.DegreesToRadians(YawDegrees));
         }
 
         return matrix * Matrix4.CreateTranslation(Center);
@@ -129,9 +136,11 @@ public static class ArmourMeshCatalog
         float sx, float sy, float sz,
         ArmourMaterial material,
         float pitch = 0f,
-        float roll = 0f)
+        float roll = 0f,
+        EquipmentShape shape = EquipmentShape.Box,
+        float yaw = 0f)
     {
-        return new ArmourPart(new Vector3(x, y, z), new Vector3(sx, sy, sz), material, pitch, roll);
+        return new ArmourPart(new Vector3(x, y, z), new Vector3(sx, sy, sz), material, pitch, roll, shape, yaw);
     }
 
     private static List<ArmourModel> BuildModels()

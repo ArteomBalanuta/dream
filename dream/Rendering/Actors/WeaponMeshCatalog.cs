@@ -31,7 +31,9 @@ public readonly record struct WeaponPart(
     Vector3 Size,
     WeaponMaterial Material,
     float PitchDegrees = 0f,
-    float RollDegrees = 0f)
+    float RollDegrees = 0f,
+    EquipmentShape Shape = EquipmentShape.Box,
+    float YawDegrees = 0f)
 {
     // Local box (unit cube) to model space, for row vectors.
     public Matrix4 ToMatrix()
@@ -45,6 +47,11 @@ public readonly record struct WeaponPart(
         if (RollDegrees != 0f)
         {
             matrix *= Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(RollDegrees));
+        }
+
+        if (YawDegrees != 0f)
+        {
+            matrix *= Matrix4.CreateRotationY(MathHelper.DegreesToRadians(YawDegrees));
         }
 
         return matrix * Matrix4.CreateTranslation(Center);
@@ -131,9 +138,11 @@ public static class WeaponMeshCatalog
         float sx, float sy, float sz,
         WeaponMaterial material,
         float pitch = 0f,
-        float roll = 0f)
+        float roll = 0f,
+        EquipmentShape shape = EquipmentShape.Box,
+        float yaw = 0f)
     {
-        return new WeaponPart(new Vector3(x, y, z), new Vector3(sx, sy, sz), material, pitch, roll);
+        return new WeaponPart(new Vector3(x, y, z), new Vector3(sx, sy, sz), material, pitch, roll, shape, yaw);
     }
 
     private static Dictionary<string, WeaponModel> BuildModels()
