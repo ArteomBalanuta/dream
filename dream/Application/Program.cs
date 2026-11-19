@@ -18,7 +18,8 @@ internal enum ProcessMode
     Database,
     Characters,
     Accounts,
-    Items
+    Items,
+    ValidateContent
 }
 
 public static class Program
@@ -40,6 +41,7 @@ public static class Program
             ProcessMode.Characters => CharacterCli.Run(args[1..]),
             ProcessMode.Accounts => AccountCli.Run(args[1..]),
             ProcessMode.Items => ItemCli.Run(args[1..]),
+            ProcessMode.ValidateContent => ContentValidateCli.Run(args[1..], Console.Out, Console.Error),
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown process mode.")
         };
     }
@@ -88,6 +90,13 @@ public static class Program
             return true;
         }
 
+        if (string.Equals(args[0], "--validate-content", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = ProcessMode.ValidateContent;
+            errorMessage = null;
+            return true;
+        }
+
         if (string.Equals(args[0], "--db", StringComparison.OrdinalIgnoreCase))
         {
             mode = ProcessMode.Database;
@@ -122,7 +131,7 @@ public static class Program
         errorMessage =
             $"Unsupported startup argument(s): {string.Join(", ", args)}. " +
             "Supported modes: no arguments for desktop, --server [--world <id|name>] for the dedicated server, " +
-            "or --worlds list|create|copy|delete for the world catalog, or --characters list|release|rename for characters, or --accounts grant-admin|revoke-admin|unban for accounts, or --items grant|list for item rolls, or --db backup|restore for the database file.";
+            "or --worlds list|create|copy|delete for the world catalog, or --characters list|release|rename for characters, or --accounts grant-admin|revoke-admin|unban for accounts, or --items grant|list for item rolls, or --db backup|restore for the database file, or --validate-content [--dir <dir>] [--ui <dir>] [--strict] to check the content files.";
         return false;
     }
 
