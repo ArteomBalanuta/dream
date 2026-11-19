@@ -29,7 +29,7 @@ public sealed class ContentCatalogTests
     {
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "items.json")));
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "enemies.json")));
-        Assert.Equal(59, ContentCatalog.Shipped.Items.Count);
+        Assert.Equal(65, ContentCatalog.Shipped.Items.Count);
         Assert.Matches("^[0-9a-f]{64}$", ContentCatalog.Shipped.ContentDigest);
     }
 
@@ -427,11 +427,11 @@ public sealed class ContentCatalogTests
         Assert.True(catalog.TryGetLootTable("wolf", out LootTable wolf));
         Assert.Equal(1, wolf.Drops);
         Assert.Equal(75, wolf.NothingWeight);
-        Assert.Equal(52, wolf.Items.Count);
+        Assert.Equal(58, wolf.Items.Count);
         Assert.Equal((85, 13, 2), (wolf.CommonWeight, wolf.UncommonWeight, wolf.RareWeight));
         Assert.True(catalog.TryGetLootTable("dire-wolf", out LootTable dire));
         Assert.Equal(2, dire.Drops);
-        Assert.Equal(52, dire.Items.Count);
+        Assert.Equal(58, dire.Items.Count);
         // The item catalogue joined the tables with the same "nothing" weights as before, so the chance of
         // a drop is only diluted across more kinds (potions carry the most weight).
         Assert.Equal(75, wolf.NothingWeight);

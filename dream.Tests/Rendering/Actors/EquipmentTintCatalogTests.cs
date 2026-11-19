@@ -60,6 +60,42 @@ public class EquipmentTintCatalogTests
         Assert.Empty(EquipmentTintCatalog.Tiers.Keys.Where(id => !known.Contains(id)));
     }
 
+    // The royal sorcerer set is one set and must read as one: six pieces, one tier. Named here
+    // rather than derived from the mesh catalog, because "every known id has a tier" passes just as
+    // happily when a piece is quietly Common.
+    public static TheoryData<string> SorcererRegaliaIds() =>
+    [
+        "worn.head.sorcerer-crown",
+        "worn.body.sorcerer-regalia",
+        "worn.hands.sorcerer-gauntlets",
+        "worn.legs.sorcerer-greaves",
+        "worn.feet.sorcerer-sabatons",
+        "worn.back.sorcerer-mantle",
+    ];
+
+    [Theory]
+    [MemberData(nameof(SorcererRegaliaIds))]
+    public void TheSorcererRegalia_IsEpic(string visualId)
+    {
+        Assert.Equal(EquipmentTier.Epic, EquipmentTintCatalog.TierOf(visualId));
+        Assert.Equal(EquipmentTintCatalog.TintFor(EquipmentTier.Epic), EquipmentTintCatalog.Resolve(visualId));
+    }
+
+    // The regalia is enamelled indigo plate, a material the tier table has not had to carry before.
+    // Run the same safety check the per-id theories run, on the ids whether or not the mesh catalog
+    // of this build already lists them.
+    [Theory]
+    [MemberData(nameof(SorcererRegaliaIds))]
+    public void TheSorcererRegaliaTint_NeverBlowsOutOrDestroysAMaterial(string visualId)
+    {
+        EquipmentTint tint = EquipmentTintCatalog.Resolve(visualId);
+        foreach (ArmourMaterial material in Enum.GetValues<ArmourMaterial>())
+        {
+            EquipmentSurface surface = EquipmentSurface.For(material);
+            AssertSafe(tint, ArmourMeshCatalog.BaseColor(material), surface.AccentMix, $"{visualId}/{material}");
+        }
+    }
+
     [Fact]
     public void AnUnknownIdAndNull_ResolveToNeutral()
     {

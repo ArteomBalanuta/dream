@@ -905,6 +905,108 @@
       }
     },
     {
+      "key": "gear.sorcerer-crown",
+      "displayName": "Sorcerer's Crown",
+      "description": "A circlet of indigo enamel and gold, cold against the brow.",
+      "visualId": "worn.head.sorcerer-crown",
+      "detailLines": [ "Role: Arcane", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "sellPrice": 36,
+      "equipSlots": ["Head"],
+      "footprint": [2, 2],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 4, "max": 7 }, { "stat": "Energy", "min": 3, "max": 5 }, { "stat": "Vitality", "min": 1, "max": 2 } ],
+        "uncommon": [ { "stat": "Armor", "min": 6, "max": 10 }, { "stat": "Energy", "min": 4, "max": 7 }, { "stat": "Vitality", "min": 2, "max": 3 } ],
+        "rare": [ { "stat": "Armor", "min": 8, "max": 13 }, { "stat": "Energy", "min": 6, "max": 10 }, { "stat": "Vitality", "min": 2, "max": 4 } ]
+      }
+    },
+    {
+      "key": "gear.sorcerer-regalia",
+      "displayName": "Sorcerer's Regalia",
+      "description": "Enamelled plate the colour of deep water, traced in gold.",
+      "visualId": "worn.body.sorcerer-regalia",
+      "detailLines": [ "Role: Arcane", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "sellPrice": 46,
+      "equipSlots": ["Body"],
+      "footprint": [2, 2],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 6, "max": 10 }, { "stat": "Energy", "min": 4, "max": 7 }, { "stat": "Vitality", "min": 3, "max": 5 } ],
+        "uncommon": [ { "stat": "Armor", "min": 9, "max": 14 }, { "stat": "Energy", "min": 6, "max": 9 }, { "stat": "Vitality", "min": 4, "max": 7 } ],
+        "rare": [ { "stat": "Armor", "min": 12, "max": 19 }, { "stat": "Energy", "min": 8, "max": 13 }, { "stat": "Vitality", "min": 5, "max": 9 } ]
+      }
+    },
+    {
+      "key": "gear.sorcerer-gauntlets",
+      "displayName": "Sorcerer's Gauntlets",
+      "description": "Slim indigo gauntlets, gold at every knuckle.",
+      "visualId": "worn.hands.sorcerer-gauntlets",
+      "detailLines": [ "Role: Arcane", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "sellPrice": 28,
+      "equipSlots": ["Hands"],
+      "footprint": [2, 2],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 3, "max": 6 }, { "stat": "Energy", "min": 2, "max": 4 }, { "stat": "AttackSpeed", "min": 0.1, "max": 0.3 } ],
+        "uncommon": [ { "stat": "Armor", "min": 5, "max": 8 }, { "stat": "Energy", "min": 3, "max": 6 }, { "stat": "AttackSpeed", "min": 0.3, "max": 0.6 } ],
+        "rare": [ { "stat": "Armor", "min": 6, "max": 11 }, { "stat": "Energy", "min": 5, "max": 8 }, { "stat": "AttackSpeed", "min": 0.5, "max": 0.9 } ]
+      }
+    },
+    {
+      "key": "gear.sorcerer-greaves",
+      "displayName": "Sorcerer's Greaves",
+      "description": "Long enamelled greaves, gilt down the shin.",
+      "visualId": "worn.legs.sorcerer-greaves",
+      "detailLines": [ "Role: Arcane", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "sellPrice": 36,
+      "equipSlots": ["Legs"],
+      "footprint": [2, 2],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 5, "max": 9 }, { "stat": "Energy", "min": 3, "max": 5 }, { "stat": "Vitality", "min": 2, "max": 4 } ],
+        "uncommon": [ { "stat": "Armor", "min": 7, "max": 12 }, { "stat": "Energy", "min": 4, "max": 7 }, { "stat": "Vitality", "min": 3, "max": 5 } ],
+        "rare": [ { "stat": "Armor", "min": 10, "max": 16 }, { "stat": "Energy", "min": 6, "max": 10 }, { "stat": "Vitality", "min": 3, "max": 7 } ]
+      }
+    },
+    {
+      "key": "gear.sorcerer-sabatons",
+      "displayName": "Sorcerer's Sabatons",
+      "description": "Narrow indigo sabatons that fall quiet on stone.",
+      "visualId": "worn.feet.sorcerer-sabatons",
+      "detailLines": [ "Role: Arcane", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "sellPrice": 28,
+      "equipSlots": ["Feet"],
+      "footprint": [2, 2],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 3, "max": 7 }, { "stat": "Energy", "min": 2, "max": 4 }, { "stat": "Agility", "min": 1, "max": 2 } ],
+        "uncommon": [ { "stat": "Armor", "min": 5, "max": 9 }, { "stat": "Energy", "min": 3, "max": 6 }, { "stat": "Agility", "min": 1, "max": 3 } ],
+        "rare": [ { "stat": "Armor", "min": 7, "max": 12 }, { "stat": "Energy", "min": 5, "max": 8 }, { "stat": "Agility", "min": 2, "max": 4 } ]
+      }
+    },
+    {
+      "key": "gear.sorcerer-mantle",
+      "displayName": "Sorcerer's Mantle",
+      "description": "A heavy indigo mantle, its gold hem worn thin by old hands.",
+      "visualId": "worn.back.sorcerer-mantle",
+      "detailLines": [ "Role: Arcane", "Stats: rolled when made" ],
+      "heldLight": "None",
+      "modifiers": [],
+      "sellPrice": 32,
+      "equipSlots": ["Back"],
+      "footprint": [3, 2],
+      "rolls": {
+        "common": [ { "stat": "Armor", "min": 3, "max": 6 }, { "stat": "Energy", "min": 3, "max": 5 }, { "stat": "Vitality", "min": 1, "max": 3 } ],
+        "uncommon": [ { "stat": "Armor", "min": 5, "max": 8 }, { "stat": "Energy", "min": 4, "max": 7 }, { "stat": "Vitality", "min": 2, "max": 4 } ],
+        "rare": [ { "stat": "Armor", "min": 6, "max": 11 }, { "stat": "Energy", "min": 6, "max": 10 }, { "stat": "Vitality", "min": 2, "max": 5 } ]
+      }
+    },
+    {
       "key": "consumable.weak-heal",
       "displayName": "Weak Healing Draught",
       "description": "A thin red tonic, watered down but still warm.",

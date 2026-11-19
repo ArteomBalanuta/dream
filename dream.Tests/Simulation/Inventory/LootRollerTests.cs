@@ -126,7 +126,7 @@ public sealed class LootRollerTests(ITestOutputHelper output)
 
         output.WriteLine(picks);
         // The item catalogue added kinds to the table (same nothing weight, bigger total), so the picks moved;
-        // rolls are still pure functions of the seed.
-        Assert.Equal("gear.travel-cloak/Rare nothing nothing gear.plated-leggings/Common consumable.weak-heal/Uncommon gear.iron-blade/Rare gear.long-sword/Common nothing nothing gear.leather-cap/Common", picks);
+        // the royal sorcerer regalia moved them again for the same reason. Rolls are still pure functions of the seed.
+        Assert.Equal("nothing consumable.minor-mana/Uncommon gear.ash-staff/Common gear.ember-wisp/Common consumable.minor-heal/Uncommon gear.plate-gauntlets/Rare gear.plated-leggings/Common consumable.minor-heal/Uncommon gear.iron-boots/Uncommon gear.leather-vest/Common", picks);
     }
 }
