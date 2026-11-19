@@ -1,4 +1,6 @@
+using Dream.Rendering.Actors;
 using Dream.Rendering.Lighting;
+using Dream.Rendering.Models;
 using Dream.Rendering.World;
 using Dream.Simulation.Combat;
 using OpenTK.Mathematics;
@@ -110,12 +112,20 @@ public sealed class FxSimulation
     // A segment is born when the blade passes its start and is gone this long after: twice the swing, so the tail
     // end has faded while the tip is still being laid.
     internal const float TrailLife = 2f * MeleeArcSwing.ActiveSeconds;
+    // Half-sizes in authored metres, like FxBladeTrailGeometry; WorldMetresPerAuthoredMetre makes them world sizes.
     private const float TrailStartHalfSize = 0.26f;
     private const float TrailEndHalfSize = 0.10f;
     // Each segment's quad is stretched to this many times the chord it spans, so neighbours overlap.
     private const float TrailOverlap = 1.5f;
     private const float TrailDepthBias = 0.5f;
     private const float TrailBrightness = 0.97f;
+    private static readonly Lazy<float> WorldPerAuthored =
+        new(static () => HeldItemScale.ModelUnitsPerMetre * PlayerModelAssetDefinition.VisualScale);
+
+    // FxBladeTrailGeometry (and the clip test that measures it) speaks authored metres: model units over
+    // HeldItemScale.ModelUnitsPerMetre. The figure is drawn at PlayerModelAssetDefinition.VisualScale world metres
+    // per model unit (PlayerRenderState.Create), so one authored metre is this many world metres.
+    internal static float WorldMetresPerAuthoredMetre => WorldPerAuthored.Value;
     private static readonly Vector3 TrailTint = new(0.94f, 0.97f, 1f);
     private const int BoltDarts = 12;
     private const int BoltSparks = 6;
@@ -192,6 +202,10 @@ public sealed class FxSimulation
         public Vector3 LastCasterPosition;
         public bool HasCasterPosition;
         public float AnchorLift;
+        // The soles of the caster's feet in world Y, once the locator has answered (a located pose is the body
+        // centre, FxShadowRules.PlayerPoseToFeet above them, whichever side published the cast).
+        public float LocatedFeetY;
+        public bool HasLocatedFeet;
         public bool FollowLost;
         public bool Aimed;
         public float Range;
@@ -910,8 +924,9 @@ public sealed class FxSimulation
 
     // Cleave: nothing at the cast. As the swing turns active (MeleeArcSwing.WindupSeconds after the cast) a
     // flat crescent is laid on the ground ahead of the caster, sized by FxArcGeometry so its painted outer edge
-    // lands on the skill's range. Over the active window a white blade trail is laid along FxBladeTrailGeometry's path and steel sparks are
-    // thrown along that edge, from the caster's left tip to the right tip, matching the sweep of the blade.
+    // lands on the skill's range. Over the active window a white blade trail is laid along FxBladeTrailGeometry's
+    // path and steel sparks are thrown along that edge, from the caster's left tip to the right tip, matching the
+    // sweep of the blade.
     private void AdvanceArcSweeps(float dt)
     {
         for (int i = 0; i < _sweepCount;)
@@ -963,8 +978,16 @@ public sealed class FxSimulation
         }
 
         sweep.LastCasterPosition = now;
+        sweep.LocatedFeetY = now.Y - FxShadowRules.PlayerPoseToFeet;
+        sweep.HasLocatedFeet = true;
         sweep.Origin = new Vector3(now.X, now.Y + sweep.AnchorLift, now.Z);
     }
+
+    // The ground under the caster. A local cast is published from the body centre and a remote one from the eye, so
+    // the cast origin cannot say where the feet are; the located body centre can. With no locator answer the origin
+    // is taken as the capsule-centre convention of the other casts (CasterFeetDrop below it).
+    private static float SweepFeetY(in ArcSweep sweep) =>
+        sweep.HasLocatedFeet ? sweep.LocatedFeetY : sweep.Origin.Y - CasterFeetDrop;
 
     private int SweepRoom(ref ArcSweep sweep)
     {
@@ -984,7 +1007,7 @@ public sealed class FxSimulation
             if (sweep.Aimed && room > 0)
             {
                 room--;
-                Vector3 feet = new(origin.X, origin.Y - CasterFeetDrop + GroundQuadLift, origin.Z);
+                Vector3 feet = new(origin.X, SweepFeetY(in sweep) + GroundQuadLift, origin.Z);
                 float half = FxArcGeometry.HalfSizeForRange(sweep.Range);
                 EmitGroundQuad(FxParticleKind.Arc, FxFrame.Arc, feet, MathF.Atan2(aim.Z, aim.X), half, half, ArcLife, ArcTint);
             }
@@ -1020,12 +1043,14 @@ public sealed class FxSimulation
     }
 
     // The blade tip at `progress` through the active window, in world space (FxBladeTrailGeometry in the caster's frame).
-    private static Vector3 TrailPoint(Vector3 origin, Vector3 aim, Vector3 right, float progress)
+    // The geometry is authored metres; radius and height are converted to world metres here.
+    private static Vector3 TrailPoint(Vector3 origin, float feetY, Vector3 aim, Vector3 right, float progress)
     {
+        float scale = WorldMetresPerAuthoredMetre;
         float theta = FxBladeTrailGeometry.TipAngleRadians(progress);
         Vector3 direction = aim * MathF.Cos(theta) + right * MathF.Sin(theta);
-        return new Vector3(origin.X, origin.Y - CasterFeetDrop + FxBladeTrailGeometry.TipHeightMetres(progress), origin.Z)
-            + direction * FxBladeTrailGeometry.TipRadiusMetres;
+        return new Vector3(origin.X, feetY + (FxBladeTrailGeometry.TipHeightMetres(progress) * scale), origin.Z)
+            + (direction * (FxBladeTrailGeometry.TipRadiusMetres * scale));
     }
 
     // Lays the segments the blade has passed since the last look. Segment i spans progress i/N .. (i+1)/N; it is
@@ -1044,21 +1069,23 @@ public sealed class FxSimulation
         Vector3 aim = sweep.Aim;
         Vector3 right = new(-aim.Z, 0f, aim.X);
         Vector3 colour = TrailTint * TrailBrightness;
+        float feetY = SweepFeetY(in sweep);
+        float scale = WorldMetresPerAuthoredMetre;
         for (int k = 0; k < emit; k++)
         {
             int i = sweep.TrailEmitted + k;
-            Vector3 from = TrailPoint(sweep.Origin, aim, right, (float)i / n);
-            Vector3 to = TrailPoint(sweep.Origin, aim, right, (float)(i + 1) / n);
+            Vector3 from = TrailPoint(sweep.Origin, feetY, aim, right, (float)i / n);
+            Vector3 to = TrailPoint(sweep.Origin, feetY, aim, right, (float)(i + 1) / n);
             float born = MeleeArcSwing.WindupSeconds + ((float)i / n * MeleeArcSwing.ActiveSeconds);
             FxParticle segment = new()
             {
                 Kind = FxParticleKind.Trail,
-                Position = TrailPoint(sweep.Origin, aim, right, (i + 0.5f) / n),
+                Position = TrailPoint(sweep.Origin, feetY, aim, right, (i + 0.5f) / n),
                 Axis = (to - from) * 0.5f,
                 Age = Math.Clamp(sweep.Elapsed - born, 0f, 0.9f * TrailLife),
                 Life = TrailLife,
-                StartHalfSize = TrailStartHalfSize,
-                EndHalfSize = TrailEndHalfSize,
+                StartHalfSize = TrailStartHalfSize * scale,
+                EndHalfSize = TrailEndHalfSize * scale,
                 Frame = (float)FxFrame.Trail,
                 Color = new Vector4(colour, 0f)
             };
@@ -1081,7 +1108,7 @@ public sealed class FxSimulation
             return;
         }
 
-        Vector3 feet = new(origin.X, origin.Y - CasterFeetDrop + ArcSparkHeight, origin.Z);
+        Vector3 feet = new(origin.X, SweepFeetY(in sweep) + ArcSparkHeight, origin.Z);
         float theta = MathHelper.DegreesToRadians(FxArcGeometry.PaintedArcDegrees) * ((index + 0.5f) / ArcSparks - 0.5f);
         Vector3 direction = aim * MathF.Cos(theta) + right * MathF.Sin(theta);
         float heat = _random.Range(0.75f, 1f);

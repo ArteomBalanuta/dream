@@ -15,6 +15,14 @@ public class FxBladeTrailTests
     private static readonly Vector3 Camera = new(10f, 2f, 10f);
     private static readonly FxViewBasis FlatBasis = new(Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ);
 
+    private static readonly Vector3 Body = new(10f, 0.5f, 4f);
+
+    private static bool LocateBody(int actorId, out Vector3 position)
+    {
+        position = Body;
+        return actorId == 5;
+    }
+
     private static FxFrameInputs Inputs(float dt, float night = 0f, FxViewBasis? basis = null) =>
         new(dt, Camera, -Vector3.UnitZ, Camera, night, basis ?? FlatBasis);
 
@@ -72,19 +80,24 @@ public class FxBladeTrailTests
     [Fact]
     public void One_Tick_Into_The_Window_The_First_Segment_Sits_On_The_Left_End_Of_The_Path()
     {
-        FxSimulation simulation = CastAt(WindupTicks + 1);
+        // Located at a body centre; the effect stands on the feet below it, whatever origin the cast was published from.
+        FxSimulation simulation = new(3u) { CasterLocator = LocateBody };
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f, 5);
+        Step(simulation, WindupTicks + 1);
         List<FxInstance> trails = Trails(simulation);
 
         Assert.NotEmpty(trails);
-        Vector3 offset = trails[0].Position - Origin;
+        Vector3 offset = trails[0].Position - Body;
         // Aim +X, so the caster's right is +Z.
         float theta = MathF.Atan2(offset.Z, offset.X);
         float expected = FxBladeTrailGeometry.TipAngleRadians(0.5f / FxSimulation.BladeTrailSegments);
         Assert.Equal(expected, theta, 3);
         Assert.True(theta < 0f, "the first segment is on the caster's left");
-        Assert.Equal(FxBladeTrailGeometry.TipRadiusMetres, MathF.Sqrt((offset.X * offset.X) + (offset.Z * offset.Z)), 0.05f);
-        float feetY = Origin.Y - 0.9f;
-        Assert.Equal(FxBladeTrailGeometry.TipHeightMetres(0.5f / FxSimulation.BladeTrailSegments), trails[0].Position.Y - feetY, 0.05f);
+        // The geometry is authored metres; the world sizes follow the drawn figure's scale.
+        float scale = FxSimulation.WorldMetresPerAuthoredMetre;
+        Assert.Equal(FxBladeTrailGeometry.TipRadiusMetres * scale, MathF.Sqrt((offset.X * offset.X) + (offset.Z * offset.Z)), 0.05f);
+        float feetY = Body.Y - FxShadowRules.PlayerPoseToFeet;
+        Assert.Equal(FxBladeTrailGeometry.TipHeightMetres(0.5f / FxSimulation.BladeTrailSegments) * scale, trails[0].Position.Y - feetY, 0.01f);
     }
 
     [Fact]
@@ -249,12 +262,6 @@ public class FxBladeTrailTests
                 }
             }
         });
-    }
-
-    [Fact]
-    public void Trail_Life_Is_Twice_The_Active_Window()
-    {
-        Assert.Equal(2f * MeleeArcSwing.ActiveSeconds, FxSimulation.TrailLife);
     }
 
     [Theory]

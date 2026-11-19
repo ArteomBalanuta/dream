@@ -85,7 +85,12 @@ public class FxArcSweepAnchorTests
         int segment = Array.FindIndex(all, 0, count, x => x.Frame == (float)FxFrame.Trail);
         Assert.True(segment >= 0);
         Vector3 offset = all[segment].Position - (Origin + new Vector3(2f, 0f, 0f));
-        Assert.Equal(FxBladeTrailGeometry.TipRadiusMetres, MathF.Sqrt((offset.X * offset.X) + (offset.Z * offset.Z)), 0.05f);
+        Assert.Equal(FxBladeTrailGeometry.TipRadiusMetres * FxSimulation.WorldMetresPerAuthoredMetre, MathF.Sqrt((offset.X * offset.X) + (offset.Z * offset.Z)), 0.05f);
+        // Vertically the segment is placed from the located body's feet, not from the cast origin.
+        float feetY = mover.Position.Y - FxShadowRules.PlayerPoseToFeet;
+        float height = all[segment].Position.Y - feetY;
+        float scale = FxSimulation.WorldMetresPerAuthoredMetre;
+        Assert.InRange(height, (FxBladeTrailGeometry.TipHeightMetres(1f) * scale) - 0.01f, (FxBladeTrailGeometry.TipHeightMetres(0f) * scale) + 0.01f);
     }
 
     [Fact]
