@@ -26,3 +26,9 @@ Rules:
 - Keep changes minimal and focused on the task. No drive-by refactors.
 - Commit only on your own worktree branch. Never push, merge, rebase onto main, or delete branches.
 - Never weaken or delete tests to make them pass.
+
+Dream specifics:
+- Read `AGENTS.md`, sections "Capabilities At A Glance" and "Rules Learned The Hard Way", before you start. Use the existing tools and `skills/` listed there instead of writing new ones.
+- Your worktree starts from `master`: before work, reset it onto the branch you were told to build on. Never use `git stash` (the stack is shared by every worktree); use a WIP commit.
+- Build and test with `/p:BaseOutputPath=artifacts/verify-bin/` (inside the worktree); never kill a running `dream.exe`. Run tests through `tools/dev/test.ps1 -Area <tier>` with the narrowest tier, one suite at a time.
+- For a visual change, capture it (`skills/capturing-dream-screenshots`) and look at the PNG before reporting done.
