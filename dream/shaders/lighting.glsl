@@ -50,9 +50,13 @@ const float SunShadowTapSpacing = 1.5;
 // Even live, strength 0 (DREAM_SHADOWS=0, the view-model range) returns a literal 1.0 before any fetch.
 #define DREAM_SUN_SHADOW_LIVE 1
 
-// 1.0 = fully lit, 0.0 = fully shadowed, of the SUN term (the dominant light: sun, else moon, matching the map).
-// It multiplies the SUN term in dreamDirectShaded (clouds.glsl), the one call site. dreamDirect stays textually unchanged
-// (the engine contract enginelook.py restates), and so does the moon term.
+// True when the shadow map was rendered from the sun, false when from the moon. Mirrors Render.BuildSunFrame's choice of
+// dominant light (sun when SunDirection.W >= MoonDirection.W) and dreamSunVisibility's toLight below (pinned by MoonShadowTermTests).
+bool dreamShadowMapIsSun() { return uSunDirection.w >= uMoonDirection.w; }
+
+// 1.0 = fully lit, 0.0 = fully shadowed, of the DOMINANT light's term (sun, else moon, matching the map).
+// It multiplies that term in dreamDirectShaded (clouds.glsl) and the equipment specular lobe in enemyFragment.glsl: one call
+// site each, the other light's term gets exactly 1.0. dreamDirect stays textually unchanged (the engine contract enginelook.py restates).
 float dreamSunVisibility(vec3 fragPos, vec3 n)
 {
 #if DREAM_SUN_SHADOW_LIVE
