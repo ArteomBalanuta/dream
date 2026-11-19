@@ -427,6 +427,10 @@ void main()
     n = dreamTerrainBump(n, terrainHx, terrainHy, terrainPosDx, terrainPosDy);
 #endif
     vec3 lit = (dreamAmbient(n) + dreamDirectShaded(n, fragPos) + dreamPointLights(n, fragPos)) * baseColor.rgb;
+    // The emissive is added after exposure, before fog, into the HDR target. It is NOT clipped at 1.0
+    // any more: only the part of it above the 0.80 knee (postTone.glsl) blooms, so an emitter that
+    // should glow has to authorise a channel above 0.80 in its catalog Emissive(); one under it reads
+    // exactly as it did.
     vec3 emissive = material.emissiveFactor;
     if (material.hasEmissiveTexture) {
         emissive *= texture(material.emissiveTexture, texCoord0 + material.emissiveUvScroll * uTime).rgb;
