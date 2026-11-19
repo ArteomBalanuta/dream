@@ -10,7 +10,8 @@ public enum GpuTimerSection
     Actors = 1,
     Hud = 2,
     Effects = 3,
-    Shadows = 4
+    Shadows = 4,
+    Post = 5
 }
 
 // The GL query calls GpuFrameTimer makes, behind a seam so the ring logic runs without a context.
@@ -44,13 +45,14 @@ public readonly record struct GpuFrameTimings(
     double HudMilliseconds,
     long PrimitivesGenerated,
     double EffectsMilliseconds = 0d,
-    double ShadowMilliseconds = 0d)
+    double ShadowMilliseconds = 0d,
+    double PostMilliseconds = 0d)
 {
     public bool HasValue => FrameNumber > 0;
 }
 
 // GPU timing without pipeline stalls. Each frame uses one slot of a small ring: a GL_TIME_ELAPSED
-// query per section (world, actors, effects, HUD, shadows), issued sequentially, plus one GL_PRIMITIVES_GENERATED
+// query per section (world, actors, effects, HUD, shadows, post), issued sequentially, plus one GL_PRIMITIVES_GENERATED
 // query around the whole frame. A slot is read back no sooner than MinReadLatencyFrames frames
 // later, and only once every query in it reports QUERY_RESULT_AVAILABLE. If a slot is still
 // pending when the ring comes back around to it, its result is dropped (MissedFrames) and the
@@ -60,7 +62,7 @@ public sealed class GpuFrameTimer : IDisposable
 {
     public const int DefaultRingSize = 4;
     public const int MinReadLatencyFrames = 2;
-    public const int SectionCount = 5;
+    public const int SectionCount = 6;
     private const double NanosecondsPerMillisecond = 1_000_000d;
 
     private readonly IGpuQueryApi _api;
@@ -253,7 +255,8 @@ public sealed class GpuFrameTimer : IDisposable
             ReadMilliseconds(slot, GpuTimerSection.Hud),
             slot.PrimitivesIssued ? _api.GetResult(slot.PrimitivesQuery) : 0L,
             ReadMilliseconds(slot, GpuTimerSection.Effects),
-            ReadMilliseconds(slot, GpuTimerSection.Shadows));
+            ReadMilliseconds(slot, GpuTimerSection.Shadows),
+            ReadMilliseconds(slot, GpuTimerSection.Post));
         slot.Pending = false;
         ResolvedFrames++;
         return true;
