@@ -7,6 +7,7 @@ using Dream.Server.Persistence;
 using Dream.Server.Worlds;
 using Dream.Simulation.World;
 using OpenTK.Mathematics;
+using Dream.Rendering.Core;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
@@ -175,11 +176,17 @@ public static class Program
             ClientSize = new Vector2i(1, 1),
             StartVisible = false,
             StartFocused = false,
+#if DEBUG
+            // The same flag the real window asks for, so a driver that refuses a debug 4.5 context falls back here.
+            Flags = ContextFlags.Debug,
+#endif
         });
     }
 
     private static int RunDesktop()
     {
+        // RenderDoc hooks the GL driver when it loads, so it attaches before the first context (the probe below) exists.
+        RenderDocHook.TryAttach(Environment.GetEnvironmentVariable);
         IReadOnlyList<Version> attempts = GlContextVersion.AttemptsFromEnvironment();
         Version version = attempts[0];
         if (attempts.Count > 1)

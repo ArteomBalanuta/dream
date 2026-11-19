@@ -114,9 +114,14 @@ public class Game : GameWindow
 #endif
     };
 
+    // Frames presented so far; RenderDoc's capture-frame option counts them.
+    private long _renderedFrames;
+
     public Game(Version apiVersion) : base(GameWindowSettings.Default, CreateWindowSettings(apiVersion))
     {
         GLUtils.BindRenderThread();
+        // Before any shader is compiled, so every program gets its debug label.
+        GpuDebug.Initialize();
         Console.WriteLine(
             $"[startup] gl: requested {GlContextVersion.Describe(apiVersion)} core, "
             + $"got {GL.GetString(StringName.Version)} / {GL.GetString(StringName.Renderer)}");
@@ -580,6 +585,7 @@ public class Game : GameWindow
         RunMenuFlowStep();
         Stopwatch swapStopwatch = Stopwatch.StartNew();
         SwapBuffers();
+        RenderDocHook.OnFrameEnd(_renderedFrames++);
         swapStopwatch.Stop();
         frameStopwatch.Stop();
         _playScene?.ReportPresentedFramePerformance(
