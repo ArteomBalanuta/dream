@@ -7,26 +7,31 @@ using Xunit;
 
 namespace Dream.Tests.Rendering.Shadows;
 
-// The fire shadow slots are ranked by the STEADY colour (Color / PointLight.Flicker), so two fires of similar steady
-// brightness do not swap slots as their flames flicker. The synthetic negative ranks by the flickered colour and must flip.
+// The fire shadow slots are ranked by the STEADY light (colour / Flicker, radius / RadiusScaleOf(Flicker)), so near-tied fires
+// do not swap slots as their flames flicker. The lights are built exactly as the producers build them (position + Offset,
+// radius * RadiusScale, colour * Intensity). The synthetic negatives rank by the old, partial rules and must swap.
 public class FireShadowSteadyRankTests
 {
-    private const int Fires = 5;
-    private const int Samples = 200;
+    private const int Samples = 240;
+    private const float BaseRadius = 10f;
     private static readonly Vector3 Focus = new(0f, 0f, -10f);
 
-    private static PointLight[] Ring(double clock)
+    // Distance / radius of each fire. The contested pair is 0.75 vs 0.80: windowed falloff is 1.57x apart there, more than the
+    // positional wander can close (see Wander_ScoreSwing_IsBounded) but far less than the radius flicker swing (-62% / +76%).
+    private static readonly float[] Ratios = { 0.5f, 0.6f, 0.7f, 0.75f, 0.8f };
+
+    private static PointLight[] Fires(double clock)
     {
-        PointLight[] lights = new PointLight[Fires];
-        for (int i = 0; i < Fires; i++)
+        PointLight[] lights = new PointLight[Ratios.Length];
+        for (int i = 0; i < Ratios.Length; i++)
         {
-            // Equal distance from the focus; the steady brightness differs by 2% per fire, far below the flicker swing.
-            float angle = i * MathF.Tau / Fires;
-            Vector3 position = Focus + new Vector3(MathF.Cos(angle) * 3f, 0f, MathF.Sin(angle) * 3f);
-            int seed = 1000 + (i * 7919);
-            FireFlickerSample sample = FireFlicker.Sample(FireFlickerKind.Brazier, position, clock, seed);
-            Vector3 steady = new Vector3(1f, 0.6f, 0.3f) * (1f + (0.02f * i));
-            lights[i] = new PointLight(position, 8f, steady * sample.Intensity, seed, 0, sample.Intensity);
+            float angle = i * MathF.Tau / Ratios.Length;
+            float d = Ratios[i] * BaseRadius;
+            Vector3 basePosition = Focus + new Vector3(MathF.Cos(angle) * d, 0f, MathF.Sin(angle) * d);
+            int seed = FireFlicker.SeedFor(basePosition);
+            FireFlickerSample sample = FireFlicker.Sample(FireFlickerKind.Brazier, basePosition, clock, seed);
+            lights[i] = new PointLight(
+                basePosition + sample.Offset, BaseRadius * sample.RadiusScale, new Vector3(1f, 0.6f, 0.3f) * sample.Intensity, seed, 0, sample.Intensity);
         }
 
         return lights;
@@ -42,67 +47,136 @@ public class FireShadowSteadyRankTests
         return list;
     }
 
-    private static int IndexOfLight(PointLight[] lights, in LightList list, int listIndex)
+    private static LightList ToList(PointLight[] lights, float[] flicker)
     {
-        Vector3 p = list.PositionRadius[listIndex].Xyz;
+        LightList list = default;
+        list.Count = lights.Length;
         for (int i = 0; i < lights.Length; i++)
         {
-            if (lights[i].Position == p)
-            {
-                return i;
-            }
+            list.PositionRadius[i] = new Vector4(lights[i].Position, lights[i].Radius);
+            list.Color[i] = new Vector4(lights[i].Color, 0f);
+            flicker[i] = lights[i].Flicker;
         }
 
-        throw new InvalidOperationException("list entry matches no input light");
+        return list;
     }
 
-    private static int SetOf(PointLight[] lights, in LightList list, ReadOnlySpan<float> flicker)
+    private static int RealSet(PointLight[] lights)
     {
+        float[] flicker = new float[LightList.MaxLights];
+        LightList list = ToList(lights, flicker);
         Span<int> chosen = stackalloc int[ShadowSettings.MaxCastingFireCount];
         int count = FireShadowAtlas.SelectSlots(in list, Focus, 4, chosen, flicker);
         int mask = 0;
         for (int s = 0; s < count; s++)
         {
-            mask |= 1 << IndexOfLight(lights, in list, chosen[s]);
+            mask |= 1 << chosen[s];
         }
 
         return mask;
     }
 
-    [Fact]
-    public void SteadyRanking_PicksTheSameSetAtEveryClockSample()
+    // The same ranking written out, with each steady-ing step switchable: the old fix divided the colour only.
+    private static int SetBy(PointLight[] lights, bool steadyColour, bool steadyRadius)
     {
-        int[] carriers = new int[LightList.MaxLights];
-        float[] flicker = new float[LightList.MaxLights];
-        int expected = -1;
-        for (int n = 0; n < Samples; n++)
+        (float Score, int Index)[] scored = new (float, int)[lights.Length];
+        for (int i = 0; i < lights.Length; i++)
         {
-            PointLight[] lights = Ring(n * 0.05);
-            LightList list = Select(lights, carriers, flicker);
-            Assert.Equal(Fires, list.Count);
-            int mask = SetOf(lights, in list, flicker);
-            expected = expected < 0 ? mask : expected;
-            Assert.Equal(expected, mask);
+            PointLight l = lights[i];
+            Vector3 color = steadyColour ? l.Color / l.Flicker : l.Color;
+            float radius = steadyRadius ? l.Radius / FireFlicker.RadiusScaleOf(l.Flicker) : l.Radius;
+            scored[i] = (FireShadowAtlas.Score(color, l.Position, radius, Focus), i);
         }
 
-        // The four brightest steady fires are 1..4.
-        Assert.Equal(0b11110, expected);
+        Array.Sort(scored, (x, y) => y.Score.CompareTo(x.Score));
+        int mask = 0;
+        for (int k = 0; k < 4; k++)
+        {
+            mask |= 1 << scored[k].Index;
+        }
+
+        return mask;
     }
 
-    [Fact]
-    public void RankingByTheFlickeredColour_ChangesTheSet_SyntheticNegative()
+    private static HashSet<int> Sets(Func<PointLight[], int> pick)
     {
-        int[] carriers = new int[LightList.MaxLights];
-        float[] flicker = new float[LightList.MaxLights];
         HashSet<int> sets = new();
         for (int n = 0; n < Samples; n++)
         {
-            PointLight[] lights = Ring(n * 0.05);
-            LightList list = Select(lights, carriers, flicker);
-            sets.Add(SetOf(lights, in list, ReadOnlySpan<float>.Empty));
+            sets.Add(pick(Fires(n * 0.05)));
         }
 
-        Assert.True(sets.Count > 1, "ranking by the flickered colour should swap slots; the gate cannot fail otherwise");
+        return sets;
+    }
+
+    [Fact]
+    public void RadiusScaleOf_IsTheFormulaSampleUses()
+    {
+        for (int n = 0; n < Samples; n++)
+        {
+            FireFlickerSample sample = FireFlicker.Sample(FireFlickerKind.Brazier, Focus, n * 0.05, 4242);
+            Assert.Equal(sample.RadiusScale, FireFlicker.RadiusScaleOf(sample.Intensity));
+        }
+
+        Assert.Equal(1f, FireFlicker.RadiusScaleOf(0f));
+        Assert.Equal(1f, FireFlicker.RadiusScaleOf(float.NaN));
+        Assert.Equal(1f, FireFlicker.RadiusScaleOf(1f));
+    }
+
+    [Fact]
+    public void SteadyRanking_PicksTheSameSetAtEveryClockSample()
+    {
+        HashSet<int> sets = Sets(RealSet);
+        Assert.Single(sets);
+        // The four fires nearest their own centre: ratios 0.5, 0.6, 0.7, 0.75.
+        Assert.Equal(0b01111, sets.Single());
+    }
+
+    [Fact]
+    public void RankingByTheSteadyColourOnly_ChangesTheSet_SyntheticNegative()
+    {
+        Assert.True(Sets(l => SetBy(l, steadyColour: true, steadyRadius: false)).Count > 1,
+            "the old fix (colour only) must still swap near-tied far fires; the gate cannot fail otherwise");
+    }
+
+    [Fact]
+    public void RankingByTheFlickeredLight_ChangesTheSet_SyntheticNegative()
+    {
+        Assert.True(Sets(l => SetBy(l, steadyColour: false, steadyRadius: false)).Count > 1,
+            "no division at all must swap slots; the gate cannot fail otherwise");
+    }
+
+    [Fact]
+    public void SteadyHarness_AgreesWithSelectSlots()
+    {
+        for (int n = 0; n < Samples; n++)
+        {
+            PointLight[] lights = Fires(n * 0.05);
+            Assert.Equal(SetBy(lights, true, true), RealSet(lights));
+        }
+    }
+
+    // The flame's positional wander is accepted, not carried (the list has no offset). Its worst-case effect on a score is
+    // bounded here, along the radial direction, at the distance/radius values that matter.
+    [Fact]
+    public void Wander_ScoreSwing_IsBounded()
+    {
+        const float bound = 0.25f;
+        foreach (float ratio in new[] { 0.6f, 0.7f, 0.8f })
+        {
+            float d = ratio * BaseRadius;
+            float steady = FireShadowAtlas.WindowedFalloff(d, BaseRadius);
+            foreach (float delta in new[] { FireFlicker.OffsetLateral, -FireFlicker.OffsetLateral })
+            {
+                float moved = FireShadowAtlas.WindowedFalloff(d + delta, BaseRadius);
+                Assert.True(MathF.Abs(moved - steady) / steady < bound, $"ratio {ratio} delta {delta}: {moved} vs {steady}");
+            }
+        }
+
+        // And the bound is not vacuous: the 0.75 vs 0.80 pair stays ordered at the worst wander on both.
+        float near = FireShadowAtlas.WindowedFalloff((0.75f * BaseRadius) + FireFlicker.OffsetLateral, BaseRadius);
+        float far = FireShadowAtlas.WindowedFalloff((0.80f * BaseRadius) - FireFlicker.OffsetLateral, BaseRadius);
+        Assert.True(near > far);
     }
 
     [Fact]

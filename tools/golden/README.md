@@ -24,7 +24,7 @@ Build the capture exe first (see the capture skill), or pass `-Bin`.
 ## Scene file `scenes/<name>.json`
 
 ```json
-{"script":"play,keys:g:3,wait:120,snap","timeOfDay":"noon","seed":1,
+{"script":"play,tod:12,keys:g:3,wait:120,snap","timeOfDay":"noon","seed":1,
  "env":["DREAM_FX_CLOCK=10","DREAM_FIRE_CLOCK=10","DREAM_DAY_LENGTH_MINUTES=1440","DREAM_MAX_FPS=60"],
  "pixelThreshold":0.08,"maxFraction":0.002,"ignore":[[0,0,200,40]]}
 ```

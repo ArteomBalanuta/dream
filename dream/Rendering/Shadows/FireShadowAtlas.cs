@@ -109,9 +109,15 @@ public static class FireShadowAtlas
         for (int i = 0; i < available; i++)
         {
             Vector4 positionRadius = list.PositionRadius[i];
-            // Rank by the steady colour: the producer's flicker multiplier is divided back out so flickering fires do not swap slots.
-            float steady = i < flicker.Length && float.IsFinite(flicker[i]) && flicker[i] > 0f ? 1f / flicker[i] : 1f;
-            float score = Score(list.Color[i].Xyz * steady, positionRadius.Xyz, positionRadius.W, focus);
+            // Rank by the STEADY light: the producer's flicker multiplier is divided back out of the colour, and the radius
+            // it breathes with (FireFlicker.RadiusScaleOf, the one formula the producers use) out of the radius, because the
+            // windowed falloff is far more radius-sensitive than colour-sensitive near the edge. The flame's positional
+            // wander (<= FireFlicker.OffsetLateral / OffsetVertical) is deliberately NOT undone: the list does not carry
+            // the offset, it is slow, and FireShadowSteadyRankTests measures its score swing and bounds it.
+            bool valid = i < flicker.Length && float.IsFinite(flicker[i]) && flicker[i] > 0f;
+            float steady = valid ? 1f / flicker[i] : 1f;
+            float radius = valid ? positionRadius.W / FireFlicker.RadiusScaleOf(flicker[i]) : positionRadius.W;
+            float score = Score(list.Color[i].Xyz * steady, positionRadius.Xyz, radius, focus);
             if (!float.IsFinite(score))
             {
                 continue;
