@@ -74,7 +74,8 @@ public sealed class TextureAnisotropyTests
             // readback: TEXTURE_MAX_ANISOTROPY is an invalid enum on a context without the extension.
             float requested = TextureAnisotropy.ResolveLevel(
                 Environment.GetEnvironmentVariable(TextureAnisotropy.EnvironmentVariable));
-            if (ContextSupportsAnisotropy())
+            bool supported = ContextSupportsAnisotropy();
+            if (supported)
             {
                 GL.GetTexParameter(TextureTarget.Texture2D, (GetTextureParameter)TextureMaxAnisotropy, out float mippedLevel);
                 Assert.Equal(applied > 1f ? applied : 1f, mippedLevel);
@@ -87,8 +88,11 @@ public sealed class TextureAnisotropyTests
 
             int clamped = TextureDecoder.UploadTexture2DClamped(texture, 0);
             GL.BindTexture(TextureTarget.Texture2D, clamped);
-            GL.GetTexParameter(TextureTarget.Texture2D, (GetTextureParameter)TextureMaxAnisotropy, out float clampedLevel);
-            Assert.Equal(1f, clampedLevel);
+            if (supported)
+            {
+                GL.GetTexParameter(TextureTarget.Texture2D, (GetTextureParameter)TextureMaxAnisotropy, out float clampedLevel);
+                Assert.Equal(1f, clampedLevel);
+            }
 
             GL.BindTexture(TextureTarget.Texture2D, 0);
             GL.DeleteTexture(mipped);

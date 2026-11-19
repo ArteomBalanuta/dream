@@ -130,6 +130,48 @@ public class LightCutoffFadeTests
         Assert.True(summed >= 13f, $"summed weight {summed}");
     }
 
+    // Continuity half: the ring is fixed, the camera walks through it, and the 16th and 17th lights swap rank on the way.
+    // Every light's weight (0 when not kept) may change by at most the cut-off's and its own distance's movement.
+    [Fact]
+    public void The_Debug_Ring_Weights_Change_Boundedly_While_Walking_Through_A_Rank_Swap()
+    {
+        var ring = new PointLight[32];
+        Render.FillDebugPointLightRing(ring, new Vector3(10f, 3f, -4f));
+        float[]? previous = null;
+        HashSet<int> keptSets = [];
+        float bound = (2f * Step / LightSelection.CutoffFadeBand) + 1e-4f;
+        for (int stepIndex = 0; stepIndex < 600; stepIndex++)
+        {
+            var camera = new Vector3(10f + (stepIndex * Step), 3f, -4f);
+            LightList list = default;
+            LightSelection.SelectNearestFaded(default, ring, camera, default(ViewFrustum), ref list);
+            var weights = new float[ring.Length];
+            int kept = 0;
+            for (int slot = 0; slot < list.Count; slot++)
+            {
+                Vector3 position = list.PositionRadius[slot].Xyz;
+                int index = Array.FindIndex(ring, light => light.Position == position);
+                weights[index] = list.Color[slot].Xyz.Length / ring[index].Color.Length;
+                kept |= 1 << index;
+            }
+
+            keptSets.Add(kept);
+            if (previous != null)
+            {
+                for (int i = 0; i < ring.Length; i++)
+                {
+                    Assert.True(
+                        MathF.Abs(weights[i] - previous[i]) <= bound,
+                        $"light {i} weight moved {previous[i]} -> {weights[i]} at step {stepIndex}");
+                }
+            }
+
+            previous = weights;
+        }
+
+        Assert.True(keptSets.Count > 1, "the walk never changed the kept set, so no rank swap was exercised");
+    }
+
     [Fact]
     public void Synthetic_Negative_Plain_SelectNearest_Breaks_The_Same_Bound()
     {

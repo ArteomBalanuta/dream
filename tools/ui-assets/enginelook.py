@@ -42,8 +42,8 @@ A3/M3 figure is measured at night (night_env, hours 20:00-04:00), where the sun 
 cloud mask multiplies nothing. Once figures shadow themselves the moon map can dim the moon term too, which, like
 the fire, can only widen the measured spread. For the fire it is a LOWER BOUND: with real fire shadows the figure
 self-shadows (an arm across the torso, a head over the shoulders), which can only widen the measured value spread,
-never narrow it, so a figure that meets A3 here meets it in the game. At a DAY hour the engine would dim the sun by the cloud
-shadow (coverage 0.30-0.45 all day) and by the sun map; night_env refuses day hours rather than quietly
+never narrow it, so a figure that meets A3 here meets it in the game. At a DAY hour the engine would dim the sun by
+the cloud shadow (coverage 0.30-0.45 all day) and by the sun map; night_env refuses day hours rather than quietly
 disagreeing with the engine.
 
 One deliberate deviation from the spec's prose: the spec writes the point window as (1-s)^2, the shader writes

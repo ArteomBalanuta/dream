@@ -61,8 +61,10 @@ public static class LightSelection
     // selections per frame agree and captures stay deterministic. With 16 or fewer candidates nothing is cut off and
     // the output is bitwise SelectNearest's.
     // Known trade-off: when many lights sit near the cut-off distance they are all dimmed; continuity requires it.
-    // Known step: the frustum is part of the candidate set. When the 17th candidate leaves it (count 17 -> 16) the
-    // cut-off jumps to +infinity and every dimmed kept light jumps to full weight, wherever it is on screen.
+    // Known step: the frustum is part of the candidate set, so the nearest not-kept candidate entering or leaving it
+    // moves the cut-off in one step (a light entering nearer than the cut-off pushes out a light that may still have
+    // weight > 0). At the extreme (17 -> 16 candidates) the cut-off jumps to +infinity and every dimmed light jumps
+    // to full weight.
     public static void SelectNearestFaded(
         ReadOnlySpan<PointLight> first,
         ReadOnlySpan<PointLight> second,
