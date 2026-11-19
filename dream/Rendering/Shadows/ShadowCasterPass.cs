@@ -95,26 +95,29 @@ public static class ShadowCasterPass
 
             ReadOnlySpan<FireShadowSlot> fires = frame.Fires;
             int count = Math.Clamp(frame.FireCount, 0, fires.Length);
-            using GpuDebugScope fireGroup = GpuDebug.Scope(FireAtlasGroup);
-            for (int slot = 0; slot < count; slot++)
+            if (count > 0)
             {
-                FireShadowSlot fire = fires[slot];
-                if (!(fire.Far > fire.Near) || !float.IsFinite(fire.Far) || !float.IsFinite(fire.Position.X + fire.Position.Y + fire.Position.Z))
+                using GpuDebugScope fireGroup = GpuDebug.Scope(FireAtlasGroup);
+                for (int slot = 0; slot < count; slot++)
                 {
-                    continue;
-                }
+                    FireShadowSlot fire = fires[slot];
+                    if (!(fire.Far > fire.Near) || !float.IsFinite(fire.Far) || !float.IsFinite(fire.Position.X + fire.Position.Y + fire.Position.Z))
+                    {
+                        continue;
+                    }
 
-                Matrix4 projection = FireShadowAtlas.FaceProjection(fire.Near, fire.Far);
-                for (int face = 0; face < FireShadowAtlas.FaceCount; face++)
-                {
-                    target.BeginFireTile(slot, face);
-                    Matrix4 faceView = FireShadowAtlas.FaceView(fire.Position, face);
-                    ViewFrustum frustum = ShadowCasterSelection.FireFaceFrustum(in faceView, in projection);
-                    ShadowCasterView view = new(in faceView, in projection, in frustum, focus, fire.CarrierActorId);
-                    int before = RenderCounters.DrawCalls;
-                    target.DrawCasters(in view);
-                    fireDraws += RenderCounters.DrawCalls - before;
-                    fireFaces++;
+                    Matrix4 projection = FireShadowAtlas.FaceProjection(fire.Near, fire.Far);
+                    for (int face = 0; face < FireShadowAtlas.FaceCount; face++)
+                    {
+                        target.BeginFireTile(slot, face);
+                        Matrix4 faceView = FireShadowAtlas.FaceView(fire.Position, face);
+                        ViewFrustum frustum = ShadowCasterSelection.FireFaceFrustum(in faceView, in projection);
+                        ShadowCasterView view = new(in faceView, in projection, in frustum, focus, fire.CarrierActorId);
+                        int before = RenderCounters.DrawCalls;
+                        target.DrawCasters(in view);
+                        fireDraws += RenderCounters.DrawCalls - before;
+                        fireFaces++;
+                    }
                 }
             }
         }

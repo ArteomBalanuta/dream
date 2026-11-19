@@ -31,17 +31,18 @@ sunMask = 1 - cloudShadowStrength*cover(sun ray at the cloud plane); the shadow 
 dreamSunVisibility(p,n) belongs to the DOMINANT light, the one the map was rendered from (dreamShadowMapIsSun):
 sunV = v and moonV = 1 when the sun dominates, sunV = 1 and moonV = v when the moon does. lightV =
 dreamFireVisibility, the fire atlas's visibility for that light. Each is 1.0 when nothing is modelled, and the
-engine applies them to the dominant directional term and to each point light. direct(n) (dreamDirect) is directShaded with sunMask = sunV = 1 and stays the contract of the
-callers that have no fragment position (boundaryMist, warMist).
+engine applies them to the dominant directional term and to each point light. direct(n) (dreamDirect) is
+directShaded with sunMask = sunV = 1 and stays the contract of the callers that have no fragment position
+(boundaryMist, warMist).
 
 What this instrument does NOT model, stated plainly. It has no scene geometry and no cloud sheet, so it measures
-UNOCCLUDED case (sunMask = sunV = moonV = lightV = 1 unless a caller passes otherwise via Directional.shade and
-PointLight.visibility). With no geometry moonV is 1, so the instrument is exact for the unoccluded case: the A3/M3
-figure is measured at night (night_env, hours 20:00-04:00), where the sun intensity is exactly 0 and so the cloud
-mask multiplies nothing. Once figures shadow themselves the moon map can dim the moon term too, which, like the
-fire, can only widen the measured spread: it is a lower bound there. For the fire it is a LOWER BOUND: with real fire shadows the figure self-shadows (an arm
-across the torso, a head over the shoulders), which can only widen the measured value spread, never narrow it,
-so a figure that meets A3 here meets it in the game. At a DAY hour the engine would dim the sun by the cloud
+the UNOCCLUDED case (sunMask = sunV = moonV = lightV = 1 unless a caller passes otherwise via Directional.shade
+and PointLight.visibility). With no geometry moonV is 1, so the instrument is exact for the unoccluded case: the
+A3/M3 figure is measured at night (night_env, hours 20:00-04:00), where the sun intensity is exactly 0 and so the
+cloud mask multiplies nothing. Once figures shadow themselves the moon map can dim the moon term too, which, like
+the fire, can only widen the measured spread. For the fire it is a LOWER BOUND: with real fire shadows the figure
+self-shadows (an arm across the torso, a head over the shoulders), which can only widen the measured value spread,
+never narrow it, so a figure that meets A3 here meets it in the game. At a DAY hour the engine would dim the sun by the cloud
 shadow (coverage 0.30-0.45 all day) and by the sun map; night_env refuses day hours rather than quietly
 disagreeing with the engine.
 
