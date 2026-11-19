@@ -323,7 +323,8 @@ public sealed class ChatInput
             || command.Equals("/unban", StringComparison.OrdinalIgnoreCase)
             || command.Equals("/mute", StringComparison.OrdinalIgnoreCase)
             || command.Equals("/unmute", StringComparison.OrdinalIgnoreCase)
-            || command.Equals("/announce", StringComparison.OrdinalIgnoreCase);
+            || command.Equals("/announce", StringComparison.OrdinalIgnoreCase)
+            || command.Equals(DevCommandText.Command, StringComparison.OrdinalIgnoreCase);
 
     private static string Clamp(string text) => ChatHudState.Sanitize(text, ChatHudState.MaxTextChars);
 }
