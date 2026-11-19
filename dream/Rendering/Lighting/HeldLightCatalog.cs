@@ -93,7 +93,7 @@ public static class HeldLightCatalog
 
     // The light of the kind at the anchor; false for None. The light's radius and position carry the
     // flicker (radius scale and the flame's wander), its colour the intensity.
-    public static bool TryCreate(HeldLightKind kind, Vector3 position, double timeSeconds, int seed, out PointLight light)
+    public static bool TryCreate(HeldLightKind kind, Vector3 position, double timeSeconds, int seed, out PointLight light, int carrierActorId = 0)
     {
         if (!TryResolve(kind, out Vector3 color, out float radius))
         {
@@ -113,7 +113,7 @@ public static class HeldLightCatalog
         // held torch whose producer left no seed; a scaled colour would not fail there either, it would
         // silently pin that light's halo flicker at the floor. Keep it: scale a placed fire's colour
         // (the brazier does) but never a held one.
-        light = new PointLight(position + sample.Offset, radius * sample.RadiusScale, color * sample.Intensity, seed);
+        light = new PointLight(position + sample.Offset, radius * sample.RadiusScale, color * sample.Intensity, seed, carrierActorId);
         return true;
     }
 

@@ -147,7 +147,13 @@ public static class FireShadowAtlas
     /// world positions (the depth map's origin moves with the flame) and far planes (they breathe with the radius). The
     /// list entries already carry the flicker, applied when the lights were collected; nothing is sampled again here.
     /// </summary>
-    public static void FillSlots(in LightList list, Vector3 focus, int maxSlots, float strength, ref ShadowFrame frame)
+    public static void FillSlots(
+        in LightList list,
+        Vector3 focus,
+        int maxSlots,
+        float strength,
+        ref ShadowFrame frame,
+        ReadOnlySpan<int> carriers = default)
     {
         Span<int> chosen = stackalloc int[ShadowSettings.MaxCastingFireCount];
         int count = SelectSlots(in list, focus, maxSlots, chosen);
@@ -162,6 +168,7 @@ public static class FireShadowAtlas
                 Near = NearPlane,
                 Far = FarPlane(positionRadius.W),
                 Strength = strength,
+                CarrierActorId = chosen[s] < carriers.Length ? carriers[chosen[s]] : 0,
             };
         }
 

@@ -21,15 +21,15 @@ public sealed class HeldLightAnchorTests
     }
 
     [Fact]
-    public void Body_IsAboveTheFeet_AheadAndToTheRight()
+    public void Body_IsAtHandHeight_AheadAndToTheLeft()
     {
-        // Facing -Z, right is +X (facing × up), as Camera.Right.
+        // Facing -Z, right is +X (facing × up), as Camera.Right: the left is -X of the pose.
         Vector3 anchor = HeldLightAnchor.Body(new Vector3(1f, 0f, 1f), -Vector3.UnitZ);
-        AssertClose(new Vector3(1.3f, 1.3f, 0.7f), anchor);
+        AssertClose(new Vector3(0.88f, 0.15f, 0.65f), anchor);
 
-        // Facing +X, right is +Z.
+        // Facing +X, right is +Z, so the left is -Z.
         anchor = HeldLightAnchor.Body(Vector3.Zero, Vector3.UnitX);
-        AssertClose(new Vector3(0.3f, 1.3f, 0.3f), anchor);
+        AssertClose(new Vector3(0.35f, 0.15f, -0.12f), anchor);
     }
 
     [Fact]
@@ -44,9 +44,9 @@ public sealed class HeldLightAnchorTests
     public void Body_WithNoHorizontalFacing_SitsStraightAboveThePose()
     {
         Vector3 pose = new(2f, 3f, 4f);
-        AssertClose(pose + new Vector3(0f, 1.3f, 0f), HeldLightAnchor.Body(pose, Vector3.Zero));
-        AssertClose(pose + new Vector3(0f, 1.3f, 0f), HeldLightAnchor.Body(pose, Vector3.UnitY));
-        AssertClose(pose + new Vector3(0f, 1.3f, 0f), HeldLightAnchor.Body(pose, new Vector3(float.NaN, 0f, 1f)));
+        AssertClose(pose + new Vector3(0f, 0.15f, 0f), HeldLightAnchor.Body(pose, Vector3.Zero));
+        AssertClose(pose + new Vector3(0f, 0.15f, 0f), HeldLightAnchor.Body(pose, Vector3.UnitY));
+        AssertClose(pose + new Vector3(0f, 0.15f, 0f), HeldLightAnchor.Body(pose, new Vector3(float.NaN, 0f, 1f)));
     }
 
     private static void AssertClose(Vector3 expected, Vector3 actual)

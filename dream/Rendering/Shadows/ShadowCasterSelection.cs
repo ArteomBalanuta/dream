@@ -9,8 +9,10 @@ namespace Dream.Rendering.Shadows;
 // target (the sun map, or one face of one fire), built by ShadowCasterPass and handed to every caster renderer.
 public readonly struct ShadowCasterView
 {
-    public ShadowCasterView(in Matrix4 view, in Matrix4 projection, in ViewFrustum frustum, Vector3 focus)
+    public ShadowCasterView(
+        in Matrix4 view, in Matrix4 projection, in ViewFrustum frustum, Vector3 focus, int excludeOwner = 0)
     {
+        ExcludeOwner = excludeOwner;
         View = view;
         Projection = projection;
         Frustum = frustum;
@@ -24,6 +26,10 @@ public readonly struct ShadowCasterView
     public readonly ViewFrustum Frustum;
 
     public readonly Vector3 Focus;
+
+    // The actor id whose skinned body is left out of this view (0 = none): a fire tile does not draw the actor that
+    // carries the fire, whose own body sits a hand's width from the light and would shadow the whole pool.
+    public readonly int ExcludeOwner;
 
     public bool Accepts(Vector3 min, Vector3 max, float maxDistance = ShadowCasterSelection.CasterDistance) =>
         ShadowCasterSelection.Accepts(min, max, Focus, in Frustum, maxDistance);

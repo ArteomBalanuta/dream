@@ -1,6 +1,8 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
+using Dream.Simulation.Content;
+using Dream.Simulation.Inventory;
 
 namespace Dream.Tests.Rendering.Actors;
 
@@ -32,6 +34,36 @@ public class WeaponMeshCatalogTests
         Assert.Equal(id, model.VisualId);
         Assert.True(model.Parts.Count >= 3, "a recognisable mesh needs several parts");
         Assert.NotSame(WeaponMeshCatalog.Resolve("held.unknown"), model);
+    }
+
+    [Theory]
+    [InlineData("held.tool.torch", WeaponMaterial.Ember)]
+    [InlineData("held.tool.lantern", WeaponMaterial.Ember)]
+    [InlineData("held.gear.ward-lantern", WeaponMaterial.Arcane)]
+    public void TheFlamePoint_LiesInsideAFlamePartOfItsOwnModel(string id, WeaponMaterial flameMaterial)
+    {
+        Assert.True(WeaponMeshCatalog.TryGetFlamePoint(id, out Vector3 point));
+
+        bool inside = WeaponMeshCatalog.Resolve(id).Parts
+            .Where(p => p.Material == flameMaterial)
+            .Any(p =>
+            {
+                Vector3 local = Vector3.TransformPosition(point, p.ToMatrix().Inverted());
+                return MathF.Abs(local.X) <= 0.5f + 1e-4f && MathF.Abs(local.Y) <= 0.5f + 1e-4f && MathF.Abs(local.Z) <= 0.5f + 1e-4f;
+            });
+        Assert.True(inside, $"{id}: flame point {point} is in none of its {flameMaterial} boxes");
+    }
+
+    [Theory]
+    [InlineData("held.tool.blade")]
+    [InlineData("held.weapon.sword")]
+    [InlineData("held.shield.kite")]
+    [InlineData("held.unknown")]
+    [InlineData(null)]
+    public void NonLightItems_HaveNoFlamePoint(string? id)
+    {
+        Assert.False(WeaponMeshCatalog.TryGetFlamePoint(id, out Vector3 point));
+        Assert.Equal(Vector3.Zero, point);
     }
 
     [Fact]
@@ -176,5 +208,29 @@ public class WeaponMeshCatalogTests
         Vector3 leftFace = Vector4.TransformRow(new Vector4(0f, 0f, 1f, 0f), HeldWeaponRenderer.CreateGrip(WeaponGrip.Shield, offHand: true)).Xyz;
         Assert.Equal(-1f, rightFace.X, 3);
         Assert.Equal(1f, leftFace.X, 3);
+    }
+
+    // Every item that casts a held light must have a flame point, or its light falls back to the fixed body anchor.
+    [Fact]
+    public void EveryShippedItemThatCastsAHeldLight_HasAFlamePoint()
+    {
+        List<string> lit = [];
+        List<string> missing = [];
+        foreach (ItemDefinition item in ContentCatalog.Shipped.Items)
+        {
+            if (item.HeldLight == HeldLightKind.None)
+            {
+                continue;
+            }
+
+            lit.Add(item.Key);
+            if (!WeaponMeshCatalog.TryGetFlamePoint(item.VisualId, out _))
+            {
+                missing.Add($"{item.Key} (visual {item.VisualId})");
+            }
+        }
+
+        Assert.NotEmpty(lit);
+        Assert.True(missing.Count == 0, $"lit items with no WeaponMeshCatalog flame point: {string.Join(", ", missing)}");
     }
 }
