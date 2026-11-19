@@ -340,6 +340,42 @@ public sealed class Shader : IDisposable
         RenderCounters.CountUniformUpload();
     }
 
+    // Location overloads for the scalar and vector setters, to match SetMatrix4 above. A pass that
+    // caches its locations at construction (the post chain, the boundary void) uses these and never
+    // touches the name lookup in its draw path.
+    public void SetVector2(int location, Vector2 vector)
+    {
+        if (location < 0)
+        {
+            return;
+        }
+
+        GL.Uniform2(location, vector);
+        RenderCounters.CountUniformUpload();
+    }
+
+    public void SetFloat(int location, float value)
+    {
+        if (location < 0)
+        {
+            return;
+        }
+
+        GL.Uniform1(location, value);
+        RenderCounters.CountUniformUpload();
+    }
+
+    public void SetInt(int location, int value)
+    {
+        if (location < 0)
+        {
+            return;
+        }
+
+        GL.Uniform1(location, value);
+        RenderCounters.CountUniformUpload();
+    }
+
     public void SetMatrix3(int location, Matrix3 matrix)
     {
         if (location < 0)

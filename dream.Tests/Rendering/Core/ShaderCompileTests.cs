@@ -32,6 +32,9 @@ public sealed class ShaderCompileTests
         new("boundaryVoid", "skyVertex.glsl", "boundaryVoidFragment.glsl", null),
         new("warMist", "warMistVertex.glsl", "warMistFragment.glsl", null),
         new("ui", "uiVertex.glsl", "uiFragment.glsl", null),
+        new("post.bright", "postVertex.glsl", "postBrightFragment.glsl", null),
+        new("post.blur", "postVertex.glsl", "postBlurFragment.glsl", null),
+        new("post.resolve", "postVertex.glsl", "postResolveFragment.glsl", null),
     };
 
     private static readonly Regex IncludePattern = new("^[ \\t]*#[ \\t]*include[ \\t]*\"([^\"]+)\"", RegexOptions.Multiline);

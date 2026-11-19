@@ -113,8 +113,9 @@ public class RenderCountersTests
 
         // Matrix4, Matrix3 (normal matrix), the MASK alpha cutoff, the cached material emissive,
         // the cached emissive texture flag, scroll and time, the cached equipment surface, eye and
-        // detail, and the six by-name setters.
-        Assert.Equal(16, uniformCalls);
+        // detail, the six by-name setters, and the three by-location setters the post chain uses
+        // (SetVector2, SetFloat, SetInt), which keep its draw path off the name lookup.
+        Assert.Equal(19, uniformCalls);
     }
 
     [Fact]

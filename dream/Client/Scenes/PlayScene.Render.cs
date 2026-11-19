@@ -9,6 +9,7 @@ using Dream.Rendering.Actors;
 using Dream.Rendering.Core;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Mist;
+using Dream.Rendering.Post;
 using Dream.Rendering.Sky;
 using Dream.Rendering.World;
 using Dream.Server;
@@ -27,6 +28,37 @@ public partial class PlayScene
     // Null when its shader failed to load; the per-fragment mist in the world shaders still runs.
     private BoundaryMistVoidRenderer? _boundaryMist;
     private readonly BoundaryMistSettings _boundaryMistSettings = BoundaryMistSettings.FromEnvironment();
+
+    // The offscreen RGBA16F buffer the world draws into, rebuilt when the window or the granted
+    // sample count changes, and the chain that resolves it onto the window. Both null when the
+    // chain could not be built or DREAM_POST=0, in which case the frame below is byte for byte the
+    // frame this renderer drew before the pass existed. _contextSamples is read once, from the
+    // default framebuffer, because GLFW_SAMPLES is a window-creation hint and cannot change.
+    private SceneTarget? _sceneTarget;
+    private PostChain? _postChain;
+    private int _contextSamples = -1;
+
+    // The scene target for this frame's window size, created or recreated as needed. Null when it
+    // could not be made complete, which is a supported state and not an error.
+    private SceneTarget? EnsureSceneTarget()
+    {
+        if (_contextSamples < 0)
+        {
+            // Queried with the default framebuffer bound, which is where Render starts.
+            _contextSamples = GL.GetInteger(GetPName.Samples);
+        }
+
+        int width = Math.Max(_settings.WindowWidth, 1);
+        int height = Math.Max(_settings.WindowHeight, 1);
+        if (_sceneTarget != null && _sceneTarget.Matches(width, height, _contextSamples))
+        {
+            return _sceneTarget.IsAvailable ? _sceneTarget : null;
+        }
+
+        _sceneTarget?.Dispose();
+        _sceneTarget = new SceneTarget(width, height, _contextSamples);
+        return _sceneTarget.IsAvailable ? _sceneTarget : null;
+    }
 
     public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
     {
@@ -48,6 +80,10 @@ public partial class PlayScene
         SkyState sky = SkyModel.Evaluate(_render.TimeOfDayOverride.Resolve(WorldTimeOfDay01), _skySettings);
         _render.SetFrameLighting(in sky.Lighting);
         bool isometric = _settings.CameraViewMode == CameraViewMode.Isometric;
+        // Bind the offscreen scene buffer before the clear, so the clear colour, the depth buffer
+        // and every world pass land in the float target rather than on the window.
+        SceneTarget? sceneTarget = _postChain == null ? null : EnsureSceneTarget();
+        sceneTarget?.BindForScene();
         long clearStart = Stopwatch.GetTimestamp();
         // Isometric shows the map edge, so the void is a dim horizon colour rather than the sky.
         float clearScale = isometric ? 0.25f : 1f;
@@ -238,6 +274,18 @@ public partial class PlayScene
             {
                 ViewModelDrawMilliseconds = Stopwatch.GetElapsedTime(viewModelDrawStart).TotalMilliseconds
             };
+        }
+
+        // Resolve the scene onto the window: the multisample blit if there is one, then the bright
+        // pass, the blur and the highlight shoulder. It runs AFTER the collision debug draw and the
+        // view model, because both of those are world geometry that needs the scene's depth buffer,
+        // and BEFORE the HUD, because the HUD is authored in display values and must not be rolled
+        // off. The draws fall inside the still-open Effects GPU section; a section cannot reopen
+        // within a frame, so they are not timed separately.
+        if (sceneTarget != null && _postChain != null)
+        {
+            sceneTarget.Resolve();
+            _postChain.Run(sceneTarget.ResolvedTexture, sceneTarget.Width, sceneTarget.Height);
         }
 
         long hudDrawStart = Stopwatch.GetTimestamp();
