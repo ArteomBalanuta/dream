@@ -18,7 +18,9 @@ public enum FxFrame : byte
     // Skill casts: one flat crescent, two bolt variants (add 0..1), one flat annulus.
     Arc = 23,
     Bolt0 = 24,
-    Ring = 26
+    Ring = 26,
+    // The Cleave blade-trail band along +X, additive.
+    Trail = 31
 }
 
 public static class FxAtlas
