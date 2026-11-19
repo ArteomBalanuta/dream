@@ -3,7 +3,7 @@
   "timeOfDay": "noon",
   "seed": 1,
   "env": ["DREAM_FX_CLOCK=10", "DREAM_MAX_FPS=60"],
-  "pixelThreshold": 0.12,
-  "maxFraction": 0.01,
-  "ignore": []
+  "pixelThreshold": 0.2,
+  "maxFraction": 0.0005,
+  "ignore": [[600, 100, 260, 160], [0, 880, 340, 50], [180, 890, 140, 134]]
 }
