@@ -62,16 +62,18 @@ Built with the parallel-agent-delivery workflow:
   - `gl: requested 4.5 core, got 4.5.0 NVIDIA 617.42`;
   - with `DREAM_GL_VERSION=3.3`, `got 3.3.0` and the same picture;
   - `vsync: off (capture run)`, `anisotropic filtering: 8x`, `gl markers: off` (Release, as designed).
-- **Golden scenes: still red, baselines NOT re-recorded.**
-  - The noon and wolf baselines already failed on master before this wave, at the held torch (640,464). They went
-    stale when the torch fix landed.
-  - On the night scene, this wave's differences are the brazier flame flicker and moon shadows along the fence.
-  - A re-record from this branch (18 runs; 36 for wolf-staged) passed `run.ps1`, but it broke two of the gate's own
-    negatives in `tools/golden/tests/test_golden.py`: a x0.8 darkening passed on spawn-night 04-snap, and removing the
-    wolf-scene player fell to 1.14x the limit (2x required). The recorded noise is dominated by a fire-shadow wedge
-    near the Quartermaster that appears in some runs and not others, on master too. So the re-record was discarded
-    and the committed baselines are unchanged.
-  - Making the fire-shadow slots deterministic is the prerequisite for any useful re-record.
+- **Golden scenes: re-recorded and green.** The first re-record was discarded: it passed `run.ps1` but failed the gate's own
+  negatives (a x0.8 night darkening passed), because a fire-shadow wedge toggled between runs. Fixed at the root:
+  - **Steady fire-shadow slots (a real in-game bug).** Slots were ranked by flickered brightness (0.65-1.25x at
+    1.7-13.9 Hz), so near-tied fires swapped shadows several times a second. `PointLight.Flicker` now carries the
+    multiplier each producer applied, and `FireShadowAtlas.SelectSlots` ranks by the steady colour
+    (`FireShadowSteadyRankTests`).
+  - **`DREAM_FIRE_CLOCK`** pins the fire flicker for captures (`FireClockPin`).
+  - **The golden scenes pin the sun:** `tod:<hours>` after `play`, and `DREAM_DAY_LENGTH_MINUTES=1440` for the
+    `play` frame. Under a 36-way parallel record the real-time world clock had moved the sun's shadows.
+  - **Result:** noise dropped (night 0.0021 -> 0.000011, noon 0.000098 -> 0.000008, wolf 0.00013 -> 0.000017).
+    `test_golden.py` OK, and `run.ps1 -Scene all` passed 3 times out of 3.
+  - **Full suite after these changes:** 10,225 passed, 0 failed.
 
 ## Not verified
 
