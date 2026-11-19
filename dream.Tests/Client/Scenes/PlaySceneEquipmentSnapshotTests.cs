@@ -422,4 +422,50 @@ public sealed class PlaySceneEquipmentSnapshotTests
             PlayScene.LoopbackGalleryVisualKey(0.1f, 1),
             PlayScene.LoopbackGalleryVisualKey(0.1f, 2));
     }
+
+    // The gallery draws items the inventory does not have. Before this was pinned, the local held
+    // light was still resolved from the real inventory - the starter kit equips a torch in the OFF
+    // HAND - while the hand was drawn holding whatever the gallery picked, so the flame found no
+    // flame point among the DRAWN visuals, fell back to HeldLightAnchor.Body and hung in the air
+    // beside the figure in every captured frame. The light must follow what is drawn.
+    [Fact]
+    public void LoopbackGalleryHeldLight_MatchesTheItemTheGalleryDraws()
+    {
+        Dictionary<string, HeldLightKind> lightByVisual = new(StringComparer.Ordinal);
+        foreach (ItemDefinition item in ContentCatalog.Shipped.Items)
+        {
+            if (item.HeldLight != HeldLightKind.None && !string.IsNullOrEmpty(item.VisualId))
+            {
+                lightByVisual[item.VisualId] = item.HeldLight;
+            }
+        }
+
+        Assert.NotEmpty(lightByVisual);
+
+        bool sawLit = false;
+        bool sawUnlit = false;
+        for (int step = 0; step < 40; step++)
+        {
+            for (int figure = 0; figure < 3; figure++)
+            {
+                PlayerEquipmentVisuals drawn =
+                    PlayerEquipmentVisuals.Parse(PlayScene.LoopbackGalleryVisualKey((step * 3f) + 0.5f, figure));
+
+                HeldLightKind main = Lookup(lightByVisual, drawn.MainHand);
+                HeldLightKind off = Lookup(lightByVisual, drawn.OffHand);
+                HeldLightKind expected = EquipmentSlots.ResolveHeldLight(main, off);
+
+                Assert.Equal(expected, PlayScene.LoopbackGalleryHeldLight(in drawn));
+                sawLit |= expected != HeldLightKind.None;
+                sawUnlit |= expected == HeldLightKind.None;
+            }
+        }
+
+        // Both outcomes really occur over a full cycle, so neither branch is untested.
+        Assert.True(sawLit, "the gallery never drew a lit item");
+        Assert.True(sawUnlit, "the gallery always drew a lit item");
+    }
+
+    private static HeldLightKind Lookup(Dictionary<string, HeldLightKind> map, string? visualId)
+        => visualId != null && map.TryGetValue(visualId, out HeldLightKind kind) ? kind : HeldLightKind.None;
 }

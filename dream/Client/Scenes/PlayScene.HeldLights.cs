@@ -18,6 +18,13 @@ public partial class PlayScene
     // The light of the local player's equipped item, from the latest inventory snapshot.
     private HeldLightKind _localHeldLight;
 
+    // DEBUG MODE ONLY (DREAM_LOOPBACK_REMOTE_PLAYERS): the light of the item the gallery is DRAWING
+    // in the local hands this frame, which is not the item the inventory says is equipped. Set by
+    // PushLocalAvatarInputs, which runs first in CollectHeldLights, and read only while the gallery
+    // is on. Without it the flame comes from the real equipped item while the hand is drawn holding
+    // something else, so it finds no flame point and hangs in the air beside the figure.
+    private HeldLightKind _loopbackGalleryHeldLight;
+
     // What the local player holds in each hand, from the latest inventory snapshot; drawn in the
     // hands of the third-person and isometric avatar.
     private PlayerEquipmentVisuals _localEquipmentVisuals;
@@ -54,8 +61,11 @@ public partial class PlayScene
             hasFlame = _render.LocalPlayers.TryGetHeldFlameModelPoint(out flameModelPoint);
         }
 
+        // The gallery draws items the inventory does not have, so the light has to follow what is
+        // DRAWN or the two disagree; outside the gallery this is exactly _localHeldLight as before.
+        HeldLightKind heldLight = _enableLoopbackRemotePlayers ? _loopbackGalleryHeldLight : _localHeldLight;
         LocalHeldLight local = new(
-            player.Combatant.Health.IsAlive ? _localHeldLight : HeldLightKind.None,
+            player.Combatant.Health.IsAlive ? heldLight : HeldLightKind.None,
             player.Combatant.Actor.Id,
             firstPerson,
             _runtime.LocalRenderPose.Position,
@@ -91,9 +101,15 @@ public partial class PlayScene
 
         OpenTK.Mathematics.Vector3 velocity = player.PhysicsBody.LinearVelocity.ToOpenTK();
         // The loopback debug mode (DREAM_LOOPBACK_REMOTE_PLAYERS) also puts the item gallery in the local hands.
-        PlayerEquipmentVisuals equipment = _enableLoopbackRemotePlayers
-            ? PlayerEquipmentVisuals.Parse(LoopbackGalleryVisualKey((float)_clientPresentationTimeSeconds, shieldOffset: 2))
-            : _localEquipmentVisuals;
+        PlayerEquipmentVisuals equipment = _localEquipmentVisuals;
+        if (_enableLoopbackRemotePlayers)
+        {
+            equipment = PlayerEquipmentVisuals.Parse(
+                LoopbackGalleryVisualKey((float)_clientPresentationTimeSeconds, shieldOffset: 2));
+            // Keep the held light on the item the gallery is about to draw (see the field's comment).
+            _loopbackGalleryHeldLight = LoopbackGalleryHeldLight(in equipment);
+        }
+
         _render.LocalPlayers.SetFrameInputs(new LocalPlayerFrameInputs(
             equipment,
             health.IsAlive,

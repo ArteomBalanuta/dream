@@ -491,6 +491,42 @@ public partial class PlayScene
         return PlayerEquipmentVisuals.Format(in visuals);
     }
 
+    // visual id -> the light that item casts, built once from the SHIPPED CONTENT rather than from a
+    // table of ids written out here, so it cannot drift from items.json. An id that no item carries
+    // (and every worn id) is not in the map and casts nothing.
+    private static readonly Lazy<Dictionary<string, HeldLightKind>> GalleryHeldLightByVisualId = new(() =>
+    {
+        Dictionary<string, HeldLightKind> map = new(StringComparer.Ordinal);
+        foreach (ItemDefinition item in ContentCatalog.Shipped.Items)
+        {
+            if (item.HeldLight != HeldLightKind.None && !string.IsNullOrEmpty(item.VisualId))
+            {
+                map[item.VisualId] = item.HeldLight;
+            }
+        }
+
+        return map;
+    });
+
+    // The light the gallery's DRAWN item casts. The gallery replaces what the local figure is drawn
+    // holding but cannot replace the inventory, so without this the flame is resolved from the real
+    // equipped item (the starter kit equips a torch in the off hand) while the hand is drawn holding
+    // whatever the gallery picked. The flame then finds no lit item among the drawn visuals, falls
+    // back to HeldLightAnchor.Body, and hangs in the air beside the figure in every frame - which is
+    // exactly what every gallery capture showed. Debug mode only; the real path is untouched.
+    internal static HeldLightKind LoopbackGalleryHeldLight(in PlayerEquipmentVisuals visuals)
+    {
+        return EquipmentSlots.ResolveHeldLight(
+            GalleryHeldLight(visuals.MainHand), GalleryHeldLight(visuals.OffHand));
+    }
+
+    private static HeldLightKind GalleryHeldLight(string? visualId)
+    {
+        return visualId != null && GalleryHeldLightByVisualId.Value.TryGetValue(visualId, out HeldLightKind kind)
+            ? kind
+            : HeldLightKind.None;
+    }
+
     public static bool ResolveLoopbackRemotePlayersEnabled()
     {
         string? value = Environment.GetEnvironmentVariable(LoopbackRemotePlayersEnvironmentVariable);
