@@ -667,8 +667,10 @@ had to implement it, with evidence, and fixed:
 - **Held weapons and worn armour do not cast** — they render outside the caster pass's ownership, so a
   figure casts a shadow without its sword. The baked helm and cloak do cast.
 - **Actor shadows lag one frame**: the pass runs before actors animate and replays the previous pose.
-- **The moon is never shadowed** (the sun term only), which is what keeps the grim-look CPU mirror
-  truthful at hours 0, 20, 19 and 5.
+- ~~**The moon is never shadowed** (the sun term only), which is what keeps the grim-look CPU mirror
+  truthful at hours 0, 20, 19 and 5.~~ **CHANGED 2026-11-19 (graphics quick wins):** the
+  map's visibility now multiplies the term of the light it was rendered from, so the moon casts shadows at night
+  (`dreamShadowMapIsSun` in lighting.glsl; `MoonShadowTermTests`). Before, the night pass was rendered and never read.
 - **Fire shadows move very little.** ~~Measured edge motion is 0.045 world units (~1.4 texels) at 8
   units.~~ **CLOSED by the fire-motion wave** (see the section at the end of this file): edge travel is
   now 11.59 texels. `OffsetLateral` turned out not to be the knob - see there for why.

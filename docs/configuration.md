@@ -74,7 +74,7 @@ The current `Game` constructor creates a window with:
 
 - Title: `dream` (`GameWindowTitleBuilder.BaseTitle`)
 - Initial size: `1440 x 1024`
-- Frame cap: `GameWindow.UpdateFrequency` from `max_fps` (default `144`) or `DREAM_MAX_FPS`; VSync stays off (see Desktop Client Text Config)
+- Frame cap: `GameWindow.UpdateFrequency` from `max_fps` (default `144`) or `DREAM_MAX_FPS`; VSync from `vsync` (default `adaptive`) or `DREAM_VSYNC` (see Desktop Client Text Config)
 
 The cursor stays free: movement is by clicking, so the OS cursor is hidden only while the classic HUD draws its own sprite cursor.
 
@@ -184,7 +184,7 @@ The `camera_view` key currently accepts `first_person` or `third_person`.
 
 The `msaa` key sets the multisample count of the window's default framebuffer: `0` (off), `2` or `4` (default); other values snap to the nearest of these. It is a window-creation hint (`GLFW_SAMPLES`), so it only takes effect on the next launch, and the Settings row says so. No framebuffer object is involved: the resolve happens at swap. The driver may grant fewer samples than requested, so the granted count is logged at startup (`[startup] msaa: requested 4x, granted 4 samples`). Alpha-mask (cutout) materials `discard` fragments, which kills every sample, so their edges are not smoothed.
 
-The `max_fps` key sets the render frame cap. The default is `144`; `0` means uncapped, and any other value is clamped to `30`-`500` (500 Hz is OpenTK's own `UpdateFrequency` limit), so negative values become `30`. `Game` applies the cap through `GameWindow.UpdateFrequency`, which drives both update and render frames in the single-threaded window. VSync stays off. The effective cap is printed once at startup, for example `[startup] frame cap: 144 FPS` or `[startup] frame cap: uncapped`.
+The `max_fps` key sets the render frame cap. The default is `144`; `0` means uncapped, and any other value is clamped to `30`-`500` (500 Hz is OpenTK's own `UpdateFrequency` limit), so negative values become `30`. `Game` applies the cap through `GameWindow.UpdateFrequency`, which drives both update and render frames in the single-threaded window. The `vsync` key is `off`, `on` or `adaptive` (default `adaptive`); with VSync on the cap is raised to at least twice the refresh rate so it never fights the swap interval, and capture runs always run with VSync off. See `docs/rendering-and-assets.md`, OpenGL version, frame pacing and GPU debugging. The effective cap is printed once at startup, for example `[startup] frame cap: 144 FPS` or `[startup] frame cap: uncapped`.
 
 The `admin_hud` key (`0` or `1`, default `0`) makes the F3 key and the developer controls in Settings available. The `ui_scale` key sets the classic HUD scale: `0` (default) fits the window, other values snap to quarter steps from 1 to 4 and are then capped at the auto fit for the window, because a larger scale pushes the windows under the bar (3 at 1440x1024 is used as 2; the Settings slider shows the scale in use). The Settings window has a UI Scale slider that writes `ui_scale` back. Missing keys use these defaults. The shipped `dream/config/desktop-client.txt` is not changed; the game adds the keys the next time it saves.
 
@@ -226,6 +226,8 @@ Every one of these presents as the *same* symptom - the run writes no PNG, hangs
 For repeatable local profiling, set `DREAM_AUTO_CONNECT=1` before launching the desktop client. The startup scene waits for the integrated loopback server, applies its current local endpoint, and begins the same connection flow as the Connect button without requiring UI input.
 
 Set `DREAM_MAX_FPS` to override the `max_fps` frame cap for one run without writing it back to `config/desktop-client.txt`. It uses the same rules: `0` means uncapped and other integers are clamped to `30`-`500`. A non-integer value is ignored and the config value is used.
+
+Set `DREAM_VSYNC` (`off`/`0`, `on`/`1`, `adaptive`) to override the `vsync` key for one run. Set `DREAM_GL_VERSION=3.3` to skip the OpenGL 4.5 context attempt, `DREAM_ANISOTROPY` to set anisotropic filtering (default 8, `<= 1` off, at most 16), `DREAM_GL_MARKERS=1|0` to force GPU debug groups and labels on or off, and `DREAM_RENDERDOC` / `DREAM_RENDERDOC_CAPTURE_FRAME` to attach RenderDoc and capture a frame (see `docs/rendering-and-assets.md`).
 
 Set `DREAM_MSAA` to override the `msaa` sample count for one run without writing it back to `config/desktop-client.txt`. Values snap to `0`, `2` or `4`; a non-integer value is ignored and the config value is used.
 
