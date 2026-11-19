@@ -229,7 +229,7 @@ def check_ramps() -> list[str]:
 # Measured on the shipped icons (non-emissive pixels, alpha > 0.8); the ceilings carry a little room over the worst icon.
 # Before the aging pass the same icons peaked at 1.00 with p99 0.95 and sat at saturation 0.9, which is the candy this gate stops.
 GOLD_GAP = 12    # gilded helm median (84, 72, 55): g - b = 17, was > 40 when the gold was pure toy gold
-BLUE_GAP = 6     # azure feather (74, 81, 90): b - r = 16; travel cloak (30, 32, 38): b - r = 8 after its chroma was cut to 0.44; was 25
+BLUE_GAP = 4     # azure feather (74, 81, 90): b - r = 16; travel cloak (19, 21, 25): b - r = 6 once rebuilt as dark wool; was 25
 RED_GAP = 8      # hunting spear (41, 27, 25): r - g = 14; was 15
 BONE_MIN = 70    # bone cuirass median (100, 98, 94): min channel 94; was 120, which no 0.40-ceiling icon can reach
 CEIL_P99 = 0.46          # per icon, p99 of max(R,G,B) over lit (non-emissive) pixels; measured worst 0.443 (consumable.greater-mana)
@@ -267,21 +267,38 @@ def brightness_stats(doc: dict, sheet: np.ndarray, mask: np.ndarray) -> dict:
     return out
 
 
+# A tier ramp is meant to be brighter than Common, so each sheet has its own ceilings. Measured (worst icon per quantity;
+# quantities are the MAX CHANNEL p99 / p99.9 and saturation p90, 0..1, as defined in brightness_stats):
+#   items.png          p99 0.443  p99.9 0.451  emissive p99 0.510  sat p90 0.526  candy 0.000
+#   items_uncommon.png p99 0.800  p99.9 0.831  emissive p99 0.814  sat p90 0.552  candy 0.000
+#   items_rare.png     p99 0.847  p99.9 0.865  emissive p99 0.792  sat p90 0.714  candy 0.000
+# All three peaked at 1.00 before the ageing pass. The ceilings carry a little room over the worst icon of each sheet.
+SHEET_CEILINGS = {
+    "items.png": (CEIL_P99, CEIL_P999, CEIL_EMIT_P99, SAT_P90, SAT_CANDY_SHARE),
+    "items_uncommon.png": (0.84, 0.87, 0.86, 0.60, SAT_CANDY_SHARE),
+    "items_rare.png": (0.89, 0.91, 0.84, 0.76, SAT_CANDY_SHARE),
+}
+
+
 def check_brightness(doc: dict, sheet: np.ndarray) -> list[str]:
-    """No icon may drift back to bright, saturated toy colour."""
+    """No icon may drift back to bright, saturated toy colour, on the Common sheet or on either tier sheet a rarer
+    item draws from (the sheet argument is items.png; the tier sheets are read here)."""
     mask = np.asarray(Image.open(ITEMS / "items_mask.png").convert("RGBA"))
     errs = []
-    for name, (p99, p999, ep99, sat, candy) in brightness_stats(doc, sheet, mask).items():
-        if p99 > CEIL_P99:
-            errs.append(f"{name}: p99 channel {p99:.3f} over the {CEIL_P99} ceiling")
-        if p999 > CEIL_P999:
-            errs.append(f"{name}: p99.9 channel {p999:.3f} over {CEIL_P999}")
-        if ep99 > CEIL_EMIT_P99:
-            errs.append(f"{name}: emissive p99 {ep99:.3f} over {CEIL_EMIT_P99}")
-        if sat > SAT_P90:
-            errs.append(f"{name}: p90 saturation {sat:.2f} over {SAT_P90}")
-        if candy > SAT_CANDY_SHARE:
-            errs.append(f"{name}: {candy:.3f} of pixels are bright and saturated")
+    for image, (c99, c999, cemit, csat, ccandy) in SHEET_CEILINGS.items():
+        pix = sheet if image == "items.png" else np.asarray(Image.open(ITEMS / image).convert("RGBA"))
+        for name, (p99, p999, ep99, sat, candy) in brightness_stats(doc, pix, mask).items():
+            tag = f"{image}:{name}"
+            if p99 > c99:
+                errs.append(f"{tag}: p99 channel {p99:.3f} over the {c99} ceiling")
+            if p999 > c999:
+                errs.append(f"{tag}: p99.9 channel {p999:.3f} over {c999}")
+            if ep99 > cemit:
+                errs.append(f"{tag}: emissive p99 {ep99:.3f} over {cemit}")
+            if sat > csat:
+                errs.append(f"{tag}: p90 saturation {sat:.2f} over {csat}")
+            if candy > ccandy:
+                errs.append(f"{tag}: {candy:.3f} of pixels are bright and saturated")
     return errs
 
 

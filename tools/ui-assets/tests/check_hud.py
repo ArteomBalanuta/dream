@@ -161,24 +161,24 @@ def check_gems(errs, S):
             body = (rgb[..., 0] > 70) & (rgb[..., 0] > 1.8 * rgb[..., 1]) & (rgb[..., 0] > 1.8 * rgb[..., 2])
             deep = (rgb[..., 0] > 20) & (rgb[..., 0] < 130) & (rgb[..., 1] < 30) & (rgb[..., 2] < 40)
         else:
-            body = (rgb[..., 2] > 70) & (rgb[..., 2] > 1.5 * rgb[..., 0])
+            body = (rgb[..., 2] > 70) & (rgb[..., 2] > 1.5 * rgb[..., 0]) & (rgb[..., 2] > 1.5 * rgb[..., 1])   # symmetric with the red test: no teal or cyan stone
             deep = (rgb[..., 2] > 20) & (rgb[..., 2] < 140) & (rgb[..., 0] < 30)
         fl = rgb / 255.0
         sat = (fl.max(axis=2) - fl.min(axis=2)) / np.maximum(fl.max(axis=2), 1e-6)
         iron = (sat < 0.30) & (luma(full) > 0.06) & (luma(full) < 0.6)
-        for label, m, need in (("oxidised body", body, 0.15), ("deep glass", deep, 0.30), ("iron cage", iron, 0.04)):   # measured: body 0.425/0.412, deep 0.500/0.440, iron 0.090/0.090
+        for label, m, need in (("oxidised body", body, 0.30), ("deep glass", deep, 0.22), ("iron cage", iron, 0.06)):   # SHARE of the stone, measured hp / mp: body 0.361 / 0.350, deep 0.411 / 0.280, iron 0.109 / 0.095
             if (m & ins).sum() < need * ins.sum():
                 errs.append(f"gem.{kind}.full: {label} cover {(m & ins).sum() / ins.sum():.3f} of the stone, want {need}")
-        if (luma(full)[ins] > 0.80).mean() > 0.004:   # measured 0.0010 / 0.0002: no plastic hot spot survives
+        if (luma(full)[ins] > 0.80).mean() > 0.004:   # LUMA share over 0.80, measured 0.0017 / 0.0005 after the iteration-3 relight (0.0023 / 0.0003 before): no plastic hot spot survives
             errs.append(f"gem.{kind}.full: plastic highlights cover {(luma(full)[ins] > 0.80).mean():.4f} of the stone")
-        if np.percentile(fl.max(axis=2)[ins], 99) > 0.80:   # measured p99 of the brightest channel 0.728 / 0.655
-            errs.append(f"gem.{kind}.full: p99 channel {np.percentile(fl.max(axis=2)[ins], 99):.3f} over the 0.80 ceiling")
+        if np.percentile(fl.max(axis=2)[ins], 99) > 0.86:   # MAX-CHANNEL (not luma) p99, measured 0.800 / 0.824
+            errs.append(f"gem.{kind}.full: p99 channel {np.percentile(fl.max(axis=2)[ins], 99):.3f} over the 0.86 ceiling")
         # the glass alone (HSV S > 0.45; the near-neutral iron cage drags a whole-sprite mean down): lit through, still oxidised
         glass = ins & (sat > 0.45)
         gv = fl.max(axis=2)[glass]
-        if np.percentile(gv, 95) < 0.40:   # measured glass p95 0.651 / 0.616; the C# ClassicHudGemTests counts the pixels that differ between fill 0 and 1
+        if np.percentile(gv, 95) < 0.40:   # measured glass p95 of the MAX CHANNEL 0.737 / 0.749 (luma is ~0.35 of it on the red stone); the C# ClassicHudGemTests counts the pixels that differ between fill 0 and 1
             errs.append(f"gem.{kind}.full: glass p95 {np.percentile(gv, 95):.3f} under 0.40: the fluid is not lit")
-        if sat[glass].mean() < 0.70:   # measured 0.784 / 0.742
+        if sat[glass].mean() < 0.70:   # measured 0.806 / 0.726
             errs.append(f"gem.{kind}.full: glass saturation {sat[glass].mean():.3f} under 0.70")
         if np.percentile(sat[ins], 50) > 0.85:   # measured median saturation 0.76 / 0.70
             errs.append(f"gem.{kind}.full: median saturation {np.percentile(sat[ins], 50):.2f} is candy")

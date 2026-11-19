@@ -115,8 +115,8 @@ _register("cell", fg.Material((0.0105, 0.0105, 0.0113), (0.016, 0.016, 0.017), 0
 _register("cell.stone", fg.Material((0.0062, 0.0060, 0.0057), (0.018, 0.018, 0.018), 0.82, 0.0, (0.020, 0.019, 0.018), (0.04, 0.04, 0.04), 0.7, 0.5, 0.8, 0.05))
 # the scroll rod: dark steel, its highlight a soft broken streak
 _register("rod.steel", fg.Material((0.012, 0.012, 0.013), (0.085, 0.085, 0.09), 0.52, 0.45, (0.02, 0.02, 0.021), (0.14, 0.14, 0.145), 0.46, 0.5, 0.3, 0.30))
-# the gold leaf of the frame: raised a third over the first pass so its remnants read as warm against the cold iron
-_register("rail.dim", fg.Material((0.100, 0.064, 0.025), (0.110, 0.086, 0.047), 0.52, 0.15, (0.17, 0.11, 0.05), (0.24, 0.18, 0.09), 0.42, 0.7, 0.3, 0.6))
+# the gold leaf of the frame: raised about 13% over the first pass (a third took win.side.left hf over its 0.11 ceiling) so its remnants read as warm against the cold iron
+_register("rail.dim", fg.Material((0.085, 0.054, 0.021), (0.095, 0.074, 0.040), 0.52, 0.15, (0.15, 0.10, 0.045), (0.22, 0.165, 0.085), 0.42, 0.7, 0.3, 0.6))
 _register("glyph.brass", fg.Material((0.034, 0.020, 0.0055), (0.26, 0.18, 0.062), 0.46, 0.2, (0.050, 0.031, 0.010), (0.46, 0.33, 0.14), 0.36, 0.8, 0.3, 0.10))
 _register("glyph.ember", fg.Material((0.022, 0.0105, 0.0030), (0.12, 0.070, 0.026), 0.60, 0.2, (0.075, 0.030, 0.006), (0.42, 0.24, 0.07), 0.45, 0.8, 0.3, 0.10))
 
@@ -589,7 +589,7 @@ def crown_value_map(r: fg.Relief) -> np.ndarray:
     return np.where((x < SIDE_W) | (x > 177.0), column, body).astype(F32)
 
 
-FRAME_RENDER = dict(wear=0.14, grime=0.55, rust=0.24, dust=0.05, detail=0.6)
+FRAME_RENDER = dict(wear=0.14, grime=0.55, rust=0.19, dust=0.05, detail=0.6)
 
 
 def render_crown(kind: str) -> np.ndarray:
@@ -1359,17 +1359,27 @@ def build_wells() -> list[Sprite]:
 # cells --------------------------------------------------------------------------------
 
 
+
+
 def _corner_rivets(r: fg.Relief, name: str, inset: float = 1.3, rad: float = 0.46, w_u: float = 20.0, h_u: float = 20.0, mat: str = "frame.rivet") -> None:
+    # one sprite serves every cell, so the wear is asymmetric inside it: a single worn brass stud at the lit corner, one
+    # soot-blackened iron stud, one worn flat, and one missing, instead of four bright dots in every cell
     for i, (x, y) in enumerate(((inset, inset), (w_u - inset, inset), (inset, h_u - inset), (w_u - inset, h_u - inset))):
-        r.dome(x, y, rad, z=zat(r, x, y), mat=mat, collar=False, seed=f"{name}.rv{i}")
+        if mat == "brass":
+            if i == 2:
+                continue
+            m_, rr = (("brass", rad * 0.9), ("frame.rivet", rad), None, ("frame.rivet", rad * 0.6))[i]
+        else:
+            m_, rr = mat, rad
+        r.dome(x, y, rr, z=zat(r, x, y), mat=m_, collar=False, seed=f"{name}.rv{i}")
 
 
 def cell_relief(name: str, face: str = "cell") -> fg.Relief:
     """The bag cell: a rolled iron bezel with a rivet in each corner round a carved stone niche. The niche floor is dark
     pitted slate, deep enough that the lip throws a shadow across its top and left, and dull enough that an icon reads on it."""
     r = fg.Relief(20, 20, "frame.black", 1.0)
-    r.plate(Rect(0.4, 0.4, 19.2, 19.2, 0.5), z=1.0, bevel=1.9, profile="rolled", rise=0.6, mat="frame.warm", wobble=0.04, nick=0.012, seed=name + ".lip")
-    r.pocket(Rect(2.3, 2.3, 15.4, 15.4, 0.4), depth=2.7, wall=1.1, mat="cell.stone", wobble=0.05, nick=0.01, seed=name + ".niche")
+    r.plate(Rect(0.4, 0.4, 19.2, 19.2, 0.5), z=1.0, bevel=1.9, profile="rolled", rise=0.6, mat="frame.warm", wobble=0.04, nick=0.006, seed=name + ".lip")
+    r.pocket(Rect(2.3, 2.3, 15.4, 15.4, 0.4), depth=2.5, wall=1.6, mat="cell.stone", wobble=0.05, nick=0.006, seed=name + ".niche")
     _corner_rivets(r, name, mat="brass")   # a gold stud in each corner: the one warm accent in the bag grid
     return r
 
@@ -1391,7 +1401,7 @@ def shop_cell_relief(name: str) -> fg.Relief:
     return r
 
 
-CELL_RENDER = dict(wear=0.08, grime=0.55, rust=0.22, dust=0.03)
+CELL_RENDER = dict(wear=0.05, grime=0.55, rust=0.14, dust=0.03)
 SHOP_CELL_RENDER = dict(wear=0.03, grime=0.8, rust=0.34, dust=0.02)
 
 
@@ -1408,7 +1418,7 @@ def render_cell_empty() -> np.ndarray:
     r = cell_relief("cell.empty")
     vm = cell_value_map(r, "cell.stone", 1.0)
     prim = r.h.copy()
-    micro(r, "cell.empty", 1.0, 0.05, 0.035, 0.06)   # pitted: the third band is the 1.25 u pock of weathered stone
+    micro(r, "cell.empty", 0.5, 0.03, 0.02, 0.0)   # pitted, but the finest (1.25 u) band is held low: art gate hf ceiling 0.055 sits under every icon
     return fg.downsample(render_chain(r, "cell.empty", prim, value_map=vm, **CELL_RENDER))
 
 
@@ -1433,7 +1443,7 @@ def lattice_tile(name: str, tone: tuple, line: tuple, studs: bool = True, grate:
                 r.dome(ox, oy, 0.52, z=zat(r, min(max(ox, 0.05), 19.95), min(max(oy, 0.05), 19.95)) + 0.05, mat="frame.rivet", collar=False, seed=f"{name}.st{ox}{oy}")
     r.tint = np.broadcast_to(np.array(tone, dtype=F32), (r.H_px, r.W_px, 3)).copy()
     prim = r.h.copy()
-    micro(r, name, 1.2, 0.06, 0.04, 0.07)
+    micro(r, name, 1.2, 0.05, 0.035, 0.025)
     hi = render_chain(r, name, prim, wear=0.0, grime=0.45, rust=0.16 if not grate else 0.3, dust=0.0)
     return fg.downsample(hi, wrap="xy")
 
