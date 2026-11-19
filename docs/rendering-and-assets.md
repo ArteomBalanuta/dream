@@ -196,7 +196,7 @@ A part is a `Center`, a `Size`, a `Material`, three rotations (`PitchDegrees`, t
 
 ### Shapes
 
-`EquipmentShape` names twelve sculpted primitives and `EquipmentShapeLibrary` builds one unit mesh for each, once, lazily, into an `EquipmentMeshCache`:
+`EquipmentShape` names twenty sculpted primitives and `EquipmentShapeLibrary` builds one unit mesh for each, once, lazily, into an `EquipmentMeshCache`:
 
 | Shape | What it is for |
 | --- | --- |
@@ -214,8 +214,16 @@ A part is a `Center`, a `Size`, a `Material`, three rotations (`PitchDegrees`, t
 | `Panel` | a curved, waved sheet: cloaks, tabards, mantles, wings |
 | `Horn` | a cone swept along an arc, ending in a point: pauldron barbs, helm crests, claws, hooked quillons. The curved `Spike`, and the element the reference silhouette leans on hardest |
 | `Flare` | a hollow bell with a concave profile and a rolled rim: gauntlet cuffs, boot tops, fauld skirts, helm brims |
+| `Pauldron` | a shoulder cap: widest a third of the way down, then tucking in and opening at the hem, so it sits ON a shoulder. Opens toward -Z like `Plate`, so cap with `pitch: -90f` |
+| `Cuirass` | a torso: an hourglass with an elliptical section and a hard waist ring. `Plate` as a chest is a barrel |
+| `Greave` | a limb shell that tapers 0.50 to 0.29 and leans toward +Z: greaves, bracers, vambraces, boot shafts. `Plate` as a limb is a pipe |
+| `Lame` | three stacked plates with hard steps between them: faulds, tassets, couters, gorgets, socket collars |
+| `Membrane` | a ribbed sheet with a **scalloped** trailing edge: wings, fins, tattered banners |
+| `Drape` | a cloak as one part: widens as it falls, five soft folds, a ragged hem. Replaces a stack of separate falls, which leaves gaps that read as floating rectangles |
 
-Every shape is built inside the same unit frame the old cube used, with outward winding, unit normals (split at a facet, averaged around a curve) and UVs in `[0, 1]`, and is then **fitted to that frame**, so a part's authored `Size` is its real extent and a shape is a drop-in for a `Box`. Two axes are deliberately left unfitted and are pinned by `EquipmentShapeLibraryTests`: `Ring`'s Y is a torus's minor diameter (0.30 of `Size.Y`), and `Panel`'s Z is a sheet's thickness plus its bulge. The fit is not cosmetic: `Plate` shipped for one iteration as a 150-degree arc whose Z ran 0.09 to 0.50, which drew every piece of plate armour in the front 41% of its box, and no gate could see it because the gates measure a part's box.
+Every shape is built inside the same unit frame the old cube used, with outward winding, unit normals (split at a facet, averaged around a curve) and UVs in `[0, 1]`, and is then **fitted to that frame**, so a part's authored `Size` is its real extent and a shape is a drop-in for a `Box`. Two axes are deliberately left unfitted and are pinned by `EquipmentShapeLibraryTests`: `Ring`'s Y is a torus's minor diameter (0.30 of `Size.Y`), and the three sheets - `Panel`, `Membrane` and `Drape` - keep a Z that is wall thickness plus camber. The fit is not cosmetic: `Plate` shipped for one iteration as a 150-degree arc whose Z ran 0.09 to 0.50, which drew every piece of plate armour in the front 41% of its box, and no gate could see it because the gates measure a part's box.
+
+The last six are **profiled shells**: the same construction as `Plate` but with a ring table, where radius, sweep and centre all vary per ring (`AppendArcShell`). That is what makes a pauldron swell and tuck and a cuirass cinch, and it is the one technique the `lowpoly-armor-generator` skill is built on. Two rules that cost a pass each: a step in a ring table has to be in the GEOMETRY (a hard normal split across a 0.01 radius change is a crease nobody can see), and a sheet's detail cannot live in its thin axis (a rib 0.055 deep in the unit frame, scaled by a wing's `Size.Z` of 0.05, is a third of a pixel - put the form in the silhouette instead). `tools/ui-assets/tests/modelsheet.py` renders every model in both catalogues from the dumped unit meshes at the shipped camera angle, which is how both were found.
 
 ### Material response (GLSL 330)
 

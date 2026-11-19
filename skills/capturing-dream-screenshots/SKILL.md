@@ -70,6 +70,29 @@ writes `NN-<step>.png` of the real back buffer, and closes itself. The full step
 5. Look at the PNGs (Read them). Measure when a number matters:
    `python tools/ui-assets/tests/check_look.py <png> --actor-from-log <out.log>` (A1 value tails, A3 actor contrast).
 
+## Before you capture equipment at all: the model sheet
+
+A capture is the wrong first tool for a geometry question. The gallery step is chosen from the
+client clock, so you cannot ask a run for a named piece, and a Release build plus two runs is
+minutes. `tools/ui-assets/tests/modelsheet.py` composes every model in both equipment catalogues out
+of the unit meshes the engine actually builds and draws all 50, by name, at the shipped camera
+angle, in about a second:
+
+```powershell
+$dump = "$env:TEMP\shapes"
+$env:DREAM_SHAPE_DUMP = $dump
+dotnet test dream.Tests\dream.Tests.csproj --filter "FullyQualifiedName~EveryShapeDumpsToObj" -v q --nologo
+python tools\ui-assets\tests\modelsheet.py $dump armour.png armour
+python tools\ui-assets\tests\shapesheet.py $dump shapes.png     # the primitives alone
+```
+
+It is NOT the engine: no tint, no equipment pattern, no point lights, no shadow, one constant gain.
+Use it for "is this piece the shape I meant, does it read as one object, is any part a floating
+slab", and use a capture for everything in the list at the end of the next section. In pass 4 the
+sheet found three defects in one picture each - a Lame whose steps were 0.01 of a radius and
+rendered as a smooth taper, a wing whose ribs were a third of a pixel deep, and five back items
+reading as loose rectangles - and every one of them was green on every gate.
+
 ## Looking at worn and held equipment
 
 Equipment is the one thing a normal capture shows badly: the shipped window puts the whole figure at
