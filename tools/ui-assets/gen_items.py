@@ -1790,27 +1790,27 @@ def write_ramps(out: Path) -> None:
 
 ICON_EXPOSURE = 0.50   # the icons sit on dark cells in a dark window: they must not be the brightest thing on screen
 ICON_ALBEDO = 0.72    # and a little darker still, so aged gold and paint stop shouting
-ICON_DESAT = 0.55      # linear-light saturation kept; pure toy colours read cheap next to forged iron (was 0.75)
+ICON_DESAT = 0.70      # linear-light saturation kept; pure toy colours read cheap next to forged iron (was 0.75, 0.55 in the grey pass, 0.70 now)
 # The engine multiplies UI albedo up to ~2.17x with no tonemap, so an authored channel above ~0.40 blooms into candy.
 GRADE_CEIL = 0.43      # asymptote of the soft knee on the brightest channel; the measured p99 is in check_items
 GRADE_KNEE = 0.20      # below this the value is untouched
-GRADE_CHROMA = 0.52    # sRGB chroma kept after the knee for lit material (was 0.62 on the first pass)
-GRADE_CHROMA_EMIT = 0.58   # glass and flame keep more of their colour, they are the only light an icon has
+GRADE_CHROMA = 0.62    # sRGB chroma kept after the knee for lit material (0.62 first pass, 0.52 grey pass, 0.62 again: colour comes back as chroma, never as brightness)
+GRADE_CHROMA_EMIT = 0.66   # glass and flame keep more of their colour, they are the only light an icon has
 GRADE_EMIT_LIFT = 0.10     # emissive pixels may sit this far above the ceiling
-AGE_WEAR, AGE_GRIME, AGE_RUST, AGE_DUST = 0.38, 1.0, 0.42, 0.24
+AGE_WEAR, AGE_GRIME, AGE_RUST, AGE_DUST = 0.38, 0.70, 0.42, 0.24
 # The icons that were still the loudest paint in the window: a flat saturated face reads as a toy however it is aged. They keep
 # less chroma and carry more pitting and soot, so the paint looks flaked and the iron under it shows.
 ICON_TUNE = {
-    "item.shield.kite": dict(chroma=0.34, patina=1.6),
-    "item.gear.wooden-buckler": dict(chroma=0.40, patina=1.4),
-    "item.gear.kite-shield": dict(chroma=0.34, patina=1.6),
-    "item.gear.tower-shield": dict(chroma=0.40, patina=1.4),
+    "item.shield.kite": dict(chroma=0.48, patina=1.3),
+    "item.gear.wooden-buckler": dict(chroma=0.50, patina=1.2),
+    "item.gear.kite-shield": dict(chroma=0.48, patina=1.3),
+    "item.gear.tower-shield": dict(chroma=0.50, patina=1.2),
     "item.gear.travel-cloak": dict(chroma=0.80, patina=1.1),
-    "item.bow.verdant": dict(chroma=0.20, patina=1.3),
+    "item.bow.verdant": dict(chroma=0.40, patina=1.15),
 }
 TOP_LIGHT = 0.34       # extra light on up-facing faces, so a silhouette has a bright top edge against the dark cell
 SHADOW_OPACITY, SHADOW_SIGMA_U, SHADOW_DX_U, SHADOW_DY_U = 0.62, 0.55, 0.45, 0.85   # contact shadow cast on the cell behind
-PATINA_PIT, PATINA_BLOTCH = 0.26, 0.34   # pitting amplitude (0.4-1.6 u) and soot blotches (3-12 u) on every unlit surface
+PATINA_PIT, PATINA_BLOTCH = 0.26, 0.26   # pitting amplitude (0.4-1.6 u) and soot blotches (3-12 u) on every unlit surface
 
 
 def _scene_maps(s: Scene, n: np.ndarray, d_in: np.ndarray) -> fg.Maps:

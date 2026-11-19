@@ -235,7 +235,7 @@ BONE_MIN = 70    # bone cuirass median (100, 98, 94): min channel 94; was 120, w
 CEIL_P99 = 0.46          # per icon, p99 of max(R,G,B) over lit (non-emissive) pixels; measured worst 0.443 (consumable.greater-mana)
 CEIL_P999 = 0.48         # per icon, p99.9 of the same; measured worst 0.451
 CEIL_EMIT_P99 = 0.54     # emissive pixels (flames, glass, wisp) may sit higher; measured worst 0.510 (item.tool.torch)
-SAT_P90 = 0.62           # per icon, p90 of (max-min)/max over pixels whose max channel is above 0.15; measured worst 0.526 (potion.mana)
+SAT_P90 = 0.70           # per icon, p90 of (max-min)/max over pixels whose max channel is above 0.15; measured worst 0.671 (potion.mana); was 0.526 before the item-colour revival
 SAT_CANDY_SHARE = 0.01   # share of pixels that are both saturated (>0.80) and bright (max > 0.30); measured worst 0.000
 
 
@@ -269,13 +269,13 @@ def brightness_stats(doc: dict, sheet: np.ndarray, mask: np.ndarray) -> dict:
 
 # A tier ramp is meant to be brighter than Common, so each sheet has its own ceilings. Measured (worst icon per quantity;
 # quantities are the MAX CHANNEL p99 / p99.9 and saturation p90, 0..1, as defined in brightness_stats):
-#   items.png          p99 0.443  p99.9 0.451  emissive p99 0.510  sat p90 0.526  candy 0.000
-#   items_uncommon.png p99 0.800  p99.9 0.831  emissive p99 0.814  sat p90 0.552  candy 0.000
-#   items_rare.png     p99 0.847  p99.9 0.865  emissive p99 0.792  sat p90 0.714  candy 0.000
+#   items.png          p99 0.443  p99.9 0.451  emissive p99 0.510  sat p90 0.671  candy 0.000
+#   items_uncommon.png p99 0.804  p99.9 0.835  emissive p99 0.816  sat p90 0.641  candy 0.000
+#   items_rare.png     p99 0.846  p99.9 0.863  emissive p99 0.761  sat p90 0.725  candy 0.000
 # All three peaked at 1.00 before the ageing pass. The ceilings carry a little room over the worst icon of each sheet.
 SHEET_CEILINGS = {
     "items.png": (CEIL_P99, CEIL_P999, CEIL_EMIT_P99, SAT_P90, SAT_CANDY_SHARE),
-    "items_uncommon.png": (0.84, 0.87, 0.86, 0.60, SAT_CANDY_SHARE),
+    "items_uncommon.png": (0.84, 0.87, 0.86, 0.67, SAT_CANDY_SHARE),
     "items_rare.png": (0.89, 0.91, 0.84, 0.76, SAT_CANDY_SHARE),
 }
 
