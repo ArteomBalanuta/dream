@@ -240,28 +240,34 @@ public static class WeaponMeshCatalog
             Box(0f, 0.86f, 0.10f, 0.06f, 0.03f, 0.06f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
             Box(0f, 1.00f, 0f, 0.05f, 0.12f, 0.05f, WeaponMaterial.Steel, shape: Spike));
 
-        // Studded head: a dome crowned with four pyramid flanges and a finial, not a cube of spikes.
+        // Flanged head: at the 28x101 px actor the old head - a dome with four EQUAL flanges at the four
+        // compass points - collapsed into a symmetric blob on a stick, because a symmetric outline carries no
+        // information about which way the weapon faces. The head now has an asymmetric profile: two broad
+        // side flanges that stand well out, a long rear pick and a shorter, lower front beak.
         Hand("held.weapon.mace", false,
             Box(0f, 0.30f, 0f, 0.075f, 0.82f, 0.075f, WeaponMaterial.Wood, shape: Shaft),
             Box(0f, -0.10f, 0f, 0.11f, 0.08f, 0.11f, WeaponMaterial.Gilt, pitch: 180f, shape: Taper),
             Box(0f, 0.08f, 0f, 0.09f, 0.26f, 0.09f, WeaponMaterial.Leather, shape: Shaft),
             Box(0f, 0.64f, 0f, 0.10f, 0.04f, 0.10f, WeaponMaterial.Gilt, shape: Ring),
             Box(0f, 0.80f, 0f, 0.20f, 0.20f, 0.20f, WeaponMaterial.DarkIron, shape: Dome),
-            Box(0.14f, 0.80f, 0f, 0.12f, 0.14f, 0.08f, WeaponMaterial.Steel, roll: -90f, shape: Spike),
-            Box(-0.14f, 0.80f, 0f, 0.12f, 0.14f, 0.08f, WeaponMaterial.Steel, roll: 90f, shape: Spike),
-            Box(0f, 0.80f, 0.14f, 0.08f, 0.14f, 0.12f, WeaponMaterial.Steel, pitch: 90f, shape: Spike),
-            Box(0f, 0.80f, -0.14f, 0.08f, 0.14f, 0.12f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
+            Box(0.17f, 0.80f, 0f, 0.16f, 0.20f, 0.05f, WeaponMaterial.Steel, roll: -90f, shape: Spike),
+            Box(-0.17f, 0.80f, 0f, 0.16f, 0.20f, 0.05f, WeaponMaterial.Steel, roll: 90f, shape: Spike),
+            Box(0f, 0.76f, 0.13f, 0.07f, 0.12f, 0.06f, WeaponMaterial.Steel, pitch: 90f, shape: Spike),
+            Box(0f, 0.80f, -0.20f, 0.06f, 0.26f, 0.07f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
             Box(0f, 0.97f, 0f, 0.07f, 0.14f, 0.07f, WeaponMaterial.Steel, shape: Spike));
 
         // A long haft and a heavy block head: the head and langet stay rectilinear (a war hammer IS a
-        // forged block) but bevelled, with a crowned striking face and a back pick.
+        // forged block) but bevelled, with a crowned striking face, a LONG back pick that overhangs the
+        // haft, and a lug under the face - the head has to break its own square outline to read as a hammer
+        // rather than as a blob, and the pick is what tells the eye which way it is swung.
         Hand("held.weapon.hammer", false,
             Box(0f, 0.45f, 0f, 0.08f, 1.30f, 0.08f, WeaponMaterial.Wood, shape: Shaft),
             Box(0f, -0.20f, 0f, 0.11f, 0.08f, 0.11f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
             Box(0f, 0.05f, 0f, 0.095f, 0.34f, 0.095f, WeaponMaterial.Leather, shape: Shaft),
             Box(0f, 1.00f, 0f, 0.20f, 0.22f, 0.30f, WeaponMaterial.DarkIron, shape: BevelBox),
             Box(0f, 1.00f, 0.22f, 0.24f, 0.14f, 0.28f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
-            Box(0f, 1.00f, -0.24f, 0.07f, 0.22f, 0.09f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
+            Box(0f, 0.99f, -0.27f, 0.07f, 0.30f, 0.09f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
+            Box(0f, 0.88f, 0.20f, 0.14f, 0.10f, 0.14f, WeaponMaterial.DarkIron, pitch: 90f, shape: Taper),
             Box(0f, 0.78f, 0f, 0.11f, 0.06f, 0.11f, WeaponMaterial.Gilt, shape: Ring),
             Box(0f, 0.86f, 0f, 0.09f, 0.22f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
             Box(0.11f, 1.00f, 0f, 0.05f, 0.04f, 0.05f, WeaponMaterial.Steel, roll: -90f, shape: Dome),
@@ -295,7 +301,9 @@ public static class WeaponMeshCatalog
             Box(0f, -0.80f, -0.24f, 0.07f, 0.07f, 0.07f, WeaponMaterial.Gilt, roll: 180f, shape: Dome),
             Box(0f, 0f, -0.24f, 0.015f, 1.58f, 0.015f, WeaponMaterial.Bone, shape: Shaft));
 
-        // A tall dark staff: a claw of four tapers closing on a glowing stone under a crown ring.
+        // A tall dark staff: an ASYMMETRIC claw closing on a glowing stone under a crown ring - one long
+        // front talon, two side talons of unequal length and a short rear horn swept back. Four equal
+        // talons at the compass points drew as a symmetric lump at actor size and read as a knob.
         Hand("held.weapon.staff", false,
             Box(0f, 0.72f, 0f, 0.07f, 2.00f, 0.07f, WeaponMaterial.Wood, shape: Shaft),
             Box(0f, 0.05f, 0f, 0.09f, 0.34f, 0.09f, WeaponMaterial.Leather, shape: Shaft),
@@ -303,10 +311,10 @@ public static class WeaponMeshCatalog
             Box(0f, -0.30f, 0f, 0.09f, 0.08f, 0.09f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
             Box(0f, 1.60f, 0f, 0.05f, 0.10f, 0.05f, WeaponMaterial.DarkIron, pitch: 180f, shape: Spike),
             Box(0f, 1.70f, 0f, 0.13f, 0.08f, 0.13f, WeaponMaterial.DarkIron, shape: Ring),
-            Box(0.085f, 1.86f, 0f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, roll: -12f, shape: Taper),
-            Box(-0.085f, 1.86f, 0f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, roll: 12f, shape: Taper),
-            Box(0f, 1.86f, 0.085f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, pitch: 12f, shape: Taper),
-            Box(0f, 1.86f, -0.085f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, pitch: -12f, shape: Taper),
+            Box(0f, 1.88f, 0.10f, 0.04f, 0.40f, 0.04f, WeaponMaterial.DarkIron, pitch: 16f, shape: Taper),
+            Box(0.095f, 1.86f, 0.02f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, roll: -14f, shape: Taper),
+            Box(-0.095f, 1.84f, 0.02f, 0.035f, 0.30f, 0.035f, WeaponMaterial.DarkIron, roll: 14f, shape: Taper),
+            Box(0f, 1.78f, -0.11f, 0.05f, 0.22f, 0.05f, WeaponMaterial.DarkIron, pitch: -40f, shape: Spike),
             Box(0f, 1.88f, 0f, 0.13f, 0.20f, 0.13f, WeaponMaterial.Arcane, roll: 45f, shape: Gem),
             Box(0f, 2.01f, 0f, 0.12f, 0.035f, 0.12f, WeaponMaterial.DarkIron, shape: Ring));
 
@@ -355,7 +363,8 @@ public static class WeaponMeshCatalog
             Box(0f, -0.60f, -0.19f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Bone, roll: 180f, shape: Dome),
             Box(0f, 0f, -0.19f, 0.015f, 1.20f, 0.015f, WeaponMaterial.Bone, shape: Shaft));
 
-        // A pale bone shaft: a horned skull cap with a cold arcane stone above it and vertebra rings.
+        // A pale bone shaft: a skull cap with a cold arcane stone above it, vertebra rings, a jutting jaw and
+        // two horns of DIFFERENT length and sweep, so the head has a front and a back at actor size.
         Hand("held.weapon.bone-staff", false,
             Box(0f, 0.60f, 0f, 0.08f, 1.70f, 0.08f, WeaponMaterial.Bone, shape: Shaft),
             Box(0f, 0.05f, 0f, 0.10f, 0.30f, 0.10f, WeaponMaterial.Leather, shape: Shaft),
@@ -364,8 +373,9 @@ public static class WeaponMeshCatalog
             Box(0f, 1.55f, 0f, 0.18f, 0.16f, 0.20f, WeaponMaterial.Bone, shape: Dome),
             Box(0f, 1.48f, 0.08f, 0.14f, 0.06f, 0.10f, WeaponMaterial.DarkIron, shape: BevelBox),
             Box(0f, 1.56f, 0.105f, 0.12f, 0.05f, 0.02f, WeaponMaterial.DarkIron, shape: BevelBox),
-            Box(0.07f, 1.66f, 0f, 0.05f, 0.14f, 0.05f, WeaponMaterial.Bone, roll: -18f, shape: Spike),
-            Box(-0.07f, 1.66f, 0f, 0.05f, 0.14f, 0.05f, WeaponMaterial.Bone, roll: 18f, shape: Spike),
+            Box(0.08f, 1.68f, -0.01f, 0.05f, 0.20f, 0.05f, WeaponMaterial.Bone, roll: -26f, shape: Spike),
+            Box(-0.075f, 1.64f, 0.01f, 0.045f, 0.13f, 0.045f, WeaponMaterial.Bone, roll: 14f, shape: Spike),
+            Box(0f, 1.47f, 0.13f, 0.10f, 0.09f, 0.10f, WeaponMaterial.DarkIron, pitch: 90f, shape: Taper),
             Box(0f, 1.76f, 0f, 0.09f, 0.12f, 0.09f, WeaponMaterial.Arcane, roll: 45f, shape: Gem));
 
         // A gilt cage lantern with a cold arcane flame, a domed roof and a hanging bail.

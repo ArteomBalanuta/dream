@@ -145,6 +145,33 @@ public class WeaponMeshCatalogTests
         }
     }
 
+    // The blunt and hafted families are a stick plus a lump at the shipped 28x101 px actor, and a lump that is
+    // the same front and back carries no information at all: it cannot say which way the weapon faces or which
+    // end strikes. Left-right symmetry is natural and stays; FRONT-BACK symmetry is the defect. The old heads
+    // were built on four equal flanges or talons at the compass points, so every part had a mirror twin across
+    // z and the outline was a knob. At least one part of each head must now have no such twin - a longer rear
+    // pick, a lower front beak, a jutting jaw, one talon swept further than the rest.
+    [Theory]
+    [InlineData("held.weapon.mace")]
+    [InlineData("held.weapon.hammer")]
+    [InlineData("held.weapon.staff")]
+    [InlineData("held.weapon.bone-staff")]
+    public void BluntAndHaftedHeads_AreNotTheSameFrontAndBack(string id)
+    {
+        WeaponPart[] parts = [.. WeaponMeshCatalog.Resolve(id).Parts];
+
+        static bool SameSize(Vector3 a, Vector3 b) =>
+            MathF.Abs(a.X - b.X) < 1e-4f && MathF.Abs(a.Y - b.Y) < 1e-4f && MathF.Abs(a.Z - b.Z) < 1e-4f;
+
+        bool HasMirrorTwin(WeaponPart part) => parts.Any(other =>
+            MathF.Abs(other.Center.X - part.Center.X) < 1e-4f
+            && MathF.Abs(other.Center.Y - part.Center.Y) < 1e-4f
+            && MathF.Abs(other.Center.Z + part.Center.Z) < 1e-4f
+            && SameSize(other.Size, part.Size));
+
+        Assert.Contains(parts, p => !HasMirrorTwin(p));
+    }
+
     [Fact]
     public void ShieldsAreStrappedToTheArm_AndOnlyTheBowsAreRanged()
     {

@@ -467,6 +467,60 @@ public class ArmourMeshCatalogTests
         Assert.Contains(model.Parts, p => IsDark(p.Material));
     }
 
+    // A part that is not tilted far from level presents its TOP face to a camera pitched 50 degrees down, and an
+    // up-facing normal takes the sky ambient before any light reaches it, so a level light part is the brightest
+    // thing the figure can own. This is its area, which is what decides whether it reads as a rim or as a field.
+    private static bool IsLevel(ArmourPart part) =>
+        MathF.Abs(part.PitchDegrees) <= 20f && MathF.Abs(part.RollDegrees) <= 20f;
+
+    private static float TopFootprint(ArmourPart part) => part.Size.X * part.Size.Z;
+
+    // The other half of the facet rule above, and the fix for what the engine captures showed: the facet has to
+    // be an ACCENT. The first sculpted pass put Steel and Bone on the big up-facing surfaces - helm domes, cuff
+    // plates, a ring at every joint - and the figure came back pale, a stack of cream hoops down each leg, when
+    // the art direction is dark metal with bright edges. The palette was never the problem and is not what
+    // changed: WHERE the light materials sit is. A Ring lies in the XZ plane and shows its whole top face, so
+    // the Rings are held to one per piece, and the one large level light surface left in the catalog is named.
+    [Fact]
+    public void LightMaterialsAreRimsAndEdges_NotFields()
+    {
+        foreach (string id in All)
+        {
+            ArmourPart[] rings = [.. Model(id).Parts.Where(p => p.Shape == EquipmentShape.Ring && IsLight(p.Material) && IsLevel(p))];
+            Assert.True(rings.Length <= 1, $"{id} stacks {rings.Length} light level rings; a piece gets at most one bright rim");
+            Assert.All(rings, r => Assert.True(r.Size.X <= 0.34f, $"{id} has a {r.Size.X} wide light ring: a rim, not a lid"));
+        }
+
+        // The deliberate exception, named rather than left to a threshold: the plate cuirass's breastplate is a
+        // Plate, a vertical arc about Y, so the camera sees its glancing front and only the EDGE of its top rim.
+        // Nothing else in the catalog puts a light material on a large level surface.
+        (string Id, Vector3 Size)[] fields =
+        [
+            .. All.SelectMany(id => Model(id).Parts.Where(p => IsLight(p.Material) && IsLevel(p) && TopFootprint(p) > 0.12f)
+                .Select(p => (id, p.Size)))
+        ];
+        Assert.All(fields, f =>
+        {
+            Assert.Equal("worn.body.plate-cuirass", f.Id);
+            Assert.True(f.Size.Y > f.Size.X, $"a large light field must at least be a standing arc, not a lid ({f.Size})");
+        });
+    }
+
+    public static IEnumerable<object[]> LegAndFootIds() => Legs.Concat(Feet).Select(id => new object[] { id });
+
+    [Theory]
+    [MemberData(nameof(LegAndFootIds))]
+    public void EachLegAndFootPiece_ShowsAtMostOneBrightBand(string id)
+    {
+        // The single worst thing the captures showed: the legs are the lowest and nearest part of the figure, a
+        // leg piece and a boot are drawn one above the other, and each used to carry two or three light bands of
+        // its own. Stacked, they read as bandages rather than as armour. Small fittings (a buckle, a strap stud,
+        // a narrow shin ridge) are not bands and are not counted - a band is a level light part with real top
+        // area; everything else down a leg is DarkIron, or is turned so it shows its side instead of its top.
+        ArmourPart[] bands = [.. Model(id).Parts.Where(p => IsLight(p.Material) && IsLevel(p) && TopFootprint(p) >= 0.02f)];
+        Assert.True(bands.Length <= 1, $"{id} shows {bands.Length} bright bands down one limb");
+    }
+
     public static IEnumerable<object[]> FittedIds() =>
         Head.Concat(Body).Concat(Hands).Concat(Feet).Concat(Legs).Select(id => new object[] { id });
 
