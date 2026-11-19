@@ -35,6 +35,7 @@ internal enum HudCaptureVerb : byte
     BuildAt,
     CellProbe,
     EnemyClick,
+    Vendor,
     GroundClick,
     HoldMove,
     Keys,
@@ -161,6 +162,9 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 return true;
             case "admin" when parts.Length == 1:
                 spec = new(HudCaptureVerb.Admin, 0, 0);
+                return true;
+            case "vendor" when parts.Length == 1:
+                spec = new(HudCaptureVerb.Vendor, 0, 0);
                 return true;
             case "esc" when parts.Length == 1:
                 spec = new(HudCaptureVerb.Escape, 0, 0);

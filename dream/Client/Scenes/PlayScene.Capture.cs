@@ -31,6 +31,8 @@ namespace Dream.Client.Scenes;
 //   menu:<n>                  click row n of the open menu
 //   confirm:destroy|cancel    answer the destroy confirm
 //   close                     click the inventory Close button
+//   vendor                    open the bag and interact with the nearest NPC, then idle for the
+//                             server's stock; the PNG shows the shop board beside the bag
 //   esc, v                    the Esc and V keys' own handlers
 //   size:<w>:<h>              resize the window (the same path as the Settings resolution)
 //   walkto:<x>:<z>:<maxFrames> click the ground at that cell (projected through last frame's camera, or
@@ -150,6 +152,9 @@ public partial class PlayScene
 
     // The wait for the server's answer to a sent inventory action, in frames.
     private const int CaptureResultTimeoutFrames = 240;
+
+    // Frames to idle after a vendor interact, for the server's VendorOpenedResult to arrive.
+    private const int CaptureVendorWaitFrames = 60;
 
     private readonly HudCaptureScript? _hudCapture = HudCaptureScript.FromEnvironment();
     private int _hudCaptureFrames;
@@ -549,6 +554,23 @@ public partial class PlayScene
                 _captureIdleFrames = 1;
                 _captureWritesPng = false;
                 break;
+            case HudCaptureVerb.Vendor:
+            {
+                // The real path: the vendor window only stays open while the bag is open (see
+                // UpdateEconomyState), and the stock arrives from the server, so open the bag,
+                // press interact and idle until VendorOpenedResult lands.
+                if (!_settings.InventoryVisible)
+                {
+                    PressInventoryKey();
+                }
+
+                bool reached = TryInteractWithNearest();
+                Console.WriteLine($"[hud-capture] vendor: interact sent={reached}, bag open={_settings.InventoryVisible}");
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = CaptureVendorWaitFrames;
+                break;
+            }
+
             case HudCaptureVerb.Escape:
                 PressEscape();
                 break;
