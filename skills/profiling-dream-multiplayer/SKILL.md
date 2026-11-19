@@ -1,6 +1,6 @@
 ---
 name: profiling-dream-multiplayer
-description: Launches and profiles the Dream multiplayer runtime with a dedicated server and one or more desktop clients. Use when investigating FPS drops, render stalls, client/server sync, invisible players, hotpaths, bottlenecks, server tick timing, network diagnostics, or when the user asks Codex to run clients and observe performance metrics.
+description: Launches and profiles the Dream multiplayer runtime with a dedicated server and one or more desktop clients. Use when investigating FPS drops, render stalls, client/server sync, invisible players, hotpaths, bottlenecks, server tick timing, network diagnostics, or when the user asks agents to run clients and observe performance metrics.
 ---
 
 # Profiling Dream Multiplayer

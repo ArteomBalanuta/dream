@@ -37,76 +37,29 @@ To run the dedicated server instead of the desktop client:
 dotnet run --project dream\dream.csproj -- --server
 ```
 
-It listens on TCP port 5057 (`ServerBootstrap.DefaultPort`, not configurable by environment variable) with protocol version 13 (`TransportEnvelope.CurrentProtocolVersion`) and keeps its SQLite world database at `config/player-profiles.db` under its output folder (`ServerBootstrap.cs:112`). The desktop client starts an integrated loopback server on demand when you pick the local server on the connection screen.
+It listens on TCP port 5057 by default; `DREAM_PORT` (1 to 65535) changes it and `DREAM_BIND_ADDRESS` picks the interface (see `docs/configuration.md`, Dedicated Server Settings). The protocol version is 22 (`TransportEnvelope.CurrentProtocolVersion`). It keeps its SQLite world database at `config/player-profiles.db` under its output folder (`ServerBootstrap.DefaultDatabasePath`). The desktop client starts an integrated loopback server on demand for Single Player and Host.
 
-The project copies runtime assets into the build output and resolves them through `AssetPaths`, so shader, animation, and font files are loaded from the runtime output layout rather than from machine-specific absolute paths.
+The project copies runtime assets into the build output and resolves them through `AssetPaths`, so shader, animation, font, audio and UI files are loaded from the runtime output layout rather than from machine-specific absolute paths.
 
 ## Default Runtime Behavior
 
-On startup, the game currently:
-
-- opens a `1440 x 1024` window
-- grabs the mouse cursor for camera look
-- starts with a `70` degree field of view
-- builds the HUD crosshair from the live viewport instead of from fixed HUD pixel coordinates
-- scales the HUD crosshair with window size while keeping it centered on the active viewport
-- starts with a `56 x 56` floor (`WorldDefaults.StartupFloorSize`): the size of a new local world, changeable from the settings menu (it does not resize an existing world or a running session)
-- loads the default first-person hands and held-item blockout viewmodels from `dream/animations/viewmodels/`
+On startup the desktop client opens a `1440 x 1024` window on the menu (Single Player, Host, Join). The camera is isometric; it is the only view the client reaches. Window, camera and HUD defaults come from `config/desktop-client.txt` (`camera_view=isometric`, `field_of_view`, `mouse_sensitivity`, ...), written next to the executable.
 
 ### Default controls
 
-- `W`, `A`, `S`, `D`: move
-- Mouse movement: look around
-- `Space`: jump
+- Right mouse button: click-to-move. Walks to the clicked ground cell; on an enemy it sets an attack goal; in Building mode it places a cube
+- Left mouse button: the character faces the cursor; in Combat mode holding it attacks
+- `W`, `A`, `S`, `D`: move relative to the facing. `Space`: jump
 - `B` / `G`: select building / combat mode
 - `1` to `6`: use the quickbar slot (a skill, or the first matching consumable in the bag); open the inventory (`V`) and click a quickbar tile to change what it holds. Skills need combat mode, except Mend
 - `Q` / `R`: drink the first healing / mana potion in the bag
 - `E`: pick up the nearest ground item or talk to the nearest NPC (vendor, quest giver)
 - `Enter`: open the chat line (`Esc` closes it); hold `Tab` for the online list
-- Left mouse button: walk to the clicked ground cell (isometric click-to-move), or the active mode's primary action (place a cube, or attack)
-- `F`: toggle frozen movement
-- `V`: open or close the inventory and character windows; the cursor is released and shown as a sprite
+- `V`: open or close the inventory and character windows
 - `Esc`: close the chat line, else an open vendor, dialogue or trade window, else the inventory, else open or close the pause menu
+- Developer keys, only where dev commands are allowed (`DREAM_DEV_COMMANDS=1` or your own integrated server): `0` toggles noclip, `F` toggles frozen movement. `F3` swaps the HUD when `admin_hud=1` or `DREAM_ADMIN_HUD=1`
 
-When the settings menu is open, the cursor is released and gameplay input is paused.
-
-## Runtime Verification For Viewmodels
-
-Use:
-
-```powershell
-dotnet run --project dream\dream.csproj
-```
-
-Current first-milestone verification flow:
-
-1. Start the app and keep the settings menu closed so gameplay input is active.
-2. Confirm the blockout hands and held item are visible in front of the camera.
-3. Move and look around to confirm the world stays behind the first-person pass.
-4. Left click to trigger the `Use` animation on the hands and held item.
-5. Confirm the update-driven clip playback advances and the models settle back into their looping `Idle` presentation after the one-shot finishes.
-6. Confirm the HUD crosshair and ImGui still render on top of the first-person pass.
-
-Success for this milestone means:
-
-- both first-person slots render every frame
-- the `PlayScene.Update()` viewmodel step advances clips and returns one-shots to idle without getting stuck
-- the pass uses live viewport aspect without obvious stretching after resize
-- left click visibly triggers the one-shot use motion
-- the world and debug passes remain behind the hands and held item
-- the HUD remains the top-most layer
-
-## Runtime Floor Resize
-
-Open the settings menu with `Esc`, move the `Floor Size` slider, and press `Apply Floor Size`.
-
-Current behavior:
-
-- the slider range is `5` to `100`
-- the value represents a square `N x N` floor
-- the world is rebuilt in place when you apply the change
-- non-floor cubes are preserved only if they still fit inside the rebuilt bounds
-- the player position is preserved when possible and otherwise clamped back into valid space
+While the pause menu is open, gameplay input is paused.
 
 ## Test
 
@@ -116,7 +69,7 @@ Use:
 dotnet test dream.Tests\dream.Tests.csproj
 ```
 
-The suite covers the simulation, protocol and transport, server, persistence, client replication, rendering helpers and project-structure rules (`dream.Tests/ProjectStructure`). Filter with `--filter`, for example `--filter FullyQualifiedName~HudLayoutTests`.
+The suite covers the simulation, protocol and transport, server, persistence, client replication, rendering helpers and project-structure rules (`dream.Tests/ProjectStructure`). The full suite takes about 3.5 to 4.5 minutes in Debug (`TestScheduling` runs the long collections first and caps concurrency). Filter with `--filter`, for example `--filter FullyQualifiedName~HudLayoutTests`, or use `tools\dev\test.ps1` (below). Do not run two suites at once: concurrent runs give spurious persistence failures and testhost hangs.
 
 ### Testing
 
@@ -155,8 +108,16 @@ dotnet test dream.Tests\dream.Tests.csproj -p:Coverage=true `
 - The run writes `coverage.json` (per-line hit counts and per-branch hits, easiest to script) and
   `coverage.cobertura.xml`. Zero-hit `Assert.` lines are the list to triage; expect the
   `DREAM_LOAD_TEST`-gated `dream.Tests/Load` tests to dominate it, since they never ran.
-- Coverage costs about two extra minutes on the full suite (12 min versus 10 min) and does not change the
+- Coverage costs about two extra minutes on the full suite and does not change the
   result.
+
+## Fast Loops
+
+- **Test tiers.** `tools\dev\test.ps1 -Area Content|Rendering|Simulation|Net|Client|Fast|Full [-Filter x] [-TimeoutMinutes 20]` runs the matching `dotnet test --filter`, tees the output to `artifacts/test-logs/<area>-<stamp>.log`, kills only its own process tree on timeout, refuses to start while a `testhost` is running (`-AllowConcurrent` overrides), and appends `utc,sha,area,seconds,passed,failed,skipped` to `artifacts/test-durations.csv`. `Content` runs in about 20 seconds with a warm build; `Fast` leaves out `Integration`, `Load` and `BugHunt`; `Full` is the whole suite.
+- **Content check.** `dream.exe --validate-content [--dir <contentDir>] [--ui <uiDir>] [--strict]` loads the content JSON, runs the formula probe and warns about missing UI sprites, without a window, a lock or a database. It exits 0 when valid, 1 on a usage error and 8 on invalid content (or on warnings with `--strict`).
+- **Captures from source.** `skills/capturing-dream-screenshots/scripts/capture.ps1 -FromSource` points `DREAM_ASSET_ROOT` at the source tree, so edited JSON, atlases and shaders apply on the next launch with no rebuild. Each run gets its own data directory (`DREAM_DATA_DIR`), so captures can run in parallel. See `skills/capturing-dream-screenshots/SKILL.md`.
+- **Dev commands.** Where dev commands are allowed and the connection is loopback, a chat line starting with `/dev` stages the world on the server: `/dev spawn wolf 2`, `/dev tp camp <key>`, `/dev give <item>`, `/dev clear`, `/dev heal`, `/dev hp <n>`, `/dev mana <n>`; several can be chained with `;`. In capture scripts the same commands are the `dev:` step (`dev:clear;spawn:wolf:2:3`) and `tod:<hours>` sets the visual time of day. See `docs/configuration.md`, Dev commands.
+- **Worktrees and art.** `tools\dev\worktrees.ps1` reports every git worktree with its merge and dirty state and the size of its build output (read-only without flags); `tools\dev\gallery.py` writes `artifacts/gallery/index.html`. See `tools/dev/README.md`.
 
 ## Known Warnings
 
@@ -173,6 +134,8 @@ The runtime asset folders are:
 - `dream/shaders/`
 - `dream/animations/`
 - `dream/fonts/`
+- `dream/audio/`
+- `dream/ui/`
 - `dream/config/`
 
 These directories are copied into the output under:
@@ -180,6 +143,8 @@ These directories are copied into the output under:
 - `dream/bin/Debug/net10.0/shaders/`
 - `dream/bin/Debug/net10.0/animations/`
 - `dream/bin/Debug/net10.0/fonts/`
+- `dream/bin/Debug/net10.0/audio/`
+- `dream/bin/Debug/net10.0/ui/`
 - `dream/bin/Debug/net10.0/config/`
 
 If runtime asset loading fails, verify those output folders exist after build.
@@ -209,18 +174,7 @@ If the application starts failing on missing shader or model files again:
 
 1. Run `dotnet build dream\dream.csproj`
 2. Check the output directories under `dream/bin/Debug/net10.0/`
-3. Confirm `shaders/`, `animations/`, and `fonts/` are present
-4. If the first-person pass is missing assets, confirm `animations/viewmodels/DebugHands.gltf` and `animations/viewmodels/DebugHeldItem.gltf` were copied into the output tree
-
-### Viewmodel rig config missing or reset
-
-If `config/viewmodel-rig.txt` is missing from the runtime output:
-
-1. Start the game normally
-2. The startup bootstrap will recreate the file from built-in defaults
-3. Close the app and inspect `dream/bin/Debug/net10.0/config/viewmodel-rig.txt`
-
-Current behavior is startup-load only. Editing values in the in-game menu does not yet save them back into the text file automatically.
+3. Confirm `shaders/`, `animations/`, `fonts/`, `audio/` and `ui/` are present
 
 ### Tests for shared runtime helpers
 
@@ -229,21 +183,3 @@ If asset-path or shared-model behavior changes, rerun:
 ```powershell
 dotnet test dream.Tests\dream.Tests.csproj
 ```
-
-### Movement or camera feels wrong
-
-If the app starts but movement or camera feel off:
-
-1. Press `Esc` to open the settings menu
-2. Adjust `Field of View` or `Mouse Sensitivity`
-3. If needed, change the resolution preset and re-test movement feel
-
-The current player camera uses a configurable eye-height offset and a viewport-aware projection matrix. At runtime, the in-app controls exposed through the settings menu are `Field of View`, `Mouse Sensitivity`, `Third Person View`, and the resolution presets.
-The same menu now also exposes `Floor Size` with an explicit apply action, rebuilding the map without discarding cubes that still fit.
-The HUD crosshair now follows the live viewport as well, so future HUD placement changes should be driven from viewport-derived layout values rather than hardcoded viewport pixel coordinates.
-
-## Pending Runtime Verification
-
-Live visual verification of the viewport-driven crosshair at multiple window sizes is still pending and should be handled separately if a change needs end-to-end runtime confirmation.
-
-The first-person milestone was manually checked with `dotnet run --project dream\dream.csproj`; screenshots were kept locally under `artifacts/` for review and were not committed to the repository.
