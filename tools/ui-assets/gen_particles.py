@@ -1,10 +1,11 @@
 """Particle atlas for dream/ui/particles/: sparks, embers, dust motes, ash, two halos, flame tongues, a contact blob,
-a sweep crescent, two bolt lances, a ground ring and four hit marks (impact flash, crit star, slash, ragged splat).
+a sweep crescent, two bolt lances, a ground ring, four hit marks (impact flash, crit star, slash, ragged splat)
+and a blade-trail band.
 
 512x256 RGBA8, 8 columns by 4 rows of 64 px cells, frame 0 top-left, rows downward, loaded with no flip.
 Every cell keeps a 4 px margin that is fully zero. RGB is premultiplied emission and stays meaningful
 where A=0 (A=0 draws purely additive); A is coverage (ash, blob, flame, arc, ring; the flame's is scaled by the
-instance alpha, so it is additive at night and occludes the sky by day). Frame 31 is reserved and empty.
+instance alpha, so it is additive at night and occludes the sky by day). Frame 31 is the blade trail; no cell is reserved.
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ GROUPS = (
     ("star", 28, 1, "zero"),
     ("slash", 29, 1, "zero"),
     ("splat", 30, 1, "zero"),
+    ("trail", 31, 1, "zero"),
 )
 
 
@@ -365,6 +367,22 @@ def splat_frame() -> np.ndarray:
     return finish_hit(out)
 
 
+# The Cleave blade trail's extent. dream/Rendering/Effects/FxBladeTrailGeometry.cs restates this number
+# (CellPlateauFraction = TRAIL_PLATEAU_PX / 32) and FxBladeTrailCellTests measures this cell against it.
+TRAIL_PLATEAU_PX = 20.0
+TRAIL_FADE_END_PX = 25.0  # exactly 0 here, inside the dark outer ring
+
+
+def trail_frame() -> np.ndarray:
+    """A bold neutral-white band along +X for the blade trail: flat peak out to TRAIL_PLATEAU_PX either side of
+    the centre, a smoothstep to 0 at TRAIL_FADE_END_PX; across, a tight core inside a soft sheath. Additive (A=0),
+    symmetric, no noise. The particle stretches and rotates it along the blade-tip path."""
+    x, y = grid()
+    along = smoothstep(TRAIL_FADE_END_PX, TRAIL_PLATEAU_PX, np.abs(x))
+    across = (np.exp(-((y / 3.0) ** 2)) + 0.45 * np.exp(-((y / 8.0) ** 2))) * smoothstep(25.0, 19.0, np.abs(y))
+    return finish_hit(along * across)
+
+
 # atlas --------------------------------------------------------------------------------------------
 
 def frames() -> list[np.ndarray]:
@@ -379,6 +397,7 @@ def frames() -> list[np.ndarray]:
     out += [bolt_frame(i) for i in range(2)]
     out.append(ring_frame())
     out += [flash_frame(), star_frame(), slash_frame(), splat_frame()]
+    out.append(trail_frame())
     return out
 
 
@@ -404,7 +423,7 @@ def main(out_root: Path) -> None:
     doc = {
         "version": 1, "image": "particles.png", "size": [COLUMNS * CELL, ROWS * CELL],
         "origin": "top-left", "yDown": True, "alpha": "premultiplied",
-        "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "reserved": [31, 31],
+        "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "reserved": [],
         "frames": frame_table,
     }
     (out / "particles.json").write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")

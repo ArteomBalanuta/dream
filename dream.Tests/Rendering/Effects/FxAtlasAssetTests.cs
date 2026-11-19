@@ -66,9 +66,8 @@ public class FxAtlasAssetTests
         Assert.Equal(Margin, root.GetProperty("margin").GetInt32());
         Assert.True(root.GetProperty("yDown").GetBoolean());
         Assert.Equal("premultiplied", root.GetProperty("alpha").GetString());
-        Assert.Equal(31, root.GetProperty("frames").GetArrayLength());
-        Assert.Equal(31, root.GetProperty("reserved")[0].GetInt32());
-        Assert.Equal(31, root.GetProperty("reserved")[1].GetInt32());
+        Assert.Equal(32, root.GetProperty("frames").GetArrayLength());
+        Assert.Equal(0, root.GetProperty("reserved").GetArrayLength());
     }
 
     [Fact]
@@ -103,6 +102,7 @@ public class FxAtlasAssetTests
     [InlineData(17)]
     [InlineData(24)]
     [InlineData(25)]
+    [InlineData(31)]
     public void Additive_Frames_Have_Zero_Alpha_And_Visible_Emission(int frame)
     {
         Assert.Equal(0, MaxAlpha(frame));
@@ -319,21 +319,11 @@ public class FxAtlasAssetTests
         }
     }
 
+    // Frame 31 is the blade trail (FxBladeTrailCellTests), so no cell is reserved: the 32 frames fill the grid.
     [Fact]
-    public void Reserved_Cells_Are_Empty()
+    public void No_Cell_Lies_Beyond_The_Grid()
     {
-        for (int frame = 31; frame < Columns * Rows; frame++)
-        {
-            for (int py = 0; py < Cell; py++)
-            {
-                for (int px = 0; px < Cell; px++)
-                {
-                    for (int channel = 0; channel < 4; channel++)
-                    {
-                        Assert.True(Channel(frame, px, py, channel) == 0, $"frame {frame} ({px},{py})");
-                    }
-                }
-            }
-        }
+        Assert.Equal(Columns * Rows, 32);
+        Assert.Equal(Columns * Cell * Rows * Cell * 4, Atlas.Value.Rgba.Length);
     }
 }
