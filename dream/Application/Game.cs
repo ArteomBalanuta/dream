@@ -98,8 +98,10 @@ public class Game : GameWindow
     private static int ResolveStartupSamples() =>
         MsaaSettings.ResolveFromEnvironment(LoadStartupConfig().MsaaSamples);
 
-    public Game() : base(GameWindowSettings.Default, new NativeWindowSettings
+    private static NativeWindowSettings CreateWindowSettings(Version apiVersion) => new()
     {
+        APIVersion = apiVersion,
+        Profile = ContextProfile.Core,
         NumberOfSamples = ResolveStartupSamples(),
         ClientSize = new Vector2i(1440, 1024),
         Title = GameWindowTitleBuilder.BaseTitle,
@@ -110,9 +112,14 @@ public class Game : GameWindow
         // KHR_debug messages are only guaranteed in a debug context.
         Flags = ContextFlags.Debug,
 #endif
-    })
+    };
+
+    public Game(Version apiVersion) : base(GameWindowSettings.Default, CreateWindowSettings(apiVersion))
     {
         GLUtils.BindRenderThread();
+        Console.WriteLine(
+            $"[startup] gl: requested {GlContextVersion.Describe(apiVersion)} core, "
+            + $"got {GL.GetString(StringName.Version)} / {GL.GetString(StringName.Renderer)}");
         _windowTitle = new ChangedTextSink(text => Title = text);
         ViewModelRigSettings viewModelRig = ViewModelRigTextConfig.LoadOrCreate(
             AssetPaths.Config("viewmodel-rig.txt"));
@@ -120,10 +127,9 @@ public class Game : GameWindow
         _desktopClientConfigPath = _startupConfigPath!;
         _settings = new GameSettings(new Vector2i(1440, 1024), viewModelRig, _desktopClientConfig);
         // The single-threaded GameWindow runs update and render together off UpdateFrequency (0 = uncapped).
-        // VSync stays off; the cap keeps a focused client from spinning at four-digit FPS.
-        int frameCap = FrameRateCap.ResolveFromEnvironment(_desktopClientConfig.MaxFramesPerSecond);
-        UpdateFrequency = frameCap;
-        Console.WriteLine($"[startup] frame cap: {FrameRateCap.Describe(frameCap)}");
+        // The swap interval paces the frame (Adaptive by default); the cap backstops a driver that
+        // ignores it and keeps an unsynced client from spinning at four-digit FPS.
+        ApplyFramePacing("[startup]");
         Console.WriteLine(
             $"[startup] msaa: requested {MsaaSettings.Describe(MsaaSettings.ResolveFromEnvironment(_desktopClientConfig.MsaaSamples))}, "
             + $"granted {GL.GetInteger(GetPName.Samples)} samples");
@@ -229,11 +235,47 @@ public class Game : GameWindow
             value => $"{MathF.Round(value * 100f):0}%",
             PersistDesktopClientConfig);
 
-    private void ApplyFrameCap()
+    private void ApplyFrameCap() => ApplyFramePacing("[settings]");
+
+    // Applies the swap interval and the sleep-pacing frequency from the config and the environment.
+    private void ApplyFramePacing(string logPrefix)
     {
+        bool captureRun = VSyncSettings.IsCaptureRun(Environment.GetEnvironmentVariable);
+        VSyncMode mode = VSyncSettings.ResolveFromEnvironment(_desktopClientConfig.VSync);
+        // OpenTK's Adaptive asks for swap interval -1; without the tear extension that is an error
+        // on some drivers, so it is downgraded to On here rather than trusted.
+        VSync = mode == VSyncMode.Adaptive && !AdaptiveSyncSupported() ? VSyncMode.On : mode;
         int cap = FrameRateCap.ResolveFromEnvironment(_desktopClientConfig.MaxFramesPerSecond);
-        UpdateFrequency = cap;
-        Console.WriteLine($"[settings] frame cap: {FrameRateCap.Describe(cap)}");
+        int frequency = FrameRateCap.ResolveUpdateFrequency(cap, mode, ReadRefreshRate());
+        UpdateFrequency = frequency;
+        Console.WriteLine(
+            $"{logPrefix} vsync: {VSyncSettings.Describe(mode)}{(captureRun ? " (capture run)" : string.Empty)}, "
+            + $"frame cap: {FrameRateCap.Describe(cap)}, update frequency: {FrameRateCap.Describe(frequency)}");
+    }
+
+    private static bool AdaptiveSyncSupported()
+    {
+        try
+        {
+            return GLFW.ExtensionSupported("WGL_EXT_swap_control_tear")
+                || GLFW.ExtensionSupported("GLX_EXT_swap_control_tear");
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private int ReadRefreshRate()
+    {
+        try
+        {
+            return Math.Max(0, Monitors.GetMonitorFromWindow(this).CurrentVideoMode.RefreshRate);
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
     }
 
     // The title screen over a fresh coordinator on the current local server handle. sessionEndReason

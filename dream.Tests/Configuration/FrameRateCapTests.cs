@@ -1,6 +1,8 @@
 using System.IO;
 using Xunit;
+using Dream.Client.Menu;
 using Dream.Configuration;
+using OpenTK.Windowing.Common;
 
 namespace Dream.Tests.Configuration;
 
@@ -131,5 +133,51 @@ public class FrameRateCapTests
     {
         Assert.Equal("uncapped", FrameRateCap.Describe(0));
         Assert.Equal("144 FPS", FrameRateCap.Describe(144));
+    }
+
+    [Theory]
+    [InlineData(144, VSyncMode.On, 0, 144)]
+    [InlineData(144, VSyncMode.Adaptive, -1, 144)]
+    [InlineData(0, VSyncMode.On, 60, 0)]
+    [InlineData(0, VSyncMode.Adaptive, 144, 0)]
+    [InlineData(30, VSyncMode.On, 60, 30)]
+    [InlineData(59, VSyncMode.Adaptive, 60, 59)]
+    [InlineData(60, VSyncMode.On, 60, 120)]
+    [InlineData(144, VSyncMode.Adaptive, 60, 144)]
+    [InlineData(144, VSyncMode.Adaptive, 144, 288)]
+    [InlineData(240, VSyncMode.On, 240, 480)]
+    [InlineData(500, VSyncMode.On, 360, 500)]
+    [InlineData(300, VSyncMode.On, 300, 500)]
+    public void ResolveUpdateFrequency_LiftsTheSleepCapAboveTheRefreshRate(int cap, VSyncMode mode, int refresh, int expected)
+    {
+        Assert.Equal(expected, FrameRateCap.ResolveUpdateFrequency(cap, mode, refresh));
+    }
+
+    [Fact]
+    public void ResolveUpdateFrequency_OffReturnsTheCapUnchanged()
+    {
+        foreach (int cap in MenuOptionRows.FrameCaps)
+        {
+            foreach (int refresh in new[] { -1, 0, 30, 60, 75, 120, 144, 165, 240, 360 })
+            {
+                Assert.Equal(cap, FrameRateCap.ResolveUpdateFrequency(cap, VSyncMode.Off, refresh));
+            }
+        }
+    }
+
+    [Fact]
+    public void ResolveUpdateFrequency_NeverLeavesTheSanitizedRange()
+    {
+        foreach (VSyncMode mode in new[] { VSyncMode.On, VSyncMode.Adaptive })
+        {
+            foreach (int cap in MenuOptionRows.FrameCaps)
+            {
+                for (int refresh = 1; refresh <= 1000; refresh += 7)
+                {
+                    int result = FrameRateCap.ResolveUpdateFrequency(cap, mode, refresh);
+                    Assert.Equal(FrameRateCap.Sanitize(result), result);
+                }
+            }
+        }
     }
 }

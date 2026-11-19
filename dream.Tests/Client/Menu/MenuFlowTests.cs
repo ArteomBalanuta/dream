@@ -327,6 +327,16 @@ public class MenuFlowTests
         Assert.Equal(60, config.MaxFramesPerSecond);
         Assert.Equal(2, capApplied);
 
+        MenuOptionRow vsync = rows.Single(r => r.Label == "VSync");
+        Assert.Equal(2f, vsync.GetValue!());
+        Assert.Equal("Adaptive", vsync.FormatValue(2f));
+        vsync.SetValue!(0f);
+        Assert.Equal(OpenTK.Windowing.Common.VSyncMode.Off, config.VSync);
+        Assert.Equal("Off", vsync.FormatValue(0f));
+        vsync.SetValue!(1f);
+        Assert.Equal(OpenTK.Windowing.Common.VSyncMode.On, config.VSync);
+        Assert.Equal(4, capApplied);
+
         damage.SetValue!(1.5f);
         Assert.Equal(1.5f, settings.FloatingCombatText.SizeMultiplier);
         Assert.Equal(1.5f, config.FloatingCombatText.SizeMultiplier);

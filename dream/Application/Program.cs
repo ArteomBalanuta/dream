@@ -6,6 +6,7 @@ using Dream.Server.Items;
 using Dream.Server.Persistence;
 using Dream.Server.Worlds;
 using Dream.Simulation.World;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace Dream.Application;
 
@@ -137,7 +138,23 @@ public static class Program
 
     private static int RunDesktop()
     {
-        using var game = new Game();
+        IReadOnlyList<Version> attempts = GlContextVersion.AttemptsFromEnvironment();
+        Game? created = null;
+        for (int i = 0; created == null; i++)
+        {
+            try
+            {
+                created = new Game(attempts[i]);
+            }
+            catch (GLFWException ex) when (i + 1 < attempts.Count)
+            {
+                Console.WriteLine(
+                    $"[startup] gl: {GlContextVersion.Describe(attempts[i])} context unavailable ({ex.Message}), "
+                    + $"falling back to {GlContextVersion.Describe(attempts[i + 1])}");
+            }
+        }
+
+        using var game = created;
         try
         {
             game.Run();
