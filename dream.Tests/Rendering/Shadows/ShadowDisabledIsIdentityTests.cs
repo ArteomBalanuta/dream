@@ -180,7 +180,7 @@ public class ShadowDisabledIsIdentityTests
             ("enemyFragment.glsl", "const float ActorDirectScale = 0.75;"),
             ("enemyFragment.glsl", "lit = max(lit, baseColor.rgb * uLightingParams.y);"),
             ("pointLights.glsl", "sum += uPointLightColor[i].rgb * (f * (0.25 + 0.75 * lambert)) * visibility;"),
-            ("pointLights.glsl", "f = f * f / (1.0 + 1.5 * s);"),
+            ("pointLights.glsl", "return PointPeak * w * w / (1.0 + PointCore * s);"),
         ];
         foreach ((string shader, string line) in contract)
         {

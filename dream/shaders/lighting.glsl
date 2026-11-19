@@ -9,12 +9,15 @@
 // uSunShadowMatrix0..3: the four ROWS of the C# Matrix4 (world -> shadow texture space), see dreamSunShadowMatrix below.
 // uSunShadowParams: x 1 / resolution, y constant bias / depth range, z normal offset in world units, w strength (0 = off).
 // uCameraPosition is the FOG origin (the isometric focus), not the eye; the sky takes the real eye as its own uniform.
+// uFogHeight: x height-fog amount 0..0.9 (0 = off: exactly the distance-only fog), y falloff per world unit (1 / scale height),
+//             z reference height offset added to the fog origin's Y, w 0. See dreamFogTransmittance.
 // uLightingParams: x exposure, y actor brightness floor, z actor ambient scale (enemyFragment.glsl), w 0.
 layout(std140) uniform FrameLighting {
     vec4 uSunDirection; vec4 uSunColor; vec4 uMoonDirection; vec4 uMoonColor;
     vec4 uAmbientSky; vec4 uAmbientGround; vec4 uFogColor; vec4 uCameraPosition; vec4 uLightingParams;
     vec4 uCloudParams; vec4 uFrameTime;
     vec4 uSunShadowMatrix0; vec4 uSunShadowMatrix1; vec4 uSunShadowMatrix2; vec4 uSunShadowMatrix3; vec4 uSunShadowParams;
+    vec4 uFogHeight;
 };
 vec3 dreamAmbient(vec3 n) { return mix(uAmbientGround.rgb, uAmbientSky.rgb, n.y * 0.5 + 0.5); }
 vec3 dreamDirect(vec3 n) {
@@ -22,9 +25,21 @@ vec3 dreamDirect(vec3 n) {
          + max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;
 }
 vec3 dreamExpose(vec3 c) { return c * uLightingParams.x; }
+// Height term of the fog: a multiplier on the density, 1 + amount * (m - 1), where m is the mean of exp(-a * h) along the ray from
+// the fog origin (h = 0, the focus plus the reference offset) to the fragment (h = dy). Level with the focus m = 1, so the fog is
+// today's; a rise thins it (m < 1, down to 1 - amount), a hollow thickens it. dy is clamped at -1.5 scale heights, so
+// m <= (e^1.5 - 1) / 1.5 = 2.32 and the multiplier stays finite. Exactly 1.0 when uFogHeight.x is 0.
+float dreamFogHeightScale(vec3 fragPos) {
+    if (uFogHeight.x <= 0.0) return 1.0;
+    float a = max(uFogHeight.y, 1e-4);
+    float u = a * max(fragPos.y - uCameraPosition.y - uFogHeight.z, -1.5 / a);
+    float m = abs(u) < 1e-3 ? 1.0 : (1.0 - exp(-u)) / u;
+    return 1.0 + min(uFogHeight.x, 0.9) * (m - 1.0);
+}
 float dreamFogTransmittance(vec3 fragPos) {
     float d = max(distance(fragPos, uCameraPosition.xyz) - uCameraPosition.w, 0.0);
     float k = uFogColor.w * d;
+    k *= dreamFogHeightScale(fragPos);
     return clamp(exp2(-k * k), 0.0, 1.0);
 }
 vec3 dreamApplyFog(vec3 c, vec3 fragPos) { return mix(uFogColor.rgb, c, dreamFogTransmittance(fragPos)); }

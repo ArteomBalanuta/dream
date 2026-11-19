@@ -68,7 +68,7 @@ public static class FireShadowAtlas
     public static float Luminance(Vector3 color) => SkyModelKeyframes.Luminance(color);
 
     /// <summary>
-    /// pointLights.glsl's window, line for line: s = d^2 / r^2; f = clamp(1 - s, 0, 1); f = f * f / (1 + 1.5 s).
+    /// pointLights.glsl's window, line for line: s = d^2 / r^2; w = clamp(1 - s^2, 0, 1); f = 1.27 * w * w / (1 + 8 s) (dreamPointWindow).
     /// It is exactly 0 at and beyond the radius. A non-positive radius (a dead light) contributes nothing.
     /// </summary>
     public static float WindowedFalloff(float distance, float radius)
@@ -79,8 +79,8 @@ public static class FireShadowAtlas
         }
 
         float s = distance * distance / (radius * radius);
-        float f = Math.Clamp(1f - s, 0f, 1f);
-        return f * f / (1f + 1.5f * s);
+        float w = Math.Clamp(1f - (s * s), 0f, 1f);
+        return 1.27f * w * w / (1f + (8f * s));
     }
 
     /// <summary>A light's contribution at the focus: luminance times the windowed falloff of its distance.</summary>

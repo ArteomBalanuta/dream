@@ -202,12 +202,12 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
         output.WriteLine($"up-facing: noon {noonUp:F4}, midnight {nightUp:F4} ({nightUp / noonUp:P1}), torch at 2 m {torchUp:F4} ({torchUp / noonUp:P1}), torch + night {(torchUp + nightUp) / noonUp:P1}");
         Assert.True(torchUp >= 0.4f * noonUp, $"torch at 2 m gives {torchUp}, under 40% of noon {noonUp}");
 
-        // The mirror itself: full strength at the light, nothing at or past the radius.
-        Assert.Equal(torchColor, PointLight(Vector3.UnitY, torch - new Vector3(0f, 0.02f, 0f), torch, TorchRadius, torchColor), new Vector3Comparer(1e-3f));
+        // The mirror itself: PointPeak (1.27) at the light, nothing at or past the radius.
+        Assert.Equal(torchColor * 1.27f, PointLight(Vector3.UnitY, torch - new Vector3(0f, 0.02f, 0f), torch, TorchRadius, torchColor), new Vector3Comparer(1e-3f));
         Assert.Equal(Vector3.Zero, PointLight(Vector3.UnitY, torch - new Vector3(0f, TorchRadius + 0.01f, 0f), torch, TorchRadius, torchColor));
     }
 
-    // CPU mirror of dreamPointLights in pointLights.glsl for one light: windowed (1 - s)^2 / (1 + 1.5 s) falloff, s = d^2/r^2,
+    // CPU mirror of dreamPointLights in pointLights.glsl for one light: windowed 1.27 * (1 - s^2)^2 / (1 + 8 s) falloff, s = d^2/r^2,
     // and a 0.25 wrap on the Lambert term.
     private static Vector3 PointLight(Vector3 normal, Vector3 fragPos, Vector3 position, float radius, Vector3 color)
     {
@@ -215,8 +215,8 @@ public class WaveT1DayCycleLightingTests(ITestOutputHelper output)
         Vector3 toLight = position - fragPos;
         float d2 = Vector3.Dot(toLight, toLight);
         float s = d2 / (radius * radius);
-        float f = Math.Clamp(1f - s, 0f, 1f);
-        f = f * f / (1f + 1.5f * s);
+        float w = Math.Clamp(1f - (s * s), 0f, 1f);
+        float f = 1.27f * w * w / (1f + (8f * s));
         float lambert = MathF.Max(Vector3.Dot(n, toLight / MathF.Sqrt(MathF.Max(d2, 1e-4f))), 0f);
         return color * (f * (0.25f + 0.75f * lambert));
     }

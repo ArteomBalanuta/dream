@@ -236,22 +236,23 @@ public class FireShadowAtlasLayoutTests
         string glsl = File.ReadAllText(Path.Combine(RepoRoot(), "dream", "shaders", "pointLights.glsl"));
         // The four lines of the window, character for character apart from the types.
         Assert.Matches(new Regex(@"float s = d2 / \(r \* r\);"), glsl);
-        Assert.Matches(new Regex(@"float f = clamp\(1\.0 - s, 0\.0, 1\.0\);"), glsl);
-        Assert.Matches(new Regex(@"f = f \* f / \(1\.0 \+ 1\.5 \* s\);"), glsl);
+        Assert.Matches(new Regex(@"float f = dreamPointWindow\(s\);"), glsl);
+        Assert.Matches(new Regex(@"float w = clamp\(1\.0 - s \* s, 0\.0, 1\.0\);"), glsl);
+        Assert.Matches(new Regex(@"return PointPeak \* w \* w / \(1\.0 \+ PointCore \* s\);"), glsl);
 
         // And the C# window evaluates that expression.
         foreach ((float distance, float radius) in new[] { (0f, 10f), (3f, 10f), (7.5f, 10f), (9.99f, 10f), (4f, 4.5f) })
         {
             float s = distance * distance / (radius * radius);
-            float f = Math.Clamp(1f - s, 0f, 1f);
-            Assert.Equal(f * f / (1f + 1.5f * s), FireShadowAtlas.WindowedFalloff(distance, radius), 6);
+            float w = Math.Clamp(1f - (s * s), 0f, 1f);
+            Assert.Equal(1.27f * w * w / (1f + (8f * s)), FireShadowAtlas.WindowedFalloff(distance, radius), 6);
         }
     }
 
     [Fact]
     public void The_Window_Is_Exactly_Zero_At_And_Beyond_The_Radius_And_For_A_Dead_Light()
     {
-        Assert.Equal(1f, FireShadowAtlas.WindowedFalloff(0f, 10f));
+        Assert.Equal(1.27f, FireShadowAtlas.WindowedFalloff(0f, 10f));
         Assert.Equal(0f, FireShadowAtlas.WindowedFalloff(10f, 10f));
         Assert.Equal(0f, FireShadowAtlas.WindowedFalloff(25f, 10f));
         Assert.Equal(0f, FireShadowAtlas.WindowedFalloff(1f, 0f));

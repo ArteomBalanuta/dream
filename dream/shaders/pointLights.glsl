@@ -7,6 +7,19 @@ layout(std140) uniform LightList {
     vec4 uPointLightColor[16];
 };
 
+// The falloff window shared by the diffuse and the specular loop below (a highlight dies where its pool does).
+// s = d^2 / r^2. f(s) = PointPeak * (1 - s^2)^2 / (1 + PointCore * s): an inverse-square-like core (1/s once s > 1/PointCore)
+// with a smooth window that is exactly 0, with zero slope, at s = 1. It replaces (1 - s)^2 / (1 + 1.5 s). PointPeak is chosen so
+// the integral over the floor disc (int f ds, 0..1) equals the old curve's: 0.25239 old, 0.2527 new (the exact match is 1.267),
+// so the scene's overall brightness does not jump; the core is brighter (f(0) = 1.27, which the HDR target can hold) and the
+// middle thinner.
+const float PointPeak = 1.27;
+const float PointCore = 8.0;
+float dreamPointWindow(float s) {
+    float w = clamp(1.0 - s * s, 0.0, 1.0);
+    return PointPeak * w * w / (1.0 + PointCore * s);
+}
+
 vec3 dreamPointLights(vec3 n, vec3 fragPos) {
     vec3 sum = vec3(0.0);
     int count = min(uPointLightCount.x, 16); // never index past the array, whatever the buffer says
@@ -15,8 +28,7 @@ vec3 dreamPointLights(vec3 n, vec3 fragPos) {
         float r = uPointLightPositionRadius[i].w;
         float d2 = dot(toLight, toLight);
         float s = d2 / (r * r);
-        float f = clamp(1.0 - s, 0.0, 1.0);
-        f = f * f / (1.0 + 1.5 * s); // windowed to 0 at r; the 1/(1+1.5s) term keeps the core and thins the middle, so a pool punches
+        float f = dreamPointWindow(s); // windowed to 0 at r: a bright tight core and a long falloff, so a pool punches
         float lambert = max(dot(n, toLight * inversesqrt(max(d2, 1e-4))), 0.0);
         // The fire shadow multiplies the lit term of a casting light (fireShadows.glsl); 1.0, with no fetch, for every other
         // light and whenever no fire casts, so a build with shadows off sums exactly what it summed before.
@@ -43,8 +55,7 @@ vec3 dreamPointSpecular(vec3 n, vec3 fragPos, vec3 viewDir, float shininess, vec
         float r = uPointLightPositionRadius[i].w;
         float d2 = dot(toLight, toLight);
         float sd = d2 / (r * r);
-        float f = clamp(1.0 - sd, 0.0, 1.0);
-        f = f * f / (1.0 + 1.5 * sd); // the same window as the diffuse loop, so a highlight dies where its pool does
+        float f = dreamPointWindow(sd); // the same window as the diffuse loop, so a highlight dies where its pool does
         if (f <= 0.0) { continue; }
         vec3 l = toLight * inversesqrt(max(d2, 1e-4));
         float ndl = max(dot(n, l), 0.0);

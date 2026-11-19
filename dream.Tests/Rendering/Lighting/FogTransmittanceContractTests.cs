@@ -82,6 +82,34 @@ public class FogTransmittanceContractTests
         }
     }
 
+    [Fact]
+    public void Height_Fog_Is_Off_At_Zero_And_Level_With_The_Focus_And_Bounded()
+    {
+        string source = Lighting();
+        Assert.Contains("if (uFogHeight.x <= 0.0) return 1.0;", source);
+        Assert.Contains("k *= dreamFogHeightScale(fragPos);", source);
+
+        Assert.Equal(1f, HeightScale(0f, 0.5f, 1f / 6f));       // level with the focus
+        Assert.Equal(1f, HeightScale(-5f, 0f, 1f / 6f));        // amount 0: off at any height
+        Assert.Equal(0.8934693f, HeightScale(3f, 0.5f, 1f / 6f), 5);   // a 3 unit rise thins it
+        Assert.Equal(1.660563f, HeightScale(-9f, 0.5f, 1f / 6f), 5);   // at the clamp, 1.5 scale heights down
+        Assert.Equal(1.660563f, HeightScale(-90f, 0.5f, 1f / 6f), 5);  // and no further
+        Assert.True(HeightScale(1000f, 0.9f, 1f / 6f) > 0.09f);        // never reaches 0 (amount clamped to 0.9)
+    }
+
+    // The CPU mirror of dreamFogHeightScale (dy = fragment Y minus the fog origin's Y, offset 0).
+    private static float HeightScale(float dy, float amount, float a)
+    {
+        if (amount <= 0f)
+        {
+            return 1f;
+        }
+
+        float u = a * MathF.Max(dy, -1.5f / a);
+        float m = MathF.Abs(u) < 1e-3f ? 1f : (1f - MathF.Exp(-u)) / u;
+        return 1f + (MathF.Min(amount, 0.9f) * (m - 1f));
+    }
+
     private static string Body(string source, string signature)
     {
         int start = source.IndexOf(signature, StringComparison.Ordinal);

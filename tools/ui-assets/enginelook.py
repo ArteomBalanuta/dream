@@ -23,7 +23,7 @@ FireShadowSamplingMirrorTests / ShadowDisabledIsIdentityTests on the C# side:
                + max(dot(n,moonDir),0)*moonI*moonCol                            lighting.glsl dreamDirect
     directShaded(n,p) = max(dot(n,sunDir),0)*sunI*sunCol*sunMask*sunV
                + max(dot(n,moonDir),0)*moonI*moonCol                            clouds.glsl dreamDirectShaded
-    points: s = d^2/r^2 ; f = clamp(1-s,0,1)^2 / (1 + 1.5*s)
+    points: s = d^2/r^2 ; f = 1.27 * clamp(1-s^2,0,1)^2 / (1 + 8*s)
             contribution = colour * f * (0.25 + 0.75*max(dot(n,l),0)) * lightV  pointLights.glsl dreamPointLights
     albedo = texel/255 * baseColorFactor        # the texture bytes ARE linear albedo
 
@@ -209,14 +209,18 @@ def direct_term(n: np.ndarray, env: Env) -> np.ndarray:
     return out
 
 
+POINT_PEAK = 1.27     # pointLights.glsl PointPeak: the floor-disc integral of the window equals the old (1-s)^2/(1+1.5s)'s
+POINT_CORE = 8.0      # pointLights.glsl PointCore
+
+
 def point_term(n: np.ndarray, p: np.ndarray, env: Env) -> np.ndarray:
     out = np.zeros((len(n), 3), dtype=F64)
     for L in env.points:
         to = _v(L.position)[None, :] - p
         d2 = (to * to).sum(1)
         s = d2 / (L.radius * L.radius)
-        f = np.clip(1.0 - s, 0.0, 1.0)
-        f = f * f / (1.0 + 1.5 * s)
+        w = np.clip(1.0 - s * s, 0.0, 1.0)
+        f = POINT_PEAK * w * w / (1.0 + POINT_CORE * s)
         lam = np.maximum((n * (to / np.sqrt(np.maximum(d2, 1e-4))[:, None])).sum(1), 0.0)
         out += _v(L.colour)[None, :] * (f * (0.25 + 0.75 * lam) * L.visibility)[:, None]
     return out
@@ -490,8 +494,11 @@ CONTRACT = (
     ("clouds.glsl", "+ max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;"),
     ("clouds.glsl", "sunMask = 1.0 - uCloudParams.z * dreamCloudCover(onPlane.xz);"),
     ("pointLights.glsl", "float s = d2 / (r * r);"),
-    ("pointLights.glsl", "float f = clamp(1.0 - s, 0.0, 1.0);"),
-    ("pointLights.glsl", "f = f * f / (1.0 + 1.5 * s);"),
+    ("pointLights.glsl", "float f = dreamPointWindow(s);"),
+    ("pointLights.glsl", "float w = clamp(1.0 - s * s, 0.0, 1.0);"),
+    ("pointLights.glsl", "return PointPeak * w * w / (1.0 + PointCore * s);"),
+    ("pointLights.glsl", "const float PointPeak = 1.27;"),
+    ("pointLights.glsl", "const float PointCore = 8.0;"),
     ("pointLights.glsl", "sum += uPointLightColor[i].rgb * (f * (0.25 + 0.75 * lambert)) * visibility;"),
 )
 
@@ -502,7 +509,7 @@ HEADER_FRAGMENTS = (
     "ambient(n) = mix(ambientGround, ambientSky, n.y*0.5 + 0.5)",
     "directShaded(n,p) = max(dot(n,sunDir),0)*sunI*sunCol*sunMask*sunV",
     "+ max(dot(n,moonDir),0)*moonI*moonCol",
-    "s = d^2/r^2 ; f = clamp(1-s,0,1)^2 / (1 + 1.5*s)",
+    "s = d^2/r^2 ; f = 1.27 * clamp(1-s^2,0,1)^2 / (1 + 8*s)",
     "contribution = colour * f * (0.25 + 0.75*max(dot(n,l),0)) * lightV",
 )
 
@@ -568,13 +575,13 @@ def _selftest() -> None:
     p = np.zeros((1, 3))
     for d in (0.5, 2.0, BRAZIER_RADIUS, BRAZIER_RADIUS * 2):
         sd = (d / BRAZIER_RADIUS) ** 2
-        want = max(1.0 - sd, 0.0) ** 2 / (1.0 + 1.5 * sd)       # lambert 1: the whole window, no wrap term
+        want = POINT_PEAK * max(1.0 - sd * sd, 0.0) ** 2 / (1.0 + POINT_CORE * sd)   # lambert 1: the whole window, no wrap term
         e = env.with_points(PointLight((0.0, 0.0, d), BRAZIER_RADIUS, (1.0, 1.0, 1.0)))
         got = float(point_term(np.array([[0.0, 0.0, 1.0]]), p, e)[0, 0])
         assert abs(got - want) < 1e-9, (d, got, want)
         assert (d < BRAZIER_RADIUS) == (want > 0.0)
     s = (1.5 / BRAZIER_RADIUS) ** 2
-    f = (1 - s) ** 2 / (1 + 1.5 * s)
+    f = POINT_PEAK * (1 - s * s) ** 2 / (1 + POINT_CORE * s)
     e = env.with_points(brazier((0.0, 0.0, 1.5)))
     facing = float(point_term(np.array([[0.0, 0.0, 1.0]]), p, e)[0, 0])
     away = float(point_term(np.array([[0.0, 0.0, -1.0]]), p, e)[0, 0])
