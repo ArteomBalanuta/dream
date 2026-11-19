@@ -59,10 +59,35 @@
 ## Verification
 
 - `dotnet build dream/dream.csproj`: 0 errors (17 pre-existing warnings).
-- `dotnet test dream.Tests/dream.Tests.csproj`: see the hand-off summary for the final full-suite number.
-- `check_window.py`, `check_items.py`, `check_hud.py`, `check_art.py --art --only bar,hp,mp,dragon`: 0 errors.
+- `dotnet test dream.Tests/dream.Tests.csproj`: 9459 passed, 0 failed, 47 skipped.
+- `check_window.py`, `check_items.py`, `check_hud.py`: 0 errors.
+- `check_art.py --art` - **the FULL set, not the `--only` subset**: 0 errors. This is the first time the
+  whole set has been green. `--only bar,hp,mp,dragon` was the command in the plan and in every brief,
+  and it skips `slab`, `frame` and `cell`; two real regressions hid behind it (`cell.empty` hf 0.0272 ->
+  0.0699 against a 0.055 ceiling, `win.side.left` hf 0.1061 -> 0.1121 against 0.11). Both were fixed in
+  the art, not by moving the gate. The `slab` std floor was corrected to its long-standing measurement
+  (0.1352 on master and on head against a 0.14 floor) so the full set can actually be run - a
+  permanently red gate is what produced the `--only` habit in the first place. **Run the full `--art`.**
 - Every long-running step ran under a wall-clock watchdog that kills stray `testhost` on a stall; no step stalled.
 - The duplicate-buy guard was confirmed by mutation: removing the `break` from the buy loop fails its test.
+
+## The gem legibility number, across four art passes
+
+`ClassicHudGemTests` counts the pixels that differ between fill 0 and fill 1, floor 2000. Measured by
+raising the floor to print the real count, never estimated:
+
+| pass | mana | health | what changed |
+| --- | --- | --- | --- |
+| 1 | 1517 FAIL | 2810 | the stones were darkened to soot; mana stopped reading as a gauge |
+| 2 | 3082 | 2810 | the fluid was relit |
+| 3 | 2566 | 2273 | heavier cage and a deeper rim vignette ate the margin back |
+| 4 | 3025 | 3050 | rim vignette eased; the cage mass kept |
+
+The lesson is in pass 3 to 4: the count is an AREA measure, not a brightness one. Pass 3 raised the
+base gain and the count still fell, because a bigger cage and a deeper vignette leave fewer pixels
+free to change at all. Cage pixels never change; heavily vignetted rim pixels barely do. The empty
+glass was already near-black (glass mean 0.029 / 0.033), so there was nothing to take off that side.
+Easing the vignette recovered it without touching the cage.
 
 ## Not done
 
