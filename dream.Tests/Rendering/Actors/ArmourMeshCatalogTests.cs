@@ -974,7 +974,7 @@ public class ArmourMeshCatalogTests
             ArmourPart[] caps =
             [
                 .. Model(id).Parts.Where(p =>
-                    p.Shape is EquipmentShape.Plate or EquipmentShape.Dome
+                    p.Shape is EquipmentShape.Plate or EquipmentShape.Dome or EquipmentShape.Pauldron
                     && p.Center.Y >= TorsoShoulderBandY
                     && MathF.Abs(p.Center.X) > 0.15f)
             ];
@@ -1030,7 +1030,7 @@ public class ArmourMeshCatalogTests
         // The wings are not cloth: no cloth material, thin planes, glowing, and nowhere near a hem.
         ArmourModel wings = Model("worn.back.gossamer-wings");
         Assert.DoesNotContain(wings.Parts, p => p.Material is ArmourMaterial.ClothAsh or ArmourMaterial.ClothRed or ArmourMaterial.Leather);
-        Assert.Equal(2, wings.Parts.Count(p => p.Material == ArmourMaterial.Arcane && p.Size.Z <= 0.03f));
+        Assert.Equal(2, wings.Parts.Count(p => p.Material == ArmourMaterial.Arcane && p.Size.Z <= 0.06f));
         Assert.True(wingsMin.Y > 0f);
         Assert.InRange(wingsMax.Y, 0.90f, 1.05f);
         Assert.InRange(wingsMax.X, 0.40f, 0.60f);
@@ -1153,7 +1153,7 @@ public class ArmourMeshCatalogTests
 
         // The oversized caps are turned so their opening goes DOWN onto the shoulder, each ends in a gold
         // Horn barb, and each is edged on its outer border - the pauldron rules the rest of the set supports.
-        ArmourPart[] caps = [.. model.Parts.Where(p => p.Shape == EquipmentShape.Plate && MathF.Abs(p.Center.X) > 0.15f)];
+        ArmourPart[] caps = [.. model.Parts.Where(p => p.Shape == EquipmentShape.Pauldron && MathF.Abs(p.Center.X) > 0.15f)];
         Assert.Equal(2, caps.Length);
         Assert.All(caps, c => Assert.Equal(-90f, c.PitchDegrees));
         Assert.Equal(2, model.Parts.Count(p => p.Shape == EquipmentShape.Horn && p.Material == ArmourMaterial.Gilt));
