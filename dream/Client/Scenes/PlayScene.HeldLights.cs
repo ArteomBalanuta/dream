@@ -25,6 +25,8 @@ public partial class PlayScene
     // Animation events for the local avatar: counters it compares, so a swing or a hit is played once.
     private int _localAttackSerial;
     private int _localHitSerial;
+    // Counts the local player's accepted MeleeArc casts; a new value plays the cleave swing.
+    private int _localSkillSwingSerial;
     private int _localLastHealth = -1;
     private double _localLastAttackSeconds = double.NegativeInfinity;
     private const double LocalAttackRepeatSeconds = 0.2;
@@ -82,7 +84,8 @@ public partial class PlayScene
             MathF.Abs(velocity.Y) > AirborneVerticalSpeed,
             _localAttackSerial,
             _localHitSerial,
-            _runtime.LocalRenderPose.TravelDirection));
+            _runtime.LocalRenderPose.TravelDirection,
+            SkillSwingSerial: _localSkillSwingSerial));
     }
 
     // The local player's held light inputs for one frame.

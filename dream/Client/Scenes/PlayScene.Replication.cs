@@ -12,6 +12,7 @@ using Dream.Rendering.Ui.Panels;
 using Dream.Rendering.ViewModels;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.World;
 
@@ -295,6 +296,13 @@ public partial class PlayScene
                 && actionMessage.Result.Payload is AbilityUsedResult used)
             {
                 // Own cast only: AbilityUsedResult is unicast to the caster, and only an accepted cast gets here.
+                // An accepted MeleeArc cast plays the cleave swing on the local avatar; remote casters
+                // get theirs from the snapshot's cast event.
+                if (ContentCatalog.Shipped.TryGetSkill(used.Key, out SkillDefinition? cast) && cast.Kind == SkillKind.MeleeArc)
+                {
+                    _localSkillSwingSerial++;
+                }
+
                 // The effect is aimed with the camera; the server resolves the cast on its own ray.
                 ClientSkillCastPublisher.Publish(
                     _events,
