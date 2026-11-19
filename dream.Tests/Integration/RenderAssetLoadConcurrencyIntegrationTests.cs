@@ -202,10 +202,7 @@ public class RenderAssetLoadConcurrencyIntegrationTests(ITestOutputHelper output
         return new[]
             {
                 material.BaseColorTexture,
-                material.NormalTexture,
-                material.MetallicRoughnessTexture,
-                material.EmissiveTexture,
-                material.OcclusionTexture
+                material.EmissiveTexture
             }
             .Where(texture => texture != null)
             .Select(texture => texture!);

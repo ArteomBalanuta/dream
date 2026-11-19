@@ -163,18 +163,12 @@ public class AnimatedModel : IDisposable
                 EmissiveFactor = source.EmissiveFactor,
                 EmissiveUvScroll = source.EmissiveUvScroll,
                 BaseColorTexture = UploadTexture(source.BaseColorTexture),
-                NormalTexture = UploadTexture(source.NormalTexture),
-                MetallicRoughnessTexture = UploadTexture(source.MetallicRoughnessTexture),
-                EmissiveTexture = UploadTexture(source.EmissiveTexture),
-                OcclusionTexture = UploadTexture(source.OcclusionTexture)
+                EmissiveTexture = UploadTexture(source.EmissiveTexture)
             };
 
             // Set texture presence flags
             materialData.HasBaseColorTexture = materialData.BaseColorTexture != -1;
-            materialData.HasNormalTexture = materialData.NormalTexture != -1;
-            materialData.HasMetallicRoughnessTexture = materialData.MetallicRoughnessTexture != -1;
             materialData.HasEmissiveTexture = materialData.EmissiveTexture != -1;
-            materialData.HasOcclusionTexture = materialData.OcclusionTexture != -1;
 
             _materials[i] = materialData;
         }
@@ -438,6 +432,7 @@ public class AnimatedModel : IDisposable
         // The joint matrices depend only on the node, so they are composed once per node, and so
         // are the model and normal matrices, which every primitive of the node shares.
         bool jointsComposed = false;
+        JointPaletteUploads uploaded = default;
         shader.SetModelMatrix(modelMatrix);
         Shader bound = shader;
         foreach (var primitive in primitives)
@@ -455,7 +450,7 @@ public class AnimatedModel : IDisposable
                 bound = program;
             }
 
-            ApplySkinning(program, primitive, pose, jointMatrices, meshWorldMatrix, ref jointsComposed);
+            ApplySkinning(program, primitive, pose, jointMatrices, meshWorldMatrix, ref jointsComposed, ref uploaded);
 
             if (!_depthOnly)
             {
@@ -479,6 +474,7 @@ public class AnimatedModel : IDisposable
         Matrix4 meshWorldMatrix)
     {
         bool jointsComposed = false;
+        JointPaletteUploads uploaded = default;
         // Instanced draws read the model matrix from the per-instance attribute and derive the
         // normal matrix from it in the shader, so `model` and `normalMatrix` are not uploaded.
         shader.SetBool("useInstancing", true);
@@ -501,7 +497,7 @@ public class AnimatedModel : IDisposable
                 bound = program;
             }
 
-            ApplySkinning(program, primitive, _pose, _restJointMatrices, meshWorldMatrix, ref jointsComposed);
+            ApplySkinning(program, primitive, _pose, _restJointMatrices, meshWorldMatrix, ref jointsComposed, ref uploaded);
 
             if (!_depthOnly)
             {
@@ -574,7 +570,8 @@ public class AnimatedModel : IDisposable
         AnimatedModelPose pose,
         Matrix4[] jointMatrices,
         Matrix4 meshWorldMatrix,
-        ref bool jointsComposed)
+        ref bool jointsComposed,
+        ref JointPaletteUploads uploaded)
     {
         if (!primitive.UsesSkinning || !_skeleton.HasSkin)
         {
@@ -589,7 +586,40 @@ public class AnimatedModel : IDisposable
             jointsComposed = true;
         }
 
-        UploadJointMatrices(shader.GetUniformLocations(JointMatrixArrayUniformName)[0], jointMatrices);
+        // The palette is the same for every primitive of the node, so each program object (the base
+        // one and the MASK variant) receives it once per node call.
+        if (uploaded.TryMark(shader))
+        {
+            UploadJointMatrices(shader.GetUniformLocations(JointMatrixArrayUniformName)[0], jointMatrices);
+        }
+    }
+
+    // Which program objects already hold the current node's joint palette: a node draws with at
+    // most two (base and MASK variant), so two slots, no allocation. A fresh record per node call.
+    internal struct JointPaletteUploads
+    {
+        private object? _first;
+        private object? _second;
+
+        // True when the program has not received the palette yet (and is now recorded as having it).
+        public bool TryMark(object program)
+        {
+            if (ReferenceEquals(_first, program) || ReferenceEquals(_second, program))
+            {
+                return false;
+            }
+
+            if (_first == null)
+            {
+                _first = program;
+            }
+            else
+            {
+                _second = program;
+            }
+
+            return true;
+        }
     }
 
     // The whole joint array in one glUniformMatrix4fv call (one counted uniform upload), from the
@@ -608,22 +638,6 @@ public class AnimatedModel : IDisposable
 
     private void SetMaterialProperties(Shader shader, MaterialData material)
     {
-        /*
-        // Log material properties for debugging
-        Console.WriteLine("Setting Material Properties:");
-        Console.WriteLine($"  baseColorFactor: {material.BaseColorFactor}");
-        Console.WriteLine($"  metallicFactor: {material.MetallicFactor}");
-        Console.WriteLine($"  roughnessFactor: {material.RoughnessFactor}");
-        Console.WriteLine($"  emissiveFactor: {material.EmissiveFactor}");
-        Console.WriteLine($"  alphaCutoff: {material.AlphaCutoff}");
-        Console.WriteLine($"  alphaMode: {material.AlphaMode}");
-        Console.WriteLine($"  hasBaseColorTexture: {material.HasBaseColorTexture}");
-        Console.WriteLine($"  hasNormalTexture: {material.HasNormalTexture}");
-        Console.WriteLine($"  hasMetallicRoughnessTexture: {material.HasMetallicRoughnessTexture}");
-        Console.WriteLine($"  hasEmissiveTexture: {material.HasEmissiveTexture}");
-        Console.WriteLine($"  hasOcclusionTexture: {material.HasOcclusionTexture}");
-        */
-
         shader.SetVector4("material.baseColorFactor", material.BaseColorFactor);
         shader.SetFloat("material.metallicFactor", material.MetallicFactor);
         shader.SetFloat("material.roughnessFactor", material.RoughnessFactor);
@@ -633,22 +647,16 @@ public class AnimatedModel : IDisposable
 
         // Set texture presence flags
         shader.SetBool("material.hasBaseColorTexture", material.HasBaseColorTexture);
-        shader.SetBool("material.hasNormalTexture", material.HasNormalTexture);
-        shader.SetBool("material.hasMetallicRoughnessTexture", material.HasMetallicRoughnessTexture);
         shader.SetHasEmissiveTexture(material.HasEmissiveTexture);
         shader.SetEmissiveUvScroll(material.EmissiveUvScroll);
         if (material.EmissiveUvScroll != Vector2.Zero)
         {
             shader.SetTime(RenderFrameClock.Seconds);
         }
-        shader.SetBool("material.hasOcclusionTexture", material.HasOcclusionTexture);
 
         // Bind textures
         SetTexture(shader, "material.baseColorTexture", 0, material.BaseColorTexture);
-        SetTexture(shader, "material.normalTexture", 1, material.NormalTexture);
-        SetTexture(shader, "material.metallicRoughnessTexture", 2, material.MetallicRoughnessTexture);
         SetTexture(shader, "material.emissiveTexture", 3, material.EmissiveTexture);
-        SetTexture(shader, "material.occlusionTexture", 4, material.OcclusionTexture);
     }
 
 
@@ -740,17 +748,11 @@ public class AnimatedModel : IDisposable
         public float AlphaCutoff;
         public AlphaMode AlphaMode;
         public int BaseColorTexture = -1;
-        public int NormalTexture = -1;
-        public int MetallicRoughnessTexture = -1;
         public int EmissiveTexture = -1;
-        public int OcclusionTexture = -1;
 
         // Add texture presence flags
         public bool HasBaseColorTexture;
-        public bool HasNormalTexture;
-        public bool HasMetallicRoughnessTexture;
         public bool HasEmissiveTexture;
-        public bool HasOcclusionTexture;
     }
     #endregion
 }
