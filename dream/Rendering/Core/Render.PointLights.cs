@@ -80,6 +80,6 @@ public partial class Render
         }
 
         ViewFrustum frustum = ViewFrustum.FromViewAndProjection(view, _projection);
-        LightSelection.SelectNearest(Lights.Lights, _debugPointLights, cameraPosition, in frustum, ref _selectedLights, _selectedLightCarriers);
+        LightSelection.SelectNearestFaded(Lights.Lights, _debugPointLights, cameraPosition, in frustum, ref _selectedLights, _selectedLightCarriers);
     }
 }
