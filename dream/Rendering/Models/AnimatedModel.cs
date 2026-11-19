@@ -544,6 +544,13 @@ public class AnimatedModel : IDisposable
         // Wave I: the enemy shader's colour tint (zero for every other model), so the MASK variant
         // never draws with a value an earlier frame or model left in it.
         program.SetVector3("uActorTintOffset", ActorTintOffset);
+        // The equipment material response (enemyFragment.glsl, uEquipSurface / uEquipEye): zero for
+        // every model AnimatedModel draws, so a MASK variant never answers light as a sculpted
+        // pauldron because an equipment draw left its surface in that program object. The eye is
+        // unread while the surface is zero and is written anyway, so no uniform of the variant is
+        // ever stale (Wave9AlphaMaskUniformCoverageTests).
+        program.SetEquipmentSurface(Vector4.Zero);
+        program.SetEquipmentEye(Vector3.Zero);
         program.SetVector2("uWind", Wind);
         if (!instanced)
         {

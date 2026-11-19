@@ -47,6 +47,8 @@ public class Wave9AlphaMaskUniformCoverageTests
             ["material.hasEmissiveTexture"] = switchPaths.Contains("SetHasEmissiveTexture(", StringComparison.Ordinal),
             ["material.emissiveUvScroll"] = switchPaths.Contains("SetEmissiveUvScroll(", StringComparison.Ordinal),
             ["uTime"] = switchPaths.Contains("SetTime(", StringComparison.Ordinal),
+            ["uEquipSurface"] = switchPaths.Contains("SetEquipmentSurface(", StringComparison.Ordinal),
+            ["uEquipEye"] = switchPaths.Contains("SetEquipmentEye(", StringComparison.Ordinal),
             ["jointMatrices"] = switchPaths.Contains("JointMatrixArrayUniformName", StringComparison.Ordinal),
         };
 
