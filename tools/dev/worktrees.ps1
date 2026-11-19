@@ -6,10 +6,13 @@
   Read-only by default: it prints one row per worktree plus totals and changes nothing.
 
   -CleanBuildOutput  deletes dream/bin, dream/obj, dream.Tests/bin, dream.Tests/obj and artifacts/*-bin
-                     in each worktree, except the current worktree, the main worktree, and any worktree
-                     with a dream.exe or testhost running from its path.
+                     in each worktree, except the current worktree, the main worktree, locked worktrees, and any
+                     worktree with a dream.exe, dotnet, MSBuild node, VBCSCompiler or testhost process whose
+                     path or command line mentions it (the worktree shows as 'running').
   -RemoveMerged      runs `git worktree remove` (never --force) for worktrees whose branch is merged into
-                     the base branch AND that are clean AND not locked; never the main or current one.
+                     the base branch AND have at least one commit of their own (a fresh branch that never
+                     moved off its creation commit is 'fresh', not merged) AND are clean AND not locked and
+                     not busy; never the main or current one.
                      Asks before each removal unless -Yes.
   Never deletes branches and never uses git stash.
 
@@ -77,11 +80,11 @@ function Get-NormalPath {
 }
 
 function Get-RunningFromPaths {
-    # Executable paths and command lines of running dream.exe / testhost processes, lower-cased.
+    # Executable paths and command lines of running dream.exe / dotnet / MSBuild / VBCSCompiler / testhost processes, lower-cased.
     $paths = New-Object System.Collections.Generic.List[string]
     try {
         $procs = Get-CimInstance Win32_Process -ErrorAction Stop |
-            Where-Object { $_.Name -like 'dream.exe' -or $_.Name -like 'testhost*' }
+            Where-Object { $_.Name -like 'dream.exe' -or $_.Name -like 'testhost*' -or $_.Name -like 'dotnet*' -or $_.Name -like 'MSBuild*' -or $_.Name -like 'VBCSCompiler*' }
         foreach ($p in $procs) {
             if ($p.ExecutablePath) { $paths.Add($p.ExecutablePath.ToLowerInvariant().Replace('/', '\')) }
             if ($p.CommandLine) { $paths.Add($p.CommandLine.ToLowerInvariant().Replace('/', '\')) }
@@ -92,8 +95,10 @@ function Get-RunningFromPaths {
 
 function Test-RunningIn {
     param([string]$WorktreePath, [string[]]$Running)
-    $needle = (Get-NormalPath $WorktreePath).ToLowerInvariant() + '\'
-    foreach ($r in $Running) { if ($r.Contains($needle)) { return $true } }
+    # The path must end at a boundary so that ...\wt\a does not match a process in ...\wt\ab.
+    $base = (Get-NormalPath $WorktreePath).ToLowerInvariant()
+    $pattern = [regex]::Escape($base) + '(\\|["'' ]|$)'
+    foreach ($r in $Running) { if ($r -match $pattern) { return $true } }
     return $false
 }
 
@@ -120,6 +125,16 @@ foreach ($line in $raw) {
 }
 if ($cur) { $entries.Add($cur) }
 
+function Test-BranchAdvanced {
+    # True when the branch has at least one commit of its own: its tip differs from the commit it was created at
+    # (oldest reflog entry). No reflog or a detached HEAD is treated as "not advanced" so nothing gets removed on a guess.
+    param([string]$Dir, [string]$BranchName)
+    if (-not $BranchName -or $BranchName -eq '(detached)') { return $false }
+    $log = @(Invoke-Git $Dir @('reflog', 'show', '--format=%H', "refs/heads/$BranchName") | Where-Object { $_ })
+    if ($log.Count -eq 0) { return $false }
+    return ($log[0] -ne $log[$log.Count - 1])
+}
+
 $running = Get-RunningFromPaths
 $mode = if ($CleanBuildOutput -or $RemoveMerged) { 'ACTIVE' } else { 'read-only' }
 Write-Host ("worktrees: {0} (base {1}, mode {2})" -f $entries.Count, $Base, $mode)
@@ -136,6 +151,8 @@ foreach ($e in $entries) {
         & git -C $Repo merge-base --is-ancestor $e.Head $Base 2>$null
         $merged = ($LASTEXITCODE -eq 0)
     }
+    $fresh = $false
+    if ($merged -and -not (Test-BranchAdvanced $Repo $e.Branch)) { $merged = $false; $fresh = $true }
     $dirty = $false
     if ($exists -and -not $e.Bare) {
         $status = Invoke-Git $path @('status', '--porcelain')
@@ -146,7 +163,7 @@ foreach ($e in $entries) {
     foreach ($d in $dirs) { $bytes += Get-DirectoryBytes $d }
     $rows.Add([pscustomobject]@{
         Path = $path; Branch = $e.Branch; IsMain = $isMain; IsCurrent = ($path -ieq $current)
-        Merged = $merged; Dirty = $dirty; Locked = $e.Locked; Prunable = $e.Prunable
+        Merged = $merged; Fresh = $fresh; Dirty = $dirty; Locked = $e.Locked; Prunable = $e.Prunable
         Exists = $exists; Bytes = $bytes; BuildDirs = $dirs
         Busy = ($exists -and (Test-RunningIn $path $running))
     })
@@ -157,6 +174,7 @@ foreach ($r in $rows) {
     if ($r.IsMain) { $flags += 'main' }
     if ($r.IsCurrent) { $flags += 'current' }
     if ($r.Merged) { $flags += 'merged' }
+    if ($r.Fresh) { $flags += 'fresh' }
     if ($r.Dirty) { $flags += 'dirty' }
     if ($r.Locked) { $flags += 'locked' }
     if ($r.Prunable) { $flags += 'prunable' }
@@ -166,8 +184,8 @@ foreach ($r in $rows) {
 
 $total = ($rows | Measure-Object -Property Bytes -Sum).Sum
 $mergedCount = @($rows | Where-Object { $_.Merged -and -not $_.IsMain }).Count
-$removable = @($rows | Where-Object { $_.Merged -and -not $_.Dirty -and -not $_.Locked -and -not $_.IsMain -and -not $_.IsCurrent -and $_.Exists })
-$cleanable = @($rows | Where-Object { -not $_.IsMain -and -not $_.IsCurrent -and -not $_.Busy -and $_.Bytes -gt 0 })
+$removable = @($rows | Where-Object { $_.Merged -and -not $_.Dirty -and -not $_.Locked -and -not $_.Busy -and -not $_.IsMain -and -not $_.IsCurrent -and $_.Exists })
+$cleanable = @($rows | Where-Object { -not $_.IsMain -and -not $_.IsCurrent -and -not $_.Busy -and -not $_.Locked -and $_.Bytes -gt 0 })
 $cleanBytes = ($cleanable | Measure-Object -Property Bytes -Sum).Sum
 Write-Host ''
 Write-Host ("totals: {0} worktrees, build output {1}, merged {2}, dirty {3}, locked {4}, prunable {5}, running {6}" -f `
@@ -180,7 +198,8 @@ if ($CleanBuildOutput) {
     $freed = 0L
     foreach ($r in $rows) {
         if ($r.IsMain -or $r.IsCurrent) { continue }
-        if ($r.Busy) { Write-Host "skip (dream.exe/testhost running): $($r.Path)"; continue }
+        if ($r.Locked) { Write-Host "skip (locked): $($r.Path)"; continue }
+        if ($r.Busy) { Write-Host "skip (dream/dotnet/MSBuild/testhost running): $($r.Path)"; continue }
         foreach ($d in $r.BuildDirs) {
             $size = Get-DirectoryBytes $d
             try {
@@ -196,6 +215,7 @@ if ($CleanBuildOutput) {
 
 if ($RemoveMerged) {
     foreach ($r in $removable) {
+        if ($r.Locked) { Write-Host "skip (locked): $($r.Path)"; continue }
         if ($r.Busy) { Write-Host "skip (running): $($r.Path)"; continue }
         $go = $Yes
         if (-not $go) {

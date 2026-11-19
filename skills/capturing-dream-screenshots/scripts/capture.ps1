@@ -37,10 +37,18 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 if (-not $Bin) { $Bin = Join-Path $repo 'artifacts\capture-bin\Release\net10.0' }
 if (-not $OutRoot) { $OutRoot = Join-Path $repo 'artifacts\captures' }
-$Bin = [System.IO.Path]::GetFullPath($Bin)
-$OutRoot = [System.IO.Path]::GetFullPath($OutRoot)
+# Resolve against $PWD (the shell's location), not the .NET process CWD that GetFullPath would use.
+function Resolve-FullPath([string]$path) {
+    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path)
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ($full.TrimEnd('\', '/') -ieq $root.TrimEnd('\', '/')) { return $root }
+    return $full.TrimEnd('\', '/')
+}
+$Bin = Resolve-FullPath $Bin
+$OutRoot = Resolve-FullPath $OutRoot
 if (-not $DataDir) { $DataDir = Join-Path (Join-Path $OutRoot $Name) 'data' }
-$DataDir = [System.IO.Path]::GetFullPath($DataDir)
+$DataDir = Resolve-FullPath $DataDir
+$DataMarker = '.dream-capture-data'
 
 function Test-NoColon([string]$path, [string]$what) {
     # A drive qualifier ("G:") is the only colon allowed; anywhere else it is an illegal Windows file name that shows up
@@ -86,13 +94,34 @@ $vars['DREAM_HUD_CAPTURE'] = $cap
 $outLog = Join-Path $cap 'out.log'
 $errLog = Join-Path $cap 'err.log'
 
-# A fresh world per run unless -KeepData. Refuse paths that could be something else than a run directory.
-$dataRoot = [System.IO.Path]::GetPathRoot($DataDir)
-if ($DataDir.TrimEnd('\', '/') -eq $dataRoot.TrimEnd('\', '/') -or $DataDir.TrimEnd('\', '/') -eq $repo.TrimEnd('\', '/') -or $DataDir.TrimEnd('\', '/') -eq $Bin.TrimEnd('\', '/')) {
-    throw "DataDir must be a dedicated run folder, not $DataDir"
+# A fresh world per run unless -KeepData. The wipe is recursive, so it only touches a folder this script owns: one
+# under $OutRoot, or one holding the marker file this script wrote when it created it. Anything else is refused.
+function Test-SamePath([string]$a, [string]$b) { return ($a.TrimEnd('\', '/') -ieq $b.TrimEnd('\', '/')) }
+function Test-UnderPath([string]$child, [string]$parent) {
+    $p = $parent.TrimEnd('\', '/') + '\'
+    return $child.StartsWith($p, [System.StringComparison]::OrdinalIgnoreCase)
 }
-if (-not $KeepData -and (Test-Path $DataDir)) { Remove-Item -Recurse -Force $DataDir }
+function Get-WipeRefusal([string]$dir) {
+    $protected = @($repo, $Bin, $OutRoot, $HOME, [Environment]::GetFolderPath('UserProfile'), $env:SystemRoot, $env:ProgramFiles) | Where-Object { $_ }
+    if (Test-SamePath $dir ([System.IO.Path]::GetPathRoot($dir))) { return 'it is a drive root' }
+    foreach ($q in $protected) {
+        if (Test-SamePath $dir $q) { return "it is $q" }
+        if (Test-UnderPath $q $dir) { return "it contains $q" }
+    }
+    if (Test-UnderPath $dir $Bin) { return 'it is inside the build output folder' }
+    if (Test-UnderPath $dir $OutRoot) { return $null }
+    if (Test-Path -LiteralPath (Join-Path $dir $DataMarker) -PathType Leaf) { return $null }
+    return "it is neither under OutRoot ($OutRoot) nor a folder this script created earlier (no $DataMarker marker)"
+}
+$dataExisted = Test-Path -LiteralPath $DataDir
+if (-not $KeepData -and $dataExisted) {
+    $why = Get-WipeRefusal $DataDir
+    if ($why) { throw "Refusing to delete DataDir $DataDir : $why. Pass -KeepData to reuse it, or pick a folder under OutRoot." }
+    Remove-Item -LiteralPath $DataDir -Recurse -Force
+    $dataExisted = $false
+}
 New-Item -ItemType Directory -Force $DataDir | Out-Null
+if (-not $dataExisted) { Set-Content -LiteralPath (Join-Path $DataDir $DataMarker) -Value 'created by capture.ps1; safe to wipe' -Encoding ascii }
 
 # With -Serial: strictly one dream.exe at a time, wait for every other one to finish. Never stop a process this script did not start.
 $deadline = (Get-Date).AddSeconds($WaitForIdleSeconds)
