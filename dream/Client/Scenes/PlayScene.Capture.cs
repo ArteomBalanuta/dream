@@ -4,6 +4,7 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 using Dream.Application;
 using Dream.Client.Input;
 using Dream.Client.Presentation;
+using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Models;
 using Dream.Rendering.Ui;
@@ -61,6 +62,11 @@ namespace Dream.Client.Scenes;
 //   wait:<frames>, snap, log  idle, capture, print the inventory (and the player's position)
 //   fight:<frames>            for that many frames, face the nearest enemy, close in and attack in combat
 //                             mode (the real command path), then capture; for damage numbers and death
+//   dev:<sub>[:<arg>...][;<sub>...]  send "/dev <sub> <arg>...; ..." as a Command chat line (the server's
+//                             staging commands; needs dev commands on and a loopback connection), then idle
+//                             until one [dev] reply per subcommand arrives or the timeout ends; no PNG
+//   tod:<hours>|off          set this client's visual time of day override (decimal hours, [0,24)), or turn
+//                             it off; the server clock is untouched; no PNG
 // <slot> is 0..63 for a bag anchor (row * 8 + col; the drag target is where the item's anchor lands, with the
 // item centred on the pointer), or 100..111 / main|off|head|body|hands|feet|legs|neck|ring1|ring2|back|pet
 // for an equipment well.
@@ -184,6 +190,9 @@ public partial class PlayScene
     private HudCaptureKeys _captureKeys;
     private bool _captureKeySnap;
     private bool _captureWaitIdle;
+    // The dev: step's chat line while its replies are awaited; the replies arrive in ApplyServerMessage.
+    private string? _captureDevLine;
+    private int _captureDevRepliesPending;
     private System.Diagnostics.Stopwatch? _captureHoldLeftWatch;
     private readonly Dictionary<int, int> _captureHitHealth = new();
     private readonly HashSet<int> _captureHitSeen = new();
@@ -548,6 +557,42 @@ public partial class PlayScene
                 _captureIdleFrames = spec.A;
                 _captureWritesPng = false;
                 break;
+            case HudCaptureVerb.Dev:
+                // The parse already validated the step; rebuild the line from the (lowercased) step text.
+                _captureWritesPng = false;
+                _capturePhase = CapturePhase.Idle;
+                if (HudCaptureDevStep.TryBuildChatLine(name, out string devLine, out int devReplies))
+                {
+                    _captureDevLine = devLine;
+                    _captureDevRepliesPending = devReplies;
+                    _captureIdleFrames = HudCaptureDevStep.ReplyTimeoutFrames;
+                    _remoteClient.QueueChat(new ClientChatMessage(ChatChannel.Command, devLine));
+                    Console.WriteLine($"[hud-capture] dev sent {devLine} (awaiting {devReplies} replies)");
+                }
+                else
+                {
+                    _captureIdleFrames = 1;
+                    Console.WriteLine($"[hud-capture] dev {name}: not a valid dev step, skipped");
+                }
+
+                break;
+            case HudCaptureVerb.TimeOfDay:
+                _captureWritesPng = false;
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = 1;
+                if (spec.A < 0)
+                {
+                    _render.TimeOfDayOverride.Enabled = false;
+                    Console.WriteLine("[hud-capture] tod off: the world clock drives the sky again");
+                }
+                else
+                {
+                    _render.TimeOfDayOverride.Hours = spec.A / 60f;
+                    _render.TimeOfDayOverride.Enabled = true;
+                    Console.WriteLine($"[hud-capture] tod {_render.TimeOfDayOverride.Hours:0.00} h (client-only override)");
+                }
+
+                break;
             case HudCaptureVerb.Log:
                 LogHudCaptureInventory("log");
                 _capturePhase = CapturePhase.Idle;
@@ -700,6 +745,17 @@ public partial class PlayScene
         if (_captureExpectsResult)
         {
             LogHudCaptureInventory("after " + step);
+        }
+
+        if (_captureDevLine is { } devStepLine)
+        {
+            if (_captureDevRepliesPending > 0)
+            {
+                Console.WriteLine(HudCaptureDevStep.FormatTimeoutLog(devStepLine, _captureDevRepliesPending));
+            }
+
+            _captureDevLine = null;
+            _captureDevRepliesPending = 0;
         }
 
         if (_captureHoldLeftWatch is { } watch && !_captureHoldLeftEnded)

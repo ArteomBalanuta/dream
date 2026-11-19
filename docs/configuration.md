@@ -132,6 +132,17 @@ Current consumers include:
 
 into the build output so the runtime asset layout matches the resolution model.
 
+### Run directories
+
+Two optional variables split a run's state from the build folder. Unset, everything stays under the exe folder exactly as before.
+
+| Variable | Effect |
+|---|---|
+| `DREAM_DATA_DIR=<dir>` | Writable state moves to `<dir>` (created if missing): `player-profiles.db` (with its `.world-N.lock` and `.maintenance.lock`), `desktop-client.txt` and the default identity file `account-tokens.json`. Identity precedence: `DREAM_IDENTITY_FILE`, then `DREAM_DATA_DIR`, then `%LOCALAPPDATA%\Dream\account-tokens.json`. An invalid value (a colon beyond a drive qualifier, or an uncreatable folder) throws on first use naming the variable; it never falls back silently. |
+| `DREAM_ASSET_ROOT=<dir>` | Read-only assets (`shaders`, `animations`, `fonts`, `audio`, `ui`, `config/content`, `config/player-profiles.init.sql`, `config/migrations`, `config/viewmodel-rig.txt`) load from `<dir>`, normally the source tree `dream` folder, so edited JSON, atlases and shaders apply on the next launch without a rebuild. The database and `desktop-client.txt` never follow it. A missing folder or one without `shaders` prints one stderr line and uses the exe folder. |
+
+Each active variable prints one stderr line at startup: `[startup] data dir: <path>` or `[startup] asset root: <path>`. `DREAM_HUD_CAPTURE` also implies `DREAM_AUTO_CONNECT`.
+
 ## Viewmodel Rig Text Config
 
 The project now treats the startup viewmodel rig defaults as a dedicated text-backed runtime config:
@@ -193,13 +204,20 @@ The in-game HUD is the classic sprite HUD by default. The ImGui HUD is the autom
 - `status` also logs `actorclip <clip> mode <mode> playbackSpeed <s> rawDeltaDeg <d> residualDeg <r> airTuck <t> hitFlinch <f> dead <bool>`: the animation clip `PlayerAnimationStateMachine` actually selected for that frame, with the raw travel-minus-facing delta it was selected from and the residual twist handed to the pose layers - contract C2's table, measured instead of derived. Without it the selected clip appears nowhere in a capture, and a state machine that computed the right sector and then played the wrong clip would look identical in the log. `actorclip none: <reason>` when the local player has not been drawn (first person, or the model is not uploaded yet).
 - While `DREAM_HUD_CAPTURE` is set the window is created without taking focus (`StartFocused` off), so a capture run does not pull focus from whatever else is on screen; with it unset the window starts focused as before.
 
+#### Capture steps `dev:` and `tod:`
+
+- `dev:<sub>[:<arg>...][;<sub>...]` stages the world through the server-authoritative `/dev` command (see Dev commands under Characters And Accounts). Colons become spaces and the line is prefixed with `/dev `: `dev:clear;spawn:wolf:2:3;tp:camp:north-east-wolves` sends `/dev clear; spawn wolf 2 3; tp camp north-east-wolves`. Max 8 subcommands (`DevCommandText.MaxSubcommands`), no commas (they separate steps), the whole line at most `ClientChatMessage.MaxTextLength` (256) characters; a malformed step is dropped like any unknown step. Writes no PNG. Waits for one `[dev] ` reply per subcommand (or 240 frames), then 30 more frames. Each reply is logged `[hud-capture] dev <line> -> <reply>`; a missing one `[hud-capture] dev <line> -> no reply (<n> missing)`. Needs dev commands allowed and a loopback connection.
+- `tod:<hours>|off` sets the client-only visual time of day (`Render.TimeOfDayOverride`): decimal hours in [0,24), invariant culture (`tod:21.5`); `off` returns to the world clock. Writes no PNG; the server clock is untouched.
+- capture.ps1 exit code 3: an out.log line matches `^\[hud-capture\] dev .* -> (\[dev\] error:|no reply)` and `-AllowDevErrors` was not passed.
+
 #### Capture traps
 
 Every one of these presents as the *same* symptom - the run writes no PNG, hangs until the timeout, and its last stdout line is the harmless `[startup] GL debug output: high and medium severity`. Each has cost this project real time, so check them in this order before suspecting the script:
 
-- **Only one `dream.exe` may run at a time.** The first process locks the world; every later one hangs to its timeout. Captures must be strictly serial - never launch two in parallel, and kill leftovers (`Get-Process dream | Stop-Process`) before the next run.
+- **Run one `dream.exe` per data directory.** The world database and its lock belong to the data dir, so captures with distinct `DREAM_DATA_DIR` values (capture.ps1's default `<OutRoot>\<Name>\data`) may run in parallel from one bin, while two processes sharing a data dir (or the bin's own `config`) block each other: the second hangs to its timeout. Pass `-Serial` to capture.ps1 to restore the old wait for any running `dream.exe`, and kill leftovers (`Get-Process dream | Stop-Process`) before a shared-dir run.
+- **A capture connects by itself.** `DREAM_HUD_CAPTURE` implies `DREAM_AUTO_CONNECT`; setting both is harmless, and a capture that stays on the connection screen is one of the other traps, not a missing variable.
 - **The local server's startup errors go to stderr, not stdout.** `[startup] local server not started: World '1' is already in use` (another `dream.exe` holds it) and `World '7' does not exist` both land in the redirected stderr stream, so a run whose stdout looks fine can still have no server to connect to. Always read the stderr tail of a failed capture.
-- **With a local server `DREAM_CLIENT_NAME` is ignored.** `RemoteClientOptions.TryResolveFromEnvironment` returns false unless `DREAM_SERVER_HOST` is set, so the character name always comes from `config/desktop-client.txt` (`player_name=dream-client`). The first run to claim that name owns it, and any later run with a **fresh** `DREAM_IDENTITY_FILE` is rejected with `[session] ended: Join rejected: That character belongs to someone else. Choose another name.` - and that line is in **stdout**, not stderr. Share one identity file across runs.
+- **With a local server `DREAM_CLIENT_NAME` is ignored.** `RemoteClientOptions.TryResolveFromEnvironment` returns false unless `DREAM_SERVER_HOST` is set, so the character name always comes from `config/desktop-client.txt` (`player_name=dream-client`). The first run to claim that name owns it, and any later run with a **fresh** `DREAM_IDENTITY_FILE` is rejected with `[session] ended: Join rejected: That character belongs to someone else. Choose another name.` - and that line is in **stdout**, not stderr. A fresh data dir has its own database and its own default identity (`<data dir>/account-tokens.json`), so it claims the name afresh; the conflict only arises when runs share a data dir (or the bin's `config`) but not an identity - then share one identity file across them.
 - **No colons in any filename**, `DREAM_IDENTITY_FILE` included. Colons are illegal in Windows paths and the failure shows up as a silent auto-connect hang rather than an error. (The capture writer already rewrites `:` as `-` in the PNG names it generates; the variables you set yourself are on you.)
 - Builds for a capture need an absolute Windows `BaseOutputPath` **inside the worktree being captured**, set from PowerShell; a POSIX shell mangles the backslashes and MSBuild rejects the resulting `/p:`. Running a capture against another worktree's binaries is how a gate ends up measuring the wrong build.
 
@@ -227,6 +245,8 @@ These are read by the desktop client (`RemoteClientOptions`, `PlayScene`) and by
 | `DREAM_CLIENT_SESSION_ID` | same | Parsed, but `Game` forwards only host, port and name, so the desktop client still joins with a fresh `client-<guid>` (`ClientConnectionOptions`). |
 | `DREAM_LOOPBACK_REMOTE_PLAYERS` | `PlayScene.ResolveLoopbackRemotePlayersEnabled` | `1` or `true` feeds fake remote-player snapshots into the presenter for local render checks. |
 | `DREAM_MODEL_DIAGNOSTICS` | `AnimatedModelData` | `1` prints glTF vertex, material and skinning diagnostics to the console while models load. |
+| `DREAM_DATA_DIR` | `DataPaths` (`dream/Assets/DataPaths.cs`) | Folder for the run's writable state: database, `desktop-client.txt`, default identity. See Run directories. |
+| `DREAM_ASSET_ROOT` | `AssetPaths.RuntimeRoot` | Folder the read-only assets load from instead of the exe folder (normally the source `dream` folder). See Run directories. |
 | `DREAM_PHYSICS_LEAK_TRACKING` | `PhysicsIntegrator.TrackLeaks` | `1` records a stack trace for each `PhysicsIntegrator` construction so a leaked owner can be found. Off by default because it is costly. |
 
 ## Test And Load Harness Variables
@@ -236,6 +256,7 @@ Read only by `dream.Tests` (see `docs/build-and-run.md`, Testing):
 | Variable | Read in | Effect |
 | --- | --- | --- |
 | `DREAM_LOAD_TEST` | `LoadFactAttribute` | `1` enables the load, measurement and soak tests (`dream.Tests/Load`). Without it they are skipped, so the default suite stays fast. They write `artifacts/load/<scenario>.json` and a `.md` summary. |
+| `DREAM_GL_TESTS` | `GlFactAttribute` | `0` skips the tests that need a hidden OpenGL context (the `ShaderCompileTests` GL facts) with a reason. Unset, they run and FAIL if no context can be created (no GPU or display), so the gate cannot go blind silently. |
 | `DREAM_LOAD_DURATION_SECONDS` | `LoadScenario.DurationOverrideEnvironmentVariable` | Overrides every scenario's duration, in seconds. |
 | `DREAM_W9_RUNS` | `Wave9NetworkMeasurementTests` | Repetitions per cell of the stall table (default 3). |
 | `DREAM_W9_SCENARIOS` | `Wave9NetworkMeasurementTests` | Comma-separated stall scenarios to run (default `SendStall,FrameStall,NetworkStall,Steady200Ms,Hitchy`). |
@@ -414,7 +435,13 @@ A second desktop client on the same database and world does not get a local serv
 
 **Backup and restore.** `dream --db backup <path>` copies the whole database file with `SqliteConnection.BackupDatabase`, checks the copy with `integrity_check`, and moves it into place. It is safe while a server runs and refuses an existing destination. `dream --db restore <path> --yes` is an offline file swap. It takes the maintenance lock (so no start can create or open a world between its checks and the swap) and every world's lease (the worlds in the database plus every existing lock file), and exits **7** if either is held. It validates the source first: a schema version newer than this build exits **3**; a failed `integrity_check` or damaged pages (SQLite error 11) exit **6**; a missing source, a file that is not a SQLite database, a zero-byte file, or a SQLite file with neither a `worlds` nor a `player_profiles` table exits **2**. A legacy database from before `schema_version` has `player_profiles` and restores. It keeps the current file as `{db}.pre-restore.{timestamp}.bak` (a `-1`, `-2`... suffix if that name exists), then swaps the source in. The safety copy never depends on the health of the file being replaced: it uses the SQLite backup API and, when that fails because the live file is damaged (a bad header is error 26, a truncated file 11), a raw copy of the file with its `-wal` and `-shm`; so restoring over a damaged database, the case exit 6 tells the operator to fix, works. If the raw copy also fails, or the live file cannot be replaced (locked), the restore stops with exit **2**, the live file is left as it was and the staging file is removed; the next start migrates an older source with the usual backup. There is no per-world restore: player profiles are global, so restoring one world would leave orphans.
 
-**Process exit codes.** Server: **3** schema newer than this build, **4** world not found, **5** world cannot be opened, **6** database integrity failure, **7** world held, **8** invalid content file or a formula that fails the start probe. `--worlds`: 1 usage, 2 not found or conflict, 3 schema too new, 4 terrain invalid, 7 world held. `--db`: 1 usage, 2 source or target invalid, 3 schema too new, 6 integrity failure, 7 world held. `--characters` and `--items` are listed in their own sections below.
+**Process exit codes.** Server: **3** schema newer than this build, **4** world not found, **5** world cannot be opened, **6** database integrity failure, **7** world held, **8** invalid content file or a formula that fails the start probe. `--worlds`: 1 usage, 2 not found or conflict, 3 schema too new, 4 terrain invalid, 7 world held. `--db`: 1 usage, 2 source or target invalid, 3 schema too new, 6 integrity failure, 7 world held. `--characters` and `--items` are listed in their own sections below. `--validate-content`: 0 ok (warnings allowed), 1 usage error, 8 invalid content, failed formula probe, or any warning under `--strict` (8 is the server's content-invalid code).
+
+### Content validation: `--validate-content`
+
+`dream --validate-content [--dir <contentDir>] [--ui <uiDir>] [--strict]` checks the content files without starting a server, taking a lock, opening the database or creating a window. It runs the one content parser (`ContentCatalog.LoadFromDirectory`) and the startup formula probe, then warns about content with no art: a skill whose `iconKey` has no UI sprite, an item with no `item.<key>` sprite. Defaults: the shipped `config/content` and the `ui` folder (both follow `DREAM_ASSET_ROOT`). It takes well under a second.
+
+Stdout: `warning: ...` lines, then `ok: digest=<sha> items=N enemies=N loot=N camps=N npcs=N skills=N quests=N (<ms> ms)`. Stderr: `error: <file>: <message>`. Formulas stored in a world database are not checked.
 
 ## Characters And Accounts
 
@@ -424,7 +451,7 @@ One account owns up to 5 characters. Level, experience and base stats follow a c
 
 | Item | Value |
 | --- | --- |
-| Location | `%LOCALAPPDATA%\Dream\account-tokens.json` (the per-user local application data folder on other systems). `DREAM_IDENTITY_FILE` replaces the path, for tests and for two accounts on one machine. |
+| Location | `%LOCALAPPDATA%\Dream\account-tokens.json` (the per-user local application data folder on other systems). `DREAM_IDENTITY_FILE` replaces the path, for tests and for two accounts on one machine; without it, `DREAM_DATA_DIR` moves it to `<data dir>/account-tokens.json` (see Run directories). |
 | Tokens | One per server, keyed by lowercase `host:port`. Every loopback address and port (`localhost`, `127.0.0.1`, `::1`, the integrated server on whatever port it gets, a dedicated server or another window's server on this computer) shares the key `local`, so one person is one account there. Older entries such as `127.0.0.1:5057` stay in the file, unused. |
 | Stat sliders | `PlayerStatsUpdateIntent` is a development tool (decision U4): any client can set its own base stats within the validated range, and they persist and travel between worlds with the character. Removed when levels give stat points. |
 | Corrupt file | Moved aside to `.bad-<UTC stamp>`, never overwritten. A new file starts, which means new accounts. |
@@ -471,6 +498,25 @@ An administrator types these in chat. The server alone decides: the line travels
 | `/announce <text>` | A System line to every joined player. |
 
 Put a name with spaces in double quotes. A ban or mute belongs to the account, not the character, and holds in every world of the database and across restarts (`accounts.banned_until_utc`, `ban_reason`, `muted_until_utc`, schema 14). An administrator cannot sanction themselves or another administrator who is online. Every command is logged as `server.admin` with the administrator, the action and the target; tokens are never logged. A ban made by a new token is a new account: there are no address bans.
+
+### Dev commands
+
+`/dev <subcommand>[; <subcommand>...]` stages the world for testing. It is sent as a `Command` chat line (no protocol change) and the server answers the sender with exactly one System line per subcommand, starting `[dev] ` (`[dev] error: ` on failure). Up to 8 subcommands per line, run in order; a failure replies and the next still runs. `/dev` alone prints the usage line.
+
+Allowed only when **both** hold, checked when the command runs: dev commands are on (integrated server, or `DREAM_DEV_COMMANDS` on a dedicated server) **and** the connection is loopback (127.0.0.1 / ::1). Otherwise the reply is `[dev] error: Dev commands are off on this server.` The admin role does not matter, and a remote player on a public host can never use them. Keys match case-insensitively.
+
+| Subcommand | Effect |
+|---|---|
+| `help` | one usage line |
+| `spawn <enemy> [count 1-16] [distance 1-16 m]` | spawn on a ring round you, each on a standable surface; no camp, so not restored next start |
+| `tp <x> <z>` | go to world metres x,z (spawns.json / `status` units), onto the top standable surface; outside the map or no surface is an error |
+| `tp camp <key>` / `tp npc <key>` / `tp spawn` | go to a spawns.json camp, an NPC, or the world spawn |
+| `give <item> [common\|uncommon\|rare] [count 1-20]` | rarity applies to items that roll; a full bag stops the grant and the reply says how many landed |
+| `clear [radius m]` | despawn live enemies (all, or within radius); no loot, no XP; camps refill on their timers |
+| `heal` | full health and mana |
+| `hp <n>` / `mana <n>` | set current health (clamped 1..max) or mana (0..max) |
+
+Not available: god mode, time of day, levels, kills with loot or XP.
 
 ### Rolled items: `--items`
 

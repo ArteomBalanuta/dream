@@ -114,6 +114,16 @@ public partial class PlayScene
         if (message is ServerChatMessage chat)
         {
             // Not a routed kind: it only feeds the chat log, as plain clamped text.
+            if (_captureDevRepliesPending > 0 && HudCaptureDevStep.IsReply(chat.Channel, chat.Text))
+            {
+                // A capture dev: step is waiting on the server's [dev] replies (test-only path).
+                Console.WriteLine(HudCaptureDevStep.FormatReplyLog(_captureDevLine!, chat.Text));
+                if (--_captureDevRepliesPending == 0)
+                {
+                    _captureIdleFrames = Math.Min(_captureIdleFrames, HudCaptureDevStep.SettleAfterReplyFrames);
+                }
+            }
+
             _chatInput.State.AddServerMessage(chat.Channel, chat.From, chat.Text);
             return;
         }

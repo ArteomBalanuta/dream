@@ -69,6 +69,8 @@ For small changes (one or two files), skip the architect and use a single implem
 ## Verification
 
 - For C# project changes, run `dotnet build dream\dream.csproj` and `dotnet test dream.Tests\dream.Tests.csproj`.
+- `tools/dev/test.ps1 -Area Content|Rendering|Simulation|Net|Client|Fast|Full` runs one test tier with a watchdog, refuses to start beside another `testhost`, tees the log to `artifacts/test-logs/` and records durations in `artifacts/test-durations.csv`. Use the narrowest area that covers the change.
+- For content JSON changes, `dream --validate-content` (from the build output) checks the content files, the formula probe and missing sprites in well under a second without a window or database; exit 0 ok, 1 usage, 8 invalid (see `docs/configuration.md`, Content validation).
 - From Git Bash, prefix those commands with `MSYS_NO_PATHCONV=1` so `/p:` switches are not rewritten as paths.
 - A running `dream.exe` locks `dream\bin` and fails the build's copy step. Do not kill a user's game process. Build and test with `/p:BaseOutputPath=artifacts/verify-bin/` instead. The output must stay inside the repo, because repo-relative tests find the root from their output folder.
 - For multiplayer or performance changes, the harness in `skills/profiling-dream-multiplayer` runs a dedicated server plus desktop clients and writes `logs/perf-run-*`. Pass `-NoStopExisting` so it does not stop running `dream.exe` processes, and `-SkipBuild -Exe <path to a dream.exe built elsewhere>` to profile a build from another output folder. The headless load tests (`DREAM_LOAD_TEST=1`) are described in the same skill.
