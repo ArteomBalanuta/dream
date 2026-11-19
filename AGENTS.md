@@ -13,9 +13,54 @@ This file is for future Codex/LLM agents working in this repository. It defines 
 ## Required First Reads
 
 - Read [README.md](README.md) first.
-- Read the relevant files under [docs](/G:/workspace/projects/dream/docs) for the subsystem you are touching.
+- Read the relevant files under [docs](/G:/workspace/projects/dream/docs) for the subsystem you are touching, and the matching skill from Capabilities At A Glance.
 - Read [docs/ledger/README.md](/G:/workspace/projects/dream/docs/ledger/README.md) before creating or changing ledger records.
 - Read relevant current files in [docs/ledger/specs](/G:/workspace/projects/dream/docs/ledger/specs), [docs/ledger/plans](/G:/workspace/projects/dream/docs/ledger/plans), [docs/ledger/decisions](/G:/workspace/projects/dream/docs/ledger/decisions), and [docs/ledger/work-log](/G:/workspace/projects/dream/docs/ledger/work-log) when the task overlaps prior work.
+
+## Capabilities At A Glance
+
+Check this table before writing a new tool or script: most "can an agent see, stage, measure or check X?" questions
+already have an answer here. Each `skills/<name>/SKILL.md` is the procedure; read it before using that capability.
+
+| You want to | Use | Where it is documented |
+| --- | --- | --- |
+| See a change in the real game (PNG screenshots, unattended, parallel runs) | `skills/capturing-dream-screenshots/scripts/capture.ps1` (`DREAM_HUD_CAPTURE`; `-FromSource`, `-DataDir`, `-Seed`, `-Serial`; exit 0/1/2/3) | `capturing-dream-screenshots` skill, `docs/configuration.md` (HUD (classic and ImGui), Capture traps) |
+| Stage the world (spawn enemies, give items, teleport, clear, heal, set hp/mana) | `/dev <sub>[; <sub>...]` chat command, or the `dev:` capture step; loopback and dev-commands-allowed only | `docs/configuration.md` (Dev commands) |
+| Force a time of day for a look | `tod:<hours>` or `tod:off` capture step (client-only visual) | `docs/configuration.md` (Capture steps `dev:` and `tod:`) |
+| Catch visual regressions | `tools/golden/run.ps1 -Scene all [-FromSource]` (median baselines, per-step noise, pixel/tone/block checks) | `tools/golden/README.md` |
+| Run the narrowest test tier | `tools/dev/test.ps1 -Area <tier>` (Content, Rendering, Simulation, Net, Client, Fast, Full) | `tools/dev/README.md`, `docs/build-and-run.md` |
+| Check content JSON in under a second | `dream.exe --validate-content` (exit 0/1/8) | `docs/configuration.md` (Content validation) |
+| Isolate a run's database and edited assets | `DREAM_DATA_DIR=<dir>`, `DREAM_ASSET_ROOT=<repo>\dream` | `docs/configuration.md` (Run directories) |
+| Generate or change art (props, characters, clips, terrain, icons, HUD) | `tools/ui-assets/gen_*.py` + `tests/check_*.py` gates | `generating-dream-assets` skill, `tools/ui-assets/README.md` |
+| Add a particle or trail effect | `gen_particles.py` cell + `FxSimulation` spawn + `FxEventBridge` trigger | `adding-dream-effects` skill |
+| Add or retune a combat skill (cost, timing, hit window, clip, effect, icon) | Cleave is the worked reference | `adding-dream-combat-skills` skill |
+| Change terrain material distribution | noise-driven blending | `blending-dream-terrain-materials` skill |
+| Profile multiplayer, run server + clients, load tests | `skills/profiling-dream-multiplayer/scripts` | `profiling-dream-multiplayer` skill |
+| Inspect or repair persistent state | SQLite DDL + live DB scripts | `updating-dream-persistence-state` skill, `docs/server-persistence-ddl.md` |
+| Check that shaders compile | `ShaderCompileTests` (hidden GL context; `DREAM_GL_TESTS=0` skips) | `docs/configuration.md` (Test And Load Harness Variables) |
+| Browse all generated art and recent captures | `python -I tools/dev/gallery.py` -> `artifacts/gallery/index.html` | `tools/dev/README.md` |
+| Report worktrees and their build output | `tools/dev/worktrees.ps1` (read-only without flags) | `tools/dev/README.md` |
+| Write a new repo skill | conventions and validation | `creating-dream-skills` skill |
+
+Deliberately not built yet: live hot reload of content, a scripted bot client, `/dev time`, `/dev god`.
+
+## Rules Learned The Hard Way
+
+- **Look, do not guess.** A green suite does not show a sword pointing at the sky or a trail above the head. Any
+  visual change gets a capture (and the golden run when a staged scene covers it) before it is called done.
+- **Render colours are albedo.** Output is albedo times a gain of about 2.17 with no tonemap: keep lit catalog and
+  generator colours at or below 0.40 per channel. Unlit additive effects are exempt.
+- **One test suite at a time.** Concurrent `testhost` runs produce false failures; `test.ps1` refuses to start
+  beside one (exit 3). Never trust an exit code that went through a pipe to `tail`.
+- **Never `git stash`.** The stash stack is shared by every worktree, so parallel agents take each other's work. Use
+  a WIP commit.
+- **Worktrees start from `master`.** A swarm worktree must be reset onto its integration branch before work starts.
+  Build output stays inside the worktree (`/p:BaseOutputPath=artifacts/verify-bin/`), never redirected outside it.
+- **Never kill the user's `dream.exe`.** Build to another output folder instead.
+- **Derive, do not restate.** Constants shared between server, animation, effect and generator live once in C#;
+  Python generators repeat them only where a C# test pins the generated output to the constant. Every new gate gets a
+  synthetic negative proving it can fail.
+- **Review the whole combined diff after parallel fixes.** Workstreams that pass alone can reopen each other's bugs.
 
 ## Workflow
 
@@ -73,6 +118,7 @@ For small changes (one or two files), skip the architect and use a single implem
 - For content JSON changes, `dream --validate-content` (from the build output) checks the content files, the formula probe and missing sprites in well under a second without a window or database; exit 0 ok, 1 usage, 8 invalid (see `docs/configuration.md`, Content validation).
 - From Git Bash, prefix those commands with `MSYS_NO_PATHCONV=1` so `/p:` switches are not rewritten as paths.
 - A running `dream.exe` locks `dream\bin` and fails the build's copy step. Do not kill a user's game process. Build and test with `/p:BaseOutputPath=artifacts/verify-bin/` instead. The output must stay inside the repo, because repo-relative tests find the root from their output folder.
+- For visual changes, capture the result (`capturing-dream-screenshots`) and, when a golden scene covers it, run `tools/golden/run.ps1 -Scene all`; exit 0 only when every scene passes.
 - For multiplayer or performance changes, the harness in `skills/profiling-dream-multiplayer` runs a dedicated server plus desktop clients and writes `logs/perf-run-*`. Pass `-NoStopExisting` so it does not stop running `dream.exe` processes, and `-SkipBuild -Exe <path to a dream.exe built elsewhere>` to profile a build from another output folder. The headless load tests (`DREAM_LOAD_TEST=1`) are described in the same skill.
 - For documentation-only changes, verify file paths, links, and referenced names.
 - Report exactly what you verified.

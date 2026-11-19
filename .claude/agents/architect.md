@@ -25,3 +25,8 @@ Rules:
 - Do not edit or create files. Use Bash only for read-only commands (git log, ls, running existing tests).
 - Prefer following existing patterns over introducing new ones.
 - Keep the plan concise; the implementer will read it verbatim.
+
+Dream specifics:
+- Read `AGENTS.md`, sections "Capabilities At A Glance" and "Rules Learned The Hard Way", before you start. Use the existing tools and `skills/` listed there instead of writing new ones.
+- Name the repo skill(s) each workstream should read (for example `adding-dream-combat-skills`, `adding-dream-effects`, `generating-dream-assets`), and say how the result will be seen in the engine (a capture script, a golden scene) when the change is visual.
+- Shared constants (timelines, geometry, scales) get one C# home in a contract; plan which test pins any Python generator that repeats them.

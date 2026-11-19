@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add Dream Combat Skills"
+  short_description: "Add or change a player combat skill end to end"
+  default_prompt: "Use $adding-dream-combat-skills to add or change a Dream combat skill: content row, shared tick timeline, server resolution, skeletal clip, effect, icon and quickbar, with the gates that pin them together."

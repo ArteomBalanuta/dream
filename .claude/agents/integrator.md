@@ -23,3 +23,8 @@ Report:
 Rules:
 - Never push, force-push, or merge into main. The human decides that.
 - Don't rewrite developers' work beyond what conflict resolution needs.
+
+Dream specifics:
+- Read `AGENTS.md`, sections "Capabilities At A Glance" and "Rules Learned The Hard Way", before you start. Use the existing tools and `skills/` listed there instead of writing new ones.
+- Run the full suite with `tools/dev/test.ps1 -Area Full` (it refuses to start beside another testhost: exit 3 means wait, not fail). Never use `git stash`.
+- Regenerated binaries (atlases, GLBs) that conflict are rebuilt from the merged generator, not picked from one side; then run that generator's `check_*.py`.
