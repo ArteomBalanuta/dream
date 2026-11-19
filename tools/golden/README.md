@@ -6,7 +6,7 @@ by diffing `DREAM_HUD_CAPTURE` PNGs against recorded baselines. numpy + PIL only
 ## Use
 
 ```powershell
-# Record baselines (each scene is captured -Runs times, default 4, min 3, to measure its own noise), then commit them.
+# Record baselines (each scene is captured -Runs times, default 4, min 3 - use -Runs 10 or more for committed baselines - to measure its own noise), then commit them.
 powershell -ExecutionPolicy Bypass -File tools\golden\run.ps1 -Scene all -Record -Parallel
 # Compare the current build against them. Exit 0 only when every scene PASSes.
 powershell -ExecutionPolicy Bypass -File tools\golden\run.ps1 -Scene all
@@ -29,40 +29,76 @@ Build the capture exe first (see the capture skill), or pass `-Bin`.
  "pixelThreshold":0.08,"maxFraction":0.002,"ignore":[[0,0,200,40]]}
 ```
 
-- Both images are box-downscaled x2. A pixel differs when its max channel difference exceeds `pixelThreshold`
-  (0..1). `ignore` rects are `[x, y, w, h]` in full-resolution pixels and are excluded from the count.
-- The baseline is the per-pixel MEDIAN of the N recorded runs (a flickering pixel settles on its usual value).
-  `selfDiffFraction` in `baselines/<scene>/noise.json` is the worst leave-one-out difference: every run against the
-  median of the OTHER runs, over every step (so it is not flattered by a run being its own baseline).
-- A step FAILs when the differing fraction exceeds `max(maxFraction, k * selfDiffFraction)`, k =
-  `golden.NOISE_MULTIPLIER` = 4, derived in `golden.effective_limit` and pinned by `tests/test_golden.py`.
-- A missing baseline, a different set of step PNGs, or a size mismatch FAILs.
+- Both images are box-downscaled x2. `ignore` rects are `[x, y, w, h]` in full-resolution pixels and are excluded from
+  every check below.
+- The baseline is the per-pixel MEDIAN of the N recorded runs (N >= 8 in the committed baselines: 18 per scene).
+  `baselines/<scene>/noise.json` + `blocks.npz` hold each step's own run-to-run noise: every run against the median of
+  the OTHER runs (leave-one-out), so it is not flattered by a run being its own baseline.
+- A step PASSes only when all three checks hold (a failing line ends in `<- failed: pixel|tone|block`):
+
+| Check | Measures | Limit |
+|---|---|---|
+| pixel | fraction of pixels whose max channel differs by more than `pixelThreshold` | `max(maxFraction, 3 * perStep[step])` (`NOISE_MULTIPLIER`); the scene-wide `selfDiffFraction` only if the step is absent |
+| tone | relative shift of mean luma, R/G/B means and luma p10/p25/p50/p75/p95 (outside ignore rects) | per statistic `max(0.04, 3 * noise.json tone[step][stat])` |
+| block | gain-normalised mean abs diff per 8x8 block (16x16 capture px) of the half-res frame, vs that block's own noise (3x3 neighbourhood max of the recorded worst) | per block `max(0.06, 5 * blocks.npz[step][block])` |
+
+- **Tone** exists because the pixel threshold (0.2 / 0.3) is blind to a global darkening: x0.8 moves almost no pixel by
+  more than 0.2, so 0% differ. Fire flicker moves the mean (night: up to 17%) and the lit percentiles a lot, but the dark
+  percentiles (p10/p25) hardly, so a x0.8 darkening shows there (noon p10 22% vs limit 4%; night p25 11-14% vs 6.0-6.5%).
+  Statistics that flicker a lot get a wide limit and are simply inert.
+- **Block** exists so a small missing figure fails (the pixel fraction of a 28x101 figure, 0.19%, is below the noise at night
+  and wolf). Flicker is a smooth multiplicative gain on the lit ground, so `a` is divided by a local gain (median of the
+  per-pixel luma ratio per 16x16 cell, then the median over 5x5 cells) before the diff; a vanished figure is a small
+  minority of that window and is not absorbed. Without the gain, the blocks next to the torch (where the player
+  stands) are as noisy as the figure's signal; with it, noon/wolf blocks there drop from 0.04 to 0.01. The diff PNG tints
+  failing blocks yellow and differing pixels red.
+- A missing baseline, missing noise files, a different set of step PNGs, or a size mismatch FAILs.
 
 ## Gate that cannot go blind
 
-`python -I tools/golden/tests/test_golden.py` includes synthetic negatives: a moved 20x60 bar must FAIL, so a
-compare that stopped measuring would be caught. `python -I tools/golden/golden.py selftest` is the short form.
+`python -I tools/golden/tests/test_golden.py` includes synthetic and real-baseline negatives: a moved bar, a x0.8 and x0.6
+global darkening on every step of every scene, the player figure painted out (noon, wolf), a 100x100 block (bright over
+the player, black on lit ground; all scenes incl. night), a 200x300 block, and a 20x60 bar on noon. `python -I
+tools/golden/golden.py selftest` is the short form.
 
 ## What varies between runs, and what each scene does about it
 
-Measured on 5 runs per scene (pairwise and leave-one-out differences, diff PNGs):
-
 | Source | Effect | Handled by |
 |---|---|---|
-| Fire flicker (+-25% intensity, wall clock; torch, braziers, lamps, their shadows) | the dominant noise: brightness of the lit ground changes by more than a small threshold, large at night where the lit ground is most of the frame | cannot be pinned (`DREAM_FX_CLOCK` pins clouds, sway and mist but explicitly NOT fire); higher `pixelThreshold` (noon 0.2, night 0.3) and a limit derived from the measured noise |
+| Fire flicker (+-25% intensity, wall clock; torch, braziers, lamps, their shadows) | the dominant noise: brightness of the lit ground and the position of soft shadow edges | cannot be pinned (`DREAM_FX_CLOCK` pins clouds, sway and mist but explicitly NOT fire); high `pixelThreshold` (noon/wolf 0.2, night 0.3), noise-derived limits, the gain-normalised block check |
 | Clouds, wind sway, boundary mist | none once pinned | `DREAM_FX_CLOCK=10` |
 | Frame timing | none (server rolls) | `DREAM_MAX_FPS=60`, `-Seed 1` |
-| Wolf fight: floating damage number (random 12/18), health orb, chat log, wolf pose | wolf-staged only | `ignore` rects for the number zone, the chat log and the health orb; the wolf's own pose stays in the compare |
+| Wolf fight: floating damage number (12 or 18, appears in about half the runs) | wolf-staged only | the `ignore` rect `[650,150,82,70]` is the damage-number zone and nothing else. (It used to be `[600,100,260,160]`, which also masked the Gate Warden NPC column at x 733..750, y 115..185; the NPC is compared now, pinned by a test.) The chat log and health orb have their own rects |
 
-Neither fire flicker nor the damage roll can be pinned without game code, so night and wolf-staged are
-gross-change gates: a 20x60 bar is 0.08% of a 1440x1024 frame, below their noise (night 0.28%, wolf 0.09% self
-difference), while a 200x300 block (4%) fails. `spawn-noon` is the sprite-level gate: its limit is 0.054%, below the
-0.081% a 20x60 bar adds. `tests/test_golden.py` pins both facts against the committed baselines.
+Wolf pose, health orb and chat text stay as measured noise.
 
-### Choosing k
+## Choosing the multipliers
 
-With 5 recorded runs, for every 4-run subset: self = worst leave-one-out difference of the 4, held-out = the 5th
-run against their median. Worst held-out/self ratio: noon 1.1, night 1.7, wolf 3.96 (th 0.2..0.3; the wolf's self is
-tiny, so its ratio is noisy), hence k = 4 with the per-scene floor `maxFraction` covering a near-zero self.
-Verification after recording: 8 sequential compares (noon) / 3 sequential + 1 parallel (all scenes) all PASS;
-the worst run used 73% of the limit.
+`golden.py study <scene> <run dirs...>` is the held-out study: for every run h, the noise comes from the other runs and h
+is measured against their median; it prints the smallest k that would have passed every held-out run (counting only
+items above their floor). 18 runs per scene (two capture batches of 10 and 8, the second taken after the first), 2 steps
+each, final floors:
+
+| | pixel (floor = maxFraction) | tone (floor 0.04) | block (floor 0.06) |
+|---|---|---|---|
+| noon | 0.00 (never above floor) | 1.19-1.25 | 1.03-1.07 |
+| night | 1.20-1.37 | 1.29-1.43 | 1.45-2.02 (at floor 0.08) |
+| wolf | 0.00-0.99 | 1.12-1.47 | 1.01-2.95 |
+
+Worst observed: pixel 1.37, tone 1.47, block 2.95. Multipliers chosen with margin: pixel k = 3 (2.2x), tone k = 3 (2.0x),
+block k = 5 (1.7x). The old k = 4 sat exactly on 3.96 measured from 5 runs; the old 5-run and a 10-run study had
+heavy block tails (6.7, 8.8) because one extreme-flicker run was held out; with 18 runs the tail is covered. Floors:
+tone 0.04 (quiet noon p10 deviates 0.2%), block 0.06 (held-out noon/wolf peak 0.07 is covered by noise-derived limits;
+a soft shadow edge near (520,650) shifts by 0.054-0.067 in some runs and was missing from a 10-run baseline, which is
+why the baseline now holds 18).
+
+Verification after recording (fresh captures, not part of the baseline): `run.ps1 -Scene all` 5 sequential + 3 `-Parallel`,
+all PASS. Worst limit usage over the runs: pixel noon 43%, night 25%, wolf 38%; tone 67% (night p25); block
+below 50% outside the floor-limited blocks. Doctored negatives on the committed baselines, value vs limit:
+
+| Doctoring | noon | night | wolf |
+|---|---|---|---|
+| x0.8 everywhere (tone) | p10 0.222 vs 0.040 | p25 0.112 vs 0.065 | p10 0.212 vs 0.040 |
+| player figure painted out (block) | 0.124 vs 0.063 (also pixel 0.064% vs 0.04%) | not required (figure is in the dark) | 0.086 vs 0.060 (weak: 1 block, 1.4x) |
+| 100x100 bright over the player | fails | block 0.71 vs 0.35, pixel 0.68% vs 0.47% | fails |
+| 100x100 black on lit ground | fails | block 0.23 vs 0.06 | fails |

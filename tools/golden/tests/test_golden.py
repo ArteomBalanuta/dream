@@ -95,7 +95,9 @@ class GoldenCompareTests(unittest.TestCase):
 
     def test_effective_limit_is_max_of_floor_and_k_times_noise(self):
         k = golden.NOISE_MULTIPLIER
-        self.assertEqual(k, 4.0)
+        # k = 3: the worst held-out ratio over 18 recorded runs per scene was 1.37 (README, "Choosing the multipliers")
+        self.assertEqual(k, 3.0)
+        self.assertEqual((golden.TONE_MULTIPLIER, golden.BLOCK_MULTIPLIER), (3.0, 5.0))
         self.assertEqual(golden.effective_limit(0.002, 0.0), 0.002)
         self.assertEqual(golden.effective_limit(0.002, 0.002 / k / 2), 0.002)
         self.assertAlmostEqual(golden.effective_limit(0.002, 0.01), k * 0.01)
@@ -128,6 +130,67 @@ class GoldenCompareTests(unittest.TestCase):
         self.record(frame=a)
         self.assertFalse(all(ok for ok, _ in self.run_compare(loud, name="loud2")))
 
+    def test_per_step_noise_sets_each_steps_own_limit(self):
+        # step s1 has one odd run among four (noisy), step s2 is identical in all runs (quiet)
+        a = golden.synthetic_frame()
+        odd = a.copy()
+        odd[10:30, 10:60] = 255
+        dirs = []
+        for i in range(4):
+            d = self.root / f"r{i}"
+            save(d / "s1.png", odd if i == 3 else a)
+            save(d / "s2.png", a)
+            dirs.append(d)
+        golden.record(dirs, self.scene, self.base)
+        noise = golden.json.loads((self.base / "t" / "noise.json").read_text())
+        self.assertGreater(noise["perStep"]["s1.png"], 0.0)
+        self.assertEqual(noise["perStep"]["s2.png"], 0.0)
+        self.assertAlmostEqual(noise["selfDiffFraction"], noise["perStep"]["s1.png"])
+        actual = self.root / "actual"
+        save(actual / "s1.png", a)
+        save(actual / "s2.png", a)
+        lines = [line for _, line in golden.compare(actual, self.scene, self.base, self.out)]
+        limits = [float(line.split()[4]) for line in lines]
+        self.assertAlmostEqual(limits[0], golden.effective_limit(0.002, noise["perStep"]["s1.png"]))
+        self.assertAlmostEqual(limits[1], 0.002)  # the quiet step is NOT widened by the noisy one
+        self.assertGreater(limits[0], limits[1])
+
+    def test_tone_limit_is_derived_from_recorded_spread_with_a_floor(self):
+        dev = np.array([0.0, 0.001, 0.02, 0.05, 0.2, 0.0, 0.0, 0.0, 0.0])
+        lim = golden.tone_limits(dev)
+        self.assertAlmostEqual(lim[0], golden.TONE_FLOOR)
+        self.assertAlmostEqual(lim[2], max(golden.TONE_FLOOR, golden.TONE_MULTIPLIER * 0.02))
+        self.assertAlmostEqual(lim[4], golden.TONE_MULTIPLIER * 0.2)
+        # recorded: runs that differ in brightness widen the limit of the statistics they move
+        a = golden.synthetic_frame()
+        dim = np.clip(a.astype(np.float32) * 0.9, 0, 255).astype(np.uint8)
+        dirs = []
+        for i in range(4):
+            d = self.root / f"r{i}"
+            save(d / "s1.png", dim if i == 3 else a)
+            dirs.append(d)
+        golden.record(dirs, self.scene, self.base)
+        stored = golden.json.loads((self.base / "t" / "noise.json").read_text())["tone"]["s1.png"]
+        self.assertGreater(stored[0], 0.05)  # mean luma moved ~10% between runs
+
+    def test_global_darkening_fails_on_the_tone_check_alone(self):
+        self.record()
+        dark = np.clip(golden.synthetic_frame().astype(np.float32) * 0.8, 0, 255).astype(np.uint8)
+        results = self.run_compare(dark)
+        self.assertFalse(results[0][0], results)
+        self.assertIn("tone", results[0][1].split("<- failed:")[-1])
+        # at a pixel threshold so high that no pixel counts, the pixel check is blind yet the compare still fails
+        blind = dict(self.scene, pixelThreshold=0.9)
+        self.assertFalse(self.run_compare(dark, blind, name="blind")[0][0])
+
+    def test_a_missing_small_figure_fails_on_the_block_check(self):
+        self.record()
+        gone = golden.synthetic_frame()
+        gone[60:120, 100:120] = gone[130:190, 100:120]  # the bar replaced by the ground below
+        results = self.run_compare(gone, dict(self.scene, maxFraction=1.0))  # pixel floor wide open
+        self.assertFalse(results[0][0], results)
+        self.assertIn("block", results[0][1].split("<- failed:")[-1])
+
     def test_selftest_passes(self):
         self.assertEqual(golden.selftest(), 0)
 
@@ -135,49 +198,103 @@ class GoldenCompareTests(unittest.TestCase):
 class RealBaselineTests(unittest.TestCase):
     """The committed baselines, with a doctored frame: the gate must still be able to fail on real pixels."""
 
-    BAR = (20, 60)  # full-resolution px, the "moved bar" class: a sword at the sky, a trail above the head
+    SCENES = ("spawn-noon", "spawn-night", "wolf-staged")
+    # Player figure (28x101 px incl. torch flame) on the 1440x1024 capture, and the ground 110 px below it.
+    FIGURE = (710, 468, 28, 101)
 
-    def doctored(self, scene_name, x=0, y=0, value=0.9, paint=True, bar=None):
+    def doctored(self, scene_name, edit=None, every_step=False):
+        """Compare the committed baseline (upscaled to capture size) after edit(full_res_frame) in place."""
         scene = golden.load_scene(scene_name)
-        base_dir = golden.BASELINES / scene_name
-        baseline = golden.list_pngs(base_dir)
+        baseline = golden.list_pngs(golden.BASELINES / scene_name)
         self.assertTrue(baseline, f"no committed baseline for {scene_name}: record with tools/golden/run.ps1 -Record")
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         actual = Path(tmp.name) / "actual"
         for path in baseline:
-            # the baseline is stored at half resolution: upscale it to a capture-sized frame
             half = golden.read_rgb(path)
             full = np.repeat(np.repeat(half, 2, axis=0), 2, axis=1)
-            if paint and path == baseline[-1]:
-                w, h = bar or self.BAR
-                full[y:y + h, x:x + w] = value
-            save(actual / path.name, (full * 255.0 + 0.5).astype(np.uint8))
+            if edit is not None and (every_step or path == baseline[-1]):
+                edit(full)
+            save(actual / path.name, (np.clip(full, 0, 1) * 255.0 + 0.5).astype(np.uint8))
         return scene, golden.compare(actual, scene, golden.BASELINES, Path(tmp.name) / "out")
 
+    @staticmethod
+    def paint(x, y, w, h, value):
+        def edit(full):
+            full[y:y + h, x:x + w] = value
+        return edit
+
+    @classmethod
+    def remove_figure(cls, rect=None):
+        x, y, w, h = rect or cls.FIGURE
+
+        def edit(full):
+            full[y:y + h, x:x + w] = full[y + 110:y + 110 + h, x:x + w]  # the ground just below
+        return edit
+
     def test_undoctored_baseline_passes_itself(self):
-        for name in ("spawn-noon", "spawn-night", "wolf-staged"):
-            _, results = self.doctored(name, paint=False)
+        for name in self.SCENES:
+            _, results = self.doctored(name)
             self.assertTrue(all(ok for ok, _ in results), results)
 
-    def test_a_20x60_bar_on_the_noon_baseline_fails_everywhere_it_is_painted(self):
-        for x, y in ((500, 360), (240, 200), (600, 660), (1000, 500)):
-            _, results = self.doctored("spawn-noon", x, y)
+    def test_a_20_percent_global_darkening_fails_every_step_of_every_scene(self):
+        # The per-pixel threshold alone is blind to this (0% of pixels move by > threshold); the tone check is not.
+        def darken(full):
+            full *= 0.8
+        for name in self.SCENES:
+            _, results = self.doctored(name, darken, every_step=True)
+            for ok, line in results:
+                self.assertFalse(ok, line)
+                self.assertIn("tone", line.split("<- failed:")[-1], line)
+
+    def test_a_40_percent_global_darkening_fails_every_scene(self):
+        # the reviewer's x0.6 case (0.83% of pixels vs a 1.11% night limit used to PASS)
+        def darken(full):
+            full *= 0.6
+        for name in self.SCENES:
+            _, results = self.doctored(name, darken, every_step=True)
+            self.assertFalse(any(ok for ok, _ in results), (name, results))
+
+    def test_removing_the_player_figure_fails_noon_and_wolf(self):
+        for name in ("spawn-noon", "wolf-staged"):
+            _, results = self.doctored(name, self.remove_figure())
+            self.assertFalse(results[-1][0], (name, results[-1]))
+            self.assertIn("block", results[-1][1].split("<- failed:")[-1], results[-1])
+
+    def test_a_100x100_block_fails_every_scene_including_night(self):
+        # bright over the player's feet, black on lit ground (black on the unlit void is no change at all)
+        for name in self.SCENES:
+            for x, y, value in ((690, 440, 0.9), (400, 550, 0.0)):
+                _, results = self.doctored(name, self.paint(x, y, 100, 100, value))
+                self.assertFalse(results[-1][0], (name, x, y, value, results[-1]))
+
+    def test_a_20x60_bar_on_the_noon_baseline_fails_where_it_is_painted(self):
+        for x, y in ((500, 360), (240, 200), (600, 660), (1000, 500), (1100, 100)):
+            _, results = self.doctored("spawn-noon", self.paint(x, y, 20, 60, 0.9))
             self.assertFalse(results[-1][0], (x, y, results[-1]))
 
-    def test_a_20x60_bar_in_the_dark_fails_the_noon_scene(self):
-        # Upper-right of the frame: sky/void, unlit by the torch, so flicker cannot hide it.
-        _, results = self.doctored("spawn-noon", 1100, 100)
-        self.assertFalse(results[-1][0], results[-1])
+    def test_a_200x300_block_fails_every_scene(self):
+        for name in self.SCENES:
+            _, results = self.doctored(name, self.paint(900, 80, 200, 300, 0.9))
+            self.assertFalse(results[-1][0], (name, results[-1]))
 
-    def test_night_and_wolf_are_gross_change_gates(self):
-        # Their limits are 4x the measured noise (night: torch flicker over the lit ground, about 1% of the frame;
-        # wolf: the fight), so a 20x60 bar (0.08%) passes there by design; a 200x300 block (4%) must still fail.
-        for name in ("spawn-night", "wolf-staged"):
-            _, small = self.doctored(name, 1100, 100)
-            self.assertTrue(small[-1][0], (name, small[-1]))
-            _, big = self.doctored(name, 900, 80, bar=(200, 300))
-            self.assertFalse(big[-1][0], (name, big[-1]))
+    def test_recorded_noise_is_per_step_with_tone_and_blocks(self):
+        for name in self.SCENES:
+            noise = golden.json.loads((golden.BASELINES / name / "noise.json").read_text())
+            self.assertGreaterEqual(noise["runs"], 8)
+            steps = [p.name for p in golden.list_pngs(golden.BASELINES / name)]
+            self.assertEqual(sorted(noise["perStep"]), steps)
+            self.assertEqual(sorted(noise["tone"]), steps)
+            self.assertEqual(noise["toneStats"], golden.TONE_NAMES)
+            blocks = np.load(golden.BASELINES / name / "blocks.npz")
+            self.assertEqual(sorted(blocks.files), steps)
+
+    def test_wolf_ignore_rect_leaves_the_gate_warden_in_the_compare(self):
+        # the rect masks the floating damage number only; the NPC column (x 733..750, y 115..185) must be compared
+        scene = golden.load_scene("wolf-staged")
+        mask = golden.ignore_mask((512, 720), scene["ignore"])
+        self.assertTrue(mask[85:90, 330:340].all(), "damage number zone must stay masked")
+        self.assertFalse(mask[60:90, 368:376].any(), "Gate Warden must not be masked")
 
 
 if __name__ == "__main__":
