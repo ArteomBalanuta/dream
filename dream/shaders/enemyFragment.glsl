@@ -3,6 +3,9 @@
 in vec2 texCoord0;
 in vec3 normal;
 in vec3 fragPos;
+// The unskinned model-space position (cubeVertex.glsl): the space the equipment surface detail
+// lives in, because it is nailed to the mesh and does not crawl when the figure walks.
+in vec3 localPos;
 
 out vec4 FragColor;
 
@@ -101,10 +104,163 @@ float dreamEquipNoise(vec3 p) {
 // which is exactly what the first in-engine pass of this wave showed. At 4 and 11 cycles the coarse
 // octaves read as dents, soot and scuffing across a few pixels, which is the point. Centred near 0.5.
 float dreamEquipGrain(vec3 worldPos) {
-    float n = dreamEquipNoise(worldPos * 11.0) * 0.52;
-    n += dreamEquipNoise(worldPos * 4.0) * 0.33;
-    n += dreamEquipNoise(worldPos * 26.0) * 0.15;
+    float n = dreamEquipNoise(worldPos * 6.0) * 0.52;
+    n += dreamEquipNoise(worldPos * 2.5) * 0.33;
+    n += dreamEquipNoise(worldPos * 14.0) * 0.15;
     return clamp(n, 0.0, 1.0);
+}
+
+// ---- Equipment surface DETAIL. Nothing below is reachable unless uEquipSurface.y > 0.0. ----
+//
+// x pattern id (EquipmentPattern), y model-to-metre scale for this part, z pattern depth,
+// w a per-item seed so two pieces of the same material do not share a wear map.
+//
+// Keyed on `localPos`, the UNSKINNED model-space position (cubeVertex.glsl), and on texCoord0 -
+// never on fragPos. fragPos is a world position, so a pattern keyed on it crawls across the piece
+// as the figure walks, which is what the first pass of this did. localPos is nailed to the mesh,
+// and uEquipDetail.y converts it to metres so a cuff and a cuirass get the same real grain size
+// instead of the same number of cycles across very different objects.
+//
+// EVERY FREQUENCY HERE IS CHOSEN AGAINST THE PIXEL, NOT AGAINST THE METRE. A worn part is about
+// 20 px across at the shipped isometric zoom, so a feature narrower than about 1/12th of a face is
+// sub-pixel and MSAA averages it into a flat tone - the first two passes of this block were tuned
+// by amplitude and showed nothing at all for exactly that reason. The rule: a border band is 0.10
+// of the UV or wider, a rivet is 0.09 of the UV or bigger, and a noise octave is under about 20
+// cycles per metre. Fewer, bigger, higher-contrast features. Anything finer is instructions spent
+// on something the player cannot see.
+//
+// Every pattern may only take light AWAY (the albedo multiplier it returns is at most 1.0): the
+// world pass has no tonemap and the albedo ceiling is the one thing holding the figure out of a
+// flat clipped patch. Features that have to read BRIGHT - a rivet head, a polished boss - do it by
+// lowering local roughness instead, so they answer with a specular glint rather than a lighter
+// albedo. That is also what they physically are.
+uniform vec4 uEquipDetail;
+
+const int EquipPatternNone = 0;
+const int EquipPatternPolishedPlate = 1;
+const int EquipPatternWornPlate = 2;
+const int EquipPatternHide = 3;
+const int EquipPatternWeave = 4;
+const int EquipPatternBone = 5;
+const int EquipPatternWood = 6;
+const int EquipPatternRune = 7;
+
+// Distance to the nearest edge of a face's 0..1 UV square, in UV units. Every shape gives each face
+// (or each band of a lathe) its own 0..1 patch, so this is "how far into the panel am I" - the
+// coordinate a border bevel, a rivet row and a stitch line all live in.
+float dreamEquipBorder(vec2 uv)
+{
+    vec2 d = min(uv, vec2(1.0) - uv);
+    return min(d.x, d.y);
+}
+
+// A row of dots following the panel border at `inset`, spaced `period` apart along it. Returns the
+// coverage of the nearest dot, 0..1.
+float dreamEquipRivets(vec2 uv, float inset, float period, float radius)
+{
+    float border = dreamEquipBorder(uv);
+    // Position ALONG the border: whichever axis is the near one supplies the other as the run.
+    vec2 d = min(uv, vec2(1.0) - uv);
+    float run = d.x < d.y ? uv.y : uv.x;
+    float along = fract(run / period) - 0.5;
+    float across = (border - inset) / radius;
+    float r = sqrt((along * period / radius) * (along * period / radius) + (across * across));
+    return 1.0 - smoothstep(0.6, 1.0, r);
+}
+
+// Value noise stretched along one axis: fibres, scratches, wood grain.
+float dreamEquipStreak(vec3 p, vec3 stretch, float seed)
+{
+    return dreamEquipNoise((p * stretch) + vec3(seed * 7.3, seed * 3.1, seed * 11.7));
+}
+
+// The surface pattern. Returns the albedo multiplier (<= 1.0) and writes a roughness delta.
+float dreamEquipPattern(vec3 lp, vec2 uv, int pattern, float depth, float seed, out float roughDelta)
+{
+    roughDelta = 0.0;
+    if (pattern == EquipPatternNone || depth <= 0.0) {
+        return 1.0;
+    }
+
+    float border = dreamEquipBorder(uv);
+    float albedo = 1.0;
+
+    if (pattern == EquipPatternPolishedPlate || pattern == EquipPatternWornPlate) {
+        // A plate is a PANEL: a bevelled border, a groove where two plates meet, a row of rivets
+        // just inside the edge, and hammer dimples across the field. The groove is what makes a
+        // flat face read as one plate among several rather than as a side of a box.
+        float groove = 1.0 - smoothstep(0.0, 0.105, border);
+        float bevel = smoothstep(0.08, 0.26, border);
+        albedo *= 1.0 - (0.46 * depth * groove);
+        // The bevel inside the groove catches light: rougher in the groove, smoother on the field.
+        roughDelta += depth * ((0.22 * groove) - (0.05 * bevel));
+
+        float rivets = dreamEquipRivets(uv, 0.165, 0.34, 0.092);
+        // A rivet head is a small polished dome: it reads by GLINTING, not by being pale.
+        roughDelta -= depth * 0.40 * rivets;
+        albedo *= 1.0 - (0.14 * depth * rivets);
+
+        float dimples = dreamEquipNoise((lp * 9.0) + vec3(seed * 5.0));
+        albedo *= 1.0 - (depth * 0.16 * (1.0 - dimples));
+        roughDelta += depth * 0.16 * (1.0 - dimples);
+
+        if (pattern == EquipPatternWornPlate) {
+            // Blackened iron: deeper pitting, and long scratches running down the piece.
+            float pits = dreamEquipNoise((lp * 16.0) + vec3(seed * 13.0));
+            albedo *= 1.0 - (depth * 0.22 * smoothstep(0.52, 1.0, 1.0 - pits));
+            float scratch = dreamEquipStreak(lp, vec3(14.0, 2.0, 14.0), seed);
+            roughDelta += depth * 0.26 * smoothstep(0.62, 1.0, scratch);
+        }
+    } else if (pattern == EquipPatternHide) {
+        // Leather: a fibrous grain running the length of the piece, a soft mottle, and a stitch
+        // line following the border - the one detail that says "sewn" at this size.
+        float fibre = dreamEquipStreak(lp, vec3(17.0, 4.0, 17.0), seed);
+        albedo *= 1.0 - (depth * 0.20 * (1.0 - fibre));
+        float mottle = dreamEquipNoise((lp * 5.0) + vec3(seed * 3.0));
+        albedo *= 1.0 - (depth * 0.16 * (1.0 - mottle));
+        float stitch = dreamEquipRivets(uv, 0.125, 0.20, 0.055);
+        albedo *= 1.0 - (depth * 0.34 * stitch);
+        roughDelta += depth * (0.18 - (0.10 * fibre));
+    } else if (pattern == EquipPatternWeave) {
+        // Cloth: a warp and weft lattice far too fine to resolve on its own, so what actually reads
+        // is the low-frequency fold field it rides on. Both are here; the lattice survives as a
+        // texture when the figure is close and averages into the fold value when it is not.
+        float warp = 0.5 + (0.5 * sin(uv.x * 26.0));
+        float weft = 0.5 + (0.5 * sin(uv.y * 26.0));
+        float lattice = max(warp, weft);
+        albedo *= 1.0 - (depth * 0.08 * (1.0 - lattice));
+        float folds = dreamEquipNoise((lp * vec3(4.5, 3.0, 4.5)) + vec3(seed * 2.0));
+        albedo *= 1.0 - (depth * 0.30 * (1.0 - folds));
+        roughDelta += depth * 0.10;
+    } else if (pattern == EquipPatternBone) {
+        // Bone: striations down the length, and pitting at the ends where it is worked.
+        float striae = 0.5 + (0.5 * sin((lp.y * 19.0) + (dreamEquipNoise(lp * 6.0) * 6.0)));
+        albedo *= 1.0 - (depth * 0.20 * (1.0 - striae));
+        float pits = dreamEquipNoise((lp * 13.0) + vec3(seed * 9.0));
+        albedo *= 1.0 - (depth * 0.22 * smoothstep(0.58, 1.0, 1.0 - pits));
+        roughDelta += depth * 0.14;
+    } else if (pattern == EquipPatternWood) {
+        // Wood: long grain along the haft with the odd knot, and a darker line where the grain runs
+        // out. A haft is often the longest thing on screen, so its grain is worth the instructions.
+        float grain = dreamEquipStreak(lp, vec3(20.0, 2.5, 20.0), seed);
+        albedo *= 1.0 - (depth * 0.24 * (1.0 - grain));
+        float knots = dreamEquipNoise((lp * vec3(3.5, 1.6, 3.5)) + vec3(seed * 4.0));
+        albedo *= 1.0 - (depth * 0.26 * smoothstep(0.74, 1.0, knots));
+        roughDelta += depth * 0.16;
+    } else if (pattern == EquipPatternRune) {
+        // The glowing materials: banded filigree across the piece, dark between the bands. The glow
+        // itself is the material emissive, added after exposure; this only carves the dark away
+        // from it so the light reads as lines rather than as a solid block of colour.
+        float bands = 0.5 + (0.5 * sin((lp.y * 9.0) + (lp.x * 4.0) + (seed * 3.0)));
+        albedo *= 1.0 - (depth * 0.34 * smoothstep(0.35, 0.95, 1.0 - bands));
+        roughDelta -= depth * 0.10;
+    }
+
+    // No extra border term here: the plate groove and the leather stitch already own the border,
+    // and a second one stacked on top of them is what turned the first pass muddy rather than
+    // detailed. The floor is deliberately high - a pattern is a MODULATION, and anything that can
+    // halve a piece's albedo is competing with the material palette instead of decorating it.
+    return clamp(albedo, 0.58, 1.0);
 }
 
 // The NORMALISED Blinn-Phong lobe: (shininess + 8) / (8 pi) keeps the energy under the lobe constant
@@ -161,19 +317,31 @@ void main()
         float rough = clamp(uEquipSurface.y, EquipMinRoughness, 1.0);
         float grain = clamp(uEquipSurface.z, 0.0, 1.0);
 
-        // Surface grain. The modulation is mostly DOWNWARD, so a piece gets pitted, not brighter.
-        float wear = dreamEquipGrain(fragPos);
+        // Surface grain, the base layer every material gets: broad dents and soot. Keyed on the
+        // model-space position scaled to metres, so it is attached to the piece.
+        vec3 detailPos = localPos * max(uEquipDetail.y, 0.001);
+        float wear = dreamEquipGrain(detailPos + vec3(uEquipDetail.w * 17.0));
         // ONE-SIDED on purpose. `lit` is linear in the albedo, so an upward lobe here is exactly an
         // albedo multiplier, and it would lift a piece past EquipmentTint.MaxAlbedoChannel - the
         // ceiling the CPU clamp is documented to guarantee - straight back into a blown-out patch.
         // Wear takes light away; it never adds any.
-        float wearAlbedo = mix(1.0 - 0.34 * grain, 1.0, wear);
+        float wearAlbedo = mix(1.0 - 0.20 * grain, 1.0, wear);
         // `lit` above is albedo * max(G, floor) and is LINEAR in the albedo, so scaling it here is
         // exactly the same thing as modulating the albedo before the floor clamp - and because it
         // scales both terms, the floor still holds and a dark piece can never go black.
         lit *= wearAlbedo;
         // A worn patch scatters wider: the hollows of the grain (low wear) are the rough ones.
         rough = clamp(rough + grain * 0.30 * (1.0 - wear), EquipMinRoughness, 1.0);
+
+        // The material's own surface ON TOP of the grain: panel seams and rivets on plate, fibre
+        // and stitching on leather, weave and folds on cloth, striations on bone, grain on wood,
+        // filigree on the glowing materials. This is the layer that stops a part reading as one
+        // flat value, which is the whole complaint the sculpting alone did not answer.
+        float patternRough;
+        float patternAlbedo = dreamEquipPattern(
+            detailPos, texCoord0, int(uEquipDetail.x + 0.5), uEquipDetail.z, uEquipDetail.w, patternRough);
+        lit *= patternAlbedo;
+        rough = clamp(rough + patternRough, EquipMinRoughness, 1.0);
 
         vec3 v = normalize(uEquipEye - fragPos);
         float a = max(rough, EquipMinRoughness);

@@ -101,11 +101,81 @@ public static class EquipmentShapeLibrary
         return writer.ToMesh();
     }
 
-    // TEMPORARY stand-ins, replaced by the real geometry in the same wave: a Horn draws as a Spike
-    // and a Flare as a Taper, so a part that names one is never invisible while the two are built.
-    private static void AppendHorn(MeshWriter writer) => AppendSpike(writer);
+    // A curved, tapering horn: a cone swept along a circular arc that starts pointing along +Y and
+    // leans toward +Z as it rises, ending in a point. Spike is the straight version of this and
+    // reads as a stud; the sweep is the whole difference, because it puts the silhouette's weight
+    // off the vertical and that is what the eye calls a horn.
+    //
+    // The section is a circle perpendicular to the path, so the horn stays round as it bends - a
+    // horn built as stacked axis-aligned rings pinches on the inside of the curve. The tip ring is
+    // tiny rather than a single point: a zero-radius ring would stitch degenerate triangles.
+    private static void AppendHorn(MeshWriter writer)
+    {
+        const int segments = 8;
+        const float sweep = 1.2f;   // radians, about 69 degrees of lean by the tip
+        const float pathRadius = 0.75f;
+        ReadOnlySpan<float> stops = [0f, 0.22f, 0.44f, 0.66f, 0.85f, 1f];
 
-    private static void AppendFlare(MeshWriter writer) => AppendTaper(writer);
+        Vector3[][] rings = new Vector3[stops.Length][];
+        for (int i = 0; i < stops.Length; i++)
+        {
+            float t = stops[i];
+            float angle = sweep * t;
+            float sin = MathF.Sin(angle);
+            float cos = MathF.Cos(angle);
+            // The arc: tangent is +Y at the base and rotates toward +Z.
+            Vector3 centre = new(0f, pathRadius * sin, pathRadius * (1f - cos));
+            Vector3 across = Vector3.UnitX;
+            Vector3 up = new(0f, -sin, cos);
+            // A touch of entasis on the taper, so the horn swells out of its base instead of
+            // starting to shrink immediately.
+            float radius = i == stops.Length - 1
+                ? 0.012f
+                : 0.30f * MathF.Pow(1f - t, 0.82f) * (1f + (0.10f * MathF.Sin(MathF.PI * t)));
+
+            Vector3[] ring = new Vector3[segments];
+            for (int k = 0; k < segments; k++)
+            {
+                float theta = MathF.Tau * k / segments;
+                ring[k] = centre + (radius * ((MathF.Cos(theta) * across) + (MathF.Sin(theta) * up)));
+            }
+
+            rings[i] = ring;
+        }
+
+        AppendTube(writer, rings, null, Repeat(segments, false), TubeCap.Fan, TubeCap.Fan);
+    }
+
+    // A bell: narrow at the base, widening along a CONCAVE profile to a flared lip, hollow, with a
+    // wall and a rolled rim. A cuff, a boot top, a fauld skirt, a helm brim.
+    //
+    // Built as a lathe of a CLOSED profile rather than a stack of rings, because the thing that has
+    // to read is the rim: the profile runs up the outside, across the lip and back down the inside,
+    // so the lip is a real edge with a thickness instead of a cut-off cone. The profile never
+    // touches the axis, so the solid is a ring in topology and stays watertight.
+    private static void AppendFlare(MeshWriter writer)
+    {
+        // (radius, height), counter-clockwise, so the 2D edge normal (dy, -dx) points outward.
+        ReadOnlySpan<Vector2> profile =
+        [
+            new Vector2(0.18f, -0.50f),   // outer wall, from the narrow base
+            new Vector2(0.26f, -0.18f),
+            new Vector2(0.38f, 0.14f),
+            new Vector2(0.50f, 0.42f),    // the flare
+            new Vector2(0.50f, 0.50f),    // outer lip
+            new Vector2(0.43f, 0.50f),    // across the rim
+            new Vector2(0.41f, 0.36f),    // inner wall, back down
+            new Vector2(0.31f, 0.06f),
+            new Vector2(0.21f, -0.24f),
+            new Vector2(0.13f, -0.50f),   // inner base; the bottom annulus closes to point 0
+        ];
+
+        // Creases: the lip and both rim corners, and the bottom annulus. The walls stay smooth, so
+        // the bell has a run of light up it and a hard bright line along the rim.
+        bool[] hard = [true, false, false, true, true, true, false, false, false, true];
+
+        AppendLathe(writer, profile, hard, segments: 10);
+    }
 
     // The legacy unit cube: six flat-shaded quads, outward normals, each face UV 0..1.
     private static void AppendBox(MeshWriter writer)
@@ -794,6 +864,69 @@ public static class EquipmentShapeLibrary
         }
 
         return ring;
+    }
+
+    // Revolves a CLOSED 2D profile of (radius, height) points about the Y axis. The profile must be
+    // counter-clockwise in that plane and must not touch the axis, so the result is watertight with
+    // no pole. A profile point flagged in `hard` keeps a crease: its two edges each get their own
+    // normal instead of the average, which is how a rim stays a rim.
+    private static void AppendLathe(MeshWriter writer, ReadOnlySpan<Vector2> source, bool[] hard, int segments)
+    {
+        // Copied out of the span: the local functions below capture it, and a ref struct cannot be
+        // captured.
+        Vector2[] profile = source.ToArray();
+        int count = profile.Length;
+
+        // The outward 2D normal of each edge i -> i+1.
+        Vector2[] edgeNormal = new Vector2[count];
+        for (int i = 0; i < count; i++)
+        {
+            Vector2 d = profile[(i + 1) % count] - profile[i];
+            Vector2 n = new(d.Y, -d.X);
+            edgeNormal[i] = n.LengthSquared > 1e-12f ? Vector2.Normalize(n) : Vector2.UnitX;
+        }
+
+        // The 2D normal to use at profile point i when it is the START of edge e, and when it is the
+        // END of edge e: equal (the average) at a smooth point, each edge's own at a hard one.
+        Vector2 NormalAt(int point, int edge)
+        {
+            if (hard[point])
+            {
+                return edgeNormal[edge];
+            }
+
+            int previous = (edge + count - 1) % count;
+            Vector2 sum = edgeNormal[previous] + edgeNormal[edge];
+            return sum.LengthSquared > 1e-12f ? Vector2.Normalize(sum) : edgeNormal[edge];
+        }
+
+        (Vector3 Position, Vector3 Normal, Vector2 Uv) Vertex(int point, int edge, int segment)
+        {
+            float theta = MathF.Tau * segment / segments;
+            float cos = MathF.Cos(theta);
+            float sin = MathF.Sin(theta);
+            Vector2 p = profile[point];
+            Vector2 n = NormalAt(point, edge);
+            return (
+                new Vector3(p.X * cos, p.Y, p.X * sin),
+                new Vector3(n.X * cos, n.Y, n.X * sin),
+                Uv((float)segment / segments, (float)point / count));
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            int next = (i + 1) % count;
+            for (int k = 0; k < segments; k++)
+            {
+                int k1 = (k + 1) % segments;
+                // a -> b along the profile, b -> c around the lathe: counter-clockwise from outside.
+                writer.Quad(
+                    Vertex(i, i, k),
+                    Vertex(next, i, k),
+                    Vertex(next, i, k1 == 0 ? segments : k1),
+                    Vertex(i, i, k1 == 0 ? segments : k1));
+            }
+        }
     }
 
     private static bool[] Repeat(int count, bool value)

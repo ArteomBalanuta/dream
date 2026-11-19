@@ -165,15 +165,18 @@ public sealed class HeldWeaponRenderer : IDisposable
         // know falls back to the generic stick AND to the generic stick's tint, instead of being
         // drawn as the stick in some other item's colours. WornArmourRenderer resolves the same way.
         EquipmentTint tint = EquipmentTintCatalog.Resolve(model.VisualId);
+        float seed = EquipmentDetail.SeedFor(model.VisualId);
         WeaponPart[] parts = model.PartArray;
         WeaponMaterial lastMaterial = (WeaponMaterial)(-1);
         for (int i = 0; i < parts.Length; i++)
         {
             WeaponPart part = parts[i];
+            // The surface is a pure lookup, so it is resolved every part: its material half only
+            // reaches GL on a material change, but its PATTERN SIZE is per part.
+            EquipmentSurface surface = EquipmentSurface.For(part.Material);
             if (part.Material != lastMaterial)
             {
                 lastMaterial = part.Material;
-                EquipmentSurface surface = EquipmentSurface.For(part.Material);
                 shader.SetVector4(
                     "material.baseColorFactor",
                     tint.Apply(WeaponMeshCatalog.BaseColor(part.Material), surface.AccentMix));
@@ -181,6 +184,10 @@ public sealed class HeldWeaponRenderer : IDisposable
                 shader.SetEquipmentSurface(surface.ToUniform());
             }
 
+            // The pattern's SIZE is per part, not per material, so this is set every part rather
+            // than only on a material change: a buckle and a breastplate share a material and must
+            // not share a grain size.
+            shader.SetEquipmentDetail(surface.ToDetailUniform(EquipmentDetail.PartMetres(part.Size, scale), seed));
             shader.SetModelMatrix(part.ToMatrix() * attach);
             // The VAO changes with the shape; DrawBatched rebinds, so one batch still spans them all.
             _meshes.Get(part.Shape).DrawBatched();

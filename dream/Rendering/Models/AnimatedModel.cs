@@ -551,6 +551,7 @@ public class AnimatedModel : IDisposable
         // ever stale (Wave9AlphaMaskUniformCoverageTests).
         program.SetEquipmentSurface(Vector4.Zero);
         program.SetEquipmentEye(Vector3.Zero);
+        program.SetEquipmentDetail(Vector4.Zero);
         program.SetVector2("uWind", Wind);
         if (!instanced)
         {

@@ -33,6 +33,7 @@ public sealed class Shader : IDisposable
     // (cubeFragment.glsl, the HUD programs) resolve to -1 and upload nothing.
     public const string EquipmentSurfaceUniformName = "uEquipSurface";
     public const string EquipmentEyeUniformName = "uEquipEye";
+    public const string EquipmentDetailUniformName = "uEquipDetail";
 
     // Defined in the fragment source of a world program's MASK variant only. The cutoff discard
     // sits behind it: a fragment shader that can discard loses early depth optimizations even when
@@ -53,6 +54,7 @@ public sealed class Shader : IDisposable
     private int _timeLocation = -1;
     private int _equipmentSurfaceLocation = -1;
     private int _equipmentEyeLocation = -1;
+    private int _equipmentDetailLocation = -1;
 
     // Last cutoff uploaded. Uniform values live in the program, so a value already there is not
     // uploaded again. Unknown until the first upload.
@@ -72,6 +74,7 @@ public sealed class Shader : IDisposable
     // upload, so the first reset to zero after a pass is always really uploaded.
     private Vector4 _uploadedEquipmentSurface = new(float.NaN);
     private Vector3 _uploadedEquipmentEye = new(float.NaN);
+    private Vector4 _uploadedEquipmentDetail = new(float.NaN);
 
     public Shader(string vertexPath, string fragmentPath, string? fragmentDefine = null)
     {
@@ -157,6 +160,7 @@ public sealed class Shader : IDisposable
         _timeLocation = GetUniformLocation(TimeUniformName);
         _equipmentSurfaceLocation = GetUniformLocation(EquipmentSurfaceUniformName);
         _equipmentEyeLocation = GetUniformLocation(EquipmentEyeUniformName);
+        _equipmentDetailLocation = GetUniformLocation(EquipmentDetailUniformName);
         // GL 3.3 core has no layout(binding = N) on a block, so the FrameLighting block (from
         // lighting.glsl) and the LightList block (pointLights.glsl) are pointed at their binding
         // points here, once per program; the BoundaryMist block (boundaryMist.glsl) and the FireShadowList block
@@ -446,6 +450,22 @@ public sealed class Shader : IDisposable
         _uploadedEquipmentSurface = surface;
     }
 
+    // `uEquipDetail` (x pattern id, y the part's size in metres, z pattern depth, w a per-item
+    // seed): which procedural surface the equipment block draws and how big it is. Read only when
+    // uEquipSurface is non-zero, so it needs no reset of its own - but it is still zeroed with the
+    // rest on a program switch, because a stale value is a stale value.
+    public void SetEquipmentDetail(Vector4 detail)
+    {
+        if (_equipmentDetailLocation < 0 || detail.Equals(_uploadedEquipmentDetail))
+        {
+            return;
+        }
+
+        GL.Uniform4(_equipmentDetailLocation, detail);
+        RenderCounters.CountUniformUpload();
+        _uploadedEquipmentDetail = detail;
+    }
+
     // `uEquipEye`: the real eye in world space, for the equipment specular half vector. The frame
     // lighting block's uCameraPosition is the FOG origin (the isometric focus), not the eye, so the
     // specular needs its own. Cached and -1 tolerant like the setter above.
@@ -564,6 +584,7 @@ public sealed class Shader : IDisposable
             _timeLocation = -1;
             _equipmentSurfaceLocation = -1;
             _equipmentEyeLocation = -1;
+            _equipmentDetailLocation = -1;
         }
     }
     #endregion

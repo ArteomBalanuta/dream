@@ -30,6 +30,12 @@ const vec2 WindDirection = vec2(0.8, 0.6);
 out vec2 texCoord0;
 out vec3 normal;
 out vec3 fragPos;
+out vec3 localPos;
+// The UNSKINNED model-space position, before any instance or model matrix. The equipment surface
+// detail in enemyFragment.glsl is keyed on this rather than on fragPos, because fragPos is a WORLD
+// position: a pattern keyed on it swims across the piece as the figure walks. This is nailed to the
+// mesh. Every other fragment shader ignores it; an unread vertex output costs a varying slot and
+// nothing else.
 
 int safeJointIndex(float rawIndex)
 {
@@ -82,6 +88,7 @@ void main()
         float weight = uWind.x * pow(max(aPos.y, 0.0), uWind.y) * instanceScale;
         fragPos.xz += WindDirection * (sway * weight);
     }
+    localPos = aPos;
     texCoord0 = aTexCoord0;
     normal = resolvedNormalMatrix * localNormal;
     

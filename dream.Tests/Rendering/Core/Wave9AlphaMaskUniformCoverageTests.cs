@@ -49,6 +49,7 @@ public class Wave9AlphaMaskUniformCoverageTests
             ["uTime"] = switchPaths.Contains("SetTime(", StringComparison.Ordinal),
             ["uEquipSurface"] = switchPaths.Contains("SetEquipmentSurface(", StringComparison.Ordinal),
             ["uEquipEye"] = switchPaths.Contains("SetEquipmentEye(", StringComparison.Ordinal),
+            ["uEquipDetail"] = switchPaths.Contains("SetEquipmentDetail(", StringComparison.Ordinal),
             ["jointMatrices"] = switchPaths.Contains("JointMatrixArrayUniformName", StringComparison.Ordinal),
         };
 

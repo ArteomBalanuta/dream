@@ -17,6 +17,10 @@ namespace Dream.Rendering.Actors;
 // player renderer) calls Draw right after the model, with the same shader and model matrix.
 public sealed class WornArmourRenderer : IDisposable
 {
+    // Armour draws at scale 1.0: it must match the baked body exactly (see the header). Named so
+    // the surface-pattern sizing says out loud which scale it is converting from.
+    public const float WornItemScale = 1f;
+
     // The arm hangs 0.2 either side of its node (see HeldWeaponRenderer.FistOffsetX).
     public const float ArmOffsetX = 0.2f;
 
@@ -217,15 +221,18 @@ public sealed class WornArmourRenderer : IDisposable
         // guard below is per piece too (lastMaterial is local to this call): the second of two
         // pieces of the same material re-sets the colour with its own tier instead of inheriting.
         EquipmentTint tint = EquipmentTintCatalog.Resolve(model.VisualId);
+        float seed = EquipmentDetail.SeedFor(model.VisualId);
         ArmourPart[] parts = model.PartArray;
         ArmourMaterial lastMaterial = (ArmourMaterial)(-1);
         for (int i = 0; i < parts.Length; i++)
         {
             ArmourPart part = parts[i];
+            // The surface is a pure lookup, so it is resolved every part: its material half only
+            // reaches GL on a material change, but its PATTERN SIZE is per part.
+            EquipmentSurface surface = EquipmentSurface.For(part.Material);
             if (part.Material != lastMaterial)
             {
                 lastMaterial = part.Material;
-                EquipmentSurface surface = EquipmentSurface.For(part.Material);
                 shader.SetVector4(
                     "material.baseColorFactor",
                     tint.Apply(ArmourMeshCatalog.BaseColor(part.Material), surface.AccentMix));
@@ -233,6 +240,10 @@ public sealed class WornArmourRenderer : IDisposable
                 shader.SetEquipmentSurface(surface.ToUniform());
             }
 
+            // The pattern's SIZE is per part, not per material, so this is set every part rather
+            // than only on a material change: a buckle and a breastplate share a material and must
+            // not share a grain size.
+            shader.SetEquipmentDetail(surface.ToDetailUniform(EquipmentDetail.PartMetres(part.Size, WornItemScale), seed));
             shader.SetModelMatrix(part.ToMatrix() * attach);
             // The VAO changes with the shape; DrawBatched rebinds, so one batch still spans them all.
             _meshes.Get(part.Shape).DrawBatched();

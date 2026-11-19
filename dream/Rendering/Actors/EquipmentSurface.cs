@@ -21,7 +21,31 @@ namespace Dream.Rendering.Actors;
 //   AccentMix 0..1  how much of an item's accent tint this material takes (see EquipmentTint). The
 //                   trim materials take it fully; the structural metal takes none, so a tier colour
 //                   reads as a trim, not as a wash over the whole piece.
-public readonly record struct EquipmentSurface(float Metallic, float Roughness, float Grain, float AccentMix)
+// The procedural surface a material wears, mirrored by the constants at the top of the equipment
+// block in enemyFragment.glsl. A part is one flat colour without this: sculpting fixed the FORM,
+// and this is what fixes the SURFACE - panel seams and rivets on plate, fibre and stitching on
+// leather, weave and folds on cloth, striations on bone, long grain on wood, filigree on a glowing
+// piece. The pattern only ever takes light away; anything that has to read bright does it by
+// lowering local roughness, so it glints instead of breaking the albedo ceiling.
+public enum EquipmentPattern
+{
+    None = 0,
+    PolishedPlate,
+    WornPlate,
+    Hide,
+    Weave,
+    Bone,
+    Wood,
+    Rune,
+}
+
+public readonly record struct EquipmentSurface(
+    float Metallic,
+    float Roughness,
+    float Grain,
+    float AccentMix,
+    EquipmentPattern Pattern = EquipmentPattern.None,
+    float PatternDepth = 0f)
 {
     // The shader off. Any draw that does not set uEquipSurface leaves it here.
     public static readonly EquipmentSurface None = new(0f, 0f, 0f, 0f);
@@ -29,37 +53,75 @@ public readonly record struct EquipmentSurface(float Metallic, float Roughness, 
     // x metallic, y roughness, z grain, w accentMix - the layout enemyFragment.glsl reads.
     public Vector4 ToUniform() => new(Metallic, Roughness, Grain, AccentMix);
 
+    // The second uniform the shader reads: x pattern id, y the part's size in METRES (so a cuff and
+    // a cuirass get the same real grain size rather than the same number of cycles across very
+    // different objects), z the pattern depth, w a per-item seed.
+    public Vector4 ToDetailUniform(float partMetres, float seed) =>
+        new((float)Pattern, MathF.Max(partMetres, 0.001f), PatternDepth, seed);
+
     // Roughness is clamped away from a mirror in the shader too; this is the authoring floor.
     public const float MinRoughness = 0.18f;
 
     public static EquipmentSurface For(WeaponMaterial material) => material switch
     {
-        WeaponMaterial.Steel => new EquipmentSurface(1.0f, 0.30f, 0.30f, 0.0f),
-        WeaponMaterial.DarkIron => new EquipmentSurface(0.9f, 0.48f, 0.55f, 0.0f),
-        WeaponMaterial.Wood => new EquipmentSurface(0.0f, 0.78f, 0.70f, 0.1f),
-        WeaponMaterial.Leather => new EquipmentSurface(0.1f, 0.62f, 0.65f, 0.25f),
-        WeaponMaterial.Gilt => new EquipmentSurface(1.0f, 0.34f, 0.35f, 1.0f),
-        WeaponMaterial.Cloth => new EquipmentSurface(0.0f, 0.90f, 0.80f, 1.0f),
-        WeaponMaterial.Arcane => new EquipmentSurface(0.35f, 0.22f, 0.15f, 1.0f),
-        WeaponMaterial.Ember => new EquipmentSurface(0.2f, 0.55f, 0.60f, 1.0f),
-        WeaponMaterial.Bone => new EquipmentSurface(0.0f, 0.66f, 0.72f, 0.2f),
+        WeaponMaterial.Steel => new EquipmentSurface(1.0f, 0.30f, 0.30f, 0.0f, EquipmentPattern.PolishedPlate, 0.85f),
+        WeaponMaterial.DarkIron => new EquipmentSurface(0.9f, 0.48f, 0.55f, 0.0f, EquipmentPattern.WornPlate, 1.0f),
+        WeaponMaterial.Wood => new EquipmentSurface(0.0f, 0.78f, 0.70f, 0.1f, EquipmentPattern.Wood, 0.95f),
+        WeaponMaterial.Leather => new EquipmentSurface(0.1f, 0.62f, 0.65f, 0.25f, EquipmentPattern.Hide, 0.95f),
+        WeaponMaterial.Gilt => new EquipmentSurface(1.0f, 0.34f, 0.35f, 1.0f, EquipmentPattern.PolishedPlate, 0.70f),
+        WeaponMaterial.Cloth => new EquipmentSurface(0.0f, 0.90f, 0.80f, 1.0f, EquipmentPattern.Weave, 0.90f),
+        WeaponMaterial.Arcane => new EquipmentSurface(0.35f, 0.22f, 0.15f, 1.0f, EquipmentPattern.Rune, 0.80f),
+        WeaponMaterial.Ember => new EquipmentSurface(0.2f, 0.55f, 0.60f, 1.0f, EquipmentPattern.Rune, 0.70f),
+        WeaponMaterial.Bone => new EquipmentSurface(0.0f, 0.66f, 0.72f, 0.2f, EquipmentPattern.Bone, 0.90f),
         _ => None,
     };
 
     public static EquipmentSurface For(ArmourMaterial material) => material switch
     {
-        ArmourMaterial.Steel => new EquipmentSurface(1.0f, 0.32f, 0.32f, 0.0f),
-        ArmourMaterial.DarkIron => new EquipmentSurface(0.9f, 0.50f, 0.58f, 0.0f),
-        ArmourMaterial.Leather => new EquipmentSurface(0.1f, 0.62f, 0.65f, 0.25f),
-        ArmourMaterial.ClothCold => new EquipmentSurface(0.0f, 0.92f, 0.80f, 1.0f),
-        ArmourMaterial.ClothAsh => new EquipmentSurface(0.0f, 0.90f, 0.82f, 1.0f),
-        ArmourMaterial.ClothRed => new EquipmentSurface(0.0f, 0.88f, 0.78f, 1.0f),
-        ArmourMaterial.Bone => new EquipmentSurface(0.0f, 0.66f, 0.72f, 0.2f),
-        ArmourMaterial.Gilt => new EquipmentSurface(1.0f, 0.34f, 0.35f, 1.0f),
-        ArmourMaterial.Arcane => new EquipmentSurface(0.35f, 0.22f, 0.15f, 1.0f),
-        ArmourMaterial.Ember => new EquipmentSurface(0.2f, 0.55f, 0.60f, 1.0f),
+        ArmourMaterial.Steel => new EquipmentSurface(1.0f, 0.32f, 0.32f, 0.0f, EquipmentPattern.PolishedPlate, 0.85f),
+        ArmourMaterial.DarkIron => new EquipmentSurface(0.9f, 0.50f, 0.58f, 0.0f, EquipmentPattern.WornPlate, 1.0f),
+        ArmourMaterial.Leather => new EquipmentSurface(0.1f, 0.62f, 0.65f, 0.25f, EquipmentPattern.Hide, 0.95f),
+        ArmourMaterial.ClothCold => new EquipmentSurface(0.0f, 0.92f, 0.80f, 1.0f, EquipmentPattern.Weave, 0.90f),
+        ArmourMaterial.ClothAsh => new EquipmentSurface(0.0f, 0.90f, 0.82f, 1.0f, EquipmentPattern.Weave, 0.95f),
+        ArmourMaterial.ClothRed => new EquipmentSurface(0.0f, 0.88f, 0.78f, 1.0f, EquipmentPattern.Weave, 0.90f),
+        ArmourMaterial.Bone => new EquipmentSurface(0.0f, 0.66f, 0.72f, 0.2f, EquipmentPattern.Bone, 0.90f),
+        ArmourMaterial.Gilt => new EquipmentSurface(1.0f, 0.34f, 0.35f, 1.0f, EquipmentPattern.PolishedPlate, 0.70f),
+        ArmourMaterial.Arcane => new EquipmentSurface(0.35f, 0.22f, 0.15f, 1.0f, EquipmentPattern.Rune, 0.80f),
+        ArmourMaterial.Ember => new EquipmentSurface(0.2f, 0.55f, 0.60f, 1.0f, EquipmentPattern.Rune, 0.70f),
         _ => None,
     };
+}
+
+// The two numbers the surface pattern needs that are not properties of the material: how big the
+// part really is, and which item it belongs to.
+public static class EquipmentDetail
+{
+    // 1 m = 1.408 model units on the authored figure (HeldItemScale).
+    public const float ModelUnitsPerMetre = 1.408f;
+
+    // The mean authored extent of a part, in metres. Without it a buckle and a breastplate would get
+    // the same NUMBER of grain cycles rather than the same grain SIZE, and every small part would
+    // look like coarse rock.
+    public static float PartMetres(Vector3 size, float itemScale) =>
+        (size.X + size.Y + size.Z) / 3f * itemScale / ModelUnitsPerMetre;
+
+    // A stable seed in 0..1 from the visual id (FNV-1a), so two pieces of the same material do not
+    // share a wear map, and one item looks the same every frame, on every client, forever.
+    public static float SeedFor(string? visualId)
+    {
+        if (string.IsNullOrEmpty(visualId))
+        {
+            return 0f;
+        }
+
+        uint hash = 2166136261u;
+        for (int i = 0; i < visualId.Length; i++)
+        {
+            hash = (hash ^ visualId[i]) * 16777619u;
+        }
+
+        return (hash & 0xFFFFu) / 65535f;
+    }
 }
 
 // The colour variation an item carries: a primary multiplier over the whole piece and an accent
