@@ -223,6 +223,7 @@ public static class ArmourMeshCatalog
         const ArmourMaterial Red = ArmourMaterial.ClothRed;
         const ArmourMaterial Bone = ArmourMaterial.Bone;
         const ArmourMaterial Gilt = ArmourMaterial.Gilt;
+        const ArmourMaterial Indigo = ArmourMaterial.Indigo;
 
         const EquipmentShape BevelBox = EquipmentShape.BevelBox;
         const EquipmentShape Shaft = EquipmentShape.Shaft;
@@ -307,6 +308,31 @@ public static class ArmourMeshCatalog
             Box(0.13f, 0.40f, 0.10f, 0.045f, 0.10f, 0.08f, Gilt, roll: -35f, shape: Horn),
             Box(-0.13f, 0.40f, 0.10f, 0.045f, 0.10f, 0.08f, Gilt, roll: 35f, shape: Horn),
             Box(0f, 0.30f, 0.165f, 0.22f, 0.04f, 0.04f, Steel, shape: BevelBox));
+
+        // The royal sorcerer's crown, and the first piece in the catalog whose FIELD is enamelled Indigo rather
+        // than blackened iron: a close indigo hood shell over a dark mask, a gold brow band with a pointed gold
+        // nasal guard dropped from it, and FIVE gold crown points rooted in that band - a tall centre horn with
+        // two shorter pairs fanning out to the sides, every one of them a Horn so the crown reads as swept
+        // regalia and not as a ring of studs. The crest is the only thing allowed past half-width 0.18, and it
+        // uses the band the head section opens above y 0.42; the outer pair is the widest at 0.25.
+        // The one light material is a narrow Steel brow bar over the nasal guard: gold is the colour of this
+        // set, but Gilt's luma is 0.24 and it is not a LIGHT material, so without that bar the crown would own
+        // no bright facet at all.
+        Add("worn.head.sorcerer-crown", ArmourMount.Head,
+            Box(0f, 0.22f, 0f, 0.34f, 0.46f, 0.34f, Indigo, shape: Dome),
+            Box(0f, 0.13f, 0.155f, 0.22f, 0.26f, 0.06f, Leather, shape: BevelBox),
+            Box(0f, 0.075f, 0f, 0.35f, 0.13f, 0.35f, Indigo, pitch: 180f, shape: Flare),
+            Box(0.15f, 0.14f, 0.02f, 0.24f, 0.24f, 0.05f, Indigo, yaw: 90f, shape: Plate),
+            Box(-0.15f, 0.14f, 0.02f, 0.24f, 0.24f, 0.05f, Indigo, yaw: -90f, shape: Plate),
+            Box(0f, 0.33f, 0f, 0.345f, 0.04f, 0.345f, Gilt, shape: Ring),
+            Box(0f, 0.19f, 0.165f, 0.05f, 0.24f, 0.045f, Gilt, pitch: 180f, shape: Taper),
+            Box(0f, 0.295f, 0.16f, 0.20f, 0.035f, 0.035f, Steel, shape: BevelBox),
+            Box(0f, 0.44f, 0f, 0.26f, 0.035f, 0.28f, Gilt, shape: Ring),
+            Box(0f, 0.70f, -0.05f, 0.08f, 0.50f, 0.22f, Gilt, yaw: 180f, shape: Horn),
+            Box(0.085f, 0.62f, -0.045f, 0.08f, 0.38f, 0.18f, Gilt, roll: 18f, yaw: 180f, shape: Horn),
+            Box(-0.085f, 0.62f, -0.045f, 0.08f, 0.38f, 0.18f, Gilt, roll: -18f, yaw: 180f, shape: Horn),
+            Box(0.15f, 0.52f, -0.04f, 0.07f, 0.28f, 0.15f, Gilt, roll: 30f, yaw: 180f, shape: Horn),
+            Box(-0.15f, 0.52f, -0.04f, 0.07f, 0.28f, 0.15f, Gilt, roll: -30f, yaw: 180f, shape: Horn));
 
         // ---- Body: sits on the tunic. Chest y 0..0.86 to |x| <= 0.19, hip skirt to |x| <= 0.26 (y 0..0.30),
         // z -0.14..+0.14.
@@ -408,6 +434,32 @@ public static class ArmourMeshCatalog
             Box(0f, -0.03f, 0.165f, 0.17f, 0.56f, 0.04f, Iron, shape: Panel),
             Box(0f, 0.02f, 0f, 0.55f, 0.04f, 0.34f, Gilt, shape: Ring));
 
+        // The royal sorcerer's regalia, and the most ornate body in the catalog - but built in the same order as
+        // the others, because ornament that competes with the silhouette just reads as noise at 28 px: the
+        // shoulders first (an oversized indigo cap each side, buried in the chest at its inner edge, ending in a
+        // GOLD upswept barb and edged by a gold filigree lame on its outer border), the high flared collar
+        // second, and everything after that is support - a tapered indigo cuirass, a cinched waist under a gold
+        // belt, a fauld flaring over the hips with a gold hem ring, and the diamond tabard hanging toward the
+        // knee. The sternum gem is the only glowing thing on the figure's front and is deliberately small: it is
+        // Arcane, so its emissive is added after the gain and a big one would be a lamp, not a jewel.
+        // The gold is Gilt everywhere and never Steel: this set's bright edge is warm, and Gilt sits under the
+        // light threshold, so the gem is the piece's only light facet by design.
+        Add("worn.body.sorcerer-regalia", ArmourMount.Torso,
+            Box(0f, 0.67f, 0f, 0.44f, 0.46f, 0.34f, Indigo, shape: Plate),
+            Box(0f, 0.92f, 0f, 0.34f, 0.18f, 0.30f, Indigo, shape: Flare),
+            Box(0f, 0.40f, 0f, 0.40f, 0.26f, 0.32f, Indigo, shape: Plate),
+            Box(0f, 0.16f, 0f, 0.57f, 0.33f, 0.34f, Indigo, pitch: 180f, shape: Flare),
+            Box(0f, 0.33f, 0f, 0.44f, 0.05f, 0.345f, Gilt, shape: Ring),
+            Box(0f, 0.72f, 0.17f, 0.11f, 0.13f, 0.08f, ArmourMaterial.Arcane, shape: Gem),
+            Box(0.35f, 0.84f, 0f, 0.48f, 0.32f, 0.28f, Indigo, pitch: -90f, shape: Plate),
+            Box(-0.35f, 0.84f, 0f, 0.48f, 0.32f, 0.28f, Indigo, pitch: -90f, shape: Plate),
+            Box(0.46f, 0.88f, -0.06f, 0.09f, 0.30f, 0.20f, Gilt, roll: 30f, yaw: 180f, shape: Horn),
+            Box(-0.46f, 0.88f, -0.06f, 0.09f, 0.30f, 0.20f, Gilt, roll: -30f, yaw: 180f, shape: Horn),
+            Box(0.555f, 0.84f, 0f, 0.055f, 0.26f, 0.34f, Gilt, shape: BevelBox),
+            Box(-0.555f, 0.84f, 0f, 0.055f, 0.26f, 0.34f, Gilt, shape: BevelBox),
+            Box(0f, -0.03f, 0.165f, 0.18f, 0.56f, 0.04f, Indigo, roll: 45f, shape: Panel),
+            Box(0f, 0.015f, 0f, 0.56f, 0.035f, 0.345f, Gilt, shape: Ring));
+
         // ---- Hands (one arm, centred on the arm's own axis): cover y -0.95..-0.55, |x| <= 0.09, |z| <= 0.09.
         // A straight tube reads as a pipe, so every glove now TRUMPETS at the cuff: a Flare at y ~ -0.55 with a
         // narrow rim along its lip and a short horn each side, over a wrapped shell and a stepped lame or two.
@@ -450,6 +502,25 @@ public static class ArmourMeshCatalog
             Box(0.11f, -0.58f, -0.03f, 0.08f, 0.24f, 0.16f, Iron, roll: 26f, yaw: 180f, shape: Horn),
             Box(-0.11f, -0.58f, -0.03f, 0.08f, 0.24f, 0.16f, Iron, roll: -26f, yaw: 180f, shape: Horn),
             Box(0f, -0.70f, 0f, 0.30f, 0.04f, 0.30f, Gilt, shape: Ring));
+
+        // The sorcerer's gauntlets: a fitted indigo shell that TRUMPETS twice, a gold bell at the elbow and a
+        // second, smaller one rolled down over the wrist, and three gold forearm spikes of different lengths
+        // swept up and back. The spikes are authored as MIRRORED PAIRS, not on one side: an arm model is drawn
+        // once per side through CreateSideAttach, and a one-sided sculpt would lean the whole piece off the
+        // arm's own axis. Their rolls are positive on +X because the yaw of 180 flips the roll's direction
+        // (see the Horn note in the header).
+        Add("worn.hands.sorcerer-gauntlets", ArmourMount.Arms,
+            Box(0f, -0.75f, 0.01f, 0.26f, 0.46f, 0.28f, Indigo, shape: Plate),
+            Box(0f, -0.555f, 0f, 0.38f, 0.18f, 0.38f, Gilt, shape: Flare),
+            Box(0f, -0.90f, 0.02f, 0.34f, 0.14f, 0.34f, Gilt, pitch: 180f, shape: Flare),
+            Box(0f, -0.955f, 0.06f, 0.22f, 0.09f, 0.22f, Indigo, shape: BevelBox),
+            Box(0f, -0.92f, 0.14f, 0.18f, 0.04f, 0.04f, Steel, shape: BevelBox),
+            Box(0.095f, -0.60f, -0.03f, 0.07f, 0.26f, 0.15f, Gilt, roll: 26f, yaw: 180f, shape: Horn),
+            Box(-0.095f, -0.60f, -0.03f, 0.07f, 0.26f, 0.15f, Gilt, roll: -26f, yaw: 180f, shape: Horn),
+            Box(0.10f, -0.70f, -0.03f, 0.06f, 0.20f, 0.13f, Gilt, roll: 22f, yaw: 180f, shape: Horn),
+            Box(-0.10f, -0.70f, -0.03f, 0.06f, 0.20f, 0.13f, Gilt, roll: -22f, yaw: 180f, shape: Horn),
+            Box(0.105f, -0.80f, -0.03f, 0.05f, 0.15f, 0.11f, Gilt, roll: 18f, yaw: 180f, shape: Horn),
+            Box(-0.105f, -0.80f, -0.03f, 0.05f, 0.15f, 0.11f, Gilt, roll: -18f, yaw: 180f, shape: Horn));
 
         // ---- Legs (one leg): cover y -0.75..-0.10, |x| <= 0.11, |z| <= 0.11.
         //
@@ -516,6 +587,21 @@ public static class ArmourMeshCatalog
             Box(-0.10f, -0.17f, -0.02f, 0.06f, 0.20f, 0.12f, Iron, roll: -24f, yaw: 180f, shape: Horn),
             Box(0f, -0.74f, 0.08f, 0.30f, 0.05f, 0.26f, Iron, shape: BevelBox));
 
+        // The sorcerer's greaves, and the quiet piece of the set on purpose: the shoulders and the crown are the
+        // statement, so the leg is a quilted cold-cloth thigh under a flared indigo cuff, a SLIM indigo greave
+        // below it, and one ornament - a gold knee cop with a point on it. No horns down this limb and one
+        // narrow Steel shin rib as its only bright fitting, because a leg is the lowest, nearest part of the
+        // figure and anything light and level there stacks with the boot into a bandage.
+        Add("worn.legs.sorcerer-greaves", ArmourMount.Legs,
+            Box(0f, -0.28f, 0f, 0.33f, 0.38f, 0.33f, Cold, shape: Plate),
+            Box(0f, -0.14f, 0f, 0.36f, 0.14f, 0.36f, Indigo, shape: Flare),
+            Box(0f, -0.60f, 0.02f, 0.30f, 0.34f, 0.30f, Indigo, shape: Plate),
+            Box(0f, -0.74f, 0.01f, 0.31f, 0.10f, 0.31f, Indigo, pitch: 180f, shape: Flare),
+            Box(0f, -0.45f, 0.15f, 0.19f, 0.10f, 0.19f, Gilt, pitch: 90f, shape: Dome),
+            Box(0f, -0.42f, 0.17f, 0.05f, 0.09f, 0.05f, Gilt, pitch: 90f, shape: Spike),
+            Box(0f, -0.60f, 0.165f, 0.04f, 0.26f, 0.035f, Steel, shape: BevelBox),
+            Box(0f, -0.33f, 0f, 0.34f, 0.035f, 0.34f, Gilt, shape: Ring));
+
         // ---- Feet (one leg): cover y -1.30..-0.88, |x| <= 0.132, z -0.05..+0.15.
         // The same rule as the legs: the boot's own bands used to stack on top of the leg bands into one
         // pale column, so a boot gets a single small light fitting (a buckle, a toe cap) and dark bands.
@@ -560,6 +646,22 @@ public static class ArmourMeshCatalog
             Box(-0.11f, -0.94f, -0.03f, 0.07f, 0.18f, 0.14f, Iron, roll: -24f, yaw: 180f, shape: Horn),
             Box(0f, -1.05f, 0.05f, 0.33f, 0.05f, 0.35f, Iron, shape: Ring),
             Box(0f, -1.26f, 0.18f, 0.26f, 0.06f, 0.22f, Gilt, shape: BevelBox));
+
+        // The sorcerer's sabatons: an indigo shell under a tall flared top and a second flare rolled down over
+        // the ankle, and the piece's one piece of regalia, a LONG gold toe cap - a Taper pitched 90 so its
+        // narrow end points forward, carried as far out as the foot's limit allows (z 0.41 of 0.42), which is
+        // what gives the boot a pointed court silhouette instead of a square one. One small Steel buckle is its
+        // only light fitting, for the same reason the greave has only a rib.
+        Add("worn.feet.sorcerer-sabatons", ArmourMount.Feet,
+            Box(0f, -1.08f, 0.06f, 0.30f, 0.46f, 0.34f, Indigo, shape: Plate),
+            Box(0f, -0.90f, 0.055f, 0.38f, 0.18f, 0.37f, Indigo, shape: Flare),
+            Box(0f, -1.14f, 0.04f, 0.34f, 0.12f, 0.35f, Indigo, pitch: 180f, shape: Flare),
+            Box(0f, -1.23f, 0.26f, 0.20f, 0.26f, 0.11f, Gilt, pitch: 90f, shape: Taper),
+            Box(0f, -1.31f, 0.10f, 0.30f, 0.05f, 0.44f, Indigo, shape: BevelBox),
+            Box(0f, -0.98f, 0.18f, 0.09f, 0.05f, 0.05f, Steel, shape: BevelBox),
+            Box(0f, -1.05f, 0.05f, 0.33f, 0.045f, 0.35f, Gilt, shape: Ring),
+            Box(0f, -0.82f, 0.02f, 0.33f, 0.035f, 0.33f, Gilt, shape: Ring),
+            Box(0f, -1.20f, -0.06f, 0.24f, 0.16f, 0.10f, Indigo, shape: BevelBox));
 
         // ---- Back (torso frame): the torso back surface is at z >= -0.14 and the panels hang off it at
         // z -0.22..-0.34. Above y 0.30 nothing is wider than 1.6x the torso (0.416); the hem may flare to 0.50.
@@ -631,6 +733,25 @@ public static class ArmourMeshCatalog
             Box(0.185f, 0.12f, -0.30f, 0.26f, 0.28f, 0.06f, Cold, pitch: 8f, yaw: 14f, shape: Panel),
             Box(0.34f, 0.74f, -0.06f, 0.07f, 0.07f, 0.07f, Iron, roll: -40f, shape: Spike),
             Box(-0.34f, 0.74f, -0.06f, 0.07f, 0.07f, 0.07f, Iron, roll: 40f, shape: Spike));
+
+        // The sorcerer's mantle: the STRAIGHT-CUT one. Where the travel cloak is ragged and the grave mantle is
+        // broad, this one is a narrow court mantle - an indigo plate yoke at the shoulders over three tiers of
+        // cold cloth that barely widen as they fall - finished with a gold border across its bottom edge, which
+        // is what makes it read as regalia rather than as a blanket. It is the longest fall of the four back
+        // items after the hooded cloak and still stops ABOVE the knee: the design asks for calf length, and the
+        // back-slot contract (nothing past y -0.43, nothing in front of the legs) is what it actually gets, for
+        // the reason pass 4 recorded - a fall that reaches the shin projects across the leg at this camera and
+        // the cloak stops being cloth on a figure.
+        Add("worn.back.sorcerer-mantle", ArmourMount.Back,
+            Box(0f, 0.86f, -0.12f, 0.40f, 0.09f, 0.34f, Indigo, shape: Plate),
+            Box(0f, 0.88f, -0.16f, 0.22f, 0.04f, 0.07f, Steel, shape: BevelBox),
+            Box(0f, 0.72f, -0.22f, 0.30f, 0.44f, 0.06f, Cold, pitch: 2f, shape: Panel),
+            Box(0.135f, 0.30f, -0.28f, 0.24f, 0.46f, 0.06f, Cold, pitch: 5f, yaw: 8f, shape: Panel),
+            Box(-0.135f, 0.30f, -0.28f, 0.24f, 0.46f, 0.06f, Cold, pitch: 5f, yaw: -8f, shape: Panel),
+            Box(0.115f, -0.14f, -0.34f, 0.21f, 0.42f, 0.06f, Cold, pitch: 8f, yaw: 5f, shape: Panel),
+            Box(-0.115f, -0.14f, -0.34f, 0.21f, 0.42f, 0.06f, Cold, pitch: 8f, yaw: -5f, shape: Panel),
+            Box(0f, -0.30f, -0.31f, 0.44f, 0.05f, 0.06f, Gilt, shape: Panel),
+            Box(0f, 0.79f, -0.19f, 0.26f, 0.03f, 0.06f, Gilt, shape: Ring));
 
         // Not cloth, and not two flat violet quads either: a DARK IRON SPAR FRAME - a long leading spar laid
         // along the top of each wing and a shorter rib under it - carrying a smaller arcane membrane inside.
