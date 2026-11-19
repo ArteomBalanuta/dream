@@ -118,7 +118,16 @@ public class FrameLightingContractTests
         // Wave T2 C0: the material emissive is added after exposure and before fog. Wave T2a: point
         // lights count as direct light (scaled by ActorDirectScale) and are added before the floor.
         Assert.Matches(
-            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ \(dreamDirectShaded\(n, fragPos\) \+ dreamPointLights\(n, fragPos\)\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
+            @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ \(dreamDirectShaded\(n, fragPos\) \+ dreamPointLights\(n, fragPos\)\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);",
+            source);
+        // Between the floor and the emissive sits the equipment material response, and nothing
+        // else: it is one block, gated on uEquipSurface (zero for every non-equipment draw), and it
+        // adds its specular to lit BEFORE dreamExpose, so the frame exposure still owns the result.
+        Assert.Matches(
+            @"lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*(//[^\n]*\n\s*)*if \(uEquipSurface\.y > 0\.0\) \{",
+            source);
+        Assert.Matches(
+            @"vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
             source);
     }
 

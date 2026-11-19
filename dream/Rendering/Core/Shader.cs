@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -27,6 +27,13 @@ public sealed class Shader : IDisposable
     public const string EmissiveUvScrollUniformName = "material.emissiveUvScroll";
     public const string TimeUniformName = "uTime";
 
+    // The equipment material response (enemyFragment.glsl). Only HeldWeaponRenderer and
+    // WornArmourRenderer ever set them; every other draw leaves uEquipSurface at zero, which is
+    // what makes the shader's whole material block a no-op. Programs that do not declare them
+    // (cubeFragment.glsl, the HUD programs) resolve to -1 and upload nothing.
+    public const string EquipmentSurfaceUniformName = "uEquipSurface";
+    public const string EquipmentEyeUniformName = "uEquipEye";
+
     // Defined in the fragment source of a world program's MASK variant only. The cutoff discard
     // sits behind it: a fragment shader that can discard loses early depth optimizations even when
     // the discard is never taken (measured: about double the GPU actors time), so OPAQUE programs
@@ -44,6 +51,8 @@ public sealed class Shader : IDisposable
     private int _hasEmissiveTextureLocation = -1;
     private int _emissiveUvScrollLocation = -1;
     private int _timeLocation = -1;
+    private int _equipmentSurfaceLocation = -1;
+    private int _equipmentEyeLocation = -1;
 
     // Last cutoff uploaded. Uniform values live in the program, so a value already there is not
     // uploaded again. Unknown until the first upload.
@@ -58,6 +67,11 @@ public sealed class Shader : IDisposable
     private int _uploadedHasEmissiveTexture = -1;
     private Vector2 _uploadedEmissiveUvScroll = new(float.NaN);
     private float _uploadedTime = float.NaN;
+
+    // Last equipment surface and eye uploaded, cached the same way. Unknown (NaN) until the first
+    // upload, so the first reset to zero after a pass is always really uploaded.
+    private Vector4 _uploadedEquipmentSurface = new(float.NaN);
+    private Vector3 _uploadedEquipmentEye = new(float.NaN);
 
     public Shader(string vertexPath, string fragmentPath, string? fragmentDefine = null)
     {
@@ -141,6 +155,8 @@ public sealed class Shader : IDisposable
         _hasEmissiveTextureLocation = GetUniformLocation(HasEmissiveTextureUniformName);
         _emissiveUvScrollLocation = GetUniformLocation(EmissiveUvScrollUniformName);
         _timeLocation = GetUniformLocation(TimeUniformName);
+        _equipmentSurfaceLocation = GetUniformLocation(EquipmentSurfaceUniformName);
+        _equipmentEyeLocation = GetUniformLocation(EquipmentEyeUniformName);
         // GL 3.3 core has no layout(binding = N) on a block, so the FrameLighting block (from
         // lighting.glsl) and the LightList block (pointLights.glsl) are pointed at their binding
         // points here, once per program; the BoundaryMist block (boundaryMist.glsl) and the FireShadowList block
@@ -413,6 +429,38 @@ public sealed class Shader : IDisposable
         _uploadedTime = seconds;
     }
 
+    // `uEquipSurface` (x metallic, y roughness, z grain, w accentMix): the equipment material
+    // response in enemyFragment.glsl. Zero - EquipmentSurface.None, what the equipment renderers
+    // set at the end of their pass - skips the whole block, so every other draw is unchanged. A
+    // program without the uniform (it is not declared in cubeFragment.glsl, and a program may also
+    // have optimized it out) has location -1 and uploads nothing, exactly like SetEmissiveFactor.
+    public void SetEquipmentSurface(Vector4 surface)
+    {
+        if (_equipmentSurfaceLocation < 0 || surface.Equals(_uploadedEquipmentSurface))
+        {
+            return;
+        }
+
+        GL.Uniform4(_equipmentSurfaceLocation, surface);
+        RenderCounters.CountUniformUpload();
+        _uploadedEquipmentSurface = surface;
+    }
+
+    // `uEquipEye`: the real eye in world space, for the equipment specular half vector. The frame
+    // lighting block's uCameraPosition is the FOG origin (the isometric focus), not the eye, so the
+    // specular needs its own. Cached and -1 tolerant like the setter above.
+    public void SetEquipmentEye(Vector3 eye)
+    {
+        if (_equipmentEyeLocation < 0 || eye.Equals(_uploadedEquipmentEye))
+        {
+            return;
+        }
+
+        GL.Uniform3(_equipmentEyeLocation, eye);
+        RenderCounters.CountUniformUpload();
+        _uploadedEquipmentEye = eye;
+    }
+
     public void SetVector4(string uniformName, Vector4 vector)
     {
         int location = GetUniformLocation(uniformName);
@@ -514,6 +562,8 @@ public sealed class Shader : IDisposable
             _hasEmissiveTextureLocation = -1;
             _emissiveUvScrollLocation = -1;
             _timeLocation = -1;
+            _equipmentSurfaceLocation = -1;
+            _equipmentEyeLocation = -1;
         }
     }
     #endregion

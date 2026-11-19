@@ -112,8 +112,9 @@ public class RenderCountersTests
         }
 
         // Matrix4, Matrix3 (normal matrix), the MASK alpha cutoff, the cached material emissive,
-        // the cached emissive texture flag, scroll and time, and the six by-name setters.
-        Assert.Equal(13, uniformCalls);
+        // the cached emissive texture flag, scroll and time, the cached equipment surface and eye,
+        // and the six by-name setters.
+        Assert.Equal(15, uniformCalls);
     }
 
     [Fact]

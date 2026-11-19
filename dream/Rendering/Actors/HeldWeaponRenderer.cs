@@ -26,7 +26,9 @@ public sealed class HeldWeaponRenderer : IDisposable
     // so each comes out at its documented real-world length: 1 m is 1.408 model units, and the
     // authored figure is 2.68 units = 1.904 m.
 
-    private StaticMeshBuffer? _cube;
+    // One GL buffer per sculpted shape, built on first use (EquipmentMeshCache). It replaces the
+    // single shared cube: a part names a shape and is drawn with that shape's mesh instead.
+    private readonly EquipmentMeshCache _meshes = new();
     private bool _disposed;
 
     public static Matrix4 CreateGrip(WeaponGrip grip, bool offHand)
@@ -61,19 +63,28 @@ public sealed class HeldWeaponRenderer : IDisposable
         }
 
         bool prepared = false;
-        if (equipment.MainHand is { } main)
+        try
         {
-            DrawHeld(shader, camera, projection, instance, layers, main, offHand: false, modelMatrix, ref prepared);
-        }
+            if (equipment.MainHand is { } main)
+            {
+                DrawHeld(shader, camera, projection, instance, layers, main, offHand: false, modelMatrix, ref prepared);
+            }
 
-        if (equipment.OffHand is { } off)
-        {
-            DrawHeld(shader, camera, projection, instance, layers, off, offHand: true, modelMatrix, ref prepared);
+            if (equipment.OffHand is { } off)
+            {
+                DrawHeld(shader, camera, projection, instance, layers, off, offHand: true, modelMatrix, ref prepared);
+            }
         }
-
-        if (prepared)
+        finally
         {
-            StaticMeshBuffer.EndBatchedDraws();
+            // Whenever the pass was prepared - including a hand that bailed out half way - the
+            // batch is closed and uEquipSurface goes back to zero, which is what makes the shader's
+            // material block a no-op for every other actor, enemy, NPC and prop draw.
+            if (prepared)
+            {
+                StaticMeshBuffer.EndBatchedDraws();
+                shader.SetEquipmentSurface(EquipmentSurface.None.ToUniform());
+            }
         }
     }
 
@@ -143,7 +154,10 @@ public sealed class HeldWeaponRenderer : IDisposable
             prepared = true;
         }
 
-        _cube ??= new StaticMeshBuffer(TerrainFallbackCubeMesh.Create());
+        // The tint is this ITEM's, so it is resolved once per item and the material guard below is
+        // per item too (lastMaterial is local to this call): a second item with the same material
+        // re-sets the colour with its own tint instead of inheriting the first one's.
+        EquipmentTint tint = EquipmentTintCatalog.Resolve(visualId);
         WeaponPart[] parts = model.PartArray;
         WeaponMaterial lastMaterial = (WeaponMaterial)(-1);
         for (int i = 0; i < parts.Length; i++)
@@ -152,12 +166,17 @@ public sealed class HeldWeaponRenderer : IDisposable
             if (part.Material != lastMaterial)
             {
                 lastMaterial = part.Material;
-                shader.SetVector4("material.baseColorFactor", WeaponMeshCatalog.BaseColor(part.Material));
+                EquipmentSurface surface = EquipmentSurface.For(part.Material);
+                shader.SetVector4(
+                    "material.baseColorFactor",
+                    tint.Apply(WeaponMeshCatalog.BaseColor(part.Material), surface.AccentMix));
                 shader.SetEmissiveFactor(WeaponMeshCatalog.Emissive(part.Material));
+                shader.SetEquipmentSurface(surface.ToUniform());
             }
 
             shader.SetModelMatrix(part.ToMatrix() * attach);
-            _cube.DrawBatched();
+            // The VAO changes with the shape; DrawBatched rebinds, so one batch still spans them all.
+            _meshes.Get(part.Shape).DrawBatched();
         }
     }
 
@@ -174,12 +193,16 @@ public sealed class HeldWeaponRenderer : IDisposable
         shader.SetHasEmissiveTexture(false);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
+        // Equipment never inherits an enemy's tint: EnemyRenderer sets uActorTintOffset per enemy
+        // and the program is shared, so it is zeroed here as part of the pass's own frame state.
+        shader.SetVector3("uActorTintOffset", Vector3.Zero);
+        // The real eye, for the specular half vector (uCameraPosition is the fog origin, not the eye).
+        shader.SetEquipmentEye(camera.Position);
     }
 
     public void Dispose()
     {
         _disposed = true;
-        _cube?.Dispose();
-        _cube = null;
+        _meshes.Dispose();
     }
 }

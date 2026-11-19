@@ -19,7 +19,9 @@ public sealed class WornArmourRenderer : IDisposable
     // The arm hangs 0.2 either side of its node (see HeldWeaponRenderer.FistOffsetX).
     public const float ArmOffsetX = 0.2f;
 
-    private StaticMeshBuffer? _cube;
+    // One GL buffer per sculpted shape, built on first use (EquipmentMeshCache), in place of the
+    // single shared cube. Its own instance: the worn path owns exactly what it made.
+    private readonly EquipmentMeshCache _meshes = new();
     private bool _disposed;
 
     public void Draw(
@@ -37,17 +39,25 @@ public sealed class WornArmourRenderer : IDisposable
         }
 
         bool prepared = false;
-        DrawSingle(shader, camera, projection, instance, layers, equipment.Head, PlayerBodyNode.Head, modelMatrix, ref prepared);
-        DrawSingle(shader, camera, projection, instance, layers, equipment.Body, PlayerBodyNode.Torso, modelMatrix, ref prepared);
-        DrawSingle(shader, camera, projection, instance, layers, equipment.Back, PlayerBodyNode.Torso, modelMatrix, ref prepared);
-        DrawSingle(shader, camera, projection, instance, layers, equipment.Companion, PlayerBodyNode.Torso, modelMatrix, ref prepared);
-        DrawPair(shader, camera, projection, instance, layers, equipment.Hands, PlayerBodyNode.LeftArm, PlayerBodyNode.RightArm, ArmOffsetX, modelMatrix, ref prepared);
-        DrawPair(shader, camera, projection, instance, layers, equipment.Legs, PlayerBodyNode.LeftLeg, PlayerBodyNode.RightLeg, 0f, modelMatrix, ref prepared);
-        DrawPair(shader, camera, projection, instance, layers, equipment.Feet, PlayerBodyNode.LeftLeg, PlayerBodyNode.RightLeg, 0f, modelMatrix, ref prepared);
-
-        if (prepared)
+        try
         {
-            StaticMeshBuffer.EndBatchedDraws();
+            DrawSingle(shader, camera, projection, instance, layers, equipment.Head, PlayerBodyNode.Head, modelMatrix, ref prepared);
+            DrawSingle(shader, camera, projection, instance, layers, equipment.Body, PlayerBodyNode.Torso, modelMatrix, ref prepared);
+            DrawSingle(shader, camera, projection, instance, layers, equipment.Back, PlayerBodyNode.Torso, modelMatrix, ref prepared);
+            DrawSingle(shader, camera, projection, instance, layers, equipment.Companion, PlayerBodyNode.Torso, modelMatrix, ref prepared);
+            DrawPair(shader, camera, projection, instance, layers, equipment.Hands, PlayerBodyNode.LeftArm, PlayerBodyNode.RightArm, ArmOffsetX, modelMatrix, ref prepared);
+            DrawPair(shader, camera, projection, instance, layers, equipment.Legs, PlayerBodyNode.LeftLeg, PlayerBodyNode.RightLeg, 0f, modelMatrix, ref prepared);
+            DrawPair(shader, camera, projection, instance, layers, equipment.Feet, PlayerBodyNode.LeftLeg, PlayerBodyNode.RightLeg, 0f, modelMatrix, ref prepared);
+        }
+        finally
+        {
+            // Whenever the pass was prepared - including a slot that bailed out half way - the batch
+            // is closed and uEquipSurface goes back to zero, so the next actor draw is untouched.
+            if (prepared)
+            {
+                StaticMeshBuffer.EndBatchedDraws();
+                shader.SetEquipmentSurface(EquipmentSurface.None.ToUniform());
+            }
         }
     }
 
@@ -141,6 +151,10 @@ public sealed class WornArmourRenderer : IDisposable
     }
 
     // The unit cube the batch draws is centred on the origin, so its corners are (+-0.5)^3.
+    // This stays the box even now that a part may be drawn with a sculpted shape: every
+    // EquipmentShape is authored inside [-0.5, 0.5]^3 (EquipmentShape's contract), so the box is
+    // still a correct - merely conservative - bound of whatever the part really draws, and the
+    // capture's actorbox can never cut a blade or a pauldron off.
     public static void AppendBoxCorners(Matrix4 boxToWorld, List<Vector3> corners)
     {
         for (int corner = 0; corner < 8; corner++)
@@ -198,7 +212,10 @@ public sealed class WornArmourRenderer : IDisposable
             prepared = true;
         }
 
-        _cube ??= new StaticMeshBuffer(TerrainFallbackCubeMesh.Create());
+        // The tint is this PIECE's (EquipmentTintCatalog, by its own visual id), so the material
+        // guard below is per piece too (lastMaterial is local to this call): the second of two
+        // pieces of the same material re-sets the colour with its own tier instead of inheriting.
+        EquipmentTint tint = EquipmentTintCatalog.Resolve(model.VisualId);
         ArmourPart[] parts = model.PartArray;
         ArmourMaterial lastMaterial = (ArmourMaterial)(-1);
         for (int i = 0; i < parts.Length; i++)
@@ -207,12 +224,17 @@ public sealed class WornArmourRenderer : IDisposable
             if (part.Material != lastMaterial)
             {
                 lastMaterial = part.Material;
-                shader.SetVector4("material.baseColorFactor", ArmourMeshCatalog.BaseColor(part.Material));
+                EquipmentSurface surface = EquipmentSurface.For(part.Material);
+                shader.SetVector4(
+                    "material.baseColorFactor",
+                    tint.Apply(ArmourMeshCatalog.BaseColor(part.Material), surface.AccentMix));
                 shader.SetEmissiveFactor(ArmourMeshCatalog.Emissive(part.Material));
+                shader.SetEquipmentSurface(surface.ToUniform());
             }
 
             shader.SetModelMatrix(part.ToMatrix() * attach);
-            _cube.DrawBatched();
+            // The VAO changes with the shape; DrawBatched rebinds, so one batch still spans them all.
+            _meshes.Get(part.Shape).DrawBatched();
         }
     }
 
@@ -231,12 +253,16 @@ public sealed class WornArmourRenderer : IDisposable
         shader.SetHasEmissiveTexture(false);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
+        // Equipment never inherits an enemy's tint: EnemyRenderer sets uActorTintOffset per enemy
+        // and the program is shared, so it is zeroed here as part of the pass's own frame state.
+        shader.SetVector3("uActorTintOffset", Vector3.Zero);
+        // The real eye, for the specular half vector (uCameraPosition is the fog origin, not the eye).
+        shader.SetEquipmentEye(camera.Position);
     }
 
     public void Dispose()
     {
         _disposed = true;
-        _cube?.Dispose();
-        _cube = null;
+        _meshes.Dispose();
     }
 }
