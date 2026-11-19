@@ -31,6 +31,13 @@ with its output and gated against it. Follow the steps in order. Long tables liv
 | inventory icon | `gen_items.py` | `dream/ui/items/` | `check_items.py`, `check_loader.py` |
 | HUD, stone window, menu, damage digits, particles | `gen_hud.py`, `gen_window.py`, `gen_menu.py`, `gen_fx.py`, `gen_particles.py` | `dream/ui/<hud|window|menu|fx|particles>/` | `check_<same>.py`, `check_manifest.py`, `check_art.py` |
 
+**Worn armour and held weapons are NOT in this table and have no generator here.** They are built at
+render time in C# from `WeaponMeshCatalog` / `ArmourMeshCatalog` plus the sculpted primitives in
+`EquipmentShapeLibrary`, so a new item costs no asset and no GLB. Do not look for a `gen_equipment.py`
+and do not add one - see "Equipment Rendering Path" in `docs/rendering-and-assets.md`. The one Python
+file that touches them is the gate `tools/ui-assets/tests/check_char.py`, which parses both catalogs
+and rasterises each part as its BOUNDING BOX to measure clipping, contrast and envelope.
+
 Full table with runtime consumers, kits and what each new asset must also touch (C# catalogs, spec manifests,
 content footprints): `references/asset-families.md`. Ground schema, budgets and the add-a-ground-asset procedure:
 `references/ground-assets.md`. Read `tools/ui-assets/README.md` for the section of the family you are changing.
