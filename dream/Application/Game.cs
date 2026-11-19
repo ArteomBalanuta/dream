@@ -242,9 +242,11 @@ public class Game : GameWindow
     {
         bool captureRun = VSyncSettings.IsCaptureRun(Environment.GetEnvironmentVariable);
         VSyncMode mode = VSyncSettings.ResolveFromEnvironment(_desktopClientConfig.VSync);
-        // OpenTK's Adaptive asks for swap interval -1; without the tear extension that is an error
-        // on some drivers, so it is downgraded to On here rather than trusted.
-        VSync = mode == VSyncMode.Adaptive && !AdaptiveSyncSupported() ? VSyncMode.On : mode;
+        // OpenTK's own Adaptive mode toggles the interval per frame from IsRunningSlowly, which turns
+        // vsync off whenever the sleep cap sits above the refresh rate. So OpenTK's VSync stays Off
+        // (nothing toggles the interval) and the swap interval is set directly, after the setter.
+        VSync = VSyncMode.Off;
+        GLFW.SwapInterval(VSyncSettings.SwapInterval(mode, AdaptiveSyncSupported()));
         int cap = FrameRateCap.ResolveFromEnvironment(_desktopClientConfig.MaxFramesPerSecond);
         int frequency = FrameRateCap.ResolveUpdateFrequency(cap, mode, ReadRefreshRate());
         UpdateFrequency = frequency;

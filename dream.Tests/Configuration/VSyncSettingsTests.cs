@@ -1,3 +1,4 @@
+using System.IO;
 using Dream.Configuration;
 using OpenTK.Windowing.Common;
 using Xunit;
@@ -74,6 +75,40 @@ public class VSyncSettingsTests
         Assert.True(VSyncSettings.IsCaptureRun(name => name == variable ? "x" : null));
         Assert.False(VSyncSettings.IsCaptureRun(name => name == variable ? "  " : null));
         Assert.False(VSyncSettings.IsCaptureRun(_ => null));
+    }
+
+    [Theory]
+    [InlineData(VSyncMode.Off, true, 0)]
+    [InlineData(VSyncMode.Off, false, 0)]
+    [InlineData(VSyncMode.On, true, 1)]
+    [InlineData(VSyncMode.On, false, 1)]
+    [InlineData(VSyncMode.Adaptive, true, -1)]
+    [InlineData(VSyncMode.Adaptive, false, 1)]
+    public void SwapInterval_AdaptiveNeedsTheTearExtension(VSyncMode mode, bool tear, int expected)
+    {
+        Assert.Equal(expected, VSyncSettings.SwapInterval(mode, tear));
+    }
+
+    [Fact]
+    public void SwapInterval_ACaptureRunNeverSyncs_WhateverTheEnvironmentSays()
+    {
+        VSyncMode resolved = VSyncSettings.Resolve(VSyncMode.Adaptive, "adaptive", captureRun: true);
+        Assert.Equal(0, VSyncSettings.SwapInterval(resolved, tearSupported: true));
+    }
+
+    [Fact]
+    public void Game_NeverLetsOpenTkTogglesTheInterval()
+    {
+        string dir = AppContext.BaseDirectory;
+        while (!File.Exists(Path.Combine(dir, "dream", "dream.csproj")))
+        {
+            dir = Path.GetDirectoryName(dir)!;
+        }
+
+        string source = File.ReadAllText(Path.Combine(dir, "dream", "Application", "Game.cs"));
+        Assert.Contains("VSync = VSyncMode.Off;", source);
+        Assert.DoesNotContain("VSync = VSyncMode.Adaptive", source);
+        Assert.Contains("GLFW.SwapInterval(VSyncSettings.SwapInterval(", source);
     }
 
     [Fact]
