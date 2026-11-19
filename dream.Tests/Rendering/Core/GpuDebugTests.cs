@@ -49,6 +49,14 @@ public sealed class GpuDebugTests
         Assert.Equal(new byte[] { 0x61, 0xC3, 0xA9, 0 }, label.Utf8);
     }
 
+    [Fact]
+    public void ObjectLabelLength_IsTheUtf8ByteCount_NotTheCharCount()
+    {
+        Assert.Equal(3, GpuDebug.ObjectLabelByteLength("abc"));
+        Assert.Equal(4, GpuDebug.ObjectLabelByteLength("aéb"));
+        Assert.Equal(6, GpuDebug.ObjectLabelByteLength("ééé"));
+    }
+
     [GlFact]
     public void OnAHiddenContext_PushAndPopBalance_WithNoGlError_AndAllocateNothing()
     {

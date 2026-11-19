@@ -118,8 +118,11 @@ public static unsafe class GpuDebug
             return;
         }
 
-        GL.ObjectLabel(identifier, handle, name.Length, name);
+        GL.ObjectLabel(identifier, handle, ObjectLabelByteLength(name), name);
     }
+
+    // GL counts the label length in bytes of the UTF-8 it is handed, not UTF-16 chars.
+    internal static int ObjectLabelByteLength(string name) => Encoding.UTF8.GetByteCount(name);
 
     // Test seam: drops the static state so a test that initialized on a hidden context leaks nothing.
     internal static void ResetForTests()
