@@ -21,6 +21,22 @@ public sealed class MeleeArcSwingContentTests
         Assert.True(MeleeArcSwing.WindupTicks > 0 && MeleeArcSwing.ActiveTicks > 0 && MeleeArcSwing.RecoveryTicks > 0);
     }
 
+    [Fact]
+    public void TheActiveWindow_IsEvenAndAtLeastThreeTicks_SoItHasAKeyedMidpointAndAThirdsPair()
+    {
+        Assert.True(MeleeArcSwing.ActiveTicks % 2 == 0,
+            "the clip keys the window's midpoint, which is only on a whole tick when the window is even");
+        Assert.True(MeleeArcSwing.ActiveTicks >= 3,
+            "the cut is measured at the window's thirds, which need at least three ticks to be distinct keys");
+    }
+
+    [Fact]
+    public void TheWindup_IsLongerThanFiveTicks_SoTheCastIsReadableBeforeTheHitLands()
+    {
+        Assert.True(MeleeArcSwing.WindupTicks > 5,
+            "MeleeSwingWindowTests places hits by literal tick numbers inside the first five ticks of the wind-up");
+    }
+
     // A swing that outlasted its own cooldown would let a second cast overlap the first.
     [Fact]
     public void EveryShippedMeleeArc_IsReadyAgainOnlyAfterItsSwingEnds()

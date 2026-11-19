@@ -33,14 +33,16 @@ REQUIRED_CLIPS = ("idle", "walk", "run", "sprint", "die", "attack-melee-right", 
 # The Cleave timeline in ticks at 64/s; MeleeArcSwing.cs is the contract and PlayerCleaveClipTests pins the shipped
 # clip to it. check_sources forbids reading that file from here, so the numbers are repeated.
 CLEAVE_TICK_RATE = 64.0
-CLEAVE_WINDUP_TICKS = 20
-CLEAVE_ACTIVE_TICKS = 10
-CLEAVE_TOTAL_TICKS = 54
+CLEAVE_WINDUP_TICKS = 8
+CLEAVE_ACTIVE_TICKS = 6
+CLEAVE_RECOVERY_TICKS = 16
+CLEAVE_TOTAL_TICKS = CLEAVE_WINDUP_TICKS + CLEAVE_ACTIVE_TICKS + CLEAVE_RECOVERY_TICKS
 
 
 def cleave_sweep(asset: dict, clip) -> tuple[list, list]:
-    """The sword arm's world direction (the arm node's hanging axis, which is where hand and weapon lie) at the
-    end of the wind-up, the midpoint of the active window and its end, plus the problems found in the clip's keys.
+    """The BLADE's world direction at the end of the wind-up, the midpoint of the active window and its end, plus the
+    problems found in the clip's keys. The held sword lies along the sword arm's +Z (HeldWeaponRenderer.CreateGrip), so
+    a raised arm lifts it: measuring the arm's hanging axis, as this gate once did, let a vertical blade pass.
     Model space: +Z forward, +X the caster's LEFT."""
     times = [float(x) for x in next(iter(clip.rotations.values()))[0]]
     problems = []
@@ -54,28 +56,33 @@ def cleave_sweep(asset: dict, clip) -> tuple[list, list]:
         k = next((i for i, x in enumerate(times) if abs(x - want) < 1e-6), None)
         if k is None:
             problems.append(f"cleave has no key at tick {tick} ({want} s)")
-            dirs.append(np.array([0.0, -1.0, 0.0]))
+            dirs.append(np.array([0.0, 0.0, 1.0]))
             continue
-        d = L.node_worlds(asset["nodes"], clip, k)[arm][:3, :3] @ np.array([0.0, -1.0, 0.0])
+        d = L.node_worlds(asset["nodes"], clip, k)[arm][:3, :3] @ np.array([0.0, 0.0, 1.0])
         dirs.append(d / np.linalg.norm(d))
     return dirs, problems
 
 
 def cleave_problems(asset: dict, clip) -> list:
-    """Left -> forward -> right, horizontal to slightly down at the end: empty when the sweep is right."""
+    """Left -> forward -> right with the blade near level: empty when the sweep is right."""
     dirs, problems = cleave_sweep(asset, clip)
-    windup, mid, end = dirs
-    if not windup[0] > 0.5:
-        problems.append(f"at the end of the wind-up the sword points {windup.round(2).tolist()}, not to the caster's left")
-    if not (mid[2] > 0.7 and abs(mid[0]) < 0.35):
-        problems.append(f"at the active midpoint the sword points {mid.round(2).tolist()}, not forward")
-    if not end[0] < -0.5:
-        problems.append(f"at the end of the active window the sword points {end.round(2).tolist()}, not to the right")
+    horizontal = []
+    for d in dirs:
+        h = np.array([d[0], d[2]])
+        horizontal.append(h / max(float(np.linalg.norm(h)), 1e-9))
+    windup, mid, end = horizontal
+    if not windup[0] > 0.3:
+        problems.append(f"at the end of the wind-up the blade points {windup.round(2).tolist()} (x, z), not to the caster's left")
+    if not (mid[1] > 0.7 and abs(mid[0]) < 0.35):
+        problems.append(f"at the active midpoint the blade points {mid.round(2).tolist()} (x, z), not forward")
+    if not end[0] < -0.3:
+        problems.append(f"at the end of the active window the blade points {end.round(2).tolist()} (x, z), not to the right")
     if not (windup[0] > mid[0] > end[0]):
-        problems.append("the sword does not sweep monotonically from left to right")
-    for label, d in (("wind-up end", windup), ("active midpoint", mid), ("active end", end)):
-        if abs(d[1]) > 0.5:
-            problems.append(f"the sword is {d[1]:+.2f} off horizontal at the {label}; the sweep must stay near level")
+        problems.append("the blade does not sweep monotonically from left to right")
+    for label, d in (("wind-up end", dirs[0]), ("active midpoint", dirs[1]), ("active end", dirs[2])):
+        elevation = math.degrees(math.asin(max(-1.0, min(1.0, float(d[1])))))
+        if not -15.0 <= elevation <= 50.0:
+            problems.append(f"the blade is {elevation:+.0f} deg above horizontal at the {label}; the cut must stay near level (-15..+50)")
     return problems
 
 
@@ -579,8 +586,9 @@ def main() -> int:
             fail("cleave does not end on the identity pose with a zero root offset")
         if not sweep:
             dirs, _ = cleave_sweep(a, cleave)
-            ok("cleave sweeps left -> forward -> right (x " + " -> ".join(f"{d[0]:+.2f}" for d in dirs) +
-               ") on the server's timeline and ends at rest")
+            ok("cleave blade sweeps left -> forward -> right (x " + " -> ".join(f"{d[0]:+.2f}" for d in dirs) +
+               ", elevation " + " / ".join(f"{math.degrees(math.asin(d[1])):+.0f}" for d in dirs) +
+               " deg) on the server's timeline and ends at rest")
         if not cleave_problems(a, mirrored(cleave)):
             fail("the cleave sweep gate passes the mirrored clip; it has stopped measuring direction")
         else:

@@ -569,9 +569,9 @@ def clip_melee(n: dict) -> G.GltfAnimation:
 # dream/Simulation/Combat/MeleeArcSwing.cs (check_sources forbids reading another file); PlayerCleaveClipTests loads
 # the shipped GLB and pins these key times and the clip length to the C# constants.
 CLEAVE_TICK_RATE = 64.0
-CLEAVE_WINDUP_TICKS = 20
-CLEAVE_ACTIVE_TICKS = 10
-CLEAVE_RECOVERY_TICKS = 24
+CLEAVE_WINDUP_TICKS = 8
+CLEAVE_ACTIVE_TICKS = 6
+CLEAVE_RECOVERY_TICKS = 16
 CLEAVE_TOTAL_TICKS = CLEAVE_WINDUP_TICKS + CLEAVE_ACTIVE_TICKS + CLEAVE_RECOVERY_TICKS
 
 
@@ -580,38 +580,45 @@ def _smooth(u: float) -> float:
 
 
 def clip_cleave(n: dict) -> G.GltfAnimation:
-    """The Warrior's Cleave, 54 ticks (0.84 s), right-handed. The model faces +Z and its right is -X, so a yaw about
-    +Y turns the front toward the caster's LEFT and a hanging arm raised by quat_x(-e) points forward at e = 90.
+    """The Warrior's Cleave, 30 ticks (0.47 s), right-handed: a cut, not a draw. The model faces +Z and its right is
+    -X, so a yaw about +Y turns the front toward the caster's LEFT. The held sword is laid along the arm's +Z
+    (HeldWeaponRenderer.CreateGrip), so a hanging arm raised by quat_x(-e) lifts the BLADE e degrees above level: the
+    arm is kept at 40..15 degrees and the blade stays near level, its tip running high-left to low-right.
 
-    Wind-up (ticks 0-20): a grounded lunge. The root dips ~0.07 m and the legs split fore and aft by exactly the angle
-    that keeps both feet on the ground at that dip (L * (1 - cos) = dip), so the knees read as flexed on a rigid leg.
-    The hips and torso coil to the left and the sword arm is drawn across the body to the left, a little above level.
-    Active (ticks 20-30, the server's damage window): the hips fire first, then the torso, and the arm trails them
-    (a whip), so the weapon sweeps left, through forward at the window's midpoint (tick 25), to the right, the arm
-    sliding from a little above level to a little below it. Recovery (ticks 30-54): everything eases back to the rest
-    pose on a smoothstep, so the swing decelerates on the right and the last key is the identity pose, like
-    clip_melee. Extra keys inside each phase only shape the easing; the phase borders are exact keys."""
+    Wind-up (ticks 0-8): a short coil, ease-out into the peak pose (0, .35, .75, .95, 1.0 of it at ticks 0/2/4/6/8) so
+    the body is nearly still at tick 8. The root dips and the legs split fore and aft by exactly the angle that keeps
+    both feet on the ground at that dip (L * (1 - cos) = dip), the hips and torso coil to the left and the sword
+    arm is drawn across the body.
+    Active (ticks 8-14, the server's damage window): the yaw sum (torso + arm) falls linearly through the window, so
+    the blade tip sweeps at a constant angular speed from 60 degrees left to 60 degrees right of the aim; the arm
+    lowers from 40 to 15 degrees as it goes. Rotations are interpolated linearly, so the keys 10, 11 and 12 pin the
+    constant speed and PlayerCleaveClipTests measures the tip against FxBladeTrailGeometry.
+    Recovery (ticks 14-30): an overshoot to about 85 degrees right at tick 16, held at 18, then a smoothstep from
+    that pose to the rest pose, so the last key is the identity pose with a zero root offset."""
     leg_len = PELVIS_U * UNITS_PER_U
     # tick: (torso yaw, arm yaw, arm raise e, hip yaw, root dip in model units, torso lean, left arm raise), degrees
-    peak = (32.0, 46.0, 95.0, 18.0, 0.095, 6.0, 40.0)
-    active = {
-        20: peak,
-        22: (22.0, 50.0, 95.0, 10.0, 0.100, 7.0, 40.0),
-        25: (-6.0, 6.0, 92.0, -8.0, 0.092, 10.0, 25.0),
-        28: (-26.0, -34.0, 86.0, -16.0, 0.086, 10.0, 5.0),
-        30: (-32.0, -46.0, 80.0, -18.0, 0.085, 8.0, -10.0),
+    peak = (36.0, 36.0, 41.5, 18.0, 0.095, 6.0, 40.0)
+    pose_at = {
+        8: peak,
+        10: (15.5, 15.5, 37.0, 12.0, 0.100, 7.0, 34.0),
+        11: (5.2, 5.2, 34.0, 6.0, 0.098, 8.0, 28.0),
+        12: (-5.0, -5.0, 30.0, 0.0, 0.094, 9.0, 20.0),
+        14: (-25.0, -25.0, 18.0, -12.0, 0.088, 9.0, 8.0),
+        16: (-34.0, -42.0, 12.0, -18.0, 0.080, 8.0, -8.0),
+        18: (-36.0, -44.0, 12.0, -18.0, 0.078, 8.0, -10.0),
     }
-    ticks = [0, 5, 10, 15, 20, 22, 25, 28, 30, 34, 38, 44, 50, 54]
+    ticks = [0, 2, 4, 6, 8, 10, 11, 12, 14, 16, 18, 21, 25, 30]
+    hold = pose_at[18]
     pose = {}
     for k in ticks:
-        if k in active:
-            pose[k] = active[k]
+        if k in pose_at:
+            pose[k] = pose_at[k]
         elif k < CLEAVE_WINDUP_TICKS:
-            f = _smooth(k / CLEAVE_WINDUP_TICKS)
+            f = {0: 0.0, 2: 0.35, 4: 0.75, 6: 0.95}[k]
             pose[k] = tuple(v * f for v in peak)
         else:
-            f = 1.0 - _smooth((k - CLEAVE_WINDUP_TICKS - CLEAVE_ACTIVE_TICKS) / CLEAVE_RECOVERY_TICKS)
-            pose[k] = tuple(v * f for v in active[30])
+            f = 1.0 - _smooth((k - 18) / (CLEAVE_TOTAL_TICKS - 18))
+            pose[k] = tuple(v * f for v in hold)
     pose[0] = tuple(0.0 for _ in peak)
     pose[ticks[-1]] = tuple(0.0 for _ in peak)
 

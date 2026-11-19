@@ -777,6 +777,21 @@ public class PlayerAnimationStateMachineTests
         Assert.True(after.MainArmHold > 0.95f);
     }
 
+    // The arm overlay blends at 12/s, so without a reset the held arm would still pin the sword for ~0.15 s of a
+    // 0.47 s cut. The very first cleave frame must already report the arm released.
+    [Fact]
+    public void TheFirstCleaveFrame_ReleasesAFullyHeldMainArm()
+    {
+        PlayerAnimationStateMachine machine = new();
+        PlayerAnimationFrame settled = Run(machine, Inputs(main: true, skill: 0), 1f);
+        Assert.True(settled.MainArmHold > 0.999f, "the arm was settled at 1 before the swing");
+
+        PlayerAnimationFrame first = machine.Update(Inputs(main: true, skill: 1), Dt);
+
+        Assert.Equal("cleave", first.Clip);
+        Assert.Equal(0f, first.MainArmHold);
+    }
+
     [Fact]
     public void AnAttackAfterTheCleave_StillSwings()
     {
