@@ -1,5 +1,5 @@
 {
-  "script": "play,keys:g:3,wait:120,snap",
+  "script": "play,tod:1320,keys:g:3,wait:120,snap",
   "timeOfDay": "night",
   "seed": 1,
   "env": ["DREAM_FX_CLOCK=10", "DREAM_MAX_FPS=60"],
