@@ -34,6 +34,29 @@ public sealed class TextureAnisotropyTests
         Assert.Equal(8f, TextureAnisotropy.DefaultLevel);
     }
 
+    private static bool ContextSupportsAnisotropy()
+    {
+        GL.GetInteger(GetPName.MajorVersion, out int major);
+        GL.GetInteger(GetPName.MinorVersion, out int minor);
+        if (major > 4 || (major == 4 && minor >= 6))
+        {
+            return true;
+        }
+
+        GL.GetInteger(GetPName.NumExtensions, out int count);
+        for (int i = 0; i < count; i++)
+        {
+            string name = GL.GetString(StringNameIndexed.Extensions, i);
+            if (name.EndsWith("_texture_filter_anisotropic", StringComparison.Ordinal)
+                && (name.StartsWith("GL_EXT_", StringComparison.Ordinal) || name.StartsWith("GL_ARB_", StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     [GlFact]
     public void MippedUpload_IsRgba8AndAnisotropic_ClampedUploadIsNot()
     {
@@ -48,6 +71,15 @@ public sealed class TextureAnisotropyTests
             GL.GetTexParameter(TextureTarget.Texture2D, (GetTextureParameter)TextureMaxAnisotropy, out float mippedLevel);
             float applied = TextureAnisotropy.AppliedLevel;
             Assert.Equal(applied > 1f ? applied : 1f, mippedLevel);
+
+            // Independent of the product's own support check, so a wrong "unsupported" cannot pass.
+            float requested = TextureAnisotropy.ResolveLevel(
+                Environment.GetEnvironmentVariable(TextureAnisotropy.EnvironmentVariable));
+            if (requested > 1f && ContextSupportsAnisotropy())
+            {
+                Assert.True(applied > 1f, $"context supports anisotropy but AppliedLevel is {applied}");
+                Assert.True(mippedLevel > 1f, $"TEXTURE_MAX_ANISOTROPY reads back {mippedLevel}");
+            }
 
             int clamped = TextureDecoder.UploadTexture2DClamped(texture, 0);
             GL.BindTexture(TextureTarget.Texture2D, clamped);
