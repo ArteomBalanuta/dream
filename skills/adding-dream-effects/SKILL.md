@@ -83,7 +83,7 @@ The player is about **28 x 101 px** on screen in the isometric view. Subtlety is
 effect is simply invisible. Size against world metres the player can see: the Cleave crescent's painted outer edge equals
 the skill's own 3.5 m range and is placed by `FxArcGeometry` (`HalfSizeForRange`, `OuterRadiusFraction`, and
 `PaintedArcDegrees`, which must equal every MeleeArc skill's `arcDegrees`), never by a hand-tuned multiple; it is emitted
-when the swing turns active (`MeleeArcSwing.WindupSeconds`) with steel sparks along the edge, left to right. The Mend ring is ~0.9 m at the feet with motes rising past head height, the Bolt lance leaves the player
+when the swing turns active (`MeleeArcSwing.WindupSeconds`) with steel sparks along the edge, left to right, and a blade trail placed by `FxBladeTrailGeometry` (white and additive, each segment gone within `2 x ActiveSeconds` of its birth). The Mend ring is ~0.9 m at the feet with motes rising past head height, the Bolt lance leaves the player
 entirely. Make hue the third discriminator (cold steel / cold violet / bone-green) so two effects never read alike.
 
 Bold low-frequency shapes also **compress better**, which matters against the PNG cap below. Fbm fleck storms cost

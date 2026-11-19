@@ -103,8 +103,20 @@ public sealed class FxSimulation
     private const float HitStar = 28f;
     private const float HitSlash = 29f;
     private const float HitSplat = 30f;
-    private const int ArcSparks = 14;
-    private const int ArcEmbers = 4;
+    private const int ArcSparks = 8;
+    // The blade trail: this many billboard segments laid end to end along FxBladeTrailGeometry's path over the
+    // active window. One quad, the trail and the sparks together are MaxCastParticles.
+    internal const int BladeTrailSegments = 10;
+    // A segment is born when the blade passes its start and is gone this long after: twice the swing, so the tail
+    // end has faded while the tip is still being laid.
+    internal const float TrailLife = 2f * MeleeArcSwing.ActiveSeconds;
+    private const float TrailStartHalfSize = 0.26f;
+    private const float TrailEndHalfSize = 0.10f;
+    // Each segment's quad is stretched to this many times the chord it spans, so neighbours overlap.
+    private const float TrailOverlap = 1.5f;
+    private const float TrailDepthBias = 0.5f;
+    private const float TrailBrightness = 0.97f;
+    private static readonly Vector3 TrailTint = new(0.94f, 0.97f, 1f);
     private const int BoltDarts = 12;
     private const int BoltSparks = 6;
     private const int MendEmbers = 14;
@@ -186,6 +198,7 @@ public sealed class FxSimulation
         public float Elapsed;
         public bool QuadEmitted;
         public int SparksEmitted;
+        public int TrailEmitted;
         public int Remaining;
     }
 
@@ -338,7 +351,7 @@ public sealed class FxSimulation
         {
             case SkillFxKind.Arc:
                 // Nothing is drawn now: the swing is queued and Advance emits it as the swing turns active.
-                planned = (aimed ? 1 : 0) + ArcSparks + ArcEmbers;
+                planned = (aimed ? 1 + BladeTrailSegments : 0) + ArcSparks;
                 if (_sweepCount < _sweeps.Length)
                 {
                     ArcSweep queued = new()
@@ -768,6 +781,19 @@ public sealed class FxSimulation
                 depthBias = DepthBiasHeld;
                 coverage = (1f - _nightFactor) * GroundCoverage;
                 break;
+            case FxParticleKind.Trail:
+                // Fades from the tail end quickly; the width shrinks through the halfSize lerp. The quad lies along
+                // the segment as the camera sees it and is stretched so its bright plateau spans the chord.
+                fade = MathF.Pow(MathF.Max(1f - t, 0f), 1.5f);
+                float ax = Vector3.Dot(p.Axis, _basis.Right);
+                float ay = Vector3.Dot(p.Axis, _basis.Up);
+                float chord = MathF.Sqrt(ax * ax + ay * ay);
+                rotation = chord > 1e-6f ? MathF.Atan2(ay, ax) : 0f;
+                stretch = chord > 1e-6f
+                    ? MathF.Max(1f, chord * TrailOverlap / (MathF.Max(halfSize, 1e-4f) * FxBladeTrailGeometry.CellPlateauFraction))
+                    : 1f;
+                depthBias = TrailDepthBias;
+                break;
             case FxParticleKind.Bolt:
                 // A dart is a lance head: bright at once, dimming along its flight. It lies along its
                 // velocity like a spark, but keeps its own violet.
@@ -884,7 +910,7 @@ public sealed class FxSimulation
 
     // Cleave: nothing at the cast. As the swing turns active (MeleeArcSwing.WindupSeconds after the cast) a
     // flat crescent is laid on the ground ahead of the caster, sized by FxArcGeometry so its painted outer edge
-    // lands on the skill's range, with a few hot embers at the hand. Over the active window steel sparks are
+    // lands on the skill's range. Over the active window a white blade trail is laid along FxBladeTrailGeometry's path and steel sparks are
     // thrown along that edge, from the caster's left tip to the right tip, matching the sweep of the blade.
     private void AdvanceArcSweeps(float dt)
     {
@@ -898,7 +924,7 @@ public sealed class FxSimulation
                 EmitArcSweep(ref sweep);
             }
 
-            if (sweep.QuadEmitted && sweep.SparksEmitted >= ArcSparks)
+            if (sweep.QuadEmitted && sweep.SparksEmitted >= ArcSparks && (sweep.TrailEmitted >= BladeTrailSegments || !sweep.Aimed))
             {
                 _sweeps[i] = _sweeps[--_sweepCount];
                 _sweeps[_sweepCount] = default;
@@ -952,7 +978,7 @@ public sealed class FxSimulation
         if (!sweep.QuadEmitted)
         {
             sweep.QuadEmitted = true;
-            int planned = (sweep.Aimed ? 1 : 0) + ArcEmbers;
+            int planned = sweep.Aimed ? 1 : 0;
             int room = SweepRoom(ref sweep);
             int granted = room;
             if (sweep.Aimed && room > 0)
@@ -963,19 +989,16 @@ public sealed class FxSimulation
                 EmitGroundQuad(FxParticleKind.Arc, FxFrame.Arc, feet, MathF.Atan2(aim.Z, aim.X), half, half, ArcLife, ArcTint);
             }
 
-            Vector3 hand = new Vector3(origin.X, origin.Y + CasterChestLift, origin.Z) + aim * 0.8f;
-            int embers = Math.Min(ArcEmbers, room);
-            room -= embers;
-            for (int i = 0; i < embers; i++)
-            {
-                EmitEmber(hand, 1f, 2.5f, 0.9f);
-            }
-
             sweep.Remaining -= granted - room;
             _pool.CountDropped(planned - (granted - room));
         }
 
         float progress = Math.Clamp((sweep.Elapsed - MeleeArcSwing.WindupSeconds) / MeleeArcSwing.ActiveSeconds, 0f, 1f);
+        if (sweep.Aimed)
+        {
+            EmitBladeTrail(ref sweep, progress);
+        }
+
         int due = progress >= 1f ? ArcSparks : (int)(progress * ArcSparks);
         if (due <= sweep.SparksEmitted)
         {
@@ -994,6 +1017,57 @@ public sealed class FxSimulation
         sweep.Remaining -= emit;
         _pool.CountDropped(wanted - emit);
         sweep.SparksEmitted = due;
+    }
+
+    // The blade tip at `progress` through the active window, in world space (FxBladeTrailGeometry in the caster's frame).
+    private static Vector3 TrailPoint(Vector3 origin, Vector3 aim, Vector3 right, float progress)
+    {
+        float theta = FxBladeTrailGeometry.TipAngleRadians(progress);
+        Vector3 direction = aim * MathF.Cos(theta) + right * MathF.Sin(theta);
+        return new Vector3(origin.X, origin.Y - CasterFeetDrop + FxBladeTrailGeometry.TipHeightMetres(progress), origin.Z)
+            + direction * FxBladeTrailGeometry.TipRadiusMetres;
+    }
+
+    // Lays the segments the blade has passed since the last look. Segment i spans progress i/N .. (i+1)/N; it is
+    // aged by how long ago the blade passed its start, so a late frame lays it already part-faded.
+    private void EmitBladeTrail(ref ArcSweep sweep, float progress)
+    {
+        const int n = BladeTrailSegments;
+        int due = progress >= 1f ? n : (int)(progress * n) + 1;
+        if (due <= sweep.TrailEmitted)
+        {
+            return;
+        }
+
+        int wanted = due - sweep.TrailEmitted;
+        int emit = Math.Min(wanted, SweepRoom(ref sweep));
+        Vector3 aim = sweep.Aim;
+        Vector3 right = new(-aim.Z, 0f, aim.X);
+        Vector3 colour = TrailTint * TrailBrightness;
+        for (int k = 0; k < emit; k++)
+        {
+            int i = sweep.TrailEmitted + k;
+            Vector3 from = TrailPoint(sweep.Origin, aim, right, (float)i / n);
+            Vector3 to = TrailPoint(sweep.Origin, aim, right, (float)(i + 1) / n);
+            float born = MeleeArcSwing.WindupSeconds + ((float)i / n * MeleeArcSwing.ActiveSeconds);
+            FxParticle segment = new()
+            {
+                Kind = FxParticleKind.Trail,
+                Position = TrailPoint(sweep.Origin, aim, right, (i + 0.5f) / n),
+                Axis = (to - from) * 0.5f,
+                Age = Math.Clamp(sweep.Elapsed - born, 0f, 0.9f * TrailLife),
+                Life = TrailLife,
+                StartHalfSize = TrailStartHalfSize,
+                EndHalfSize = TrailEndHalfSize,
+                Frame = (float)FxFrame.Trail,
+                Color = new Vector4(colour, 0f)
+            };
+            _pool.TryAdd(in segment);
+        }
+
+        sweep.Remaining -= emit;
+        _pool.CountDropped(wanted - emit);
+        sweep.TrailEmitted = due;
     }
 
     // One spark on the painted edge at the sweep's angle for `index`: -arc/2 (the caster's left) up to +arc/2

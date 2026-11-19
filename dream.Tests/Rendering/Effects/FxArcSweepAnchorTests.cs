@@ -67,6 +67,28 @@ public class FxArcSweepAnchorTests
     }
 
     [Fact]
+    public void A_Caster_Who_Moves_During_The_Windup_Gets_The_First_Trail_Segment_Around_The_Moved_Position()
+    {
+        Mover mover = new();
+        FxSimulation simulation = new(3u) { CasterLocator = mover.Locate };
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f, Caster);
+
+        int windupSteps = (int)MathF.Round(MeleeArcSwing.WindupSeconds * 64f);
+        for (int i = 0; i < windupSteps; i++)
+        {
+            mover.Position = Origin + new Vector3(2f * (i + 1) / windupSteps, 0f, 0f);
+            simulation.Advance(in Step, []);
+        }
+
+        FxInstance[] all = new FxInstance[FxLimits.MaxInstances];
+        int count = simulation.WriteInstances(all);
+        int segment = Array.FindIndex(all, 0, count, x => x.Frame == (float)FxFrame.Trail);
+        Assert.True(segment >= 0);
+        Vector3 offset = all[segment].Position - (Origin + new Vector3(2f, 0f, 0f));
+        Assert.Equal(FxBladeTrailGeometry.TipRadiusMetres, MathF.Sqrt((offset.X * offset.X) + (offset.Z * offset.Z)), 0.05f);
+    }
+
+    [Fact]
     public void The_Crescent_Stays_Where_It_Was_Laid_While_The_Caster_Keeps_Moving()
     {
         Mover mover = new();
@@ -148,12 +170,16 @@ public class FxArcSweepAnchorTests
 
         AllocationAssert.AtMost(0, () =>
         {
+            // Through the whole swing, so the crescent, the trail and the sparks are all laid and followed.
             simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f, Caster);
-            mover.Position.X += 0.1f;
-            simulation.Advance(in Step, []);
-            if (simulation.WriteInstances(destination) < 0)
+            for (int i = 0; i < 64; i++)
             {
-                throw new InvalidOperationException();
+                mover.Position.X += 0.1f;
+                simulation.Advance(in Step, []);
+                if (simulation.WriteInstances(destination) < 0)
+                {
+                    throw new InvalidOperationException();
+                }
             }
         });
     }
