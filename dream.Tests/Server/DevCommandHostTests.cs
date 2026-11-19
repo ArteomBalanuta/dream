@@ -267,6 +267,22 @@ public sealed class DevCommandHostTests
     }
 
     [Fact]
+    public void Give_FixedItem_EmptyWallet_WithRoom_GrantsTheItemAndLeavesTheWalletAtZero()
+    {
+        using Fixture f = new(allowed: true, Loopback);
+        Assert.Equal(0, f.Runtime.InventoryService.GoldOf(f.CharacterKey));
+        int torches = f.Items("tool.torch").Count;
+        Assert.True(f.Runtime.InventoryService.Ensure(f.CharacterKey));
+        Assert.True(f.Runtime.InventoryService.HasRoomFor(f.CharacterKey, "tool.torch"));
+
+        string reply = Assert.Single(f.Dev("give tool.torch"));
+
+        Assert.StartsWith("[dev] gave 1 tool.torch", reply, StringComparison.Ordinal);
+        Assert.Equal(torches + 1, f.Items("tool.torch").Count);
+        Assert.Equal(0, f.Runtime.InventoryService.GoldOf(f.CharacterKey));
+    }
+
+    [Fact]
     public void Give_FixedItem_EmptyWallet_FullBag_LeavesTheWalletAtZero()
     {
         using Fixture f = new(allowed: true, Loopback);
@@ -280,6 +296,7 @@ public sealed class DevCommandHostTests
         }
 
         Assert.Contains("bag is full", reply, StringComparison.Ordinal);
+        Assert.False(f.Runtime.InventoryService.HasRoomFor(f.CharacterKey, "tool.torch"));
         int held = f.Items("tool.torch").Count;
 
         string again = Assert.Single(f.Dev("give tool.torch"));

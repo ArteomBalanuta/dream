@@ -228,7 +228,7 @@ public sealed partial class WorldSessionRuntime
                 return probe;
             }
 
-            if (!BagHasRoomFor(characterKey, itemKey))
+            if (!_inventory.HasRoomFor(characterKey, itemKey))
             {
                 return InventoryEquipOutcome.BackpackFull;
             }
@@ -246,28 +246,12 @@ public sealed partial class WorldSessionRuntime
         {
             _inventory.TryAddGold(characterKey, 1);
         }
+        else if (borrowed && outcome != InventoryEquipOutcome.Equipped)
+        {
+            _inventory.TryRemoveGold(characterKey, 1);
+        }
 
         return outcome;
-    }
-
-    // True when the player's bag board has a free place for one of the item (held-back rows do not count).
-    internal bool BagHasRoomFor(string characterKey, string itemKey)
-    {
-        if (!ContentCatalog.Shipped.TryGetItem(itemKey, out ItemDefinition? definition))
-        {
-            return false;
-        }
-
-        BagBoard board = new();
-        foreach (InventorySlotSnapshot slot in _inventory.BuildSnapshot(characterKey).Slots)
-        {
-            if (slot.Item is InventoryItemSnapshot item && slot.SlotIndex < InventoryConstants.BackpackSlotCount)
-            {
-                board.TryPlace(slot.SlotIndex, BagGrid.FootprintOf(item.ItemKind));
-            }
-        }
-
-        return board.FirstFit(definition.Footprint) >= 0;
     }
 
     // radius 0 removes every live enemy; otherwise those within radius metres (flat distance) of the seat.
