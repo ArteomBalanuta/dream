@@ -68,17 +68,21 @@ public sealed class TextureAnisotropyTests
             GL.BindTexture(TextureTarget.Texture2D, mipped);
             GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureInternalFormat, out int format);
             Assert.Equal((int)PixelInternalFormat.Rgba8, format);
-            GL.GetTexParameter(TextureTarget.Texture2D, (GetTextureParameter)TextureMaxAnisotropy, out float mippedLevel);
             float applied = TextureAnisotropy.AppliedLevel;
-            Assert.Equal(applied > 1f ? applied : 1f, mippedLevel);
 
-            // Independent of the product's own support check, so a wrong "unsupported" cannot pass.
+            // Independent of the product's own support check, so a wrong "unsupported" cannot pass. Also guards the
+            // readback: TEXTURE_MAX_ANISOTROPY is an invalid enum on a context without the extension.
             float requested = TextureAnisotropy.ResolveLevel(
                 Environment.GetEnvironmentVariable(TextureAnisotropy.EnvironmentVariable));
-            if (requested > 1f && ContextSupportsAnisotropy())
+            if (ContextSupportsAnisotropy())
             {
-                Assert.True(applied > 1f, $"context supports anisotropy but AppliedLevel is {applied}");
-                Assert.True(mippedLevel > 1f, $"TEXTURE_MAX_ANISOTROPY reads back {mippedLevel}");
+                GL.GetTexParameter(TextureTarget.Texture2D, (GetTextureParameter)TextureMaxAnisotropy, out float mippedLevel);
+                Assert.Equal(applied > 1f ? applied : 1f, mippedLevel);
+                if (requested > 1f)
+                {
+                    Assert.True(applied > 1f, $"context supports anisotropy but AppliedLevel is {applied}");
+                    Assert.True(mippedLevel > 1f, $"TEXTURE_MAX_ANISOTROPY reads back {mippedLevel}");
+                }
             }
 
             int clamped = TextureDecoder.UploadTexture2DClamped(texture, 0);

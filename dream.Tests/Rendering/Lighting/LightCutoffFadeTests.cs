@@ -104,6 +104,32 @@ public class LightCutoffFadeTests
         Assert.True(WorstExcess(Row(20), faded: true) <= 0f);
     }
 
+    // The perf harness's debug ring with more lights than fit: the kept lights must still be lit, not all at the cut-off.
+    [Fact]
+    public void The_Debug_Ring_With_Thirty_Two_Lights_Keeps_Most_Of_Its_Sixteen_At_Full_Weight()
+    {
+        var camera = new Vector3(10f, 3f, -4f);
+        var ring = new PointLight[32];
+        Render.FillDebugPointLightRing(ring, camera);
+        LightList list = default;
+        LightSelection.SelectNearestFaded(default, ring, camera, default(ViewFrustum), ref list);
+
+        Assert.Equal(LightList.MaxLights, list.Count);
+        float summed = 0f;
+        int full = 0;
+        for (int slot = 0; slot < list.Count; slot++)
+        {
+            Vector3 position = list.PositionRadius[slot].Xyz;
+            int index = Array.FindIndex(ring, light => light.Position == position);
+            float weight = list.Color[slot].Xyz.Length / ring[index].Color.Length;
+            summed += weight;
+            full += weight > 0.999f ? 1 : 0;
+        }
+
+        Assert.True(full >= 12, $"only {full} of 16 kept ring lights at full weight");
+        Assert.True(summed >= 13f, $"summed weight {summed}");
+    }
+
     [Fact]
     public void Synthetic_Negative_Plain_SelectNearest_Breaks_The_Same_Bound()
     {
