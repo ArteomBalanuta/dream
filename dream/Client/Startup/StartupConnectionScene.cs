@@ -206,7 +206,7 @@ public sealed class StartupConnectionScene : IDisposable
 
     private void TryAutoConnect()
     {
-        if (_autoConnectAttempted || !IsAutoConnectEnabled())
+        if (_autoConnectAttempted || !IsAutoConnectEnabled(Environment.GetEnvironmentVariable, localServerPath: !_autoConnectUsesInitialOptions))
         {
             return;
         }
@@ -236,12 +236,11 @@ public sealed class StartupConnectionScene : IDisposable
         _persistConnectionOptions?.Invoke(localDefaults);
     }
 
-    private static bool IsAutoConnectEnabled() => IsAutoConnectEnabled(Environment.GetEnvironmentVariable);
-
-    // A capture run has no one to press Connect, so DREAM_HUD_CAPTURE implies auto-connect.
-    internal static bool IsAutoConnectEnabled(Func<string, string?> env)
+    // A capture run has no one to press Connect, so DREAM_HUD_CAPTURE implies auto-connect, but only on
+    // the local/integrated path: a leftover capture variable must never join a remote server unasked.
+    internal static bool IsAutoConnectEnabled(Func<string, string?> env, bool localServerPath = true)
     {
-        if (!string.IsNullOrWhiteSpace(env(MenuLaunchPolicy.HudCaptureEnvironmentVariable)))
+        if (localServerPath && !string.IsNullOrWhiteSpace(env(MenuLaunchPolicy.HudCaptureEnvironmentVariable)))
         {
             return true;
         }

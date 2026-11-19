@@ -99,6 +99,20 @@ public sealed class ContentValidateCliTests : IDisposable
     }
 
     [Theory]
+    [InlineData("--dir", "--strict")]
+    [InlineData("--ui", "--strict")]
+    [InlineData("--dir", "--ui")]
+    public void OptionValueStartingWithDashes_IsAUsageError_NotAPath(string option, string next)
+    {
+        (int exit, string output, string err) = Run(option, next);
+
+        Assert.Equal(1, exit);
+        Assert.Contains("needs a value", err);
+        Assert.Contains("usage:", err);
+        Assert.Equal(string.Empty, output);
+    }
+
+    [Theory]
     [InlineData("--bogus")]
     [InlineData("--dir")]
     [InlineData("extra")]

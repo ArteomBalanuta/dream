@@ -50,4 +50,22 @@ public class CaptureAutoConnectTests
     {
         Assert.False(StartupConnectionScene.IsAutoConnectEnabled(Env(capture: capture)));
     }
+
+    [Fact]
+    public void CaptureScript_DoesNotImplyAutoConnect_OnRemoteClientPath()
+    {
+        Assert.False(StartupConnectionScene.IsAutoConnectEnabled(Env(capture: "play,snap"), localServerPath: false));
+    }
+
+    [Theory]
+    [InlineData("1", "play", false, true)]
+    [InlineData("1", null, false, true)]
+    [InlineData(null, "play", false, false)]
+    [InlineData(null, "play", true, true)]
+    [InlineData("1", "play", true, true)]
+    [InlineData(null, null, true, false)]
+    public void Matrix(string? autoConnect, string? capture, bool local, bool expected)
+    {
+        Assert.Equal(expected, StartupConnectionScene.IsAutoConnectEnabled(Env(autoConnect, capture), local));
+    }
 }

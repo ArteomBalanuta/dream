@@ -21,6 +21,26 @@ public class ClientIdentityDataDirTests
     }
 
     [Fact]
+    public void IdentityFileEnvironment_NeverResolvesTheDataDir()
+    {
+        string path = ClientIdentityStore.ResolvePathLazy(
+            Env("explicit.json"),
+            () => throw new InvalidOperationException("bad DREAM_DATA_DIR"),
+            PerUserRoot);
+
+        Assert.Equal("explicit.json", path);
+    }
+
+    [Fact]
+    public void NoIdentityFileEnvironment_ResolvesTheDataDirLazilyAndPropagatesItsError()
+    {
+        Assert.Throws<InvalidOperationException>(() => ClientIdentityStore.ResolvePathLazy(
+            Env(null),
+            () => throw new InvalidOperationException("bad DREAM_DATA_DIR"),
+            PerUserRoot));
+    }
+
+    [Fact]
     public void DataDirOnly_UsesTheDataDirFile()
     {
         Assert.Equal(DataDirFile, ClientIdentityStore.ResolvePath(Env(null), DataDirFile, PerUserRoot));

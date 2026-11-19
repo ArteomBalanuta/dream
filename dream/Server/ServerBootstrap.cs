@@ -55,10 +55,12 @@ public static class ServerBootstrap
     // a world name. Unset means the default world. (Read from persistence wave B2 on.)
     public const string WorldEnvironmentVariable = "DREAM_WORLD";
 
-    // The dedicated server's database and its initial schema script, next to the executable.
+    // The dedicated server's database (DataPaths) and its initial schema script. The script and the
+    // migrations beside it are tied to the compiled code, so they stay next to the executable even
+    // when DREAM_ASSET_ROOT moves the other assets.
     public static string DefaultDatabasePath => DataPaths.Database;
 
-    public static string DefaultSchemaScriptPath => AssetPaths.Config("player-profiles.init.sql");
+    public static string DefaultSchemaScriptPath => AssetPaths.BundledConfig("player-profiles.init.sql");
 
     // The server's default log: each line to stderr.
     private static readonly Action<string> ConsoleLog = static line => Console.Error.WriteLine(line);
@@ -359,6 +361,12 @@ public static class ServerBootstrap
 
         host.MaxPlayers = config.MaxPlayers;
         host.Motd = config.Motd;
+        string? devExposure = DevCommandsExposureWarning(host.DevCommandsAllowed, config.BindAddress);
+        if (devExposure != null)
+        {
+            ConsoleLog(devExposure);
+        }
+
         await using IServerTransport transport = new TcpServerTransport(config.BindAddress, config.Port);
         Action<string> log = ConsoleLog;
         await using DedicatedServerService service = new(
@@ -386,6 +394,23 @@ public static class ServerBootstrap
         {
             return 0;
         }
+    }
+
+    // Dev commands are allowed to loopback connections only, but a same-machine tunnel or proxy (playit,
+    // ngrok, an nginx stream) makes every remote player look like 127.0.0.1. So dev commands on a server
+    // that is not bound to loopback is worth a loud line at start. Null when there is nothing to say.
+    internal static string? DevCommandsExposureWarning(bool devCommandsAllowed, IPAddress bindAddress)
+    {
+        ArgumentNullException.ThrowIfNull(bindAddress);
+        if (!devCommandsAllowed || IPAddress.IsLoopback(bindAddress))
+        {
+            return null;
+        }
+
+        return $"WARNING: {DevCommandsEnvironmentVariable}=1 on a server bound to {bindAddress}, which is not loopback. " +
+            "Dev commands (spawn, give, teleport, heal) are limited to loopback connections, but a tunnel or proxy " +
+            "running on this machine (playit, ngrok, nginx stream) makes every remote player arrive from 127.0.0.1 and so " +
+            "able to use them. Leave dev commands off on any server reachable through a tunnel or proxy.";
     }
 
     // host:port, with an IPv6 address in brackets.

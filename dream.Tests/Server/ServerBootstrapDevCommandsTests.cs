@@ -8,6 +8,25 @@ namespace Dream.Tests.Server;
 public sealed class ServerBootstrapDevCommandsTests
 {
     [Theory]
+    [InlineData("0.0.0.0", true, true)]
+    [InlineData("::", true, true)]
+    [InlineData("192.168.1.5", true, true)]
+    [InlineData("127.0.0.1", true, false)]
+    [InlineData("::1", true, false)]
+    [InlineData("0.0.0.0", false, false)]
+    public void DevCommandsExposureWarning_FiresOnlyForDevCommandsOnANonLoopbackBind(string bind, bool devOn, bool expectWarning)
+    {
+        string? warning = ServerBootstrap.DevCommandsExposureWarning(devOn, System.Net.IPAddress.Parse(bind));
+
+        Assert.Equal(expectWarning, warning != null);
+        if (warning != null)
+        {
+            Assert.StartsWith("WARNING", warning, StringComparison.Ordinal);
+            Assert.Contains("tunnel", warning, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
     [InlineData(null, false)]
     [InlineData("", false)]
     [InlineData("0", false)]

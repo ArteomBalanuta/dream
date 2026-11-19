@@ -10,13 +10,16 @@ namespace Dream.Server;
 //
 // The gate is two things at once, read at the moment the line runs, under the tick lock: the server allows
 // development commands (DevCommandsAllowed: the integrated server, or DREAM_DEV_COMMANDS) AND the connection
-// is loopback. A player on a public host never passes the second half, whatever the flag or their role says.
+// is loopback. A direct public connection never passes the second half, whatever the flag or their role says; a tunnel or
+// proxy on the same machine does (every remote player then arrives from loopback), hence the start warning.
 // The sender is the session the connection claimed at join; a client names no target.
 public sealed partial class DedicatedServerHost
 {
     internal const string DevCommandsOffText = DevCommandText.ErrorPrefix + "Dev commands are off on this server.";
 
-    private const string DevTooManyText = DevCommandText.ErrorPrefix + "Too many subcommands (at most 8); nothing was run.";
+    internal const string DevTooManyText = DevCommandText.ErrorPrefix + "Too many subcommands (at most 8); nothing was run.";
+
+    internal const string DevUnavailableText = DevCommandText.ErrorPrefix + "Dev commands are not available.";
 
     // One line to the sender per subcommand; a failure replies and the next one still runs.
     private void HandleDevCommand(
@@ -42,7 +45,7 @@ public sealed partial class DedicatedServerHost
             || Runtime is not { } runtime
             || !_connectionClaims.TryGetValue(context.ConnectionId, out string? sessionId))
         {
-            Reply(DevCommandText.ErrorPrefix + "Dev commands are not available.");
+            Reply(DevUnavailableText);
             return;
         }
 

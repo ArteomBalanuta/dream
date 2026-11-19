@@ -32,7 +32,9 @@ internal static class ContentValidateCli
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
-            bool hasValue = i + 1 < args.Length && !string.IsNullOrWhiteSpace(args[i + 1]);
+            // A value that starts with "--" is the next option, not a path: "--dir --strict" is a usage error.
+            bool hasValue = i + 1 < args.Length && !string.IsNullOrWhiteSpace(args[i + 1])
+                && !args[i + 1].TrimStart().StartsWith("--", StringComparison.Ordinal);
             if (string.Equals(arg, "--strict", StringComparison.OrdinalIgnoreCase))
             {
                 strict = true;
@@ -47,7 +49,11 @@ internal static class ContentValidateCli
             }
             else
             {
-                stderr.WriteLine($"error: unsupported argument '{arg}'.");
+                bool takesValue = string.Equals(arg, "--dir", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(arg, "--ui", StringComparison.OrdinalIgnoreCase);
+                stderr.WriteLine(takesValue
+                    ? $"error: '{arg}' needs a value (a path that does not start with '--')."
+                    : $"error: unsupported argument '{arg}'.");
                 stderr.WriteLine(Usage);
                 return UsageExitCode;
             }

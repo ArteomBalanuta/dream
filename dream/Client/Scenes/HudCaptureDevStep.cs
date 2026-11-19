@@ -54,6 +54,20 @@ internal static class HudCaptureDevStep
     public static bool IsReply(ChatChannel channel, string text) =>
         channel == ChatChannel.System && text is not null && text.StartsWith(DevCommandText.ReplyPrefix, StringComparison.Ordinal);
 
+    // The server answers a line it refuses as a whole with ONE reply, not one per subcommand. These are
+    // the dedicated host's DevCommandsOffText, DevUnavailableText and DevTooManyText, restated here because
+    // the client may not reference the server namespace; a test pins them to the server's strings.
+    internal const string WholeLineOffText = DevCommandText.ErrorPrefix + "Dev commands are off on this server.";
+    internal const string WholeLineUnavailableText = DevCommandText.ErrorPrefix + "Dev commands are not available.";
+    internal const string WholeLineTooManyText = DevCommandText.ErrorPrefix + "Too many subcommands (at most 8); nothing was run.";
+
+    public static bool IsWholeLineRefusal(ChatChannel channel, string text) =>
+        channel == ChatChannel.System
+        && text is not null
+        && (string.Equals(text, WholeLineOffText, StringComparison.Ordinal)
+            || string.Equals(text, WholeLineUnavailableText, StringComparison.Ordinal)
+            || string.Equals(text, WholeLineTooManyText, StringComparison.Ordinal));
+
     public static string FormatReplyLog(string line, string reply) => $"[hud-capture] dev {line} -> {reply}";
 
     public static string FormatTimeoutLog(string line, int missing) => $"[hud-capture] dev {line} -> no reply ({missing} missing)";
