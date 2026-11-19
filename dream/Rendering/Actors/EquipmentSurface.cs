@@ -62,36 +62,43 @@ public readonly record struct EquipmentSurface(
     // Roughness is clamped away from a mirror in the shader too; this is the authoring floor.
     public const float MinRoughness = 0.18f;
 
+    // The table is tuned so a material can be NAMED from a 20 px patch, which means the axes have to
+    // be far apart, not nudged: the shader's rim strength is 0.06 + 0.70 * Metallic * (1 - Roughness),
+    // so bright plate (Steel/Gilt, rim ~0.58) outlines hard, blackened iron (~0.34) softly, lacquer
+    // (Indigo ~0.33 at metallic 0.55) in between, and leather, bone, wood and cloth (<= 0.1) barely.
+    // Roughness separates the dielectrics: bone 0.50 is waxy and takes a glint, leather 0.66 a dull
+    // sheen, wood 0.84 and cloth 0.96 none. Grain is what makes a patch look worn: low on polished
+    // steel and lacquer, high on iron, leather, cloth and bone.
     public static EquipmentSurface For(WeaponMaterial material) => material switch
     {
-        WeaponMaterial.Steel => new EquipmentSurface(1.0f, 0.30f, 0.30f, 0.0f, EquipmentPattern.PolishedPlate, 0.85f),
-        WeaponMaterial.DarkIron => new EquipmentSurface(0.9f, 0.48f, 0.55f, 0.0f, EquipmentPattern.WornPlate, 1.0f),
-        WeaponMaterial.Wood => new EquipmentSurface(0.0f, 0.78f, 0.70f, 0.1f, EquipmentPattern.Wood, 0.95f),
-        WeaponMaterial.Leather => new EquipmentSurface(0.1f, 0.62f, 0.65f, 0.25f, EquipmentPattern.Hide, 0.95f),
-        WeaponMaterial.Gilt => new EquipmentSurface(1.0f, 0.34f, 0.35f, 1.0f, EquipmentPattern.PolishedPlate, 0.70f),
-        WeaponMaterial.Cloth => new EquipmentSurface(0.0f, 0.90f, 0.80f, 1.0f, EquipmentPattern.Weave, 0.90f),
+        WeaponMaterial.Steel => new EquipmentSurface(1.0f, 0.26f, 0.18f, 0.0f, EquipmentPattern.PolishedPlate, 0.85f),
+        WeaponMaterial.DarkIron => new EquipmentSurface(0.85f, 0.54f, 0.62f, 0.0f, EquipmentPattern.WornPlate, 1.0f),
+        WeaponMaterial.Wood => new EquipmentSurface(0.0f, 0.84f, 0.70f, 0.1f, EquipmentPattern.Wood, 0.95f),
+        WeaponMaterial.Leather => new EquipmentSurface(0.05f, 0.66f, 0.60f, 0.25f, EquipmentPattern.Hide, 0.95f),
+        WeaponMaterial.Gilt => new EquipmentSurface(1.0f, 0.30f, 0.22f, 1.0f, EquipmentPattern.PolishedPlate, 0.70f),
+        WeaponMaterial.Cloth => new EquipmentSurface(0.0f, 0.96f, 0.85f, 1.0f, EquipmentPattern.Weave, 0.90f),
         WeaponMaterial.Arcane => new EquipmentSurface(0.35f, 0.22f, 0.15f, 1.0f, EquipmentPattern.Rune, 0.80f),
         WeaponMaterial.Ember => new EquipmentSurface(0.2f, 0.55f, 0.60f, 1.0f, EquipmentPattern.Rune, 0.70f),
-        WeaponMaterial.Bone => new EquipmentSurface(0.0f, 0.66f, 0.72f, 0.2f, EquipmentPattern.Bone, 0.90f),
+        WeaponMaterial.Bone => new EquipmentSurface(0.0f, 0.50f, 0.62f, 0.2f, EquipmentPattern.Bone, 0.90f),
         _ => None,
     };
 
     public static EquipmentSurface For(ArmourMaterial material) => material switch
     {
-        ArmourMaterial.Steel => new EquipmentSurface(1.0f, 0.32f, 0.32f, 0.0f, EquipmentPattern.PolishedPlate, 0.85f),
-        ArmourMaterial.DarkIron => new EquipmentSurface(0.9f, 0.50f, 0.58f, 0.0f, EquipmentPattern.WornPlate, 1.0f),
-        ArmourMaterial.Leather => new EquipmentSurface(0.1f, 0.62f, 0.65f, 0.25f, EquipmentPattern.Hide, 0.95f),
-        ArmourMaterial.ClothCold => new EquipmentSurface(0.0f, 0.92f, 0.80f, 1.0f, EquipmentPattern.Weave, 0.90f),
-        ArmourMaterial.ClothAsh => new EquipmentSurface(0.0f, 0.90f, 0.82f, 1.0f, EquipmentPattern.Weave, 0.95f),
-        ArmourMaterial.ClothRed => new EquipmentSurface(0.0f, 0.88f, 0.78f, 1.0f, EquipmentPattern.Weave, 0.90f),
-        ArmourMaterial.Bone => new EquipmentSurface(0.0f, 0.66f, 0.72f, 0.2f, EquipmentPattern.Bone, 0.90f),
-        ArmourMaterial.Gilt => new EquipmentSurface(1.0f, 0.34f, 0.35f, 1.0f, EquipmentPattern.PolishedPlate, 0.70f),
+        ArmourMaterial.Steel => new EquipmentSurface(1.0f, 0.26f, 0.18f, 0.0f, EquipmentPattern.PolishedPlate, 0.85f),
+        ArmourMaterial.DarkIron => new EquipmentSurface(0.85f, 0.54f, 0.62f, 0.0f, EquipmentPattern.WornPlate, 1.0f),
+        ArmourMaterial.Leather => new EquipmentSurface(0.05f, 0.66f, 0.60f, 0.25f, EquipmentPattern.Hide, 0.95f),
+        ArmourMaterial.ClothCold => new EquipmentSurface(0.0f, 0.96f, 0.85f, 1.0f, EquipmentPattern.Weave, 0.90f),
+        ArmourMaterial.ClothAsh => new EquipmentSurface(0.0f, 0.96f, 0.85f, 1.0f, EquipmentPattern.Weave, 0.95f),
+        ArmourMaterial.ClothRed => new EquipmentSurface(0.0f, 0.96f, 0.85f, 1.0f, EquipmentPattern.Weave, 0.90f),
+        ArmourMaterial.Bone => new EquipmentSurface(0.0f, 0.50f, 0.62f, 0.2f, EquipmentPattern.Bone, 0.90f),
+        ArmourMaterial.Gilt => new EquipmentSurface(1.0f, 0.30f, 0.22f, 1.0f, EquipmentPattern.PolishedPlate, 0.70f),
         ArmourMaterial.Arcane => new EquipmentSurface(0.35f, 0.22f, 0.15f, 1.0f, EquipmentPattern.Rune, 0.80f),
         ArmourMaterial.Ember => new EquipmentSurface(0.2f, 0.55f, 0.60f, 1.0f, EquipmentPattern.Rune, 0.70f),
         // Lacquered plate: metallic and fairly smooth, so a torch finds it, with the plate pattern
         // and a low grain because enamel does not pit the way bare iron does. Takes the accent tint
         // fully, so a tier reads on the field as well as on the trim.
-        ArmourMaterial.Indigo => new EquipmentSurface(0.85f, 0.40f, 0.30f, 1.0f, EquipmentPattern.PolishedPlate, 0.80f),
+        ArmourMaterial.Indigo => new EquipmentSurface(0.55f, 0.30f, 0.20f, 1.0f, EquipmentPattern.PolishedPlate, 0.80f),
         _ => None,
     };
 }

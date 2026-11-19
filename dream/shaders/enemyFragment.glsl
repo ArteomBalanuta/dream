@@ -70,9 +70,20 @@ const float ActorDirectScale = 0.75;
 // real highlight is exposed with everything else and is allowed to clip to white - a highlight is
 // supposed to be the brightest thing in frame - while a grazing one stays a value, not a flare.
 const float EquipSpecularStrength = 0.30;
-// The fresnel edge sheen rides much lower: at 28 px across it is there to separate a helm's rim
-// from the head behind it, not to outline the piece.
-const float EquipFresnelStrength = 0.08;
+// The RIM: the sky caught on a plate edge, the cue that most separates armour from a flat render.
+// Its strength is per material and derived from the two numbers that already describe one:
+//   rimK = EquipRimBase + EquipRimMetal * metallic * (1 - roughness)
+// so polished steel (1.0, 0.26) rims at 0.06 + 0.70 * 0.74 = 0.58, blackened iron (0.85, 0.54) at
+// 0.34, leather (0.05, 0.66) at 0.07 and cloth (0, 0.96) at 0.06: plate outlines, hide barely does.
+// It is added in exposed units straight into `lit` (not through EquipSpecularStrength) and is then
+// capped to the headroom left under 1.0 / exposure, so it can brighten an edge but never clip one.
+// Worst case before the cap: sky (0.26 by day) * rim (<= 1) * 0.58 = 0.15 against a 0.92 lit peak
+// (albedo 0.42 * gain 2.2) - the cap, not the constant, is what guarantees no flat patch.
+const float EquipRimBase = 0.06;
+const float EquipRimMetal = 0.70;
+// A fresnel exponent of 3, not 5: pow 5 is under 1/10 of its peak until the last 25 percent of the
+// silhouette, a band under 1 px wide at 28 px across, which MSAA erases. Cubed it is about 3 px.
+const float EquipRimPower = 3.0;
 // Mirrors EquipmentSurface.MinRoughness. A narrower lobe than this aliases at the shipped zoom.
 const float EquipMinRoughness = 0.18;
 const float EquipMaxShininess = 512.0;
@@ -128,6 +139,13 @@ float dreamEquipGrain(vec3 worldPos) {
 // of the UV or wider, a rivet is 0.09 of the UV or bigger, and a noise octave is under about 20
 // cycles per metre. Fewer, bigger, higher-contrast features. Anything finer is instructions spent
 // on something the player cannot see.
+//
+// Units: noise frequencies are CYCLES per metre, sin() arguments are RADIANS per metre (divide by
+// 6.28). One pixel is roughly 1-2 cm, so a feature wants a period of 5-10 cm: 10-20 cycles/m, or
+// 60-120 rad/m. The audit that set the current numbers: plate groove 0.105 -> 0.13 UV, pits 16 -> 11
+// and scratches 14 -> 12 cycles/m; hide fibre 17 -> 11 and stitch dots 0.055 -> 0.075 UV; weave
+// lattice 26 -> 14 rad/UV; bone striae 19 rad/m (3 cycles, one band across the whole part) -> 56
+// rad/m (9 cycles); wood grain 20 -> 12 and rune bands 9/4 rad/m (a band wider than the part) -> 60/28.
 //
 // Every pattern may only take light AWAY (the albedo multiplier it returns is at most 1.0): the
 // world pass has no tonemap and the albedo ceiling is the one thing holding the figure out of a
@@ -189,13 +207,14 @@ float dreamEquipPattern(vec3 lp, vec2 uv, int pattern, float depth, float seed, 
         // A plate is a PANEL: a bevelled border, a groove where two plates meet, a row of rivets
         // just inside the edge, and hammer dimples across the field. The groove is what makes a
         // flat face read as one plate among several rather than as a side of a box.
-        float groove = 1.0 - smoothstep(0.0, 0.105, border);
-        float bevel = smoothstep(0.08, 0.26, border);
+        // The groove is 0.13 of the UV (was 0.105): a face is 10-20 px, so that is 1.3-2.6 px, not 1-2.
+        float groove = 1.0 - smoothstep(0.0, 0.13, border);
+        float bevel = smoothstep(0.10, 0.30, border);
         albedo *= 1.0 - (0.46 * depth * groove);
         // The bevel inside the groove catches light: rougher in the groove, smoother on the field.
         roughDelta += depth * ((0.22 * groove) - (0.05 * bevel));
 
-        float rivets = dreamEquipRivets(uv, 0.165, 0.34, 0.092);
+        float rivets = dreamEquipRivets(uv, 0.19, 0.34, 0.092);
         // A rivet head is a small polished dome: it reads by GLINTING, not by being pale.
         roughDelta -= depth * 0.40 * rivets;
         albedo *= 1.0 - (0.14 * depth * rivets);
@@ -206,43 +225,45 @@ float dreamEquipPattern(vec3 lp, vec2 uv, int pattern, float depth, float seed, 
 
         if (pattern == EquipPatternWornPlate) {
             // Blackened iron: deeper pitting, and long scratches running down the piece.
-            float pits = dreamEquipNoise((lp * 16.0) + vec3(seed * 13.0));
+            float pits = dreamEquipNoise((lp * 11.0) + vec3(seed * 13.0));
             albedo *= 1.0 - (depth * 0.22 * smoothstep(0.52, 1.0, 1.0 - pits));
-            float scratch = dreamEquipStreak(lp, vec3(14.0, 2.0, 14.0), seed);
+            float scratch = dreamEquipStreak(lp, vec3(12.0, 2.0, 12.0), seed);
             roughDelta += depth * 0.26 * smoothstep(0.62, 1.0, scratch);
         }
     } else if (pattern == EquipPatternHide) {
         // Leather: a fibrous grain running the length of the piece, a soft mottle, and a stitch
         // line following the border - the one detail that says "sewn" at this size.
-        float fibre = dreamEquipStreak(lp, vec3(17.0, 4.0, 17.0), seed);
+        float fibre = dreamEquipStreak(lp, vec3(11.0, 3.0, 11.0), seed);
         albedo *= 1.0 - (depth * 0.20 * (1.0 - fibre));
         float mottle = dreamEquipNoise((lp * 5.0) + vec3(seed * 3.0));
         albedo *= 1.0 - (depth * 0.16 * (1.0 - mottle));
-        float stitch = dreamEquipRivets(uv, 0.125, 0.20, 0.055);
+        float stitch = dreamEquipRivets(uv, 0.13, 0.26, 0.075);
         albedo *= 1.0 - (depth * 0.34 * stitch);
         roughDelta += depth * (0.18 - (0.10 * fibre));
     } else if (pattern == EquipPatternWeave) {
         // Cloth: a warp and weft lattice far too fine to resolve on its own, so what actually reads
         // is the low-frequency fold field it rides on. Both are here; the lattice survives as a
         // texture when the figure is close and averages into the fold value when it is not.
-        float warp = 0.5 + (0.5 * sin(uv.x * 26.0));
-        float weft = 0.5 + (0.5 * sin(uv.y * 26.0));
+        // 14 rad per UV is 2.2 cycles across a face: 4-9 px a cycle on a 10-20 px face. The old 26
+        // (4.1 cycles) was 2-5 px, at the Nyquist edge, and read as grey.
+        float warp = 0.5 + (0.5 * sin(uv.x * 14.0));
+        float weft = 0.5 + (0.5 * sin(uv.y * 14.0));
         float lattice = max(warp, weft);
-        albedo *= 1.0 - (depth * 0.08 * (1.0 - lattice));
+        albedo *= 1.0 - (depth * 0.13 * (1.0 - lattice));
         float folds = dreamEquipNoise((lp * vec3(4.5, 3.0, 4.5)) + vec3(seed * 2.0));
         albedo *= 1.0 - (depth * 0.30 * (1.0 - folds));
         roughDelta += depth * 0.10;
     } else if (pattern == EquipPatternBone) {
         // Bone: striations down the length, and pitting at the ends where it is worked.
-        float striae = 0.5 + (0.5 * sin((lp.y * 19.0) + (dreamEquipNoise(lp * 6.0) * 6.0)));
+        float striae = 0.5 + (0.5 * sin((lp.y * 56.0) + (dreamEquipNoise(lp * 6.0) * 6.0)));
         albedo *= 1.0 - (depth * 0.20 * (1.0 - striae));
-        float pits = dreamEquipNoise((lp * 13.0) + vec3(seed * 9.0));
+        float pits = dreamEquipNoise((lp * 10.0) + vec3(seed * 9.0));
         albedo *= 1.0 - (depth * 0.22 * smoothstep(0.58, 1.0, 1.0 - pits));
         roughDelta += depth * 0.14;
     } else if (pattern == EquipPatternWood) {
         // Wood: long grain along the haft with the odd knot, and a darker line where the grain runs
         // out. A haft is often the longest thing on screen, so its grain is worth the instructions.
-        float grain = dreamEquipStreak(lp, vec3(20.0, 2.5, 20.0), seed);
+        float grain = dreamEquipStreak(lp, vec3(12.0, 2.0, 12.0), seed);
         albedo *= 1.0 - (depth * 0.24 * (1.0 - grain));
         float knots = dreamEquipNoise((lp * vec3(3.5, 1.6, 3.5)) + vec3(seed * 4.0));
         albedo *= 1.0 - (depth * 0.26 * smoothstep(0.74, 1.0, knots));
@@ -251,7 +272,7 @@ float dreamEquipPattern(vec3 lp, vec2 uv, int pattern, float depth, float seed, 
         // The glowing materials: banded filigree across the piece, dark between the bands. The glow
         // itself is the material emissive, added after exposure; this only carves the dark away
         // from it so the light reads as lines rather than as a solid block of colour.
-        float bands = 0.5 + (0.5 * sin((lp.y * 9.0) + (lp.x * 4.0) + (seed * 3.0)));
+        float bands = 0.5 + (0.5 * sin((lp.y * 60.0) + (lp.x * 28.0) + (seed * 3.0)));
         albedo *= 1.0 - (depth * 0.34 * smoothstep(0.35, 0.95, 1.0 - bands));
         roughDelta -= depth * 0.10;
     }
@@ -357,15 +378,27 @@ void main()
         spec += dreamEquipLobe(n, v, uMoonDirection.xyz, shin, f0) * uMoonDirection.w * uMoonColor.rgb;
         spec += dreamPointSpecular(n, fragPos, v, shin, f0);
 
-        // Fresnel edge sheen: the sky caught on a rim. Metal takes most of it, leather a little.
-        // Back faces again: with culling off they carry the front normal, so dot(n, v) is negative
-        // and the rim term would saturate to a full sheen over the whole hidden face. Depth hides
-        // them while every shape is closed, but an open shell would light up. Clamp it to zero.
-        float rim = dot(n, v) <= 0.0 ? 0.0 : pow(1.0 - dot(n, v), 5.0);
-        spec += uAmbientSky.rgb * (rim * (0.10 + 0.90 * metallic) * EquipFresnelStrength);
+        // Brushed metal: the highlight is dimmed by streaks running along the part's local Y (the
+        // unskinned model-space Y, so it does not crawl). One-sided like every other term here: it
+        // only ever takes highlight AWAY, so it cannot raise the peak or clip. Across the streak
+        // the stretch is 12 cycles/m (about 8 cm, 4-5 px) and along it 1.2.
+        float brush = dreamEquipStreak(detailPos, vec3(12.0, 1.2, 12.0), uEquipDetail.w + 0.37);
+        spec *= 1.0 - (0.42 * metallic * (1.0 - brush));
 
         // Before dreamExpose, so a highlight is exposed with everything else and may clip to white.
         lit += spec * EquipSpecularStrength;
+
+        // The rim (see EquipRimBase). Back faces carry the front normal with culling off, so
+        // dot(n, v) is negative there and the term is zero instead of a full sheen. Metal rims in
+        // its own colour. Capped to the headroom under the clip point: 1 / exposure is the largest
+        // lit value that still shows as a value, and the rim may only fill what is left of it.
+        float ndv = dot(n, v);
+        float rim = ndv <= 0.0 ? 0.0 : pow(1.0 - ndv, EquipRimPower);
+        float rimK = EquipRimBase + (EquipRimMetal * metallic * (1.0 - rough));
+        vec3 rimLight = uAmbientSky.rgb * mix(vec3(1.0), baseColor.rgb * 2.4, metallic) * (rim * rimK);
+        float rimRoom = max((1.0 / max(uLightingParams.x, 0.01)) - max(lit.r, max(lit.g, lit.b)), 0.0);
+        float rimPeak = max(rimLight.r, max(rimLight.g, rimLight.b));
+        lit += rimLight * (rimPeak > rimRoom ? rimRoom / rimPeak : 1.0);
     }
 
     vec3 emissive = material.emissiveFactor;
