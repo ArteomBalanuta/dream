@@ -21,20 +21,21 @@ public static class LightSelection
     // Selects from two spans as if they were concatenated (`first` then `second`). Render uses it
     // to add the DREAM_DEBUG_POINT_LIGHTS ring to the scene's lights without copying them.
     //
-    // seeds, when given, receives each kept light's FlickerSeed at the same list index (a held light's seed is its
-    // carrier's actor id; the fire shadow pass reads it to keep the carrier out of its own light's shadow).
+    // carriers, when given, receives each kept light's CarrierActorId at the same list index (a held light's carrier
+    // is the actor holding it, 0 for every other light; the fire shadow pass reads it to keep the carrier out of its
+    // own light's shadow).
     public static void SelectNearest(
         ReadOnlySpan<PointLight> first,
         ReadOnlySpan<PointLight> second,
         Vector3 camera,
         in ViewFrustum frustum,
         ref LightList list,
-        Span<int> seeds = default)
+        Span<int> carriers = default)
     {
         Span<float> distances = stackalloc float[LightList.MaxLights];
         int count = 0;
-        Insert(first, camera, in frustum, ref list, distances, ref count, seeds);
-        Insert(second, camera, in frustum, ref list, distances, ref count, seeds);
+        Insert(first, camera, in frustum, ref list, distances, ref count, carriers);
+        Insert(second, camera, in frustum, ref list, distances, ref count, carriers);
         list.Count = count;
     }
 
@@ -62,9 +63,9 @@ public static class LightSelection
         ref LightList list,
         Span<float> distances,
         ref int count,
-        Span<int> seeds)
+        Span<int> carriers)
     {
-        bool carrySeeds = seeds.Length >= LightList.MaxLights;
+        bool carryCarriers = carriers.Length >= LightList.MaxLights;
         for (int i = 0; i < lights.Length; i++)
         {
             ref readonly PointLight light = ref lights[i];
@@ -98,18 +99,18 @@ public static class LightSelection
                 distances[j] = distances[j - 1];
                 list.PositionRadius[j] = list.PositionRadius[j - 1];
                 list.Color[j] = list.Color[j - 1];
-                if (carrySeeds)
+                if (carryCarriers)
                 {
-                    seeds[j] = seeds[j - 1];
+                    carriers[j] = carriers[j - 1];
                 }
             }
 
             distances[slot] = distance;
             list.PositionRadius[slot] = new Vector4(light.Position, light.Radius);
             list.Color[slot] = new Vector4(light.Color, 0f);
-            if (carrySeeds)
+            if (carryCarriers)
             {
-                seeds[slot] = light.FlickerSeed;
+                carriers[slot] = light.CarrierActorId;
             }
 
             if (count < LightList.MaxLights)

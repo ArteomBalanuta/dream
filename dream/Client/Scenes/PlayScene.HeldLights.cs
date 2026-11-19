@@ -40,7 +40,10 @@ public partial class PlayScene
         Player player = _runtime.Player;
         Camera camera = presentation.Camera;
         PushLocalAvatarInputs(player);
-        _render.LocalPlayers.HeldLightActorId = player.Combatant.Actor.Id;
+        // The server-numbered id, the key remote casters use; the registry id is 1 on every client and would collide
+        // with the first remote player. 0 (no exclusion) until the join list names the local actor.
+        int carrierId = _serverLocalActorId;
+        _render.LocalPlayers.HeldLightActorId = carrierId;
         // The interpolated render pose (raw body in first person), so a third-person light rides
         // with the drawn model instead of stepping on prediction ticks.
         bool firstPerson = _settings.CameraViewMode == CameraViewMode.FirstPerson;
@@ -58,7 +61,8 @@ public partial class PlayScene
             _runtime.LocalRenderPose.Position,
             _runtime.LocalRenderPose.Facing,
             hasFlame,
-            flameModelPoint);
+            flameModelPoint,
+            carrierId);
         AddHeldLights(
             lights, in local, camera.Position, camera.Front, camera.Right, camera.Up, remotePlayers,
             _clientPresentationTimeSeconds, _render.RemotePlayers);
@@ -110,7 +114,9 @@ public partial class PlayScene
         Vector3 BodyFacing,
         // The flame of the held item in the model's own space, from the last local draw (third person only).
         bool HasFlame = false,
-        Vector3 FlameModelPoint = default);
+        Vector3 FlameModelPoint = default,
+        // The server-numbered id the actor shadow casters are owned by; 0 while unknown (no shadow exclusion).
+        int CarrierActorId = 0);
 
     // Adds one light per lit player: the local one (anchored to the camera in first person, to the
     // body in third person) and each living remote player whose HeldLight is not None. Static, with
@@ -136,7 +142,7 @@ public partial class PlayScene
                     ? Vector3.TransformPosition(
                         local.FlameModelPoint, PlayerRenderState.CreateModelMatrix(local.BodyPosition, local.BodyFacing))
                     : HeldLightAnchor.Body(local.BodyPosition, local.BodyFacing);
-            if (HeldLightCatalog.TryCreate(local.Kind, anchor, timeSeconds, local.ActorId, out PointLight light))
+            if (HeldLightCatalog.TryCreate(local.Kind, anchor, timeSeconds, local.ActorId, out PointLight light, local.CarrierActorId))
             {
                 lights.Add(in light);
             }
@@ -155,7 +161,7 @@ public partial class PlayScene
                 remote.ActorId, remote.SessionId, remote.Equipment, out Vector3 flame)
                 ? Vector3.TransformPosition(flame, PlayerRenderState.CreateModelMatrix(remote.Pose.Position, remote.Pose.Facing))
                 : HeldLightAnchor.Body(remote.Pose.Position, remote.Pose.Facing);
-            if (HeldLightCatalog.TryCreate(remote.HeldLight, anchor, timeSeconds, remote.ActorId, out PointLight light))
+            if (HeldLightCatalog.TryCreate(remote.HeldLight, anchor, timeSeconds, remote.ActorId, out PointLight light, remote.ActorId))
             {
                 lights.Add(in light);
             }

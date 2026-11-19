@@ -153,7 +153,7 @@ public static class FireShadowAtlas
         int maxSlots,
         float strength,
         ref ShadowFrame frame,
-        ReadOnlySpan<int> seeds = default)
+        ReadOnlySpan<int> carriers = default)
     {
         Span<int> chosen = stackalloc int[ShadowSettings.MaxCastingFireCount];
         int count = SelectSlots(in list, focus, maxSlots, chosen);
@@ -168,7 +168,7 @@ public static class FireShadowAtlas
                 Near = NearPlane,
                 Far = FarPlane(positionRadius.W),
                 Strength = strength,
-                CarrierSeed = chosen[s] < seeds.Length ? seeds[chosen[s]] : 0,
+                CarrierActorId = chosen[s] < carriers.Length ? carriers[chosen[s]] : 0,
             };
         }
 

@@ -105,7 +105,7 @@ public static class ShadowCasterPass
                     target.BeginFireTile(slot, face);
                     Matrix4 faceView = FireShadowAtlas.FaceView(fire.Position, face);
                     ViewFrustum frustum = ShadowCasterSelection.FireFaceFrustum(in faceView, in projection);
-                    ShadowCasterView view = new(in faceView, in projection, in frustum, focus, fire.CarrierSeed);
+                    ShadowCasterView view = new(in faceView, in projection, in frustum, focus, fire.CarrierActorId);
                     int before = RenderCounters.DrawCalls;
                     target.DrawCasters(in view);
                     fireDraws += RenderCounters.DrawCalls - before;

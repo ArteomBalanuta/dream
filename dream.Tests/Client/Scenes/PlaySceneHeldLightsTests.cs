@@ -267,4 +267,36 @@ public sealed class PlaySceneHeldLightsTests
             IsAlive: isAlive,
             HeldLight: heldLight);
     }
+
+    [Fact]
+    public void TheCarrierIdIsTheServerIdForTheLocalPlayer_AndNeverCollidesWithARemote()
+    {
+        // The client registry id is 1 on every client, the same number as the first-joined remote player. The local light
+        // carries the server id the scene passes in, so the remote with id 1 is not the local carrier.
+        LightCollector lights = new();
+        PlayScene.LocalHeldLight local = new(
+            HeldLightKind.Torch, ActorId: 1, FirstPerson: false, Vector3.Zero, -Vector3.UnitZ, CarrierActorId: 7);
+        RemotePlayerPresentationState[] remotes = [Remote(1, new Vector3(10f, 0f, 0f), HeldLightKind.Torch)];
+
+        PlayScene.AddHeldLights(lights, in local, CameraPosition, CameraFront, CameraRight, CameraUp, remotes, timeSeconds: 3.0);
+
+        Assert.Equal(2, lights.Count);
+        Assert.Equal(7, lights.Lights[0].CarrierActorId);
+        Assert.Equal(1, lights.Lights[1].CarrierActorId);
+        Assert.NotEqual(lights.Lights[0].CarrierActorId, lights.Lights[1].CarrierActorId);
+    }
+
+    [Fact]
+    public void ALocalCarrierOfZeroExcludesNobody()
+    {
+        // Before the join list names the local actor the scene passes 0: no exclusion rather than a colliding key.
+        LightCollector lights = new();
+        PlayScene.LocalHeldLight local = new(HeldLightKind.Torch, ActorId: 1, FirstPerson: false, Vector3.Zero, -Vector3.UnitZ);
+
+        PlayScene.AddHeldLights(
+            lights, in local, CameraPosition, CameraFront, CameraRight, CameraUp, Array.Empty<RemotePlayerPresentationState>(), timeSeconds: 3.0);
+
+        Assert.Equal(1, lights.Count);
+        Assert.Equal(0, lights.Lights[0].CarrierActorId);
+    }
 }
