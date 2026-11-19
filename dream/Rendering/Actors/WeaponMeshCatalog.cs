@@ -24,8 +24,10 @@ public enum WeaponGrip
     Shield
 }
 
-// One box of a held model: centre and size in model units (the unscaled player model, 2.68 units
-// tall = 1.904 m, see HeldItemScale), turned about X (Pitch) and then Z (Roll), in degrees.
+// One part of a held model: centre and size in model units (the unscaled player model, 2.68 units
+// tall = 1.904 m, see HeldItemScale), turned about X (Pitch), then Z (Roll), then Y (Yaw), in degrees.
+// Shape is the sculpted primitive the part is drawn with; its mesh is inscribed in the same box the
+// centre and size describe, so Size is still the part's real extent whatever the shape.
 public readonly record struct WeaponPart(
     Vector3 Center,
     Vector3 Size,
@@ -73,8 +75,23 @@ public sealed class WeaponModel(string visualId, WeaponGrip grip, bool isRanged,
 }
 
 // The procedural meshes of the items a player holds, by the C4 visual ids. Each is a handful of
-// boxes in dark, worn materials (blackened iron, old wood, oiled leather, tarnished brass). An id
-// the catalog does not know draws as a plain stick, so a new item is never invisible.
+// SCULPTED parts (EquipmentShape) in dark, worn materials (blackened iron, old wood, oiled leather,
+// tarnished brass): a haft is a Shaft, a blade is a Blade, an axe bit a Crescent, a pommel a Dome or
+// a Ring, a ferrule or quillon tip a Taper, a stud a Spike, a cloth a Panel, an arcane stone a Gem.
+// A plain Box survives nowhere in this catalog; anything genuinely rectilinear (a shield's iron band,
+// a hammer head, a fuller) is a BevelBox, whose chamfers catch a different light value than its faces.
+// An id the catalog does not know draws as a plain stick, so a new item is never invisible.
+//
+// Budget: at most ~14 parts per model. At the shipped isometric zoom the whole figure is 28x101 px, so
+// silhouette, mass and value are what read; curvature is worth paying for (a curved surface gives a run
+// of light where a box gives one flat value), ornament smaller than a pixel is not.
+//
+// Axis conventions when choosing a rotation. A Crescent sweeps in YZ with a horn at each end of Y and
+// its convex (ground) edge toward +Z, which is an axe bit as authored; pitch: 90f turns the horns onto
+// +-Z and drops the convex edge to -Y, which is a drooping gothic crossguard. A Spike points along its
+// own +Y, so pitch: +-90f aims it along +-Z and roll: -+90f along +-X. A Dome caps its own +Y, so
+// roll: 180f makes a pommel cap and pitch: 90f a hammer's crowned face. Sizes are always authored in
+// the part's OWN frame, before the rotation.
 public static class WeaponMeshCatalog
 {
     public const string GenericVisualId = "held.generic";
@@ -86,8 +103,8 @@ public static class WeaponMeshCatalog
         WeaponGrip.Hand,
         false,
         [
-            Box(0f, 0.3f, 0f, 0.06f, 0.8f, 0.06f, WeaponMaterial.Wood),
-            Box(0f, 0.72f, 0f, 0.09f, 0.1f, 0.09f, WeaponMaterial.DarkIron)
+            Box(0f, 0.3f, 0f, 0.06f, 0.8f, 0.06f, WeaponMaterial.Wood, shape: EquipmentShape.Shaft),
+            Box(0f, 0.72f, 0f, 0.09f, 0.1f, 0.09f, WeaponMaterial.DarkIron, shape: EquipmentShape.Taper)
         ]);
 
     public static IEnumerable<string> KnownVisualIds => Models.Keys;
@@ -155,216 +172,294 @@ public static class WeaponMeshCatalog
         void Shield(string id, params WeaponPart[] parts) =>
             models[id] = new WeaponModel(id, WeaponGrip.Shield, false, parts);
 
-        // Short, thin, a bone pommel and a hooked guard.
+        const EquipmentShape BevelBox = EquipmentShape.BevelBox;
+        const EquipmentShape Shaft = EquipmentShape.Shaft;
+        const EquipmentShape Taper = EquipmentShape.Taper;
+        const EquipmentShape Blade = EquipmentShape.Blade;
+        const EquipmentShape Plate = EquipmentShape.Plate;
+        const EquipmentShape Dome = EquipmentShape.Dome;
+        const EquipmentShape Spike = EquipmentShape.Spike;
+        const EquipmentShape Ring = EquipmentShape.Ring;
+        const EquipmentShape Crescent = EquipmentShape.Crescent;
+        const EquipmentShape Gem = EquipmentShape.Gem;
+        const EquipmentShape Panel = EquipmentShape.Panel;
+
+        // Short and thin: a ring pommel, a rolled grip, a drooping hooked guard and a narrow fullered blade.
         Hand("held.weapon.dagger", false,
-            Box(0f, 0.043f, 0f, 0.07f, 0.118f, 0.07f, WeaponMaterial.Leather),
-            Box(0f, -0.027f, 0f, 0.09f, 0.037f, 0.09f, WeaponMaterial.Bone),
-            Box(0f, 0.112f, 0f, 0.08f, 0.021f, 0.20f, WeaponMaterial.DarkIron),
-            Box(0f, 0.257f, 0f, 0.04f, 0.278f, 0.10f, WeaponMaterial.Steel),
-            Box(0f, 0.246f, 0f, 0.05f, 0.182f, 0.03f, WeaponMaterial.DarkIron),
-            Box(0f, 0.418f, 0f, 0.035f, 0.054f, 0.05f, WeaponMaterial.Steel));
+            Box(0f, 0.043f, 0f, 0.07f, 0.118f, 0.07f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, -0.027f, 0f, 0.09f, 0.037f, 0.09f, WeaponMaterial.Bone, shape: Ring),
+            Box(0f, 0.062f, 0f, 0.075f, 0.018f, 0.075f, WeaponMaterial.DarkIron, shape: Ring),
+            Box(0f, 0.112f, 0f, 0.08f, 0.20f, 0.021f, WeaponMaterial.DarkIron, pitch: 90f, shape: Crescent),
+            Box(0f, 0.136f, 0f, 0.055f, 0.03f, 0.055f, WeaponMaterial.Steel, shape: Taper),
+            Box(0f, 0.257f, 0f, 0.04f, 0.278f, 0.10f, WeaponMaterial.Steel, shape: Blade),
+            Box(0f, 0.246f, 0f, 0.05f, 0.182f, 0.03f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.418f, 0f, 0.035f, 0.054f, 0.05f, WeaponMaterial.Steel, shape: Blade));
 
-        // The long blade, a plain cross guard and a round pommel.
+        // The long blade: drooping quillons with spiked tips, a gilt langet and a domed pommel on a ring.
         Hand("held.weapon.sword", false,
-            Box(0f, 0.081f, 0f, 0.08f, 0.254f, 0.08f, WeaponMaterial.Leather),
-            Box(0f, -0.063f, 0f, 0.12f, 0.091f, 0.12f, WeaponMaterial.Gilt),
-            Box(0f, 0.226f, 0f, 0.09f, 0.045f, 0.36f, WeaponMaterial.DarkIron),
-            Box(0f, 0.706f, 0f, 0.05f, 0.86f, 0.15f, WeaponMaterial.Steel),
-            Box(0f, 0.67f, 0f, 0.058f, 0.634f, 0.045f, WeaponMaterial.DarkIron),
-            Box(0f, 1.177f, 0f, 0.045f, 0.109f, 0.08f, WeaponMaterial.Steel));
+            Box(0f, 0.081f, 0f, 0.08f, 0.254f, 0.08f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, -0.063f, 0f, 0.12f, 0.091f, 0.12f, WeaponMaterial.Gilt, roll: 180f, shape: Dome),
+            Box(0f, -0.005f, 0f, 0.105f, 0.025f, 0.105f, WeaponMaterial.Gilt, shape: Ring),
+            Box(0f, 0.226f, 0f, 0.09f, 0.36f, 0.045f, WeaponMaterial.DarkIron, pitch: 90f, shape: Crescent),
+            Box(0f, 0.226f, 0.175f, 0.045f, 0.05f, 0.045f, WeaponMaterial.Steel, pitch: 90f, shape: Spike),
+            Box(0f, 0.226f, -0.175f, 0.045f, 0.05f, 0.045f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
+            Box(0f, 0.256f, 0f, 0.075f, 0.04f, 0.075f, WeaponMaterial.DarkIron, shape: Taper),
+            Box(0f, 0.30f, 0f, 0.05f, 0.10f, 0.07f, WeaponMaterial.Gilt, shape: Taper),
+            Box(0f, 0.706f, 0f, 0.05f, 0.86f, 0.15f, WeaponMaterial.Steel, shape: Blade),
+            Box(0f, 0.67f, 0f, 0.058f, 0.634f, 0.045f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 1.177f, 0f, 0.045f, 0.109f, 0.08f, WeaponMaterial.Steel, shape: Blade));
 
-        // A hand-and-a-half grip, wide crossguard with drooping quillons, a broad blade, red wrap.
+        // A hand-and-a-half: a red-wrapped grip, a wide drooping crossguard with a parrying ring over a
+        // leather ricasso, and a broad blade. The outline is the guard, not the length.
         Hand("held.weapon.greatsword", false,
-            Box(0f, 0.16f, 0f, 0.09f, 0.52f, 0.09f, WeaponMaterial.Leather),
-            Box(0f, 0.16f, 0f, 0.10f, 0.14f, 0.10f, WeaponMaterial.Cloth),
-            Box(0f, -0.14f, 0f, 0.14f, 0.12f, 0.14f, WeaponMaterial.DarkIron),
-            Box(0f, 0.45f, 0f, 0.10f, 0.07f, 0.62f, WeaponMaterial.DarkIron),
-            Box(0f, 0.40f, 0.31f, 0.10f, 0.14f, 0.07f, WeaponMaterial.DarkIron),
-            Box(0f, 0.40f, -0.31f, 0.10f, 0.14f, 0.07f, WeaponMaterial.DarkIron),
-            Box(0f, 1.20f, 0f, 0.06f, 1.40f, 0.24f, WeaponMaterial.Steel),
-            Box(0f, 1.14f, 0f, 0.07f, 1.00f, 0.07f, WeaponMaterial.DarkIron),
-            Box(0f, 1.95f, 0f, 0.055f, 0.16f, 0.14f, WeaponMaterial.Steel));
+            Box(0f, 0.16f, 0f, 0.09f, 0.52f, 0.09f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0.16f, 0f, 0.105f, 0.14f, 0.105f, WeaponMaterial.Cloth, shape: Ring),
+            Box(0f, -0.14f, 0f, 0.14f, 0.12f, 0.14f, WeaponMaterial.DarkIron, roll: 180f, shape: Dome),
+            Box(0f, -0.21f, 0f, 0.07f, 0.07f, 0.07f, WeaponMaterial.Gilt, shape: Gem),
+            Box(0f, 0.45f, 0f, 0.10f, 0.62f, 0.07f, WeaponMaterial.DarkIron, pitch: 90f, shape: Crescent),
+            Box(0f, 0.40f, 0.31f, 0.09f, 0.14f, 0.09f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
+            Box(0f, 0.40f, -0.31f, 0.09f, 0.14f, 0.09f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
+            Box(0f, 0.52f, 0f, 0.16f, 0.05f, 0.16f, WeaponMaterial.Gilt, shape: Ring),
+            Box(0f, 0.56f, 0f, 0.07f, 0.16f, 0.07f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0.66f, 0f, 0.065f, 0.14f, 0.10f, WeaponMaterial.Gilt, shape: Taper),
+            Box(0f, 1.20f, 0f, 0.06f, 1.40f, 0.24f, WeaponMaterial.Steel, shape: Blade),
+            Box(0f, 1.14f, 0f, 0.07f, 1.00f, 0.07f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 1.95f, 0f, 0.055f, 0.16f, 0.14f, WeaponMaterial.Steel, shape: Blade));
 
-        // A short haft with a single broad bit and a back spike.
+        // A short haft and one broad bearded bit: the Crescent's horns and ground convex edge ARE the axe.
         Hand("held.weapon.axe", false,
-            Box(0f, 0.38f, 0f, 0.07f, 1.05f, 0.07f, WeaponMaterial.Wood),
-            Box(0f, -0.14f, 0f, 0.10f, 0.06f, 0.10f, WeaponMaterial.DarkIron),
-            Box(0f, 0.86f, 0f, 0.12f, 0.20f, 0.12f, WeaponMaterial.DarkIron),
-            Box(0f, 0.86f, 0.21f, 0.05f, 0.40f, 0.32f, WeaponMaterial.Steel),
-            Box(0f, 0.86f, 0.38f, 0.045f, 0.50f, 0.06f, WeaponMaterial.Steel),
-            Box(0f, 0.86f, -0.14f, 0.05f, 0.08f, 0.18f, WeaponMaterial.DarkIron));
+            Box(0f, 0.38f, 0f, 0.07f, 1.05f, 0.07f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, -0.14f, 0f, 0.10f, 0.06f, 0.10f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
+            Box(0f, 0.05f, 0f, 0.085f, 0.30f, 0.085f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0.72f, 0f, 0.115f, 0.035f, 0.115f, WeaponMaterial.DarkIron, shape: Ring),
+            Box(0f, 0.86f, 0f, 0.12f, 0.20f, 0.12f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.86f, 0.21f, 0.05f, 0.40f, 0.32f, WeaponMaterial.Steel, shape: Crescent),
+            Box(0f, 0.86f, 0.38f, 0.045f, 0.50f, 0.06f, WeaponMaterial.Steel, shape: Crescent),
+            Box(0f, 0.86f, -0.14f, 0.05f, 0.18f, 0.08f, WeaponMaterial.DarkIron, pitch: -90f, shape: Spike),
+            Box(0f, 0.70f, 0.05f, 0.055f, 0.22f, 0.03f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.86f, 0.10f, 0.06f, 0.03f, 0.06f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
+            Box(0f, 1.00f, 0f, 0.05f, 0.12f, 0.05f, WeaponMaterial.Steel, shape: Spike));
 
-        // Studded round head on a stout haft.
+        // Studded head: a dome crowned with four pyramid flanges and a finial, not a cube of spikes.
         Hand("held.weapon.mace", false,
-            Box(0f, 0.30f, 0f, 0.075f, 0.82f, 0.075f, WeaponMaterial.Wood),
-            Box(0f, -0.10f, 0f, 0.11f, 0.08f, 0.11f, WeaponMaterial.Gilt),
-            Box(0f, 0.80f, 0f, 0.20f, 0.20f, 0.20f, WeaponMaterial.DarkIron),
-            Box(0f, 0.80f, 0f, 0.34f, 0.12f, 0.06f, WeaponMaterial.Steel),
-            Box(0f, 0.80f, 0f, 0.06f, 0.12f, 0.34f, WeaponMaterial.Steel),
-            Box(0f, 0.80f, 0f, 0.06f, 0.34f, 0.12f, WeaponMaterial.Steel),
-            Box(0f, 0.97f, 0f, 0.07f, 0.12f, 0.07f, WeaponMaterial.Steel));
+            Box(0f, 0.30f, 0f, 0.075f, 0.82f, 0.075f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, -0.10f, 0f, 0.11f, 0.08f, 0.11f, WeaponMaterial.Gilt, pitch: 180f, shape: Taper),
+            Box(0f, 0.08f, 0f, 0.09f, 0.26f, 0.09f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0.64f, 0f, 0.10f, 0.04f, 0.10f, WeaponMaterial.Gilt, shape: Ring),
+            Box(0f, 0.80f, 0f, 0.20f, 0.20f, 0.20f, WeaponMaterial.DarkIron, shape: Dome),
+            Box(0.14f, 0.80f, 0f, 0.12f, 0.14f, 0.08f, WeaponMaterial.Steel, roll: -90f, shape: Spike),
+            Box(-0.14f, 0.80f, 0f, 0.12f, 0.14f, 0.08f, WeaponMaterial.Steel, roll: 90f, shape: Spike),
+            Box(0f, 0.80f, 0.14f, 0.08f, 0.14f, 0.12f, WeaponMaterial.Steel, pitch: 90f, shape: Spike),
+            Box(0f, 0.80f, -0.14f, 0.08f, 0.14f, 0.12f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
+            Box(0f, 0.97f, 0f, 0.07f, 0.14f, 0.07f, WeaponMaterial.Steel, shape: Spike));
 
-        // A long haft, a heavy block head with a flat face and a back pick.
+        // A long haft and a heavy block head: the head and langet stay rectilinear (a war hammer IS a
+        // forged block) but bevelled, with a crowned striking face and a back pick.
         Hand("held.weapon.hammer", false,
-            Box(0f, 0.45f, 0f, 0.08f, 1.30f, 0.08f, WeaponMaterial.Wood),
-            Box(0f, -0.20f, 0f, 0.11f, 0.08f, 0.11f, WeaponMaterial.DarkIron),
-            Box(0f, 1.00f, 0f, 0.20f, 0.22f, 0.30f, WeaponMaterial.DarkIron),
-            Box(0f, 1.00f, 0.22f, 0.24f, 0.28f, 0.14f, WeaponMaterial.Steel),
-            Box(0f, 1.00f, -0.22f, 0.07f, 0.09f, 0.22f, WeaponMaterial.Steel),
-            Box(0f, 0.78f, 0f, 0.11f, 0.06f, 0.11f, WeaponMaterial.Gilt));
+            Box(0f, 0.45f, 0f, 0.08f, 1.30f, 0.08f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, -0.20f, 0f, 0.11f, 0.08f, 0.11f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
+            Box(0f, 0.05f, 0f, 0.095f, 0.34f, 0.095f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 1.00f, 0f, 0.20f, 0.22f, 0.30f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 1.00f, 0.22f, 0.24f, 0.14f, 0.28f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
+            Box(0f, 1.00f, -0.24f, 0.07f, 0.22f, 0.09f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
+            Box(0f, 0.78f, 0f, 0.11f, 0.06f, 0.11f, WeaponMaterial.Gilt, shape: Ring),
+            Box(0f, 0.86f, 0f, 0.09f, 0.22f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0.11f, 1.00f, 0f, 0.05f, 0.04f, 0.05f, WeaponMaterial.Steel, roll: -90f, shape: Dome),
+            Box(-0.11f, 1.00f, 0f, 0.05f, 0.04f, 0.05f, WeaponMaterial.Steel, roll: 90f, shape: Dome));
 
-        // A long shaft with a leaf head, a red tassel and an iron butt.
+        // A long shaft, a winged leaf head on langets, a red tassel and an iron butt.
         Hand("held.weapon.spear", false,
-            Box(0f, 0.62f, 0f, 0.06f, 2.10f, 0.06f, WeaponMaterial.Wood),
-            Box(0f, -0.42f, 0f, 0.09f, 0.10f, 0.09f, WeaponMaterial.DarkIron),
-            Box(0f, 1.68f, 0f, 0.10f, 0.12f, 0.10f, WeaponMaterial.Cloth),
-            Box(0f, 1.74f, 0f, 0.08f, 0.10f, 0.08f, WeaponMaterial.DarkIron),
-            Box(0f, 1.86f, 0f, 0.05f, 0.20f, 0.15f, WeaponMaterial.Steel),
-            Box(0f, 2.02f, 0f, 0.045f, 0.16f, 0.09f, WeaponMaterial.Steel),
-            Box(0f, 2.14f, 0f, 0.04f, 0.10f, 0.04f, WeaponMaterial.Steel));
+            Box(0f, 0.62f, 0f, 0.06f, 2.10f, 0.06f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, -0.42f, 0f, 0.09f, 0.10f, 0.09f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
+            Box(0f, 0.20f, 0f, 0.075f, 0.30f, 0.075f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 1.68f, 0f, 0.10f, 0.14f, 0.03f, WeaponMaterial.Cloth, shape: Panel),
+            Box(0f, 1.76f, 0f, 0.085f, 0.03f, 0.085f, WeaponMaterial.Gilt, shape: Ring),
+            Box(0f, 1.80f, 0f, 0.08f, 0.14f, 0.08f, WeaponMaterial.DarkIron, shape: Taper),
+            Box(0f, 1.70f, 0.035f, 0.035f, 0.22f, 0.02f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 1.70f, -0.035f, 0.035f, 0.22f, 0.02f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 1.90f, 0f, 0.05f, 0.24f, 0.15f, WeaponMaterial.Steel, shape: Blade),
+            Box(0f, 1.84f, 0.09f, 0.035f, 0.12f, 0.07f, WeaponMaterial.Steel, shape: Crescent),
+            Box(0f, 1.84f, -0.09f, 0.035f, 0.12f, 0.07f, WeaponMaterial.Steel, yaw: 180f, shape: Crescent),
+            Box(0f, 2.14f, 0f, 0.04f, 0.14f, 0.04f, WeaponMaterial.Steel, shape: Blade));
 
-        // Bent limbs toward the archer (-Z) and a taut string.
+        // Tapered limbs bent toward the archer (-Z), gilt nocks and a taut string. The lower limb and
+        // lower outer limb carry their pitch + 180 so the taper still narrows toward the nock.
         Hand("held.weapon.bow", true,
-            Box(0f, 0f, 0f, 0.08f, 0.26f, 0.08f, WeaponMaterial.Leather),
-            Box(0f, 0.30f, -0.03f, 0.06f, 0.36f, 0.06f, WeaponMaterial.Wood, pitch: -14f),
-            Box(0f, -0.30f, -0.03f, 0.06f, 0.36f, 0.06f, WeaponMaterial.Wood, pitch: 14f),
-            Box(0f, 0.62f, -0.13f, 0.055f, 0.34f, 0.055f, WeaponMaterial.Wood, pitch: -32f),
-            Box(0f, -0.62f, -0.13f, 0.055f, 0.34f, 0.055f, WeaponMaterial.Wood, pitch: 32f),
-            Box(0f, 0.80f, -0.24f, 0.07f, 0.07f, 0.07f, WeaponMaterial.Gilt),
-            Box(0f, -0.80f, -0.24f, 0.07f, 0.07f, 0.07f, WeaponMaterial.Gilt),
-            Box(0f, 0f, -0.24f, 0.015f, 1.58f, 0.015f, WeaponMaterial.Bone));
+            Box(0f, 0f, 0f, 0.08f, 0.26f, 0.08f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0f, 0.02f, 0.06f, 0.34f, 0.06f, WeaponMaterial.Wood, shape: BevelBox),
+            Box(0f, 0.30f, -0.03f, 0.06f, 0.36f, 0.06f, WeaponMaterial.Wood, pitch: -14f, shape: Taper),
+            Box(0f, -0.30f, -0.03f, 0.06f, 0.36f, 0.06f, WeaponMaterial.Wood, pitch: 194f, shape: Taper),
+            Box(0f, 0.62f, -0.13f, 0.055f, 0.34f, 0.055f, WeaponMaterial.Wood, pitch: -32f, shape: Taper),
+            Box(0f, -0.62f, -0.13f, 0.055f, 0.34f, 0.055f, WeaponMaterial.Wood, pitch: 212f, shape: Taper),
+            Box(0f, 0.80f, -0.24f, 0.07f, 0.07f, 0.07f, WeaponMaterial.Gilt, shape: Dome),
+            Box(0f, -0.80f, -0.24f, 0.07f, 0.07f, 0.07f, WeaponMaterial.Gilt, roll: 180f, shape: Dome),
+            Box(0f, 0f, -0.24f, 0.015f, 1.58f, 0.015f, WeaponMaterial.Bone, shape: Shaft));
 
-        // A tall dark staff with an iron claw around a glowing stone.
+        // A tall dark staff: a claw of four tapers closing on a glowing stone under a crown ring.
         Hand("held.weapon.staff", false,
-            Box(0f, 0.72f, 0f, 0.07f, 2.00f, 0.07f, WeaponMaterial.Wood),
-            Box(0f, 0.05f, 0f, 0.09f, 0.34f, 0.09f, WeaponMaterial.Leather),
-            Box(0f, -0.30f, 0f, 0.09f, 0.08f, 0.09f, WeaponMaterial.DarkIron),
-            Box(0f, 1.70f, 0f, 0.13f, 0.08f, 0.13f, WeaponMaterial.DarkIron),
-            Box(0.085f, 1.86f, 0f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron),
-            Box(-0.085f, 1.86f, 0f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron),
-            Box(0f, 1.86f, 0.085f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron),
-            Box(0f, 1.86f, -0.085f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron),
-            Box(0f, 1.88f, 0f, 0.13f, 0.20f, 0.13f, WeaponMaterial.Arcane, roll: 45f));
+            Box(0f, 0.72f, 0f, 0.07f, 2.00f, 0.07f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, 0.05f, 0f, 0.09f, 0.34f, 0.09f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0.24f, 0f, 0.085f, 0.04f, 0.085f, WeaponMaterial.Leather, shape: Ring),
+            Box(0f, -0.30f, 0f, 0.09f, 0.08f, 0.09f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
+            Box(0f, 1.60f, 0f, 0.05f, 0.10f, 0.05f, WeaponMaterial.DarkIron, pitch: 180f, shape: Spike),
+            Box(0f, 1.70f, 0f, 0.13f, 0.08f, 0.13f, WeaponMaterial.DarkIron, shape: Ring),
+            Box(0.085f, 1.86f, 0f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, roll: -12f, shape: Taper),
+            Box(-0.085f, 1.86f, 0f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, roll: 12f, shape: Taper),
+            Box(0f, 1.86f, 0.085f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, pitch: 12f, shape: Taper),
+            Box(0f, 1.86f, -0.085f, 0.035f, 0.34f, 0.035f, WeaponMaterial.DarkIron, pitch: -12f, shape: Taper),
+            Box(0f, 1.88f, 0f, 0.13f, 0.20f, 0.13f, WeaponMaterial.Arcane, roll: 45f, shape: Gem),
+            Box(0f, 2.01f, 0f, 0.12f, 0.035f, 0.12f, WeaponMaterial.DarkIron, shape: Ring));
 
-        // A plain arming sword: a short broad blade, a gilt guard and a bone pommel.
+        // A plain arming sword: a short broad blade, a gilt drooping guard and a domed bone pommel.
         Hand("held.weapon.short-sword", false,
-            Box(0f, 0.08f, 0f, 0.08f, 0.26f, 0.08f, WeaponMaterial.Leather),
-            Box(0f, -0.06f, 0f, 0.10f, 0.08f, 0.10f, WeaponMaterial.Bone),
-            Box(0f, 0.23f, 0f, 0.09f, 0.05f, 0.28f, WeaponMaterial.Gilt),
-            Box(0f, 0.58f, 0f, 0.05f, 0.66f, 0.17f, WeaponMaterial.Steel),
-            Box(0f, 0.54f, 0f, 0.058f, 0.48f, 0.05f, WeaponMaterial.DarkIron),
-            Box(0f, 0.94f, 0f, 0.04f, 0.10f, 0.09f, WeaponMaterial.Steel));
+            Box(0f, 0.08f, 0f, 0.08f, 0.26f, 0.08f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, -0.06f, 0f, 0.10f, 0.08f, 0.10f, WeaponMaterial.Bone, roll: 180f, shape: Dome),
+            Box(0f, -0.015f, 0f, 0.085f, 0.022f, 0.085f, WeaponMaterial.Gilt, shape: Ring),
+            Box(0f, -0.115f, 0f, 0.05f, 0.05f, 0.05f, WeaponMaterial.Gilt, roll: 180f, shape: Gem),
+            Box(0f, 0.23f, 0f, 0.09f, 0.28f, 0.05f, WeaponMaterial.Gilt, pitch: 90f, shape: Crescent),
+            Box(0f, 0.26f, 0f, 0.07f, 0.04f, 0.07f, WeaponMaterial.Gilt, shape: Taper),
+            Box(0f, 0.58f, 0f, 0.05f, 0.66f, 0.17f, WeaponMaterial.Steel, shape: Blade),
+            Box(0f, 0.54f, 0f, 0.058f, 0.48f, 0.05f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.94f, 0f, 0.04f, 0.10f, 0.09f, WeaponMaterial.Steel, shape: Blade));
 
-        // A heavy, broad single-edged blade with a dark spine and a clipped, angled tip.
+        // A heavy single-edged falchion: no crossguard, a dark spine, a swept clipped tip.
         Hand("held.weapon.iron-blade", false,
-            Box(0f, 0.09f, 0f, 0.08f, 0.28f, 0.08f, WeaponMaterial.Leather),
-            Box(0f, 0.25f, 0f, 0.09f, 0.05f, 0.16f, WeaponMaterial.DarkIron),
-            Box(0f, 0.68f, 0f, 0.06f, 0.80f, 0.22f, WeaponMaterial.Steel),
-            Box(0f, 0.66f, -0.10f, 0.07f, 0.72f, 0.04f, WeaponMaterial.DarkIron),
-            Box(0f, 1.12f, 0.03f, 0.05f, 0.18f, 0.14f, WeaponMaterial.Steel, pitch: -18f));
+            Box(0f, 0.09f, 0f, 0.08f, 0.28f, 0.08f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, -0.06f, 0f, 0.095f, 0.06f, 0.095f, WeaponMaterial.DarkIron, roll: 180f, shape: Dome),
+            Box(0f, 0.25f, 0f, 0.09f, 0.16f, 0.05f, WeaponMaterial.DarkIron, pitch: 90f, shape: Crescent),
+            Box(0f, 0.68f, 0f, 0.06f, 0.80f, 0.22f, WeaponMaterial.Steel, shape: Blade),
+            Box(0f, 0.66f, -0.10f, 0.07f, 0.72f, 0.04f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.30f, 0f, 0.065f, 0.10f, 0.09f, WeaponMaterial.DarkIron, shape: Taper),
+            Box(0f, 1.12f, 0.03f, 0.05f, 0.18f, 0.14f, WeaponMaterial.Steel, pitch: -18f, shape: Blade));
 
-        // A short haft and a small bearded bit.
+        // A short haft and a small bearded bit, with a back barb.
         Hand("held.weapon.hand-axe", false,
-            Box(0f, 0.165f, 0f, 0.06f, 0.576f, 0.06f, WeaponMaterial.Wood),
-            Box(0f, -0.132f, 0f, 0.09f, 0.041f, 0.09f, WeaponMaterial.DarkIron),
-            Box(0f, 0.478f, 0.02f, 0.10f, 0.132f, 0.10f, WeaponMaterial.DarkIron),
-            Box(0f, 0.478f, 0.16f, 0.045f, 0.231f, 0.20f, WeaponMaterial.Steel),
-            Box(0f, 0.478f, 0.27f, 0.04f, 0.28f, 0.04f, WeaponMaterial.Steel));
+            Box(0f, 0.165f, 0f, 0.06f, 0.576f, 0.06f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, -0.132f, 0f, 0.09f, 0.041f, 0.09f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
+            Box(0f, 0.03f, 0f, 0.075f, 0.16f, 0.075f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0.39f, 0f, 0.085f, 0.03f, 0.085f, WeaponMaterial.DarkIron, shape: Ring),
+            Box(0f, 0.478f, 0.02f, 0.10f, 0.132f, 0.10f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.478f, 0.16f, 0.045f, 0.231f, 0.20f, WeaponMaterial.Steel, shape: Crescent),
+            Box(0f, 0.478f, 0.27f, 0.04f, 0.28f, 0.04f, WeaponMaterial.Steel, shape: Crescent),
+            Box(0f, 0.478f, -0.07f, 0.04f, 0.10f, 0.05f, WeaponMaterial.DarkIron, pitch: -90f, shape: Spike));
 
-        // A small recurved bow with bone tips and a short string.
+        // A small recurved bow with bone nocks and a short string.
         Hand("held.weapon.short-bow", true,
-            Box(0f, 0f, 0f, 0.08f, 0.22f, 0.08f, WeaponMaterial.Leather),
-            Box(0f, 0.24f, -0.02f, 0.05f, 0.30f, 0.05f, WeaponMaterial.Wood, pitch: -12f),
-            Box(0f, -0.24f, -0.02f, 0.05f, 0.30f, 0.05f, WeaponMaterial.Wood, pitch: 12f),
-            Box(0f, 0.46f, -0.10f, 0.05f, 0.26f, 0.05f, WeaponMaterial.Wood, pitch: -30f),
-            Box(0f, -0.46f, -0.10f, 0.05f, 0.26f, 0.05f, WeaponMaterial.Wood, pitch: 30f),
-            Box(0f, 0.60f, -0.19f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Bone),
-            Box(0f, -0.60f, -0.19f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Bone),
-            Box(0f, 0f, -0.19f, 0.015f, 1.20f, 0.015f, WeaponMaterial.Bone));
+            Box(0f, 0f, 0f, 0.08f, 0.22f, 0.08f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0f, 0.015f, 0.05f, 0.28f, 0.05f, WeaponMaterial.Wood, shape: BevelBox),
+            Box(0f, 0.24f, -0.02f, 0.05f, 0.30f, 0.05f, WeaponMaterial.Wood, pitch: -12f, shape: Taper),
+            Box(0f, -0.24f, -0.02f, 0.05f, 0.30f, 0.05f, WeaponMaterial.Wood, pitch: 192f, shape: Taper),
+            Box(0f, 0.46f, -0.10f, 0.05f, 0.26f, 0.05f, WeaponMaterial.Wood, pitch: -30f, shape: Taper),
+            Box(0f, -0.46f, -0.10f, 0.05f, 0.26f, 0.05f, WeaponMaterial.Wood, pitch: 210f, shape: Taper),
+            Box(0f, 0.60f, -0.19f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Bone, shape: Dome),
+            Box(0f, -0.60f, -0.19f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Bone, roll: 180f, shape: Dome),
+            Box(0f, 0f, -0.19f, 0.015f, 1.20f, 0.015f, WeaponMaterial.Bone, shape: Shaft));
 
-        // A pale bone shaft with a skull cap and a cold arcane stone.
+        // A pale bone shaft: a horned skull cap with a cold arcane stone above it and vertebra rings.
         Hand("held.weapon.bone-staff", false,
-            Box(0f, 0.60f, 0f, 0.08f, 1.70f, 0.08f, WeaponMaterial.Bone),
-            Box(0f, 0.05f, 0f, 0.10f, 0.30f, 0.10f, WeaponMaterial.Leather),
-            Box(0f, -0.28f, 0f, 0.10f, 0.08f, 0.10f, WeaponMaterial.DarkIron),
-            Box(0f, 1.55f, 0f, 0.18f, 0.16f, 0.20f, WeaponMaterial.Bone),
-            Box(0f, 1.56f, 0.105f, 0.12f, 0.05f, 0.02f, WeaponMaterial.DarkIron),
-            Box(0f, 1.70f, 0f, 0.09f, 0.12f, 0.09f, WeaponMaterial.Arcane, roll: 45f));
+            Box(0f, 0.60f, 0f, 0.08f, 1.70f, 0.08f, WeaponMaterial.Bone, shape: Shaft),
+            Box(0f, 0.05f, 0f, 0.10f, 0.30f, 0.10f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, -0.28f, 0f, 0.10f, 0.08f, 0.10f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
+            Box(0f, 1.30f, 0f, 0.095f, 0.05f, 0.095f, WeaponMaterial.Bone, shape: Ring),
+            Box(0f, 1.55f, 0f, 0.18f, 0.16f, 0.20f, WeaponMaterial.Bone, shape: Dome),
+            Box(0f, 1.48f, 0.08f, 0.14f, 0.06f, 0.10f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 1.56f, 0.105f, 0.12f, 0.05f, 0.02f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0.07f, 1.66f, 0f, 0.05f, 0.14f, 0.05f, WeaponMaterial.Bone, roll: -18f, shape: Spike),
+            Box(-0.07f, 1.66f, 0f, 0.05f, 0.14f, 0.05f, WeaponMaterial.Bone, roll: 18f, shape: Spike),
+            Box(0f, 1.76f, 0f, 0.09f, 0.12f, 0.09f, WeaponMaterial.Arcane, roll: 45f, shape: Gem));
 
-        // A gilt cage lantern with a cold arcane flame and a handle.
+        // A gilt cage lantern with a cold arcane flame, a domed roof and a hanging bail.
         Hand("held.gear.ward-lantern", false,
-            Box(0f, 0.22f, 0f, 0.03f, 0.26f, 0.03f, WeaponMaterial.DarkIron),
-            Box(0f, 0.08f, 0f, 0.18f, 0.06f, 0.18f, WeaponMaterial.Gilt),
-            Box(0f, -0.02f, 0f, 0.12f, 0.18f, 0.12f, WeaponMaterial.Arcane),
-            Box(0.075f, -0.02f, 0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt),
-            Box(-0.075f, -0.02f, 0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt),
-            Box(0.075f, -0.02f, -0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt),
-            Box(-0.075f, -0.02f, -0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt),
-            Box(0f, -0.13f, 0f, 0.18f, 0.04f, 0.18f, WeaponMaterial.Gilt));
+            Box(0f, 0.35f, 0f, 0.10f, 0.03f, 0.10f, WeaponMaterial.Gilt, pitch: 90f, shape: Ring),
+            Box(0f, 0.22f, 0f, 0.03f, 0.26f, 0.03f, WeaponMaterial.DarkIron, shape: Shaft),
+            Box(0f, 0.08f, 0f, 0.18f, 0.10f, 0.18f, WeaponMaterial.Gilt, shape: Dome),
+            Box(0f, -0.02f, 0f, 0.12f, 0.18f, 0.12f, WeaponMaterial.Arcane, shape: Gem),
+            Box(0.075f, -0.02f, 0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt, shape: Shaft),
+            Box(-0.075f, -0.02f, 0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt, shape: Shaft),
+            Box(0.075f, -0.02f, -0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt, shape: Shaft),
+            Box(-0.075f, -0.02f, -0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt, shape: Shaft),
+            Box(0f, -0.13f, 0f, 0.18f, 0.04f, 0.18f, WeaponMaterial.Gilt, shape: Ring));
 
-        // Small round plate with a boss.
+        // Small round board: a domed face inside an iron hoop, a boss and a spiked finial. The planking
+        // behind it keeps its 45 degree roll - that turn is what makes the drawn outline round, not square.
         Shield("held.shield.buckler",
-            Box(0f, 0f, 0f, 0.40f, 0.28f, 0.05f, WeaponMaterial.Wood),
-            Box(0f, 0f, 0f, 0.28f, 0.40f, 0.05f, WeaponMaterial.Wood),
-            Box(0f, 0f, 0.02f, 0.32f, 0.32f, 0.05f, WeaponMaterial.DarkIron, roll: 45f),
-            Box(0f, 0f, 0.06f, 0.14f, 0.14f, 0.06f, WeaponMaterial.Steel),
-            Box(0f, 0f, 0.10f, 0.05f, 0.05f, 0.05f, WeaponMaterial.Gilt));
+            Box(0f, 0f, 0f, 0.40f, 0.05f, 0.40f, WeaponMaterial.Wood, pitch: 90f, shape: Dome),
+            Box(0f, 0.01f, 0f, 0.44f, 0.05f, 0.44f, WeaponMaterial.DarkIron, pitch: 90f, shape: Ring),
+            Box(0f, 0f, -0.01f, 0.32f, 0.32f, 0.05f, WeaponMaterial.Wood, roll: 45f, shape: BevelBox),
+            Box(0f, 0f, 0.06f, 0.14f, 0.06f, 0.14f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
+            Box(0f, 0f, 0.11f, 0.05f, 0.06f, 0.05f, WeaponMaterial.Gilt, pitch: 90f, shape: Spike),
+            Box(0f, 0.16f, 0.02f, 0.04f, 0.04f, 0.04f, WeaponMaterial.DarkIron, pitch: 90f, shape: Spike),
+            Box(0f, -0.16f, 0.02f, 0.04f, 0.04f, 0.04f, WeaponMaterial.DarkIron, pitch: 90f, shape: Spike),
+            Box(0f, 0f, -0.05f, 0.06f, 0.18f, 0.04f, WeaponMaterial.Leather, shape: BevelBox));
 
-        // Tapering heater shape, a steel rim and a red cross.
+        // A heater: three curved plate tiers narrowing to a tapered point, a steel band and a red cross.
         Shield("held.shield.kite",
-            Box(0f, 0.18f, 0f, 0.52f, 0.34f, 0.05f, WeaponMaterial.Wood),
-            Box(0f, -0.08f, 0f, 0.40f, 0.26f, 0.05f, WeaponMaterial.Wood),
-            Box(0f, -0.30f, 0f, 0.24f, 0.22f, 0.05f, WeaponMaterial.Wood),
-            Box(0f, -0.48f, 0f, 0.10f, 0.14f, 0.05f, WeaponMaterial.Wood),
-            Box(0f, 0.36f, 0.02f, 0.56f, 0.05f, 0.07f, WeaponMaterial.Steel),
-            Box(0f, 0.04f, 0.035f, 0.07f, 0.80f, 0.04f, WeaponMaterial.Cloth),
-            Box(0f, 0.16f, 0.035f, 0.42f, 0.07f, 0.04f, WeaponMaterial.Cloth),
-            Box(0f, 0.10f, 0.07f, 0.12f, 0.12f, 0.06f, WeaponMaterial.Steel));
+            Box(0f, 0.18f, 0f, 0.52f, 0.34f, 0.12f, WeaponMaterial.Wood, shape: Plate),
+            Box(0f, -0.08f, 0f, 0.40f, 0.26f, 0.12f, WeaponMaterial.Wood, shape: Plate),
+            Box(0f, -0.30f, 0f, 0.24f, 0.22f, 0.10f, WeaponMaterial.Wood, shape: Plate),
+            Box(0f, -0.48f, 0f, 0.10f, 0.14f, 0.08f, WeaponMaterial.Wood, pitch: 180f, shape: Taper),
+            Box(0f, 0.36f, 0.02f, 0.56f, 0.05f, 0.07f, WeaponMaterial.Steel, shape: BevelBox),
+            Box(0f, 0.04f, 0.045f, 0.07f, 0.80f, 0.03f, WeaponMaterial.Cloth, shape: Panel),
+            Box(0f, 0.16f, 0.045f, 0.42f, 0.07f, 0.03f, WeaponMaterial.Cloth, shape: Panel),
+            Box(0f, 0.10f, 0.08f, 0.12f, 0.06f, 0.12f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
+            Box(0f, 0.10f, 0.13f, 0.05f, 0.05f, 0.05f, WeaponMaterial.Gilt, pitch: 90f, shape: Spike),
+            Box(0f, 0.36f, 0.06f, 0.10f, 0.04f, 0.10f, WeaponMaterial.DarkIron, pitch: 90f, shape: Ring));
 
-        // A door-sized slab with an iron frame and bands.
+        // A door of planks in an iron frame. The planks and bands are the one honestly rectilinear model
+        // in the catalog, so they are BevelBoxes: chamfered, but still a carpenter's rectangle.
         Shield("held.shield.tower",
-            Box(0f, 0f, 0f, 0.64f, 1.04f, 0.06f, WeaponMaterial.Wood),
-            Box(0f, 0.53f, 0.02f, 0.70f, 0.06f, 0.09f, WeaponMaterial.DarkIron),
-            Box(0f, -0.53f, 0.02f, 0.70f, 0.06f, 0.09f, WeaponMaterial.DarkIron),
-            Box(0.33f, 0f, 0.02f, 0.06f, 1.10f, 0.09f, WeaponMaterial.DarkIron),
-            Box(-0.33f, 0f, 0.02f, 0.06f, 1.10f, 0.09f, WeaponMaterial.DarkIron),
-            Box(0f, 0.20f, 0.04f, 0.64f, 0.06f, 0.07f, WeaponMaterial.DarkIron),
-            Box(0f, -0.20f, 0.04f, 0.64f, 0.06f, 0.07f, WeaponMaterial.DarkIron),
-            Box(0f, 0f, 0.08f, 0.18f, 0.18f, 0.07f, WeaponMaterial.Steel),
-            Box(0f, 0f, 0.12f, 0.06f, 0.06f, 0.05f, WeaponMaterial.Gilt));
+            Box(0f, 0f, 0f, 0.64f, 1.04f, 0.06f, WeaponMaterial.Wood, shape: BevelBox),
+            Box(0f, 0.53f, 0.02f, 0.70f, 0.06f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, -0.53f, 0.02f, 0.70f, 0.06f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0.33f, 0f, 0.02f, 0.06f, 1.10f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(-0.33f, 0f, 0.02f, 0.06f, 1.10f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.20f, 0.04f, 0.64f, 0.06f, 0.07f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, -0.20f, 0.04f, 0.64f, 0.06f, 0.07f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0f, 0.08f, 0.18f, 0.07f, 0.18f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
+            Box(0f, 0f, 0.13f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Gilt, pitch: 90f, shape: Spike),
+            Box(0f, 0f, 0.06f, 0.26f, 0.04f, 0.26f, WeaponMaterial.DarkIron, pitch: 90f, shape: Ring));
 
         // The older tool visuals.
         Hand("held.tool.blade", false,
-            Box(0f, 0.08f, 0f, 0.07f, 0.22f, 0.07f, WeaponMaterial.Leather),
-            Box(0f, 0.20f, 0f, 0.08f, 0.04f, 0.26f, WeaponMaterial.Gilt),
-            Box(0f, 0.62f, 0f, 0.05f, 0.80f, 0.12f, WeaponMaterial.Steel),
-            Box(0f, 1.05f, 0f, 0.04f, 0.10f, 0.06f, WeaponMaterial.Steel));
+            Box(0f, 0.08f, 0f, 0.07f, 0.22f, 0.07f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, -0.04f, 0f, 0.085f, 0.06f, 0.085f, WeaponMaterial.Steel, roll: 180f, shape: Dome),
+            Box(0f, 0.20f, 0f, 0.08f, 0.26f, 0.04f, WeaponMaterial.Gilt, pitch: 90f, shape: Crescent),
+            Box(0f, 0.23f, 0f, 0.06f, 0.03f, 0.06f, WeaponMaterial.Gilt, shape: Taper),
+            Box(0f, 0.62f, 0f, 0.05f, 0.80f, 0.12f, WeaponMaterial.Steel, shape: Blade),
+            Box(0f, 0.58f, 0f, 0.055f, 0.56f, 0.04f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 1.05f, 0f, 0.04f, 0.10f, 0.06f, WeaponMaterial.Steel, shape: Blade));
 
         Hand("held.tool.maul", false,
-            Box(0f, 0.40f, 0f, 0.09f, 1.20f, 0.09f, WeaponMaterial.Wood),
-            Box(0f, 1.05f, 0f, 0.30f, 0.30f, 0.42f, WeaponMaterial.DarkIron),
-            Box(0f, 1.05f, 0.22f, 0.32f, 0.34f, 0.06f, WeaponMaterial.Steel),
-            Box(0f, 1.05f, -0.22f, 0.32f, 0.34f, 0.06f, WeaponMaterial.Steel));
+            Box(0f, 0.40f, 0f, 0.09f, 1.20f, 0.09f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, 0f, 0f, 0.105f, 0.26f, 0.105f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 1.05f, 0f, 0.30f, 0.30f, 0.42f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 1.05f, 0.22f, 0.32f, 0.06f, 0.34f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
+            Box(0f, 1.05f, -0.22f, 0.32f, 0.06f, 0.34f, WeaponMaterial.Steel, pitch: -90f, shape: Dome),
+            Box(0f, 0.85f, 0f, 0.13f, 0.06f, 0.13f, WeaponMaterial.DarkIron, shape: Ring));
 
         Hand("held.tool.builder", false,
-            Box(0f, 0.20f, 0f, 0.07f, 0.55f, 0.07f, WeaponMaterial.Wood),
-            Box(0f, 0.55f, 0.05f, 0.06f, 0.22f, 0.22f, WeaponMaterial.Steel),
-            Box(0f, 0.50f, 0f, 0.09f, 0.08f, 0.09f, WeaponMaterial.DarkIron));
+            Box(0f, 0.20f, 0f, 0.07f, 0.55f, 0.07f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, 0.55f, 0.05f, 0.06f, 0.22f, 0.22f, WeaponMaterial.Steel, shape: BevelBox),
+            Box(0f, 0.50f, 0f, 0.09f, 0.08f, 0.09f, WeaponMaterial.DarkIron, shape: Taper),
+            Box(0f, -0.09f, 0f, 0.075f, 0.04f, 0.075f, WeaponMaterial.Wood, pitch: 180f, shape: Taper),
+            Box(0f, 0.05f, 0f, 0.085f, 0.05f, 0.085f, WeaponMaterial.Leather, shape: Ring));
 
         Hand("held.tool.torch", false,
-            Box(0f, 0.169f, 0f, 0.07f, 0.479f, 0.07f, WeaponMaterial.Wood),
-            Box(0f, 0.44f, 0f, 0.12f, 0.09f, 0.12f, WeaponMaterial.Leather),
-            Box(0f, 0.536f, 0f, 0.13f, 0.102f, 0.13f, WeaponMaterial.DarkIron),
-            Box(0f, 0.604f, 0f, 0.09f, 0.09f, 0.09f, WeaponMaterial.Ember, roll: 45f),
-            Box(0f, 0.666f, 0f, 0.05f, 0.068f, 0.05f, WeaponMaterial.Ember, roll: 45f));
+            Box(0f, 0.169f, 0f, 0.07f, 0.479f, 0.07f, WeaponMaterial.Wood, shape: Shaft),
+            Box(0f, 0.30f, 0f, 0.085f, 0.03f, 0.085f, WeaponMaterial.DarkIron, shape: Ring),
+            Box(0f, 0.44f, 0f, 0.12f, 0.09f, 0.12f, WeaponMaterial.Leather, shape: Shaft),
+            Box(0f, 0.536f, 0f, 0.13f, 0.102f, 0.13f, WeaponMaterial.DarkIron, shape: Taper),
+            Box(0f, 0.604f, 0f, 0.09f, 0.09f, 0.09f, WeaponMaterial.Ember, roll: 45f, shape: Gem),
+            Box(0f, 0.666f, 0f, 0.05f, 0.068f, 0.05f, WeaponMaterial.Ember, roll: 45f, shape: Gem));
 
         Hand("held.tool.lantern", false,
-            Box(0f, 0.20f, 0f, 0.025f, 0.30f, 0.025f, WeaponMaterial.DarkIron),
-            Box(0f, 0.05f, 0f, 0.20f, 0.04f, 0.20f, WeaponMaterial.DarkIron),
-            Box(0f, 0.00f, 0f, 0.14f, 0.16f, 0.14f, WeaponMaterial.Ember),
-            Box(0.085f, 0f, 0f, 0.025f, 0.20f, 0.025f, WeaponMaterial.DarkIron),
-            Box(-0.085f, 0f, 0f, 0.025f, 0.20f, 0.025f, WeaponMaterial.DarkIron),
-            Box(0f, -0.10f, 0f, 0.20f, 0.04f, 0.20f, WeaponMaterial.DarkIron));
+            Box(0f, 0.35f, 0f, 0.09f, 0.03f, 0.09f, WeaponMaterial.DarkIron, pitch: 90f, shape: Ring),
+            Box(0f, 0.20f, 0f, 0.025f, 0.30f, 0.025f, WeaponMaterial.DarkIron, shape: Shaft),
+            Box(0f, 0.05f, 0f, 0.20f, 0.06f, 0.20f, WeaponMaterial.DarkIron, shape: Dome),
+            Box(0f, 0.00f, 0f, 0.14f, 0.16f, 0.14f, WeaponMaterial.Ember, shape: Gem),
+            Box(0.085f, 0f, 0f, 0.025f, 0.20f, 0.025f, WeaponMaterial.DarkIron, shape: Shaft),
+            Box(-0.085f, 0f, 0f, 0.025f, 0.20f, 0.025f, WeaponMaterial.DarkIron, shape: Shaft),
+            Box(0f, -0.10f, 0f, 0.20f, 0.04f, 0.20f, WeaponMaterial.DarkIron, shape: Ring));
 
         return models;
     }
