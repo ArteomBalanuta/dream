@@ -30,6 +30,14 @@ public class DesktopClientTextConfigTests
     }
 
     [Fact]
+    public void VSync_Missing_Key_Loads_As_Adaptive()
+    {
+        string path = Path.Combine(Directory.CreateTempSubdirectory().FullName, "desktop-client.txt");
+        File.WriteAllText(path, "max_fps=120" + Environment.NewLine);
+        Assert.Equal(VSyncMode.Adaptive, DesktopClientTextConfig.LoadOrCreate(path).VSync);
+    }
+
+    [Fact]
     public void VSync_Unknown_Value_Keeps_The_Default_And_Undefined_Enum_Is_Sanitized()
     {
         string path = Path.Combine(Directory.CreateTempSubdirectory().FullName, "desktop-client.txt");

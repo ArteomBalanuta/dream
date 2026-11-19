@@ -166,21 +166,43 @@ public static class Program
     }
 
     // Creates and destroys a hidden 1x1 core-profile window, so a refused version is found before
-    // the Game constructor has side effects.
+    // the Game constructor has side effects. OpenTK's default GLFW error handler throws from inside the
+    // native callback, mid glfwCreateWindow, which skips GLFW's own cleanup and leaks a hidden window per
+    // refused probe. So the handler is swapped for one that only records the message while the probe runs,
+    // the failure is raised here outside the native frame, and a throwing handler is always put back.
     private static void ProbeContext(Version version)
     {
-        using NativeWindow probe = new(new NativeWindowSettings
+        string? recorded = null;
+        GLFWProvider.SetErrorCallback((error, description) => recorded ??= $"{error}: {description}");
+        try
         {
-            APIVersion = version,
-            Profile = ContextProfile.Core,
-            ClientSize = new Vector2i(1, 1),
-            StartVisible = false,
-            StartFocused = false,
+            using NativeWindow probe = new(new NativeWindowSettings
+            {
+                APIVersion = version,
+                Profile = ContextProfile.Core,
+                ClientSize = new Vector2i(1, 1),
+                StartVisible = false,
+                StartFocused = false,
 #if DEBUG
-            // The same flag the real window asks for, so a driver that refuses a debug 4.5 context falls back here.
-            Flags = ContextFlags.Debug,
+                // The same flag the real window asks for, so a driver that refuses a debug 4.5 context falls back here.
+                Flags = ContextFlags.Debug,
 #endif
-        });
+            });
+        }
+        catch (Exception ex) when (recorded != null && ex is not GLFWException)
+        {
+            throw new GLFWException(recorded);
+        }
+        finally
+        {
+            // Same behaviour as OpenTK's default handler: surface every GLFW error as an exception.
+            GLFWProvider.SetErrorCallback((error, description) => throw new GLFWException(description, error));
+        }
+
+        if (recorded != null)
+        {
+            throw new GLFWException(recorded);
+        }
     }
 
     private static int RunDesktop()

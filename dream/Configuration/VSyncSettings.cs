@@ -14,9 +14,6 @@ public static class VSyncSettings
     public const string EnvironmentVariable = "DREAM_VSYNC";
     public const VSyncMode Default = VSyncMode.Adaptive;
 
-    private const string HudCaptureVariable = "DREAM_HUD_CAPTURE";
-    private const string MenuFlowVariable = "DREAM_MENU_FLOW";
-
     public static VSyncMode? Parse(string? text)
     {
         return text?.Trim().ToLowerInvariant() switch
@@ -31,9 +28,9 @@ public static class VSyncSettings
     public static bool IsCaptureRun(Func<string, string?> env)
     {
         ArgumentNullException.ThrowIfNull(env);
-        return !string.IsNullOrWhiteSpace(env(HudCaptureVariable))
+        return !string.IsNullOrWhiteSpace(env(MenuLaunchPolicy.HudCaptureEnvironmentVariable))
             || !string.IsNullOrWhiteSpace(env(MenuCapture.EnvironmentVariable))
-            || !string.IsNullOrWhiteSpace(env(MenuFlowVariable));
+            || MenuFlowScript.IsEnabled(env);
     }
 
     public static VSyncMode Resolve(VSyncMode configValue, string? environmentValue, bool captureRun)
