@@ -20,6 +20,14 @@ namespace Dream.Rendering.Actors;
 //     layout carries them and a future wear map will;
 //   - Box is EXACTLY the old unit cube, so a part that names no shape draws byte-for-byte as before.
 //
+// Which shapes FILL their box: every one except Ring, and every shape stays centred on the origin.
+// Ring is a torus, so it fills X and Z while its Y is the MINOR diameter, 0.30 of the authored
+// Size.Y. Every extent is pinned by EquipmentShapeLibraryTests. The exception matters in two
+// places: HeldItemScale measures a model's authored BOXES, so a Ring at the extreme end of a weapon
+// makes the drawn length a few percent shorter than the documented one (sub-pixel at the shipped
+// zoom); and the armour cover gates measure boxes too, so a Ring used as the only cover of a body
+// region covers less than the gate believes.
+//
 // Length axis: everything that has a length runs along +Y, like the old parts (a weapon's length is
 // +Y, a limb's length is +Y). The broad side faces +-Z and the thin side +-X, again as before.
 public enum EquipmentShape

@@ -20,7 +20,10 @@ namespace Dream.Rendering.Actors;
 // show nothing.
 public static class EquipmentShapeLibrary
 {
-    // Highest shape value + 1: the size of a per-shape array.
+    // The size of a per-shape array, which EquipmentMeshCache indexes by (int)shape. That is only
+    // the same thing as "highest value + 1" while the enum is contiguous from zero, so
+    // EquipmentShapeLibraryTests.TheShapeEnumIsContiguousFromZero pins exactly that: a shape given
+    // an explicit out-of-range value would otherwise be handed another shape's mesh in silence.
     public static readonly int ShapeCount = Enum.GetValues<EquipmentShape>().Length;
 
     // One unit mesh for the shape. Pure; callers cache.
@@ -66,6 +69,28 @@ public static class EquipmentShapeLibrary
                 AppendBox(writer);
                 break;
         }
+
+        // Fit the finished mesh to the unit box on the axes the shape is MEANT to fill, so a part's
+        // authored Size is its real extent and a shape is a true drop-in for a Box. Three things
+        // make this necessary, and none of them is a mistake in the shape itself:
+        //   - an arc of less than 360 degrees has an asymmetric range on its open axis (Plate),
+        //   - a polygon inscribed in a circle only touches the circle at its vertices, so a 10-gon
+        //     shaft reaches 0.951 of its radius on an axis that falls between two vertices,
+        //   - a surface with a bulge or a wave sits off-centre on its thin axis (Panel).
+        // Left unfitted these are small, silent errors in where a part is drawn, and the armour
+        // cover gates cannot see them because they measure the part's box, not its mesh.
+        //
+        // Two shapes keep an axis unfitted, because on that axis the shape IS the measurement:
+        //   - Ring's Y is a torus's MINOR diameter; stretching it to fill would make a barrel.
+        //   - Panel's Z is a sheet's thickness plus its bulge; stretching it to fill would scale the
+        //     wall up with the curve and turn a cloak into a slab.
+        // Both stay centred on their fitted axes; Panel's small residual Z offset (it bulges toward
+        // -Z) is a fraction of a sheet's thickness in engine units. Everything else fills all three.
+        // EquipmentShape.cs states this, and EquipmentShapeLibraryTests pins every real extent.
+        writer.FitToUnitBox(
+            fitX: true,
+            fitY: shape is not EquipmentShape.Ring,
+            fitZ: shape is not EquipmentShape.Panel);
 
         return writer.ToMesh();
     }
@@ -252,14 +277,27 @@ public static class EquipmentShapeLibrary
     // The clipped point: above y = 0.35 the section slides back off the leading edge.
     private static float BladeCentreZ(float y) => y <= 0.35f ? 0f : Lerp(0f, -0.12f, (y - 0.35f) / 0.15f);
 
-    // A curved shell: a 150-degree cylindrical arc about Y, outer radius 0.5, wall 0.14 thick, open
-    // at the back (-Z). The workhorse of plate armour, because it wraps a limb instead of boxing it.
-    // Smooth around the arc on the outer and the inner surface, hard at the four lip corners, and
-    // the top and bottom rims are closed with a strip so the shell is a solid, not a sheet.
+    // A curved shell: a 230-degree cylindrical arc about Y, wall 0.14 thick, open at the back (-Z).
+    // The workhorse of plate armour, because it wraps a limb instead of boxing it. Smooth around the
+    // arc on the outer and the inner surface, hard at the four lip corners, and the top and bottom
+    // rims are closed with a strip so the shell is a solid, not a sheet.
+    //
+    // Two things here are deliberate and were measured in the engine, not guessed:
+    //
+    // 1. The sweep is 230 degrees, not the 150 it started at. A 150-degree arc is a shield boss, not
+    //    a piece of armour: it covers the front of a limb and leaves the back bare, which is exactly
+    //    what the first in-engine pass showed on the cuirass and the boots.
+    // 2. The finished ring is FITTED to the unit box in X and Z. An arc of any sweep under 360 has
+    //    an asymmetric Z range, so without this the shell's centroid sits forward of the origin and
+    //    a part's Center stops meaning the part's centre - the drawn piece slides toward +Z and the
+    //    coverage gates, which measure the part's BOX, keep passing while the armour misses the body.
+    //    Fitting also means a Plate fills its authored Size like a Box did, so it is a true drop-in.
+    //    The fit is affine per axis, so the section becomes an ellipse rather than a circle; that is
+    //    an improvement for a torso and harmless everywhere else.
     private static void AppendPlate(MeshWriter writer)
     {
-        const int segments = 12;
-        const float sweep = 150f * (MathF.PI / 180f);
+        const int segments = 14;
+        const float sweep = 230f * (MathF.PI / 180f);
         const float outerRadius = 0.5f;
         const float innerRadius = outerRadius - 0.14f;
         int points = (segments + 1) * 2;
@@ -285,6 +323,8 @@ public static class EquipmentShapeLibrary
             rings[i] = ring;
         }
 
+        FitRingsToUnitBox(rings, fitX: true, fitZ: true);
+
         bool[] hardPoint = Repeat(points, false);
         hardPoint[0] = true;
         hardPoint[segments] = true;
@@ -292,6 +332,40 @@ public static class EquipmentShapeLibrary
         hardPoint[points - 1] = true;
 
         AppendTube(writer, rings, null, hardPoint, TubeCap.Strip, TubeCap.Strip);
+    }
+
+    // Scales and shifts every ring point so the rings' bounding box fills [-0.5, 0.5] on the chosen
+    // axes. Applied BEFORE AppendTube, so the normals are derived from the fitted geometry and no
+    // normal has to be corrected for the non-uniform scale. An axis whose extent is already zero or
+    // degenerate is left alone.
+    private static void FitRingsToUnitBox(Vector3[][] rings, bool fitX, bool fitZ)
+    {
+        Vector3 min = new(float.MaxValue);
+        Vector3 max = new(float.MinValue);
+        foreach (Vector3[] ring in rings)
+        {
+            foreach (Vector3 point in ring)
+            {
+                min = Vector3.ComponentMin(min, point);
+                max = Vector3.ComponentMax(max, point);
+            }
+        }
+
+        float scaleX = fitX && max.X - min.X > 1e-5f ? 1f / (max.X - min.X) : 1f;
+        float scaleZ = fitZ && max.Z - min.Z > 1e-5f ? 1f / (max.Z - min.Z) : 1f;
+        float midX = (max.X + min.X) * 0.5f;
+        float midZ = (max.Z + min.Z) * 0.5f;
+        for (int r = 0; r < rings.Length; r++)
+        {
+            for (int i = 0; i < rings[r].Length; i++)
+            {
+                Vector3 point = rings[r][i];
+                rings[r][i] = new Vector3(
+                    fitX ? (point.X - midX) * scaleX : point.X,
+                    point.Y,
+                    fitZ ? (point.Z - midZ) * scaleZ : point.Z);
+            }
+        }
     }
 
     // A hemi-ogive on a short cylindrical skirt: helm skulls, bosses, pommels. The cap is ogival
@@ -860,6 +934,50 @@ public static class EquipmentShapeLibrary
             Add(b);
             Add(c);
             _indices.AddRange([first, first + 1, first + 2]);
+        }
+
+        // Scales and shifts every vertex so the mesh's bounding box fills [-0.5, 0.5] on the chosen
+        // axes. The normals are corrected for the per-axis scale the way a normal matrix does it -
+        // n / s, renormalised - so a non-uniform fit does not tilt the shading. An axis that is
+        // already filled is an exact no-op, and a degenerate axis is left alone.
+        public void FitToUnitBox(bool fitX, bool fitY, bool fitZ)
+        {
+            if (_vertices.Count == 0)
+            {
+                return;
+            }
+
+            Vector3 min = new(float.MaxValue);
+            Vector3 max = new(float.MinValue);
+            for (int i = 0; i < _vertices.Count; i++)
+            {
+                min = Vector3.ComponentMin(min, _vertices[i].Position);
+                max = Vector3.ComponentMax(max, _vertices[i].Position);
+            }
+
+            Vector3 size = max - min;
+            Vector3 mid = (max + min) * 0.5f;
+            Vector3 scale = new(
+                fitX && size.X > 1e-5f ? 1f / size.X : 1f,
+                fitY && size.Y > 1e-5f ? 1f / size.Y : 1f,
+                fitZ && size.Z > 1e-5f ? 1f / size.Z : 1f);
+            Vector3 shift = new(fitX ? mid.X : 0f, fitY ? mid.Y : 0f, fitZ ? mid.Z : 0f);
+            if (scale == Vector3.One && shift == Vector3.Zero)
+            {
+                return;
+            }
+
+            for (int i = 0; i < _vertices.Count; i++)
+            {
+                StaticWorldVertex vertex = _vertices[i];
+                Vector3 position = (vertex.Position - shift) * scale;
+                Vector3 normal = new(
+                    vertex.Normal.X / scale.X,
+                    vertex.Normal.Y / scale.Y,
+                    vertex.Normal.Z / scale.Z);
+                normal = normal.LengthSquared > 1e-12f ? Vector3.Normalize(normal) : vertex.Normal;
+                _vertices[i] = new StaticWorldVertex(position, normal, vertex.TexCoord);
+            }
         }
 
         public StaticWorldChunkMesh ToMesh()

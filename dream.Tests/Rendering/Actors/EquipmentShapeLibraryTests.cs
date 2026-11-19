@@ -24,7 +24,7 @@ public class EquipmentShapeLibraryTests
         [EquipmentShape.Shaft] = 100,
         [EquipmentShape.Taper] = 60,
         [EquipmentShape.Blade] = 160,
-        [EquipmentShape.Plate] = 220,
+        [EquipmentShape.Plate] = 260,
         [EquipmentShape.Dome] = 180,
         [EquipmentShape.Spike] = 40,
         [EquipmentShape.Ring] = 230,
@@ -157,6 +157,102 @@ public class EquipmentShapeLibraryTests
 
         Assert.True(TriangleBudget.ContainsKey(shape), $"{shape} has no triangle budget");
         Assert.InRange(mesh.TriangleCount, 1, TriangleBudget[shape]);
+    }
+
+    // The AABB each shape ACTUALLY occupies, to a hundredth. "Touches both extremes on one axis" is
+    // not enough: Plate shipped as a 150-degree arc whose Z ran [0.09, 0.50], so every Plate part was
+    // drawn in the front 41% of its authored box with its centroid a third of a box forward of its
+    // Center - plate armour that missed the back of the body, invisible to every gate because the
+    // gates measure the part's BOX. Pin the real extents so the next off-centre shape shows in a diff.
+    //
+    // Shapes that fill the box on all three axes are the drop-in replacements for a Box. The ones
+    // that do not are listed here with what they really are: Ring is a torus, so only X and Z span
+    // the box and Y is the minor diameter; Gem's girdle fills X and Z and its points fill Y.
+    [Theory]
+    [InlineData(EquipmentShape.Box, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.BevelBox, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Shaft, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Taper, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Plate, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Dome, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Spike, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Gem, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Crescent, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    public void AShapeThatFillsItsBoxReallyFillsIt(
+        EquipmentShape shape, float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
+    {
+        StaticWorldChunkMesh mesh = EquipmentShapeLibrary.Build(shape);
+        (Vector3 min, Vector3 max) = Extents(mesh);
+
+        Assert.Equal(minX, min.X, 2);
+        Assert.Equal(minY, min.Y, 2);
+        Assert.Equal(minZ, min.Z, 2);
+        Assert.Equal(maxX, max.X, 2);
+        Assert.Equal(maxY, max.Y, 2);
+        Assert.Equal(maxZ, max.Z, 2);
+    }
+
+    // Panel is a sheet: it fills X and Y, and its Z is the wall thickness plus the bulge that gives
+    // cloth its run of light, so it is left unfitted and sits slightly toward -Z. Pinned exactly,
+    // because a silent change here moves every cloak, tabard and wing off the body.
+    [Fact]
+    public void ThePanelIsASheetInZAndIsPinnedToWhatItReallyIs()
+    {
+        StaticWorldChunkMesh mesh = EquipmentShapeLibrary.Build(EquipmentShape.Panel);
+        (Vector3 min, Vector3 max) = Extents(mesh);
+
+        Assert.Equal(-0.50f, min.X, 2);
+        Assert.Equal(0.50f, max.X, 2);
+        Assert.Equal(-0.50f, min.Y, 2);
+        Assert.Equal(0.50f, max.Y, 2);
+        Assert.InRange(max.Z - min.Z, 0.20f, 0.40f);
+        Assert.InRange(MathF.Abs(max.Z + min.Z) * 0.5f, 0f, 0.10f);
+    }
+
+    // Ring is a torus in the XZ plane: it fills X and Z and its Y is the MINOR diameter, which is
+    // stated in EquipmentShape.cs. It is the only shape that does not fill all three axes, and it is
+    // pinned here so that staying that way is a deliberate choice rather than an accident.
+    [Theory]
+    [InlineData(EquipmentShape.Ring, 0.30f)]
+    public void AShapeThatDoesNotFillYIsPinnedToWhatItReallyIs(EquipmentShape shape, float heightOfBox)
+    {
+        StaticWorldChunkMesh mesh = EquipmentShapeLibrary.Build(shape);
+        (Vector3 min, Vector3 max) = Extents(mesh);
+
+        Assert.Equal(-0.50f, min.X, 2);
+        Assert.Equal(0.50f, max.X, 2);
+        Assert.Equal(-0.50f, min.Z, 2);
+        Assert.Equal(0.50f, max.Z, 2);
+        Assert.Equal(heightOfBox, max.Y - min.Y, 2);
+        Assert.Equal(0f, max.Y + min.Y, 2);
+    }
+
+    // EquipmentShapeLibrary.ShapeCount indexes a per-shape array, so the enum has to be contiguous
+    // from zero or EquipmentMeshCache silently hands out the wrong mesh - or a Box - for the gap.
+    [Fact]
+    public void TheShapeEnumIsContiguousFromZero()
+    {
+        EquipmentShape[] shapes = Enum.GetValues<EquipmentShape>();
+
+        for (int i = 0; i < shapes.Length; i++)
+        {
+            Assert.Equal(i, (int)shapes[i]);
+        }
+
+        Assert.Equal(shapes.Length, EquipmentShapeLibrary.ShapeCount);
+    }
+
+    private static (Vector3 Min, Vector3 Max) Extents(StaticWorldChunkMesh mesh)
+    {
+        Vector3 min = new(float.MaxValue);
+        Vector3 max = new(float.MinValue);
+        for (int i = 0; i < mesh.Vertices.Count; i++)
+        {
+            min = Vector3.ComponentMin(min, mesh.Vertices[i].Position);
+            max = Vector3.ComponentMax(max, mesh.Vertices[i].Position);
+        }
+
+        return (min, max);
     }
 
     // Every shape here is closed, so the divergence theorem gives a positive volume. A globally

@@ -7,9 +7,10 @@ using Dream.Simulation.Players;
 
 namespace Dream.Rendering.Actors;
 
-// Draws the armour a player wears, one box at a time, on the node of the body part it covers. Like
-// HeldWeaponRenderer, the boxes are unit-cube draws of one shared mesh (ArmourMeshCatalog gives each
-// box its place, size and material), so there is nothing to upload per item. Every piece rides its
+// Draws the armour a player wears, one part at a time, on the node of the body part it covers. Like
+// HeldWeaponRenderer, each part draws one of the sculpted unit meshes EquipmentMeshCache holds,
+// picked by the part's shape (ArmourMeshCatalog gives each part its place, size, material and
+// shape), so a new item still costs no asset. Every piece rides its
 // node's OVERRIDDEN world matrix, so a flinch carries the cuirass and cloak, a held arm the gauntlet
 // and an air tuck the boots. Armour draws at scale 1.0: it must match the baked body exactly. Arm,
 // leg and foot pieces are one model drawn twice, mirrored in X. The owner (the local or the remote

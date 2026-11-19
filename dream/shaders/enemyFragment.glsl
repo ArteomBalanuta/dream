@@ -120,7 +120,13 @@ const float EquipLobeNormalisation = 1.0 / (8.0 * 3.14159265);
 vec3 dreamEquipLobe(vec3 n, vec3 viewDir, vec3 toLight, float shininess, vec3 f0) {
     float ndl = max(dot(n, toLight), 0.0);
     if (ndl <= 0.0) { return vec3(0.0); }
-    vec3 h = normalize(toLight + viewDir);
+    // The world pass draws with culling off, so a back face arrives with the FRONT face's normal.
+    // Exactly antiparallel light and view would then make toLight + viewDir the zero vector and
+    // normalize() a NaN, which spreads to the whole fragment. Fall out before that.
+    // (`half` is a reserved word in GLSL, hence `hv`.)
+    vec3 hv = toLight + viewDir;
+    if (dot(hv, hv) < 1e-8) { return vec3(0.0); }
+    vec3 h = normalize(hv);
     float spec = pow(max(dot(n, h), 0.0), shininess) * ((shininess + 8.0) * EquipLobeNormalisation);
     vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - max(dot(h, viewDir), 0.0), 5.0);
     return fresnel * (ndl * spec);
@@ -157,7 +163,11 @@ void main()
 
         // Surface grain. The modulation is mostly DOWNWARD, so a piece gets pitted, not brighter.
         float wear = dreamEquipGrain(fragPos);
-        float wearAlbedo = mix(1.0 - 0.34 * grain, 1.0 + 0.07 * grain, wear);
+        // ONE-SIDED on purpose. `lit` is linear in the albedo, so an upward lobe here is exactly an
+        // albedo multiplier, and it would lift a piece past EquipmentTint.MaxAlbedoChannel - the
+        // ceiling the CPU clamp is documented to guarantee - straight back into a blown-out patch.
+        // Wear takes light away; it never adds any.
+        float wearAlbedo = mix(1.0 - 0.34 * grain, 1.0, wear);
         // `lit` above is albedo * max(G, floor) and is LINEAR in the albedo, so scaling it here is
         // exactly the same thing as modulating the albedo before the floor clamp - and because it
         // scales both terms, the floor still holds and a dark piece can never go black.
@@ -180,7 +190,10 @@ void main()
         spec += dreamPointSpecular(n, fragPos, v, shin, f0);
 
         // Fresnel edge sheen: the sky caught on a rim. Metal takes most of it, leather a little.
-        float rim = pow(1.0 - max(dot(n, v), 0.0), 5.0);
+        // Back faces again: with culling off they carry the front normal, so dot(n, v) is negative
+        // and the rim term would saturate to a full sheen over the whole hidden face. Depth hides
+        // them while every shape is closed, but an open shell would light up. Clamp it to zero.
+        float rim = dot(n, v) <= 0.0 ? 0.0 : pow(1.0 - dot(n, v), 5.0);
         spec += uAmbientSky.rgb * (rim * (0.10 + 0.90 * metallic) * EquipFresnelStrength);
 
         // Before dreamExpose, so a highlight is exposed with everything else and may clip to white.

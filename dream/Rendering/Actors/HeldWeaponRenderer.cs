@@ -7,12 +7,16 @@ using Dream.Simulation.Players;
 
 namespace Dream.Rendering.Actors;
 
-// Draws the items a player holds, one box at a time, on the hand of the arm that holds them. The
-// boxes are unit-cube draws of one shared mesh (WeaponMeshCatalog gives each box its place, size
-// and material), so there is nothing to upload per item and a new item costs no GL object. The
-// owner (the local or the remote player renderer) calls Draw right after the model, with the same
-// shader and model matrix; the frame state (view, projection, tint) is set here again, so it can
-// also run after a pass that changed it.
+// Draws the items a player holds, one part at a time, on the hand of the arm that holds them.
+// WeaponMeshCatalog gives each part its place, size, material and SHAPE, and the shape picks one of
+// the sculpted unit meshes EquipmentMeshCache holds (EquipmentShapeLibrary). A new item therefore
+// still costs no asset and no GL object: only a shape nobody has drawn yet costs one buffer, built
+// once on first use. (The buffers are per renderer, so a shape used by both the local and the remote
+// figure is uploaded more than once; each is at most a few hundred triangles, so this is cheaper
+// than the lifetime bookkeeping a shared cache would need.) The owner (the local or the remote
+// player renderer) calls Draw right after the model, with the same shader and model matrix; the
+// frame state (view, projection, tint, equipment surface) is set here again, so it can also run
+// after a pass that changed it, and the equipment surface is reset to zero when the pass ends.
 public sealed class HeldWeaponRenderer : IDisposable
 {
     // Where the fist is in the arm's own frame (the arm is a 0.4 wide, 1.0 long box hanging from
@@ -157,7 +161,10 @@ public sealed class HeldWeaponRenderer : IDisposable
         // The tint is this ITEM's, so it is resolved once per item and the material guard below is
         // per item too (lastMaterial is local to this call): a second item with the same material
         // re-sets the colour with its own tint instead of inheriting the first one's.
-        EquipmentTint tint = EquipmentTintCatalog.Resolve(visualId);
+        // Keyed on the RESOLVED model's id, not the requested one, so an id the catalog does not
+        // know falls back to the generic stick AND to the generic stick's tint, instead of being
+        // drawn as the stick in some other item's colours. WornArmourRenderer resolves the same way.
+        EquipmentTint tint = EquipmentTintCatalog.Resolve(model.VisualId);
         WeaponPart[] parts = model.PartArray;
         WeaponMaterial lastMaterial = (WeaponMaterial)(-1);
         for (int i = 0; i < parts.Length; i++)

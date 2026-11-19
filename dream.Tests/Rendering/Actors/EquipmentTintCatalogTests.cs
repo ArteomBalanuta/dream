@@ -125,6 +125,17 @@ public class EquipmentTintCatalogTests
     {
         Vector4 tinted = tint.Apply(baseColor, accentMix);
         float max = EquipmentTint.MaxAlbedoChannel;
+
+        // Assert on the UNCLAMPED product, not on Apply's output. Apply ends in MathF.Min(..., max),
+        // so asserting that its result is under the ceiling only re-states the clamp and can never
+        // fail. What matters is that no catalog colour times its tint ever REACHES the clamp: a
+        // combination that did would be silently flattened to a uniform 0.42 patch on screen, and
+        // the tier would read as a flat blob instead of a tint. That is the failure this catches.
+        float mix = Math.Clamp(accentMix, 0f, 1f);
+        Vector3 factor = (tint.Primary * (1f - mix)) + (tint.Accent * mix);
+        Assert.True(
+            baseColor.X * factor.X <= max && baseColor.Y * factor.Y <= max && baseColor.Z * factor.Z <= max,
+            $"{what} would clip before the clamp: {baseColor.Xyz * factor} over {max}");
         Assert.True(tinted.X <= max && tinted.Y <= max && tinted.Z <= max, $"{what} over the ceiling: {tinted}");
         AssertNotDarkened(tinted.X, baseColor.X, what);
         AssertNotDarkened(tinted.Y, baseColor.Y, what);

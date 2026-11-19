@@ -120,14 +120,15 @@ public class FrameLightingContractTests
         Assert.Matches(
             @"lit = \(dreamAmbient\(n\) \* uLightingParams\.z \+ \(dreamDirectShaded\(n, fragPos\) \+ dreamPointLights\(n, fragPos\)\) \* ActorDirectScale\) \* baseColor\.rgb;\s*lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);",
             source);
-        // Between the floor and the emissive sits the equipment material response, and nothing
-        // else: it is one block, gated on uEquipSurface (zero for every non-equipment draw), and it
-        // adds its specular to lit BEFORE dreamExpose, so the frame exposure still owns the result.
+        // Between the floor and the emissive sits the equipment material response, AND NOTHING
+        // ELSE. That is what this assertion is for, so it is ONE contiguous match: the floor line,
+        // the equipment block (a single `if` gated on uEquipSurface, which is zero for every
+        // non-equipment draw, and whose body may nest one level of braces), then the emissive and
+        // FragColor. Split into separate matches it would still pass with a second post-floor block
+        // inserted between them, which is exactly the change it exists to catch. The specular is
+        // added to lit BEFORE dreamExpose, so the frame exposure still owns the result.
         Assert.Matches(
-            @"lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*(//[^\n]*\n\s*)*if \(uEquipSurface\.y > 0\.0\) \{",
-            source);
-        Assert.Matches(
-            @"vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
+            @"lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*(?://[^\n]*\n\s*)*if \(uEquipSurface\.y > 0\.0\) \{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*(?://[^\n]*\n\s*)*vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
             source);
     }
 
