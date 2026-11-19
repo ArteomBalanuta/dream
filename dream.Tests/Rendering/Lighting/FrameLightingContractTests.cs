@@ -29,13 +29,13 @@ public class FrameLightingContractTests
     ];
 
     [Fact]
-    public void The_Struct_Is_256_Bytes_Of_Sixteen_Std140_Vec4s()
+    public void The_Struct_Is_272_Bytes_Of_Seventeen_Std140_Vec4s()
     {
         Assert.Equal(FrameLighting.SizeInBytes, Marshal.SizeOf<FrameLighting>());
-        Assert.Equal(256, FrameLighting.SizeInBytes);
+        Assert.Equal(272, FrameLighting.SizeInBytes);
 
         FieldInfo[] fields = OrderedFields();
-        Assert.Equal(16, fields.Length);
+        Assert.Equal(17, fields.Length);
         Assert.Equal(fields.Length * 16, FrameLighting.SizeInBytes);
         for (int i = 0; i < fields.Length; i++)
         {
@@ -70,6 +70,7 @@ public class FrameLightingContractTests
         Assert.Equal(208, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.SunShadowMatrix2)));
         Assert.Equal(224, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.SunShadowMatrix3)));
         Assert.Equal(240, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.SunShadowParams)));
+        Assert.Equal(256, (int)Marshal.OffsetOf<FrameLighting>(nameof(FrameLighting.FogHeight)));
     }
 
     [Fact]
@@ -466,9 +467,10 @@ public class FrameLightingContractTests
     }
 
     [Fact]
-    public void The_View_Model_Range_Offset_Is_256_On_Real_Hardware()
+    public void The_View_Model_Range_Offset_Is_512_On_Real_Hardware()
     {
-        Assert.Equal(256, FrameLightingBuffer.RoundUp(FrameLighting.SizeInBytes, 256));
+        // 272 bytes (17 vec4s) rounds up to the next multiple of the 256 B alignment.
+        Assert.Equal(512, FrameLightingBuffer.RoundUp(FrameLighting.SizeInBytes, 256));
     }
 
     [Fact]
