@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 
 namespace Dream.Tests.Rendering.Actors;
@@ -18,8 +19,9 @@ public class PlayerAnimationStateMachineTests
         bool main = false,
         bool off = false,
         bool ranged = false,
-        float twist = 0f) =>
-        new(alive, speed, airborne, attack, hit, main, off, ranged, twist);
+        float twist = 0f,
+        int skill = 0) =>
+        new(alive, speed, airborne, attack, hit, main, off, ranged, twist, skill);
 
     private static PlayerAnimationFrame Run(PlayerAnimationStateMachine machine, PlayerAnimationInputs inputs, float seconds)
     {
@@ -673,5 +675,129 @@ public class PlayerAnimationStateMachineTests
         float justPast = -(PlayerAnimationStateMachine.StrafeSectorStartRadians +
             (PlayerAnimationStateMachine.SectorHysteresisRadians * 0.5f));
         Assert.Equal("walk", machine.Update(Inputs(speed: 1.6f, twist: justPast), Dt).Clip);
+    }
+
+    // ---- The Cleave swing (SkillSwingSerial): a MeleeArc cast plays the "cleave" clip on the shared timeline.
+
+    [Fact]
+    public void CleaveSeconds_IsTheContractTimeline()
+    {
+        Assert.Equal(MeleeArcSwing.TotalSeconds, PlayerAnimationStateMachine.CleaveSeconds);
+        Assert.Equal("cleave", PlayerAnimationStateMachine.CleaveClip);
+    }
+
+    [Fact]
+    public void TheFirstSkillSwingSerialSeen_OnlySetsTheBaseline()
+    {
+        PlayerAnimationStateMachine machine = new();
+
+        PlayerAnimationFrame frame = Run(machine, Inputs(skill: 5), 0.2f);
+
+        Assert.Equal("idle", frame.Clip);
+    }
+
+    [Fact]
+    public void ANewSkillSwingSerial_PlaysCleave_ForCleaveSeconds_ThenReturnsToTheLoop()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(skill: 0), Dt);
+
+        PlayerAnimationFrame start = machine.Update(Inputs(skill: 1), Dt);
+        PlayerAnimationFrame mid = Run(machine, Inputs(skill: 1), PlayerAnimationStateMachine.CleaveSeconds * 0.9f);
+        PlayerAnimationFrame after = Run(machine, Inputs(skill: 1), PlayerAnimationStateMachine.CleaveSeconds * 0.2f);
+
+        Assert.Equal("cleave", start.Clip);
+        Assert.Equal(PlayerClipMode.OneShot, start.Mode);
+        Assert.Equal("cleave", mid.Clip);
+        Assert.Equal("idle", after.Clip);
+    }
+
+    [Fact]
+    public void ASecondSkillSwing_IsANewOneShot()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(skill: 0), Dt);
+        int first = machine.Update(Inputs(skill: 1), Dt).OneShotSerial;
+        Run(machine, Inputs(skill: 1), PlayerAnimationStateMachine.CleaveSeconds + 0.1f);
+
+        PlayerAnimationFrame second = machine.Update(Inputs(skill: 2), Dt);
+
+        Assert.Equal("cleave", second.Clip);
+        Assert.NotEqual(first, second.OneShotSerial);
+    }
+
+    [Fact]
+    public void ASkillSwing_InterruptsAMeleeSwing()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(), Dt);
+        Assert.Equal("attack-melee-right", machine.Update(Inputs(attack: 1), Dt).Clip);
+
+        PlayerAnimationFrame frame = machine.Update(Inputs(attack: 1, skill: 1), Dt);
+
+        Assert.Equal("cleave", frame.Clip);
+    }
+
+    [Fact]
+    public void AnAttackSerial_WhileCleavePlays_IsConsumedAndIgnored()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(), Dt);
+        machine.Update(Inputs(skill: 1), Dt);
+
+        PlayerAnimationFrame during = machine.Update(Inputs(attack: 1, skill: 1), Dt);
+        PlayerAnimationFrame after = Run(machine, Inputs(attack: 1, skill: 1), PlayerAnimationStateMachine.CleaveSeconds + 0.1f);
+
+        Assert.Equal("cleave", during.Clip);
+        // Consumed: it does not start a melee swing when the cleave ends.
+        Assert.Equal("idle", after.Clip);
+    }
+
+    [Fact]
+    public void ASkillSwingAndAnAttackOnTheSameFrame_PlayTheCleave()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(), Dt);
+
+        PlayerAnimationFrame frame = machine.Update(Inputs(attack: 1, skill: 1), Dt);
+
+        Assert.Equal("cleave", frame.Clip);
+    }
+
+    [Fact]
+    public void WhileCleavePlays_TheMainArmIsNotHeld_AndItRaisesAgainAfterwards()
+    {
+        PlayerAnimationStateMachine machine = new();
+        Run(machine, Inputs(main: true, skill: 0), 0.5f);
+
+        PlayerAnimationFrame during = Run(machine, Inputs(main: true, skill: 1), 0.3f);
+        PlayerAnimationFrame after = Run(machine, Inputs(main: true, skill: 1), PlayerAnimationStateMachine.CleaveSeconds + 0.5f);
+
+        Assert.True(during.MainArmHold < 0.05f);
+        Assert.True(after.MainArmHold > 0.95f);
+    }
+
+    [Fact]
+    public void AnAttackAfterTheCleave_StillSwings()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(), Dt);
+        machine.Update(Inputs(skill: 1), Dt);
+        Run(machine, Inputs(skill: 1), PlayerAnimationStateMachine.CleaveSeconds + 0.1f);
+
+        Assert.Equal("attack-melee-right", machine.Update(Inputs(attack: 1, skill: 1), Dt).Clip);
+    }
+
+    [Fact]
+    public void Dying_EndsTheCleave_AndARespawnStartsFresh()
+    {
+        PlayerAnimationStateMachine machine = new();
+        machine.Update(Inputs(), Dt);
+        machine.Update(Inputs(skill: 1), Dt);
+
+        Assert.Equal("die", machine.Update(Inputs(alive: false, skill: 1), Dt).Clip);
+        PlayerAnimationFrame respawned = machine.Update(Inputs(skill: 1), Dt);
+
+        Assert.Equal("idle", respawned.Clip);
     }
 }

@@ -29,7 +29,62 @@ import gltfwrite as G  # noqa: E402
 import uiart as U  # noqa: E402
 
 REQUIRED_CLIPS = ("idle", "walk", "run", "sprint", "die", "attack-melee-right", "holding-right-shoot",
-                  "walk-back", "walk-strafe-left", "walk-strafe-right")
+                  "walk-back", "walk-strafe-left", "walk-strafe-right", "cleave")
+# The Cleave timeline in ticks at 64/s; MeleeArcSwing.cs is the contract and PlayerCleaveClipTests pins the shipped
+# clip to it. check_sources forbids reading that file from here, so the numbers are repeated.
+CLEAVE_TICK_RATE = 64.0
+CLEAVE_WINDUP_TICKS = 20
+CLEAVE_ACTIVE_TICKS = 10
+CLEAVE_TOTAL_TICKS = 54
+
+
+def cleave_sweep(asset: dict, clip) -> tuple[list, list]:
+    """The sword arm's world direction (the arm node's hanging axis, which is where hand and weapon lie) at the
+    end of the wind-up, the midpoint of the active window and its end, plus the problems found in the clip's keys.
+    Model space: +Z forward, +X the caster's LEFT."""
+    times = [float(x) for x in next(iter(clip.rotations.values()))[0]]
+    problems = []
+    if abs(times[0]) > 1e-9 or abs(times[-1] - CLEAVE_TOTAL_TICKS / CLEAVE_TICK_RATE) > 1e-6:
+        problems.append(f"cleave runs {times[0]}..{times[-1]} s, expected 0..{CLEAVE_TOTAL_TICKS / CLEAVE_TICK_RATE}")
+    dirs = []
+    arm = next(i for i, nd in enumerate(asset["nodes"]) if nd.name == "arm-right")
+    for tick in (CLEAVE_WINDUP_TICKS, CLEAVE_WINDUP_TICKS + CLEAVE_ACTIVE_TICKS // 2,
+                 CLEAVE_WINDUP_TICKS + CLEAVE_ACTIVE_TICKS):
+        want = tick / CLEAVE_TICK_RATE
+        k = next((i for i, x in enumerate(times) if abs(x - want) < 1e-6), None)
+        if k is None:
+            problems.append(f"cleave has no key at tick {tick} ({want} s)")
+            dirs.append(np.array([0.0, -1.0, 0.0]))
+            continue
+        d = L.node_worlds(asset["nodes"], clip, k)[arm][:3, :3] @ np.array([0.0, -1.0, 0.0])
+        dirs.append(d / np.linalg.norm(d))
+    return dirs, problems
+
+
+def cleave_problems(asset: dict, clip) -> list:
+    """Left -> forward -> right, horizontal to slightly down at the end: empty when the sweep is right."""
+    dirs, problems = cleave_sweep(asset, clip)
+    windup, mid, end = dirs
+    if not windup[0] > 0.5:
+        problems.append(f"at the end of the wind-up the sword points {windup.round(2).tolist()}, not to the caster's left")
+    if not (mid[2] > 0.7 and abs(mid[0]) < 0.35):
+        problems.append(f"at the active midpoint the sword points {mid.round(2).tolist()}, not forward")
+    if not end[0] < -0.5:
+        problems.append(f"at the end of the active window the sword points {end.round(2).tolist()}, not to the right")
+    if not (windup[0] > mid[0] > end[0]):
+        problems.append("the sword does not sweep monotonically from left to right")
+    for label, d in (("wind-up end", windup), ("active midpoint", mid), ("active end", end)):
+        if abs(d[1]) > 0.5:
+            problems.append(f"the sword is {d[1]:+.2f} off horizontal at the {label}; the sweep must stay near level")
+    return problems
+
+
+def mirrored(clip):
+    """The same clip reflected across the model's YZ plane: every rotation (x, y, z, w) -> (x, -y, -z, w) and every
+    translation x negated. It sweeps right -> left, which the gate must refuse."""
+    rot = {i: (t, np.array([[q[0], -q[1], -q[2], q[3]] for q in qs], dtype=np.float32)) for i, (t, qs) in clip.rotations.items()}
+    trs = {i: (t, np.array([[-v[0], v[1], v[2]] for v in vs], dtype=np.float32)) for i, (t, vs) in clip.translations.items()}
+    return G.GltfAnimation(name=clip.name, rotations=rot, translations=trs)
 ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right")
 # M3, the offline bimodal-lambert spread (p90 - p10 of HSV value over the silhouette, shaded through
 # enginelook at a brazier 1.5 units away, at the WORSE of two mirrored key azimuths).
@@ -507,6 +562,29 @@ def main() -> int:
     else:
         ok(f"the gate is live: die key {early} spans {early_span:.2f} units ({early_span / stand:.0%} of "
            f"standing) and fails the same {limit:.2f} limit")
+
+    # the Cleave sweep: the sword goes left -> forward -> right across the active window, the clip ends at rest,
+    # and a mirrored copy (right -> left) must FAIL the same gate, or it has stopped measuring direction
+    cleave = next((x for x in a["animations"] if x.name == "cleave"), None)
+    if cleave is None:
+        fail("no cleave clip to sweep-check")
+    else:
+        sweep = cleave_problems(a, cleave)
+        for msg in sweep:
+            fail("cleave: " + msg)
+        last_rot = [np.asarray(q[-1], dtype=np.float64) for _, q in cleave.rotations.values()]
+        last_trs = [np.asarray(v[-1], dtype=np.float64) for _, v in cleave.translations.values()]
+        if any(np.abs(q - np.array([0.0, 0.0, 0.0, 1.0])).max() > 1e-6 for q in last_rot) or \
+                any(np.abs(v).max() > 1e-6 for v in last_trs):
+            fail("cleave does not end on the identity pose with a zero root offset")
+        if not sweep:
+            dirs, _ = cleave_sweep(a, cleave)
+            ok("cleave sweeps left -> forward -> right (x " + " -> ".join(f"{d[0]:+.2f}" for d in dirs) +
+               ") on the server's timeline and ends at rest")
+        if not cleave_problems(a, mirrored(cleave)):
+            fail("the cleave sweep gate passes the mirrored clip; it has stopped measuring direction")
+        else:
+            ok("the cleave sweep gate is live: the mirrored clip fails it")
 
     # seams: no cylinder triangle jumps across its atlas rectangle, and cutting changed no geometry
     parts, _ = P.split_parts(P.build_parts())

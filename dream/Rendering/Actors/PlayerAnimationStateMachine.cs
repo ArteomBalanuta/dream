@@ -1,3 +1,4 @@
+using Dream.Simulation.Combat;
 using Dream.Simulation.Players;
 
 namespace Dream.Rendering.Actors;
@@ -41,7 +42,10 @@ public readonly record struct PlayerAnimationInputs(
     // Signed yaw, radians, from where the body faces to where it travels: the RAW delta of
     // contract C2, wrapped to (-pi, pi], as LegTwist computes it. Update picks the walk clip from
     // its sector and passes only the within-sector RESIDUAL to the pose layers.
-    float LegTwistRadians = 0f);
+    float LegTwistRadians = 0f,
+    // Counts accepted Cleave-style skill swings (a MeleeArc cast). A new value starts the cleave clip, which
+    // interrupts a melee swing and swallows attack serials until it ends. The first value seen is the baseline.
+    int SkillSwingSerial = 0);
 
 public readonly record struct PlayerAnimationFrame(
     string Clip,
@@ -76,6 +80,9 @@ public sealed class PlayerAnimationStateMachine
     public const string MeleeClip = "attack-melee-right";
     public const string ShootClip = "holding-right-shoot";
 
+    // The Warrior's Cleave swing, timed from the one MeleeArc timeline the server resolves hits on.
+    public const string CleaveClip = "cleave";
+
     // Directional walk cycles (C2): the body keeps facing the cursor while the stride runs
     // backwards or sideways, so the legs no longer sit at a 90-degree clamp to hide a moonwalk.
     public const string WalkBackClip = "walk-back";
@@ -85,6 +92,7 @@ public sealed class PlayerAnimationStateMachine
     // Clip lengths, from the model.
     public const float MeleeSeconds = 0.42f;
     public const float ShootSeconds = 0.20f;
+    public const float CleaveSeconds = MeleeArcSwing.TotalSeconds;
     public const float HitSeconds = 0.32f;
 
     // The speed each gait's cycle was AUTHORED for: at exactly this speed the clip plays at its
@@ -152,8 +160,10 @@ public sealed class PlayerAnimationStateMachine
     private bool _seeded;
     private int _lastAttackSerial;
     private int _lastHitSerial;
+    private int _lastSkillSwingSerial;
     private int _oneShotSerial;
     private float _attackLeft;
+    private float _cleaveLeft;
     private string _attackClip = MeleeClip;
     private float _hitLeft;
     private bool _dead;
@@ -276,6 +286,7 @@ public sealed class PlayerAnimationStateMachine
             _seeded = true;
             _lastAttackSerial = inputs.AttackSerial;
             _lastHitSerial = inputs.HitSerial;
+            _lastSkillSwingSerial = inputs.SkillSwingSerial;
         }
 
         if (!inputs.IsAlive)
@@ -284,6 +295,7 @@ public sealed class PlayerAnimationStateMachine
             {
                 _dead = true;
                 _attackLeft = 0f;
+                _cleaveLeft = 0f;
                 _hitLeft = 0f;
                 _oneShotSerial++;
             }
@@ -293,6 +305,7 @@ public sealed class PlayerAnimationStateMachine
             _offArm = 0f;
             _lastAttackSerial = inputs.AttackSerial;
             _lastHitSerial = inputs.HitSerial;
+            _lastSkillSwingSerial = inputs.SkillSwingSerial;
             return new PlayerAnimationFrame(DieClip, PlayerClipMode.Hold, _oneShotSerial, 1f, 0f, 0f, 0f, 0f, true, 0f);
         }
 
@@ -301,11 +314,13 @@ public sealed class PlayerAnimationStateMachine
             // Respawned: back to a fresh idle.
             _dead = false;
             _attackLeft = 0f;
+            _cleaveLeft = 0f;
             _hitLeft = 0f;
             _oneShotSerial++;
         }
 
         _attackLeft = MathF.Max(0f, _attackLeft - dt);
+        _cleaveLeft = MathF.Max(0f, _cleaveLeft - dt);
         _hitLeft = MathF.Max(0f, _hitLeft - dt);
 
         if (inputs.HitSerial != _lastHitSerial)
@@ -314,10 +329,20 @@ public sealed class PlayerAnimationStateMachine
             _hitLeft = HitSeconds;
         }
 
+        // A skill swing is read BEFORE the attack serial, so an attack counted on the same frame is swallowed by it.
+        if (inputs.SkillSwingSerial != _lastSkillSwingSerial)
+        {
+            _lastSkillSwingSerial = inputs.SkillSwingSerial;
+            _cleaveLeft = CleaveSeconds;
+            _attackLeft = 0f;
+            _oneShotSerial++;
+        }
+
         if (inputs.AttackSerial != _lastAttackSerial)
         {
+            // Consumed either way, so a swing counted while the cleave plays does not start when it ends.
             _lastAttackSerial = inputs.AttackSerial;
-            if (_attackLeft <= 0f)
+            if (_attackLeft <= 0f && _cleaveLeft <= 0f)
             {
                 _attackClip = inputs.RangedMainHand ? ShootClip : MeleeClip;
                 _attackLeft = inputs.RangedMainHand ? ShootSeconds : MeleeSeconds;
@@ -326,6 +351,7 @@ public sealed class PlayerAnimationStateMachine
         }
 
         bool attacking = _attackLeft > 0f;
+        bool cleaving = _cleaveLeft > 0f;
 
         // Hysteresis: a stop is a lower speed than a start, so a speed that hovers at the threshold
         // does not flicker between the walk and the idle clip.
@@ -336,7 +362,7 @@ public sealed class PlayerAnimationStateMachine
         float blend = Math.Min(1f, LayerBlendPerSecond * dt);
         _airTuck += ((inputs.Airborne ? 1f : 0f) - _airTuck) * blend;
         // The swing clip drives the right arm; the shooting pose does too (it keeps the arm raised).
-        bool mainArmHeld = inputs.HoldsMainHand && !(attacking && _attackClip == MeleeClip);
+        bool mainArmHeld = inputs.HoldsMainHand && !cleaving && !(attacking && _attackClip == MeleeClip);
         _mainArm += ((mainArmHeld ? 1f : 0f) - _mainArm) * blend;
         _offArm += ((inputs.HoldsOffHand ? 1f : 0f) - _offArm) * blend;
 
@@ -348,6 +374,12 @@ public sealed class PlayerAnimationStateMachine
         float legTwist = Math.Clamp(rawTwist, -MaxSprintLegTwistRadians, MaxSprintLegTwistRadians);
 
         float flinch = _hitLeft > 0f ? MathF.Sin(MathF.PI * (1f - (_hitLeft / HitSeconds))) : 0f;
+
+        if (cleaving)
+        {
+            return new PlayerAnimationFrame(
+                CleaveClip, PlayerClipMode.OneShot, _oneShotSerial, 1f, flinch, _airTuck, _mainArm, _offArm, false, legTwist);
+        }
 
         if (attacking)
         {

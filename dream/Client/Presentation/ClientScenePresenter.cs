@@ -7,6 +7,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Simulation.Combat;
+using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Players;
@@ -167,6 +168,8 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 actor.Position,
                 actor.Facing));
         }
+
+        CountRemoteSkillSwings(snapshot);
 
         // An actor the cache withheld as stale is absent from this snapshot without having left, so
         // it counts as observed and its avatar and roster entry stay until a snapshot carries it
@@ -347,7 +350,8 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                 entry.DiedAtTimestamp == 0L
                     ? float.PositiveInfinity
                     : (float)Stopwatch.GetElapsedTime(entry.DiedAtTimestamp).TotalSeconds,
-                entry.IsMoving ? entry.TravelDirection() : Vector3.Zero));
+                entry.IsMoving ? entry.TravelDirection() : Vector3.Zero,
+                entry.SkillSwingSerial));
         }
 
         return _remotePlayerStates;
@@ -521,6 +525,29 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             : StringComparer.Ordinal.Compare(left.SessionId, right.SessionId);
     }
 
+    // A MeleeArc cast event for a remote player is that player's Cleave swing: bump its serial, which the
+    // renderer feeds the state machine. Keyed on the event's actor id against the tracked remote players, never
+    // a list position, and after the actor loop so a player first seen in this very snapshot is already tracked.
+    // The caster's own client has no entry for itself, so its echo is ignored here by construction. Plain for
+    // loop, one dictionary lookup, no allocation.
+    private void CountRemoteSkillSwings(ServerSnapshotEnvelope snapshot)
+    {
+        if (snapshot.CastEvents is not { } casts)
+        {
+            return;
+        }
+
+        int count = Math.Min(casts.Count, ClientSnapshotCastApplier.MaxCastEventsPerSnapshot);
+        for (int i = 0; i < count; i++)
+        {
+            CastEventDelta cast = casts[i];
+            if (cast.Kind == SkillKind.MeleeArc && _remotePlayers.TryGetValue(cast.ActorId, out RemotePlayerEntry? entry))
+            {
+                entry.SkillSwingSerial++;
+            }
+        }
+    }
+
     private RemotePlayerEntry GetOrCreateEntry(int actorId, string sessionId)
     {
         // The server reuses a player actor id once its session leaves. An entry under this id from
@@ -671,6 +698,9 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
         public int AttackSerial { get; set; }
 
         public int HitSerial { get; set; }
+
+        // MeleeArc cast events seen for this player; a new value is a new Cleave swing.
+        public int SkillSwingSerial { get; set; }
 
         public bool Airborne { get; set; }
 

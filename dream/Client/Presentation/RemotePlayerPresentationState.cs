@@ -27,4 +27,6 @@ public readonly record struct RemotePlayerPresentationState(
     bool Airborne = false,
     float HorizontalSpeed = 0f,
     float DeathAgeSeconds = float.PositiveInfinity,
-    Vector3 TravelDirection = default);
+    Vector3 TravelDirection = default,
+    // Counts MeleeArc cast events the snapshots carried for this player; a new value plays the cleave clip.
+    int SkillSwingSerial = 0);

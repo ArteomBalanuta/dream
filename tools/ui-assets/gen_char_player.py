@@ -565,6 +565,75 @@ def clip_melee(n: dict) -> G.GltfAnimation:
     }, index=n)
 
 
+# The Cleave swing's timeline, in authoritative ticks at 64 per second. It repeats the contract in
+# dream/Simulation/Combat/MeleeArcSwing.cs (check_sources forbids reading another file); PlayerCleaveClipTests loads
+# the shipped GLB and pins these key times and the clip length to the C# constants.
+CLEAVE_TICK_RATE = 64.0
+CLEAVE_WINDUP_TICKS = 20
+CLEAVE_ACTIVE_TICKS = 10
+CLEAVE_RECOVERY_TICKS = 24
+CLEAVE_TOTAL_TICKS = CLEAVE_WINDUP_TICKS + CLEAVE_ACTIVE_TICKS + CLEAVE_RECOVERY_TICKS
+
+
+def _smooth(u: float) -> float:
+    return u * u * (3.0 - 2.0 * u)
+
+
+def clip_cleave(n: dict) -> G.GltfAnimation:
+    """The Warrior's Cleave, 54 ticks (0.84 s), right-handed. The model faces +Z and its right is -X, so a yaw about
+    +Y turns the front toward the caster's LEFT and a hanging arm raised by quat_x(-e) points forward at e = 90.
+
+    Wind-up (ticks 0-20): a grounded lunge. The root dips ~0.07 m and the legs split fore and aft by exactly the angle
+    that keeps both feet on the ground at that dip (L * (1 - cos) = dip), so the knees read as flexed on a rigid leg.
+    The hips and torso coil to the left and the sword arm is drawn across the body to the left, a little above level.
+    Active (ticks 20-30, the server's damage window): the hips fire first, then the torso, and the arm trails them
+    (a whip), so the weapon sweeps left, through forward at the window's midpoint (tick 25), to the right, the arm
+    sliding from a little above level to a little below it. Recovery (ticks 30-54): everything eases back to the rest
+    pose on a smoothstep, so the swing decelerates on the right and the last key is the identity pose, like
+    clip_melee. Extra keys inside each phase only shape the easing; the phase borders are exact keys."""
+    leg_len = PELVIS_U * UNITS_PER_U
+    # tick: (torso yaw, arm yaw, arm raise e, hip yaw, root dip in model units, torso lean, left arm raise), degrees
+    peak = (32.0, 46.0, 95.0, 18.0, 0.095, 6.0, 40.0)
+    active = {
+        20: peak,
+        22: (22.0, 50.0, 95.0, 10.0, 0.100, 7.0, 40.0),
+        25: (-6.0, 6.0, 92.0, -8.0, 0.092, 10.0, 25.0),
+        28: (-26.0, -34.0, 86.0, -16.0, 0.086, 10.0, 5.0),
+        30: (-32.0, -46.0, 80.0, -18.0, 0.085, 8.0, -10.0),
+    }
+    ticks = [0, 5, 10, 15, 20, 22, 25, 28, 30, 34, 38, 44, 50, 54]
+    pose = {}
+    for k in ticks:
+        if k in active:
+            pose[k] = active[k]
+        elif k < CLEAVE_WINDUP_TICKS:
+            f = _smooth(k / CLEAVE_WINDUP_TICKS)
+            pose[k] = tuple(v * f for v in peak)
+        else:
+            f = 1.0 - _smooth((k - CLEAVE_WINDUP_TICKS - CLEAVE_ACTIVE_TICKS) / CLEAVE_RECOVERY_TICKS)
+            pose[k] = tuple(v * f for v in active[30])
+    pose[0] = tuple(0.0 for _ in peak)
+    pose[ticks[-1]] = tuple(0.0 for _ in peak)
+
+    def z(q: tuple) -> tuple:
+        return tuple(c + 0.0 for c in q)       # no negative zeros: the last key must be exactly the identity
+
+    rot = {"torso": [], "arm-right": [], "arm-left": [], "leg-left": [], "leg-right": [], "head": []}
+    dips = []
+    for k in ticks:
+        psi, alpha, e, hip, dip, lean, el = pose[k]
+        theta = math.degrees(math.acos(1.0 - dip / leg_len))
+        rot["torso"].append(z(_mul(quat_x(lean), quat_y(psi))))
+        rot["arm-right"].append(z(_mul(quat_y(alpha), quat_x(-e))))
+        rot["arm-left"].append(z(quat_x(-el)))
+        rot["leg-left"].append(z(_mul(quat_y(hip), quat_x(-theta))))
+        rot["leg-right"].append(z(_mul(quat_y(hip), quat_x(theta))))
+        rot["head"].append(z(_mul(quat_x(-lean * 0.6), quat_y(-0.55 * psi))))
+        dips.append([0.0, -dip + 0.0, 0.0])
+    t = [k / CLEAVE_TICK_RATE for k in ticks]
+    return _clip("cleave", t, rot, {"root": dips}, index=n)
+
+
 def clip_shoot(n: dict) -> G.GltfAnimation:
     """0.2 s: the main arm is held raised by the engine, so only a small recoil and a lean."""
     t = [0.0, 0.05, 0.12, 0.20]
@@ -662,7 +731,7 @@ def build_asset():
     lift = _die_lift(nodes, primitives, index, back)
     animations = [clip_idle(index), clip_walk(index), clip_run(index), clip_sprint(index), clip_die(index, lift),
                   clip_melee(index), clip_shoot(index), clip_walk_back(index), clip_strafe(index, 1.0),
-                  clip_strafe(index, -1.0)]
+                  clip_strafe(index, -1.0), clip_cleave(index)]
     return dict(nodes=nodes, primitives=primitives, materials=materials, animations=animations,
                 atlas=atlas, encoded=enc, scale=scale, rects=rects, parts=baked, emissive=emissive,
                 meshes=meshes, uvs=uvs)

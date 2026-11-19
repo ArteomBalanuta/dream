@@ -19,7 +19,9 @@ public readonly record struct LocalPlayerFrameInputs(
     int AttackSerial,
     int HitSerial,
     // The scene's smoothed travel direction (LocalPlayerRenderPose.TravelDirection); zero when not moving.
-    Vector3 TravelDirection = default);
+    Vector3 TravelDirection = default,
+    // Counts accepted MeleeArc skill swings (the scene bumps it when the cast is accepted); a new value plays the cleave clip.
+    int SkillSwingSerial = 0);
 
 public sealed class LocalPlayerRenderer : IDisposable
 {
@@ -107,7 +109,8 @@ public sealed class LocalPlayerRenderer : IDisposable
             equipment.OffHand is not null,
             WeaponMeshCatalog.IsRanged(equipment.MainHand),
             PlayerAnimationStateMachine.LegTwist(
-                localPlayer.Facing.X, localPlayer.Facing.Z, _inputs.TravelDirection.X, _inputs.TravelDirection.Z));
+                localPlayer.Facing.X, localPlayer.Facing.Z, _inputs.TravelDirection.X, _inputs.TravelDirection.Z),
+            _inputs.SkillSwingSerial);
         _lastModelMatrix = renderState.ModelMatrix;
         _hasDrawn = true;
         PlayerAnimationFrame frame = _machine.Update(in animationInputs, deltaTime);
