@@ -112,7 +112,13 @@ public sealed class FxSimulation
     private const float CasterFeetDrop = 0.9f;
     private const float CasterChestLift = 0.2f;
     private const float GroundQuadLift = 0.05f;
-    private const float ArcLife = 0.25f;
+    // The crescent is emitted as the swing turns active, rises over the active window and lingers after it.
+    private const float ArcLinger = 0.25f;
+    private const float ArcLife = MeleeArcSwing.ActiveSeconds + ArcLinger;
+    // Sweep sparks ride the painted edge, a little inside it, from the caster's left tip to the right.
+    private const float ArcSparkRadiusFraction = 0.9f;
+    private const float ArcSparkHeight = 0.25f;
+    public const int MaxPendingArcSweeps = 8;
     private const float RingLife = 0.6f;
     private const float RingStartHalfSize = 0.3f;
     private const float RingEndHalfSize = 0.9f;
@@ -159,6 +165,21 @@ public sealed class FxSimulation
     private readonly PointLight[] _dustLights = new PointLight[DustLightCount];
     private readonly float[] _dustLightDistances = new float[DustLightCount];
     private int _dustLightCount;
+    // Cleave sweeps waiting for, or inside, their active window. Fixed size; a cast on a full array is dropped.
+    private readonly ArcSweep[] _sweeps = new ArcSweep[MaxPendingArcSweeps];
+    private int _sweepCount;
+
+    private struct ArcSweep
+    {
+        public Vector3 Origin;
+        public Vector3 Aim;
+        public bool Aimed;
+        public float Range;
+        public float Elapsed;
+        public bool QuadEmitted;
+        public int SparksEmitted;
+        public int Remaining;
+    }
 
     public FxSimulation(uint seed = FxRandom.DefaultSeed)
     {
@@ -300,9 +321,23 @@ public sealed class FxSimulation
         switch (kind)
         {
             case SkillFxKind.Arc:
+                // Nothing is drawn now: the swing is queued and Advance emits it as the swing turns active.
                 planned = (aimed ? 1 : 0) + ArcSparks + ArcEmbers;
-                EmitArc(origin, aim, aimed, range > 0f ? range : DefaultArcRange, ref budget);
-                break;
+                if (_sweepCount < _sweeps.Length)
+                {
+                    _sweeps[_sweepCount++] = new ArcSweep
+                    {
+                        Origin = origin,
+                        Aim = aim,
+                        Aimed = aimed,
+                        Range = range > 0f ? range : DefaultArcRange,
+                        Remaining = MaxCastParticles
+                    };
+                    return;
+                }
+
+                _pool.CountDropped(planned);
+                return;
             case SkillFxKind.Bolt:
                 planned = BoltDarts + BoltSparks;
                 EmitBolt(origin, aim, range > 0f ? range : DefaultBoltRange, ref budget);
@@ -343,6 +378,7 @@ public sealed class FxSimulation
         }
 
         StepParticles(dt);
+        AdvanceArcSweeps(dt);
         TopUpDust();
         ScanLights(lights, dt);
     }
@@ -702,7 +738,8 @@ public sealed class FxSimulation
                 depthBias = FlashDepthBias;
                 break;
             case FxParticleKind.Arc:
-                fade = MathF.Min(1f, t / 0.15f) * MathF.Pow(1f - t, 1.5f);
+                // Fully in by the end of the active window, then a linger that fades out.
+                fade = MathF.Min(1f, p.Age / MeleeArcSwing.ActiveSeconds) * MathF.Min(1f, (p.Life - p.Age) / ArcLinger);
                 stretch = FxInstance.GroundAligned;
                 depthBias = DepthBiasHeld;
                 coverage = (1f - _nightFactor) * GroundCoverage;
@@ -827,33 +864,118 @@ public sealed class FxSimulation
         _pool.TryAdd(in spark);
     }
 
-    // Cleave: a flat crescent swept across the ground ahead of the caster, steel sparks thrown into
-    // the forward half-plane, and a few hot embers. The crescent grows from 0.35 to 0.55 of the range
-    // in half-size (about 2.5 m to 3.9 m across for the 3.5 m skill, against a 0.6 m player).
-    private void EmitArc(Vector3 origin, Vector3 aim, bool aimed, float range, ref int budget)
+    // Cleave: nothing at the cast. As the swing turns active (MeleeArcSwing.WindupSeconds after the cast) a
+    // flat crescent is laid on the ground ahead of the caster, sized by FxArcGeometry so its painted outer edge
+    // lands on the skill's range, with a few hot embers at the hand. Over the active window steel sparks are
+    // thrown along that edge, from the caster's left tip to the right tip, matching the sweep of the blade.
+    private void AdvanceArcSweeps(float dt)
     {
-        Vector3 feet = new(origin.X, origin.Y - CasterFeetDrop + GroundQuadLift, origin.Z);
-        if (aimed && budget > 0)
+        for (int i = 0; i < _sweepCount;)
         {
-            budget--;
-            EmitGroundQuad(FxParticleKind.Arc, FxFrame.Arc, feet, MathF.Atan2(aim.Z, aim.X), 0.35f * range, 0.55f * range, ArcLife, ArcTint);
+            ref ArcSweep sweep = ref _sweeps[i];
+            sweep.Elapsed += dt;
+            if (sweep.Elapsed >= MeleeArcSwing.WindupSeconds)
+            {
+                EmitArcSweep(ref sweep);
+            }
+
+            if (sweep.QuadEmitted && sweep.SparksEmitted >= ArcSparks)
+            {
+                _sweeps[i] = _sweeps[--_sweepCount];
+                _sweeps[_sweepCount] = default;
+                continue;
+            }
+
+            i++;
+        }
+    }
+
+    private int SweepRoom(ref ArcSweep sweep)
+    {
+        return Math.Max(Math.Min(sweep.Remaining, _pool.Capacity - _pool.Count - CastPoolReserve), 0);
+    }
+
+    private void EmitArcSweep(ref ArcSweep sweep)
+    {
+        Vector3 origin = sweep.Origin;
+        Vector3 aim = sweep.Aim;
+        if (!sweep.QuadEmitted)
+        {
+            sweep.QuadEmitted = true;
+            int planned = (sweep.Aimed ? 1 : 0) + ArcEmbers;
+            int room = SweepRoom(ref sweep);
+            int granted = room;
+            if (sweep.Aimed && room > 0)
+            {
+                room--;
+                Vector3 feet = new(origin.X, origin.Y - CasterFeetDrop + GroundQuadLift, origin.Z);
+                float half = FxArcGeometry.HalfSizeForRange(sweep.Range);
+                EmitGroundQuad(FxParticleKind.Arc, FxFrame.Arc, feet, MathF.Atan2(aim.Z, aim.X), half, half, ArcLife, ArcTint);
+            }
+
+            Vector3 hand = new Vector3(origin.X, origin.Y + CasterChestLift, origin.Z) + aim * 0.8f;
+            int embers = Math.Min(ArcEmbers, room);
+            room -= embers;
+            for (int i = 0; i < embers; i++)
+            {
+                EmitEmber(hand, 1f, 2.5f, 0.9f);
+            }
+
+            sweep.Remaining -= granted - room;
+            _pool.CountDropped(planned - (granted - room));
         }
 
-        Vector3 hand = new Vector3(origin.X, origin.Y + CasterChestLift, origin.Z) + aim * 0.8f;
+        float progress = Math.Clamp((sweep.Elapsed - MeleeArcSwing.WindupSeconds) / MeleeArcSwing.ActiveSeconds, 0f, 1f);
+        int due = progress >= 1f ? ArcSparks : (int)(progress * ArcSparks);
+        if (due <= sweep.SparksEmitted)
+        {
+            return;
+        }
+
+        int wanted = due - sweep.SparksEmitted;
+        int emit = Math.Min(wanted, SweepRoom(ref sweep));
+        Vector3 right = new(-aim.Z, 0f, aim.X);
         Vector3 steel = ArcTint * CastBrightness;
-        int sparks = Math.Min(ArcSparks, budget);
-        budget -= sparks;
-        for (int i = 0; i < sparks; i++)
+        for (int n = 0; n < emit; n++)
         {
-            EmitSpark(hand, aim, steel, 3f, 7f, 1f, plain: true);
+            EmitSweepSpark(ref sweep, sweep.SparksEmitted + n, aim, right, steel);
         }
 
-        int embers = Math.Min(ArcEmbers, budget);
-        budget -= embers;
-        for (int i = 0; i < embers; i++)
+        sweep.Remaining -= emit;
+        _pool.CountDropped(wanted - emit);
+        sweep.SparksEmitted = due;
+    }
+
+    // One spark on the painted edge at the sweep's angle for `index`: -arc/2 (the caster's left) up to +arc/2
+    // (the right). direction(theta) = cos(theta) * aim + sin(theta) * right.
+    private void EmitSweepSpark(ref ArcSweep sweep, int index, Vector3 aim, Vector3 right, Vector3 steel)
+    {
+        Vector3 origin = sweep.Origin;
+        if (!sweep.Aimed)
         {
-            EmitEmber(hand, 1f, 2.5f, 0.9f);
+            EmitSpark(new Vector3(origin.X, origin.Y + CasterChestLift, origin.Z), Vector3.Zero, steel, 3f, 7f, 1f, plain: true);
+            return;
         }
+
+        Vector3 feet = new(origin.X, origin.Y - CasterFeetDrop + ArcSparkHeight, origin.Z);
+        float theta = MathHelper.DegreesToRadians(FxArcGeometry.PaintedArcDegrees) * ((index + 0.5f) / ArcSparks - 0.5f);
+        Vector3 direction = aim * MathF.Cos(theta) + right * MathF.Sin(theta);
+        float heat = _random.Range(0.75f, 1f);
+        FxParticle spark = new()
+        {
+            Kind = FxParticleKind.Spark,
+            Position = feet + direction * (sweep.Range * ArcSparkRadiusFraction),
+            Velocity = direction * _random.Range(1f, 2.5f) + Vector3.UnitY * _random.Range(0.6f, 1.6f),
+            Life = _random.Range(0.3f, 0.5f),
+            StartHalfSize = SparkStartHalfSize,
+            EndHalfSize = SparkEndHalfSize,
+            Frame = (float)FxFrame.Spark0 + _random.Range(0, 4),
+            Gravity = -7f,
+            Drag = 0.9f,
+            Plain = true,
+            Color = Premultiply(steel.X * heat, steel.Y * heat, steel.Z * heat, 0f)
+        };
+        _pool.TryAdd(in spark);
     }
 
     // Bolt: twelve single-frame darts leave at chest height with a spread of speeds, so they string

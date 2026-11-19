@@ -80,8 +80,10 @@ No new emissive material anywhere outside the atlas.
 ## 3. Scale and legibility
 
 The player is about **28 x 101 px** on screen in the isometric view. Subtlety is the main failure mode - a tasteful
-effect is simply invisible. Size against world metres the player can see: the Cleave arc sweeps near the skill's own
-3.5 m range, the Mend ring is ~0.9 m at the feet with motes rising past head height, the Bolt lance leaves the player
+effect is simply invisible. Size against world metres the player can see: the Cleave crescent's painted outer edge equals
+the skill's own 3.5 m range and is placed by `FxArcGeometry` (`HalfSizeForRange`, `OuterRadiusFraction`, and
+`PaintedArcDegrees`, which must equal every MeleeArc skill's `arcDegrees`), never by a hand-tuned multiple; it is emitted
+when the swing turns active (`MeleeArcSwing.WindupSeconds`) with steel sparks along the edge, left to right. The Mend ring is ~0.9 m at the feet with motes rising past head height, the Bolt lance leaves the player
 entirely. Make hue the third discriminator (cold steel / cold violet / bone-green) so two effects never read alike.
 
 Bold low-frequency shapes also **compress better**, which matters against the PNG cap below. Fbm fleck storms cost

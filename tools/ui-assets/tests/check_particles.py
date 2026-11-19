@@ -136,6 +136,64 @@ def check_frames(sheet: np.ndarray) -> list[str]:
     return errs
 
 
+ARC_OUTER_PX, ARC_SPAN_DEG = 24.0, 120.0  # restated from FxArcGeometry (OuterRadiusFraction = 24 / 32)
+
+
+def arc_measure(c: np.ndarray) -> tuple[float, float, float, float]:
+    """(outer radius px, left tip deg, right tip deg, brightness ratio left/right) of the crescent cell.
+    Angles are + toward the caster's right, which is the top of the image."""
+    a = c[..., 3].astype(float)
+    ys, xs = np.mgrid[0:CELL, 0:CELL]
+    x, y = xs + 0.5 - CELL / 2, ys + 0.5 - CELL / 2
+    r, theta = np.hypot(x, y), np.degrees(np.arctan2(-y, x))
+    # outer radius: along the forward axis, where the alpha falls to half its value just inside the edge
+    ahead = np.abs(theta) < 8
+    radii = np.arange(14.0, 27.0, 0.05)
+    prof = np.array([a[ahead & (np.abs(r - k) < 0.5)].mean() if (ahead & (np.abs(r - k) < 0.5)).any() else 0.0 for k in radii])
+    peak = prof.max()
+    outer = float(radii[np.nonzero(prof >= peak / 2)[0].max()])
+    band = (r > ARC_OUTER_PX - 5) & (r < ARC_OUTER_PX - 0.5) & (a >= 0.15 * a.max())
+    left, right = float(theta[band].min()), float(theta[band].max())
+    lo = (r > ARC_OUTER_PX - 5) & (r < ARC_OUTER_PX - 0.5) & (theta < -ARC_SPAN_DEG / 2 + 12) & (theta > -ARC_SPAN_DEG / 2 + 2)
+    hi = (r > ARC_OUTER_PX - 5) & (r < ARC_OUTER_PX - 0.5) & (theta > ARC_SPAN_DEG / 2 - 12) & (theta < ARC_SPAN_DEG / 2 - 2)
+    ratio = float(a[lo].mean() / max(a[hi].mean(), 1e-6))
+    return outer, left, right, ratio
+
+
+def arc_geometry_errors(c: np.ndarray) -> list[str]:
+    outer, left, right, ratio = arc_measure(c)
+    errs = []
+    if abs(outer - ARC_OUTER_PX) > 1.0:
+        errs.append(f"arc outer radius {outer:.2f} px, want {ARC_OUTER_PX} +-1")
+    if abs(right - ARC_SPAN_DEG / 2) > 6 or abs(left + ARC_SPAN_DEG / 2) > 6:
+        errs.append(f"arc spans {left:.1f}..{right:.1f} deg, want +-{ARC_SPAN_DEG / 2} +-6")
+    if not 0.1 <= ratio <= 0.7:
+        errs.append(f"arc left tip is {ratio:.2f} of the right tip's brightness, want a dim-to-bright ramp (0.1-0.7)")
+    return errs
+
+
+def arc_self_test(sheet: np.ndarray) -> list[str]:
+    """Synthetic negatives: the gate must fail on a shrunk, a narrowed, a mirrored and a flat crescent."""
+    good = cell(sheet, ARC).copy()
+    errs = []
+    if arc_geometry_errors(good):
+        return []  # the real cell is reported by check_frames' caller
+    ys, xs = np.mgrid[0:CELL, 0:CELL]
+    r = np.hypot(xs + 0.5 - CELL / 2, ys + 0.5 - CELL / 2)
+    shrunk = good.copy()
+    shrunk[r > ARC_OUTER_PX - 3] = 0
+    narrow = good.copy()
+    theta = np.degrees(np.arctan2(-(ys + 0.5 - CELL / 2), xs + 0.5 - CELL / 2))
+    narrow[np.abs(theta) > 40] = 0
+    mirrored = good[::-1].copy()
+    flat = good.copy()
+    flat[..., 3] = np.where(good[..., 3] > 0, 200, 0)
+    for name, bad in (("shrunk", shrunk), ("narrowed", narrow), ("mirrored", mirrored), ("flat", flat)):
+        if not arc_geometry_errors(bad):
+            errs.append(f"arc gate self-test: a {name} crescent passed")
+    return errs
+
+
 def generator_errors(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     errs = [f"{path.name}: contains {b}" for b in BANNED if b in text]
@@ -155,6 +213,8 @@ def main() -> int:
         errs.append(f"png is {img.mode} {img.size}")
     else:
         errs += check_frames(np.asarray(img))
+        errs += arc_geometry_errors(cell(np.asarray(img), ARC))
+        errs += arc_self_test(np.asarray(img))
     expect = {"size": [512, 256], "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "yDown": True, "alpha": "premultiplied", "image": "particles.png"}
     errs += [f"json {k}: {doc.get(k)!r}" for k, v in expect.items() if doc.get(k) != v]
     indices = [f["index"] for f in doc.get("frames", [])]

@@ -28,7 +28,7 @@
  "origin": "top-left",
  "scale": 4,
  "size": [
-  2100,
+  2106,
   1672
  ],
  "sprites": {
@@ -44,7 +44,7 @@
    "slice": null,
    "tile": "none",
    "w": 120,
-   "x": 956,
+   "x": 1092,
    "y": 1540
   },
   "item.armor.bone": {
@@ -1270,6 +1270,24 @@
    "w": 128,
    "x": 572,
    "y": 1324
+  },
+  "skill.cleave": {
+   "h": 128,
+   "meta": {
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   "pivot": [
+    24,
+    24
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 956,
+   "y": 1540
   }
  },
  "version": 1,

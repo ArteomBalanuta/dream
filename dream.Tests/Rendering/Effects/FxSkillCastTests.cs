@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Dream.Rendering.Effects;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Runtime;
 using Dream.Tests.Utilities;
 using OpenTK.Mathematics;
@@ -16,11 +17,31 @@ public class FxSkillCastTests
     private static FxFrameInputs Inputs(float dt = 1f / 60f, float night = 0f) =>
         new(dt, Camera, -Vector3.UnitZ, Camera, night, Basis);
 
-    // No Advance, so no dust: the pool holds exactly what the cast spawned.
+    // Steps the simulation in 1/64 s frames (one authoritative tick) until `seconds` have passed.
+    private static void AdvanceTo(FxSimulation simulation, float seconds)
+    {
+        FxFrameInputs step = Inputs(1f / 64f);
+        int steps = (int)MathF.Round(seconds * 64f);
+        for (int i = 0; i < steps; i++)
+        {
+            simulation.Advance(in step, []);
+        }
+    }
+
+    // Just past the active window: a Cleave has emitted everything it is going to.
+    private const float SweepDone = MeleeArcSwing.ActiveEndSeconds + 1f / 64f;
+
+    // A Cleave draws nothing until its swing turns active, so an Arc cast is stepped through the sweep first.
+    // Other kinds are written at once with no ageing (so no dust: the pool holds exactly what the cast spawned).
     private static FxInstance[] Cast(SkillFxKind kind, out int count, Vector3? direction = null, float range = 3.5f, float night = 0f, uint seed = 3u)
     {
         FxSimulation simulation = new(seed);
         simulation.SpawnSkillCast(kind, Origin, direction ?? Vector3.UnitX, range);
+        if (kind == SkillFxKind.Arc)
+        {
+            AdvanceTo(simulation, SweepDone);
+        }
+
         return Written(simulation, out count, night);
     }
 
@@ -53,6 +74,14 @@ public class FxSkillCastTests
     {
         int before = simulation.ActiveParticles;
         simulation.SpawnSkillCast(kind, Origin, Vector3.UnitX, 3.5f);
+        if (kind == SkillFxKind.Arc)
+        {
+            AdvanceTo(simulation, SweepDone);
+            FxInstance[] all = new FxInstance[FxLimits.MaxInstances];
+            int count = simulation.WriteInstances(all);
+            return simulation.ActiveParticles - before - CountFrames(all, count, FxFrame.Dust0, 4);
+        }
+
         return simulation.ActiveParticles - before;
     }
 
@@ -111,6 +140,7 @@ public class FxSkillCastTests
         // Expire nothing, but spawn sparks after the ring so the ring is not slot 0 of a later cast.
         simulation.SpawnSkillCast(SkillFxKind.Bolt, Origin, Vector3.UnitX, 18f);
         simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f);
+        AdvanceTo(simulation, SweepDone);
 
         FxInstance[] instances = Written(simulation, out int count);
 
@@ -133,20 +163,162 @@ public class FxSkillCastTests
     }
 
     [Fact]
-    public void Arc_Quad_Grows_From_035_To_055_Of_The_Range_And_Points_Along_The_Aim()
+    public void An_Arc_Cast_Spawns_Nothing_Before_The_Swing_Turns_Active()
     {
         FxSimulation simulation = new(2u);
-        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, new Vector3(0f, 0f, -1f), 3.5f);
-        FxInstance[] start = Written(simulation, out _);
-        Assert.Equal(0.35f * 3.5f, start[0].HalfSize, 3);
-        Assert.Equal(MathF.Atan2(-1f, 0f), start[0].Rotation, 4);
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f);
+        Assert.Equal(0, simulation.ActiveParticles);
 
-        FxFrameInputs half = Inputs(0.1f);
-        simulation.Advance(in half, []);
-        FxInstance[] later = Written(simulation, out _);
-        Assert.InRange(later[0].HalfSize, 1.49f, 1.52f);
-        // Feet, not the capsule centre.
-        Assert.True(later[0].Position.Y < Origin.Y - 0.5f);
+        // Up to the last frame before WindupSeconds: still nothing (dust aside).
+        AdvanceTo(simulation, MeleeArcSwing.WindupSeconds - 1.5f / 64f);
+        FxInstance[] before = new FxInstance[FxLimits.MaxInstances];
+        int count = simulation.WriteInstances(before);
+        Assert.True(count - CountFrames(before, count, FxFrame.Dust0, 4) == 0, "nothing but dust before the swing turns active");
+
+        AdvanceTo(simulation, 2f / 64f);
+        FxInstance[] after = new FxInstance[FxLimits.MaxInstances];
+        count = simulation.WriteInstances(after);
+        Assert.Equal(1, CountFrames(after, count, FxFrame.Arc));
+    }
+
+    [Fact]
+    public void The_Arc_Quad_Is_Sized_So_Its_Painted_Edge_Lands_On_The_Range_And_Points_Along_The_Aim()
+    {
+        foreach (float range in new[] { 2f, 3.5f, 5f })
+        {
+            FxSimulation simulation = new(2u);
+            simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, new Vector3(0f, 0f, -1f), range);
+            AdvanceTo(simulation, MeleeArcSwing.WindupSeconds + 2f / 64f);
+            FxInstance[] instances = Written(simulation, out int count);
+
+            int quads = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (instances[i].Frame != (float)FxFrame.Arc)
+                {
+                    continue;
+                }
+
+                quads++;
+                Assert.Equal(FxArcGeometry.HalfSizeForRange(range), instances[i].HalfSize, 3);
+                Assert.Equal(range, instances[i].HalfSize * FxArcGeometry.OuterRadiusFraction, 3);
+                Assert.Equal(MathF.Atan2(-1f, 0f), instances[i].Rotation, 4);
+                Assert.Equal(FxInstance.GroundAligned, instances[i].Stretch);
+                // Feet, not the capsule centre.
+                Assert.True(instances[i].Position.Y < Origin.Y - 0.5f);
+            }
+
+            Assert.Equal(1, quads);
+
+            // The size is constant for the whole life, and fully visible by the end of the active window.
+            AdvanceTo(simulation, MeleeArcSwing.ActiveEndSeconds - MeleeArcSwing.WindupSeconds - 2f / 64f);
+            FxInstance[] later = Written(simulation, out count);
+            int quad = Array.FindIndex(later, 0, count, x => x.Frame == (float)FxFrame.Arc);
+            Assert.True(quad >= 0);
+            Assert.Equal(FxArcGeometry.HalfSizeForRange(range), later[quad].HalfSize, 3);
+        }
+    }
+
+    [Fact]
+    public void The_Arc_Quad_Is_Fully_Opaque_By_The_End_Of_The_Active_Window_And_Then_Fades()
+    {
+        FxSimulation simulation = new(2u);
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f);
+        AdvanceTo(simulation, MeleeArcSwing.ActiveEndSeconds);
+        FxFrameInputs hold = Inputs(0f, 0f);
+        simulation.Advance(in hold, []);
+        uint atEnd = ArcAlpha(simulation);
+        AdvanceTo(simulation, 0.2f);
+        uint later = ArcAlpha(simulation);
+
+        // Day coverage is 0.7 of 255 when the crescent is fully in.
+        Assert.InRange(atEnd, 170u, 180u);
+        Assert.True(later < atEnd);
+    }
+
+    private static uint ArcAlpha(FxSimulation simulation)
+    {
+        FxInstance[] all = new FxInstance[FxLimits.MaxInstances];
+        int count = simulation.WriteInstances(all);
+        int quad = Array.FindIndex(all, 0, count, x => x.Frame == (float)FxFrame.Arc);
+        return quad < 0 ? 0u : all[quad].Color >> 24;
+    }
+
+    [Fact]
+    public void Sweep_Sparks_Ride_The_Edge_And_Move_From_The_Casters_Left_To_Right()
+    {
+        FxSimulation simulation = new(5u);
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f);
+        // The caster's right when facing +X is +Z (right = (-aim.Z, 0, aim.X)).
+        AdvanceTo(simulation, MeleeArcSwing.WindupSeconds - 1f / 64f);
+        Assert.Empty(SparkLaterals(simulation));
+
+        AdvanceTo(simulation, MeleeArcSwing.ActiveSeconds + 1f / 64f);
+        float[] lateral = SparkLaterals(simulation);
+
+        Assert.Equal(14, lateral.Length);
+        Assert.True(lateral[0] < -1.5f, $"first spark at {lateral[0]}");
+        Assert.True(lateral[^1] > 1.5f, $"last spark at {lateral[^1]}");
+        float firstHalf = lateral.Take(7).Average();
+        float secondHalf = lateral.Skip(7).Average();
+        Assert.True(firstHalf < -0.5f && secondHalf > 0.5f);
+        for (int i = 1; i < lateral.Length; i++)
+        {
+            Assert.True(lateral[i] > lateral[i - 1] - 0.45f, $"spark {i} went back toward the left");
+        }
+    }
+
+    [Fact]
+    public void Sweep_Sparks_Sit_Near_Nine_Tenths_Of_The_Range()
+    {
+        FxSimulation simulation = new(5u);
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f);
+        AdvanceTo(simulation, MeleeArcSwing.WindupSeconds + 1f / 64f);
+        FxInstance[] all = new FxInstance[FxLimits.MaxInstances];
+        int count = simulation.WriteInstances(all);
+        int found = 0;
+        for (int i = 0; i < count; i++)
+        {
+            if (all[i].Frame >= (float)FxFrame.Spark0 && all[i].Frame < (float)FxFrame.Spark0 + 4)
+            {
+                float reach = MathF.Sqrt(MathF.Pow(all[i].Position.X - Origin.X, 2f) + MathF.Pow(all[i].Position.Z - Origin.Z, 2f));
+                Assert.InRange(reach, 0.9f * 3.5f - 0.3f, 0.9f * 3.5f + 0.5f);
+                found++;
+            }
+        }
+
+        Assert.True(found >= 1);
+    }
+
+    // Lateral offsets (along the caster's right, +Z when facing +X) of every spark, in pool (emission) order.
+    private static float[] SparkLaterals(FxSimulation simulation)
+    {
+        FxInstance[] all = new FxInstance[FxLimits.MaxInstances];
+        int count = simulation.WriteInstances(all);
+        List<float> lateral = [];
+        for (int i = 0; i < count; i++)
+        {
+            if (all[i].Frame >= (float)FxFrame.Spark0 && all[i].Frame < (float)FxFrame.Spark0 + 4)
+            {
+                lateral.Add(all[i].Position.Z - Origin.Z);
+            }
+        }
+
+        return lateral.ToArray();
+    }
+
+    [Fact]
+    public void A_Full_Sweep_Array_Drops_The_Cast_And_Counts_It()
+    {
+        FxSimulation simulation = new(5u);
+        for (int i = 0; i < FxSimulation.MaxPendingArcSweeps; i++)
+        {
+            simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f);
+        }
+
+        Assert.Equal(0L, simulation.DroppedSpawns);
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f);
+        Assert.Equal(19L, simulation.DroppedSpawns);
     }
 
     [Fact]
@@ -234,18 +406,26 @@ public class FxSkillCastTests
     public void A_Cast_Leaves_The_Reserve_Free_And_Counts_What_It_Declined()
     {
         FxSimulation simulation = new(6u);
-        // Fill until only 3 to 10 slots are open to a cast (hits add 8 sparks each).
-        while (FxLimits.ParticleCapacity - FxSimulation.CastPoolReserve - simulation.ActiveParticles > 10)
+        // The ambient dust tops itself up as time passes, so let it settle: the room below is what is left for the cast.
+        FxFrameInputs settle = Inputs(0f);
+        for (int i = 0; i < 12; i++)
         {
-            simulation.SpawnHit(Origin, Dream.Simulation.Combat.FloatingCombatTextKind.Regular);
+            simulation.Advance(in settle, []);
+        }
+
+        // Fill with Mend casts (their ring and motes outlive the sweep, 15 each) until 1 to 15 slots are open.
+        while (FxLimits.ParticleCapacity - FxSimulation.CastPoolReserve - simulation.ActiveParticles > 15)
+        {
+            simulation.SpawnSkillCast(SkillFxKind.Mend, Origin, Vector3.Zero, 0f);
         }
 
         int room = FxLimits.ParticleCapacity - FxSimulation.CastPoolReserve - simulation.ActiveParticles;
-        Assert.InRange(room, 1, 10);
+        Assert.InRange(room, 1, 15);
         long droppedBefore = simulation.DroppedSpawns;
         int before = simulation.ActiveParticles;
 
         simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f);
+        AdvanceTo(simulation, SweepDone);
 
         int added = simulation.ActiveParticles - before;
         Assert.Equal(room, added);
@@ -285,8 +465,11 @@ public class FxSkillCastTests
             a.SpawnSkillCast(kind, Origin, Vector3.UnitZ, 3.5f);
             b.SpawnSkillCast(kind, Origin, Vector3.UnitZ, 3.5f);
             FxFrameInputs step = Inputs(0.05f);
-            a.Advance(in step, []);
-            b.Advance(in step, []);
+            for (int i = 0; i < 12; i++)
+            {
+                a.Advance(in step, []);
+                b.Advance(in step, []);
+            }
 
             FxInstance[] ia = new FxInstance[FxLimits.MaxInstances];
             FxInstance[] ib = new FxInstance[FxLimits.MaxInstances];
@@ -310,7 +493,7 @@ public class FxSkillCastTests
             simulation.SpawnSkillCast(kind, Origin, Vector3.UnitX, 3.5f);
             FxFrameInputs step = Inputs(0.02f, night);
             FxInstance[] instances = new FxInstance[FxLimits.MaxInstances];
-            for (int frame = 0; frame < 20; frame++)
+            for (int frame = 0; frame < 40; frame++)
             {
                 simulation.Advance(in step, []);
                 int count = simulation.WriteInstances(instances);

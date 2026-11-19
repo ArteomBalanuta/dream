@@ -1625,6 +1625,27 @@ def icon_potion_mana(s):
     potion_flask(s, "#081640", "#224A94", "#B8CCE8")
 
 
+def icon_skill_cleave(s):
+    """The Cleave skill: a dark steel blade caught mid-sweep, a pale crescent of light trailing behind it from the
+    lower left to the upper right. It sits on the quickbar tile next to the potions, so the blade is large and
+    the trail is the single bright shape."""
+    s.place(0, 1.0)
+    trail = dict(c="#C8D2E0", metal=0.0, gloss=30, spec=0.0, mott=0.1, tint=0.0, emis=0.7)
+    outer = cr([(1.0, 14.4), (5.0, 19.6), (13.0, 19.4), (18.6, 12.6), (19.6, 5.4)], 6)
+    inner = cr([(18.0, 7.0), (15.0, 13.8), (10.0, 16.6), (5.0, 16.2), (1.0, 14.4)], 6)
+    ramp = lambda x, y: np.clip((x - y + 11.0) / 23.0, 0.0, 1.0)  # noqa: E731  0 at the lower-left tip, 1 at the upper-right
+    s.poly(outer + inner, trail, prof="flat", cast=0.0, alpha=lambda x, y: 0.10 + 0.85 * ramp(x, y) ** 1.4)
+    # the blade, turned to point up and to the right
+    s.place(48, 1.0)
+    cx, top, blade_len, half_w = s.fw / 2, -3.5, 17.0, 1.9
+    blade(s, cx, [(top, 0.2), (top + half_w * 1.6 + 2.0, half_w), (top + blade_len, half_w)], M(ASH_STEEL, c="#8C939E"), slope=0.5)
+    s.groove([(cx, top + 5.0), (cx, top + blade_len - 1.5)], w=0.8, depth=0.8, dark=0.62)
+    guard_y = top + blade_len
+    s.poly([(cx - 4.2, guard_y), (cx + 4.2, guard_y), (cx + 3.4, guard_y + 2.0), (cx - 3.4, guard_y + 2.0)], BLACK_IRON, bevel=1.0, thick=(0.4, 0.6))
+    haft(s, (cx, guard_y + 1.8), (cx, guard_y + 5.2), 2.4, DARK_LEATHER, wraps=(0.0, 1.0, 3), wrap_mat=GREY_LEATHER)
+    s.ellipse(cx, guard_y + 6.2, 1.6, 1.6, BLACK_IRON, bevel=1.7)
+
+
 # registry -----------------------------------------------------------------------------
 
 
@@ -1653,6 +1674,7 @@ ICONS: dict = {
     "item.tool.torch": (1, 2, icon_torch),
     "item.potion.health": (1, 1, icon_potion_health),
     "item.potion.mana": (1, 1, icon_potion_mana),
+    "skill.cleave": (1, 1, icon_skill_cleave),
     "item.gear.leather-cap": (2, 2, icon_leather_cap),
     "item.gear.leather-vest": (2, 2, icon_leather_vest),
     "item.armor.bone": (2, 2, icon_armor_bone),

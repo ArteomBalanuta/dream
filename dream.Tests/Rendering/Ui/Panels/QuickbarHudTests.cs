@@ -321,8 +321,8 @@ public sealed class QuickbarHudTests
         // Two health potions, one mana potion.
         Assert.Contains(c.Texts, t => t.Text == "2");
         Assert.Contains(c.Texts, t => t.Text == "1");
-        // No art for the skills yet: two letters stand in.
-        Assert.Contains(c.Texts, t => t.Text == "Cl");
+        // Cleave has its own sprite (QuickbarCleaveIconTests); Bolt and Mend have no art yet, so two letters stand in.
+        Assert.DoesNotContain(c.Texts, t => t.Text == "Cl");
         Assert.Contains(c.Texts, t => t.Text == "Bo");
         Assert.Contains(c.Texts, t => t.Text == "Me");
     }

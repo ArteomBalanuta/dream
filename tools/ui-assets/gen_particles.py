@@ -220,18 +220,36 @@ def box_fade(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return smoothstep(25.0, 22.0, np.abs(x)) * smoothstep(25.0, 22.0, np.abs(y))
 
 
+# The Cleave crescent's geometry. dream/Rendering/Effects/FxArcGeometry.cs restates these two numbers
+# (PaintedArcDegrees, OuterRadiusFraction = ARC_OUTER_PX / 32) and FxArcGeometryTests measures this cell
+# against them. The cell is 64 px with 28 px drawn and the outer 3 px dark, so the edge cannot sit past ~24.
+ARC_OUTER_PX = 24.0
+ARC_SPAN_DEG = 120.0
+ARC_LEFT_BRIGHTNESS = 0.40  # dim at the caster's left tip, ramping to 1.0 at the right tip
+
+
 def arc_frame() -> np.ndarray:
-    """A swept crescent drawn flat, leading edge at +X: bright and sharp in front, fading inward, tapering
-    to nothing at both tips. Coverage alpha, like the flame: additive at night, occluding by day."""
+    """The Cleave crescent drawn flat, centred on the cell: outer edge at ARC_OUTER_PX, spanning
+    +-ARC_SPAN_DEG/2 about +X (the caster's forward), soft falloff inward, tapering toward the tips.
+    The local +Y axis of the quad is the top of the image and is the caster's right, so the right tip is
+    at image y < 0. Brightness ramps from dim at the left tip to bright at the right tip, so the sweep
+    reads left to right. Coverage alpha, like the flame: additive at night, occluding by day."""
     x, y = grid()
-    outer = 24.0 - np.hypot(x + 6.0, y)  # > 0 inside the outer disc
-    inner = np.hypot(x + 14.0, y) - 21.5  # > 0 outside the inner disc
-    wob = 1.0
-    body = smoothstep(0.0, 1.6, outer) * smoothstep(0.0, 6.0, inner * wob)
-    streak = 0.9 + 0.1 * np.cos(np.arctan2(y, x + 14.0) * 5.0)
-    e = np.clip(body * streak, 0.0, 1.0) * box_fade(x, y)
+    r = np.hypot(x, y)
+    theta = np.degrees(np.arctan2(-y, x))  # + toward the caster's right (image top)
+    half = ARC_SPAN_DEG / 2.0
+    u = np.clip(np.abs(theta) / half, 0.0, 1.0)
+    width = 3.5 + 9.5 * np.cos(u * np.pi / 2.0)  # px of body behind the edge: thick amidships, thin at tips
+    edge = smoothstep(ARC_OUTER_PX + 0.9, ARC_OUTER_PX - 0.9, r)
+    t = np.clip((r - (ARC_OUTER_PX - width)) / width, 0.0, 1.0)
+    body = t * t * (3.0 - 2.0 * t)
+    cut = smoothstep(half + 1.2, half - 1.2, np.abs(theta))
+    ramp = ARC_LEFT_BRIGHTNESS + (1.0 - ARC_LEFT_BRIGHTNESS) * np.clip((theta + half) / ARC_SPAN_DEG, 0.0, 1.0)
+    streak = 0.93 + 0.07 * np.cos(r * 0.9)
+    e = np.clip(edge * body * cut * streak, 0.0, 1.0)
+    e = e * ramp
     e = e / max(float(e.max()), 1e-6)
-    steel = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    steel = np.array([0.93, 0.97, 1.0], dtype=np.float32)
     return np.dstack((e[..., None] * steel * 0.8, 0.8 * e))
 
 
