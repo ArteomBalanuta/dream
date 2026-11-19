@@ -44,9 +44,6 @@ public sealed class FxSimulation
     public const float DepthBiasLamp = 0.9f;
     // Enough that the carrier's body does not cut the glow with a hard edge.
     public const float DepthBiasHeld = 0.4f;
-    // Held fire burns at shoulder height: the light itself sits HeldLightAnchor.BodyUp above the
-    // feet (and does not move), the halo, flame and embers sit this far below it.
-    public const float HeldFxDrop = 1f;
     // Hit and death effects start this far below the anchor (the text anchor floats above the target).
     public const float AnchorDrop = 0.2f;
     public const float DustLightGain = 0.9f;
@@ -583,7 +580,7 @@ public sealed class FxSimulation
             bool lamp = lightClass == FxLightClass.Lamp;
             bool torch = lightClass == FxLightClass.Torch;
             bool firstPerson = !lamp && (light.Position - _cameraPosition).LengthSquared < minCameraSquared;
-            Vector3 fxPosition = lamp || firstPerson ? light.Position : light.Position - Vector3.UnitY * HeldFxDrop;
+            Vector3 fxPosition = light.Position;
             bool emberTorch = torch && emberTorches < MaxEmberTorches;
             if (emberTorch)
             {
