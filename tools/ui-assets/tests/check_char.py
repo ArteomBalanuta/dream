@@ -277,7 +277,18 @@ def envelope_rows(asset: dict) -> list:
     return rows
 
 
-_BOX = re.compile(r"Box\(\s*((?:[-\d.]+f,\s*){5}[-\d.]+f),\s*(?:ArmourMaterial\.)?(\w+)((?:,\s*(?:pitch|roll):\s*[-\d.]+f)*)\)")
+# The named arguments a part may carry, in any order: the three rotations and the sculpted shape.
+# SHAPES ARE APPROXIMATED BY THEIR BOUNDING BOX here, which is what these gates need. Every
+# EquipmentShape is inscribed in the unit cube the part's Centre/Size describe (the contract at the
+# top of EquipmentShape.cs), so rasterising the box draws the largest, flattest, most light-facing
+# surface the real mesh could ever present. For a clipping gate that errs in the safe direction (a
+# sculpt can only take LESS light than its box), and for the spread and envelope gates the box is
+# precisely the silhouette bound the worn-model contract is written in. Modelling the real meshes
+# here would mean re-implementing EquipmentShapeLibrary in Python, which would make the gate agree
+# with itself rather than with the engine.
+_KW = r"(?:,\s*(?:pitch|roll|yaw):\s*[-\d.]+f|,\s*shape:\s*(?:EquipmentShape\.)?\w+)*"
+_KW_VALUE = re.compile(r"(pitch|roll|yaw):\s*([-\d.]+)f")
+_BOX = re.compile(r"Box\(\s*((?:[-\d.]+f,\s*){5}[-\d.]+f),\s*(?:ArmourMaterial\.)?(\w+)(" + _KW + r")\)")
 # ArmourMeshCatalog.BaseColor, linear, as the engine draws it. Parsed from the same .cs the boxes come from
 # (a hand-copied table had no gate tying it to the catalog and no entry for the glowing materials).
 _BASE_COLOUR = re.compile(r"ArmourMaterial\.(\w+)\s*=>\s*new Vector4\(\s*([-\d.]+)f,\s*([-\d.]+)f,\s*([-\d.]+)f,\s*[-\d.]+f\)")
@@ -298,6 +309,19 @@ def worn_palette() -> tuple:
     return colours, glow
 
 
+def _part_rotation(pitch: float, roll: float, yaw: float) -> np.ndarray:
+    """ArmourPart/WeaponPart.ToMatrix's rotation in column-vector form: scale, then X (pitch), then
+    Z (roll), then Y (yaw). The row-vector `m *= Rx; m *= Rz; m *= Ry` applies X first and Y last, so
+    the column product is Ry @ Rz @ Rx."""
+    cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
+    cr, sr = math.cos(math.radians(roll)), math.sin(math.radians(roll))
+    cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+    rx = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
+    rz = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]])
+    ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    return ry @ rz @ rx
+
+
 _FACES = (((1, 0, 0), ((1, -1, -1), (1, 1, -1), (1, 1, 1), (1, -1, 1))),
           ((-1, 0, 0), ((-1, -1, 1), (-1, 1, 1), (-1, 1, -1), (-1, -1, -1))),
           ((0, 1, 0), ((-1, 1, -1), (-1, 1, 1), (1, 1, 1), (1, 1, -1))),
@@ -307,7 +331,9 @@ _FACES = (((1, 0, 0), ((1, -1, -1), (1, 1, -1), (1, 1, 1), (1, -1, 1))),
 
 
 def catalog_boxes(visual_id: str) -> tuple:
-    """(mount, [(centre, size, material, pitch, roll)]) for one model, parsed from ArmourMeshCatalog.cs."""
+    """(mount, [(centre, size, material, pitch, roll, yaw)]) for one model, parsed from ArmourMeshCatalog.cs.
+
+    A part is rasterised as its BOUNDING BOX whatever its shape; see the note at _BOX."""
     src = CATALOG.read_text(encoding="utf-8")
     m = re.search(r'Add\("%s",\s*ArmourMount\.(\w+),(.*?)\);' % re.escape(visual_id), src, re.S)
     if not m:
@@ -315,15 +341,15 @@ def catalog_boxes(visual_id: str) -> tuple:
     out = []
     for bm in _BOX.finditer(m.group(2)):
         n = [float(x.strip().rstrip("f")) for x in bm.group(1).split(",")]
-        kw = {k: float(v.rstrip("f")) for k, v in re.findall(r"(pitch|roll):\s*([-\d.]+f)", bm.group(3))}
-        out.append((tuple(n[:3]), tuple(n[3:]), bm.group(2), kw.get("pitch", 0.0), kw.get("roll", 0.0)))
+        kw = {k: float(v) for k, v in _KW_VALUE.findall(bm.group(3))}
+        out.append((tuple(n[:3]), tuple(n[3:]), bm.group(2), kw.get("pitch", 0.0), kw.get("roll", 0.0), kw.get("yaw", 0.0)))
     return m.group(1), out
 
 
 def worn_surfaces(asset: dict, ids, labels: list | None = None, lit_glow: bool = False) -> list:
     """The worn models as enginelook Surfaces, standing on the bind-pose figure at the same normalisation the
     engine applies (the figure's own authored height, 1.2 world units). Flat-shaded boxes in the catalog's
-    own palette, turned about X (pitch) then Z (roll), exactly as ArmourPart.ToMatrix does.
+    own palette, turned about X (pitch), then Z (roll), then Y (yaw), exactly as ArmourPart.ToMatrix does.
 
     `labels`, if given, receives one "<id>:<material>" per surface. `lit_glow` draws the glowing materials by
     their lit albedo alone (their emissive is added after the gain and is not what clips); the worn-set spread
@@ -344,10 +370,8 @@ def worn_surfaces(asset: dict, ids, labels: list | None = None, lit_glow: bool =
             fail(f"{vid}: mount {mount} is not drawn by the worn-set gate (only Head, Torso and Back are)")
             return []
         W = world[names.index("head" if mount == "Head" else "torso")]
-        for centre, size, mat, pitch, roll in boxes:
-            cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
-            cr, sr = math.cos(math.radians(roll)), math.sin(math.radians(roll))
-            R = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]]) @ np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
+        for centre, size, mat, pitch, roll, yaw in boxes:
+            R = _part_rotation(pitch, roll, yaw)
             pos, nrm, tri = [], [], []
             for normal, corners in _FACES:
                 base = len(pos)
@@ -375,7 +399,7 @@ def worn_surfaces(asset: dict, ids, labels: list | None = None, lit_glow: bool =
 # (Rx(90) then the fist offset) on the arm node, and a Shield model at ShieldScale on the off-hand arm.
 HELD_HAND_SCALE, HELD_SHIELD_SCALE = 1.7, 1.5
 HELD_FIST_X, HELD_FIST_Y, HELD_SHIELD_X, HELD_SHIELD_Y = 0.2, -0.9, 0.31, -0.55
-_HELD_BOX = re.compile(r"Box\(\s*((?:[-\d.]+f,\s*){5}[-\d.]+f),\s*WeaponMaterial\.(\w+)((?:,\s*(?:pitch|roll):\s*[-\d.]+f)*)\)")
+_HELD_BOX = re.compile(r"Box\(\s*((?:[-\d.]+f,\s*){5}[-\d.]+f),\s*WeaponMaterial\.(\w+)(" + _KW + r")\)")
 _HELD_COLOUR = re.compile(r"WeaponMaterial\.(\w+)\s*=>\s*new Vector4\(\s*([-\d.]+)f,\s*([-\d.]+)f,\s*([-\d.]+)f,\s*[-\d.]+f\)")
 _HELD_EMISSIVE = re.compile(r"WeaponMaterial\.(\w+)\s*=>\s*new Vector3\(")
 
@@ -392,7 +416,9 @@ def held_ids() -> list:
 
 
 def held_boxes(visual_id: str) -> tuple:
-    """(grip, [(centre, size, material, pitch, roll)]) for one held model, parsed from WeaponMeshCatalog.cs."""
+    """(grip, [(centre, size, material, pitch, roll, yaw)]) for one held model, parsed from WeaponMeshCatalog.cs.
+
+    A part is rasterised as its BOUNDING BOX whatever its shape; see the note at _BOX."""
     src = HELD_CATALOG.read_text(encoding="utf-8")
     m = re.search(r'(Hand|Shield)\("%s",(.*?)\);' % re.escape(visual_id), src, re.S)
     if not m:
@@ -400,8 +426,8 @@ def held_boxes(visual_id: str) -> tuple:
     out = []
     for bm in _HELD_BOX.finditer(m.group(2)):
         n = [float(x.strip().rstrip("f")) for x in bm.group(1).split(",")]
-        kw = {k: float(v.rstrip("f")) for k, v in re.findall(r"(pitch|roll):\s*([-\d.]+f)", bm.group(3))}
-        out.append((tuple(n[:3]), tuple(n[3:]), bm.group(2), kw.get("pitch", 0.0), kw.get("roll", 0.0)))
+        kw = {k: float(v) for k, v in _KW_VALUE.findall(bm.group(3))}
+        out.append((tuple(n[:3]), tuple(n[3:]), bm.group(2), kw.get("pitch", 0.0), kw.get("roll", 0.0), kw.get("yaw", 0.0)))
     return m.group(1), out
 
 
@@ -427,13 +453,11 @@ def held_surfaces(asset: dict, vid: str, labels: list | None = None) -> list:
         Rg = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float64)
         tg = np.array([side * HELD_FIST_X, HELD_FIST_Y, 0.0])
     surfaces = []
-    for centre, size, mat, pitch, roll in boxes:
+    for centre, size, mat, pitch, roll, yaw in boxes:
         if mat not in colours:
             fail(f"{vid}: material {mat} is unknown to WeaponMeshCatalog.BaseColor")
             return []
-        cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
-        cr, sr = math.cos(math.radians(roll)), math.sin(math.radians(roll))
-        R = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]]) @ np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
+        R = _part_rotation(pitch, roll, yaw)
         pos, nrm, tri = [], [], []
         for normal, corners in _FACES:
             base = len(pos)

@@ -320,15 +320,65 @@ public class ArmourMeshCatalogTests
 
     [Theory]
     [MemberData(nameof(EveryId))]
-    public void EveryExpectedId_IsKnown_AndHasThreeToEightParts(string id)
+    // The budget rose from 8 to 10 when the pieces were re-sculpted: form first (the shell, the skirt,
+    // the cuff), then the secondary detail that reads at 28x101 px (a rim, a barb, a buckle, a ring row).
+    // Fine texture is the shader's job, not a part's, so the ceiling stays low.
+    public void EveryExpectedId_IsKnown_AndHasThreeToTenParts(string id)
     {
         Assert.True(ArmourMeshCatalog.IsKnown(id));
         Assert.Contains(id, ArmourMeshCatalog.KnownVisualIds);
         ArmourModel model = Model(id);
 
         Assert.Equal(id, model.VisualId);
-        Assert.InRange(model.Parts.Count, 3, 8);
+        Assert.InRange(model.Parts.Count, 3, 10);
         Assert.All(model.Parts, p => Assert.True(p.Size.X > 0f && p.Size.Y > 0f && p.Size.Z > 0f));
+    }
+
+    [Theory]
+    [MemberData(nameof(EveryId))]
+    public void EveryPart_HasAFiniteSize_ADeclaredMaterial_AndADeclaredShape(string id)
+    {
+        foreach (ArmourPart part in Model(id).Parts)
+        {
+            Assert.True(float.IsFinite(part.Size.X) && float.IsFinite(part.Size.Y) && float.IsFinite(part.Size.Z), $"{id} {part.Center} has a non-finite size");
+            Assert.True(part.Size.X > 0f && part.Size.Y > 0f && part.Size.Z > 0f, $"{id} {part.Center} has a non-positive size");
+            Assert.True(float.IsFinite(part.Center.X) && float.IsFinite(part.Center.Y) && float.IsFinite(part.Center.Z));
+            Assert.True(float.IsFinite(part.PitchDegrees) && float.IsFinite(part.RollDegrees) && float.IsFinite(part.YawDegrees));
+            Assert.Contains(part.Material, Enum.GetValues<ArmourMaterial>());
+            Assert.Contains(part.Shape, Enum.GetValues<EquipmentShape>());
+        }
+    }
+
+    // The sculpt gate. Before the re-authoring every part of every piece was one axis-aligned cube, which
+    // is what made the armour read as Minecraft blocks; this is what stops it silently going back. Both
+    // halves matter: a ceiling on plain boxes, and a named shape each family must actually use, so the
+    // boxes cannot be traded for a single shape used everywhere.
+    [Fact]
+    public void NoWornPartIsAPlainBox_AndEachFamilyUsesItsOwnShape()
+    {
+        ArmourPart[] every = [.. All.SelectMany(id => Model(id).Parts)];
+        Assert.Empty(every.Where(p => p.Shape == EquipmentShape.Box));
+
+        (string What, EquipmentShape Shape)[] families =
+        [
+            ("a helm skull or a knee cop is a Dome", EquipmentShape.Dome),
+            ("a cuirass, pauldron, greave or bracer is a Plate", EquipmentShape.Plate),
+            ("a cloak, tabard or aventail is a Panel", EquipmentShape.Panel),
+            ("a collar, mail row or cuff rim is a Ring", EquipmentShape.Ring),
+            ("a stud or barb is a Spike", EquipmentShape.Spike),
+            ("a nasal bar or a sabaton toe is a Taper", EquipmentShape.Taper),
+            ("a lame, belt or buckle is a BevelBox", EquipmentShape.BevelBox),
+            ("an arcane stone is a Gem", EquipmentShape.Gem),
+            ("a wing spar is a Shaft", EquipmentShape.Shaft)
+        ];
+        foreach ((string what, EquipmentShape shape) in families)
+        {
+            Assert.True(every.Any(p => p.Shape == shape), what);
+        }
+
+        // A Plate opens toward its own -Z, so a piece worn on the side of a limb has to be yawed to put
+        // the opening against the body. At least one piece does, or no plate is wrapping anything.
+        Assert.Contains(every, p => p.Shape == EquipmentShape.Plate && p.YawDegrees != 0f);
     }
 
     [Fact]
@@ -345,7 +395,7 @@ public class ArmourMeshCatalogTests
         HashSet<string> shapes = [];
         foreach (string id in All)
         {
-            string shape = string.Join(";", Model(id).Parts.Select(p => $"{p.Center}{p.Size}{p.Material}{p.PitchDegrees}{p.RollDegrees}"));
+            string shape = string.Join(";", Model(id).Parts.Select(p => $"{p.Center}{p.Size}{p.Material}{p.PitchDegrees}{p.RollDegrees}{p.YawDegrees}{p.Shape}"));
             Assert.True(shapes.Add(shape), $"{id} has the same mesh as another piece");
         }
     }
@@ -490,6 +540,27 @@ public class ArmourMeshCatalogTests
         }
 
         return null;
+    }
+
+    // The numbers the catalog's own section comments state, asserted straight off the parts rather than
+    // through the FitWindow table: "nothing wider than 0.18" on the head, "nothing past 0.416" on the
+    // torso, and the depth bounds that stop a plank being turned 90 degrees to dodge the width rule.
+    [Theory]
+    [InlineData(ArmourMount.Head, 0.18f, 0.195f)]
+    [InlineData(ArmourMount.Torso, 0.416f, 0.24f)]
+    [InlineData(ArmourMount.Arms, 0.207f, float.MaxValue)]
+    [InlineData(ArmourMount.Legs, 0.187f, float.MaxValue)]
+    [InlineData(ArmourMount.Feet, 0.198f, float.MaxValue)]
+    public void EveryPieceOfAMount_StandsWithinTheSectionCommentsCeiling(ArmourMount mount, float maxHalfWidth, float maxHalfDepth)
+    {
+        string[] ids = [.. All.Where(id => Model(id).Mount == mount)];
+        Assert.NotEmpty(ids);
+        foreach (string id in ids)
+        {
+            (Vector3 min, Vector3 max) = Union(Model(id));
+            Assert.True(MathF.Max(max.X, -min.X) <= maxHalfWidth + Eps, $"{id} half-width {MathF.Max(max.X, -min.X)} over {maxHalfWidth}");
+            Assert.True(MathF.Max(max.Z, -min.Z) <= maxHalfDepth + Eps, $"{id} half-depth {MathF.Max(max.Z, -min.Z)} over {maxHalfDepth}");
+        }
     }
 
     [Fact]
@@ -725,6 +796,29 @@ public class ArmourMeshCatalogTests
         Assert.Equal(-1f, corner.X, 3);
         Assert.Equal(3f, corner.Y, 3);
         Assert.Equal(6f, corner.Z, 3);
+    }
+
+    [Fact]
+    public void PartMatrix_TurnsAboutYawLast_AndYawLeavesTheHeightAlone()
+    {
+        // (0.5, 0.5, 0.5) scaled to (1, 2, 3), yawed 90 degrees about Y to (3, 2, -1), moved by (1, 2, 3).
+        ArmourPart yawed = new(new Vector3(1f, 2f, 3f), new Vector3(2f, 4f, 6f), ArmourMaterial.Steel, YawDegrees: 90f);
+        Vector3 corner = Vector4.TransformRow(new Vector4(0.5f, 0.5f, 0.5f, 1f), yawed.ToMatrix()).Xyz;
+        Assert.Equal(4f, corner.X, 3);
+        Assert.Equal(4f, corner.Y, 3);
+        Assert.Equal(2f, corner.Z, 3);
+
+        // Yaw is about Y, so it can never change a part's height: the sculpt is free to use it without
+        // moving any piece inside its mount's y limit.
+        foreach (string id in All)
+        {
+            foreach (ArmourPart part in Model(id).Parts.Where(p => p.YawDegrees != 0f))
+            {
+                ArmourPart flat = part with { YawDegrees = 0f };
+                Assert.Equal(PartBounds(flat).Min.Y, PartBounds(part).Min.Y, 4);
+                Assert.Equal(PartBounds(flat).Max.Y, PartBounds(part).Max.Y, 4);
+            }
+        }
     }
 
     [Fact]

@@ -18,6 +18,8 @@ public class HeldItemScaleTests
     // The Y extent of the item as DRAWN, computed here with a closed form that does not share code with
     // HeldItemScale: a box of size (sx, sy, sz) pitched about X by p and rolled about Z by r is centrally
     // symmetric, so its Y half-extent is (sx |sin r| + (sy |cos p| + sz |sin p|) |cos r|) / 2.
+    // Yaw does not appear: ToMatrix applies it last and it turns about Y, so it moves no point's height.
+    // WeaponMeshCatalogTests.PartMatrix_TurnsAboutYawLast asserts that independently, on the real parts.
     private static float DrawnExtentModelUnits(string id)
     {
         float min = float.MaxValue;
