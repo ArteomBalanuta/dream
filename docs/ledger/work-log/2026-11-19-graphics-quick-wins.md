@@ -64,16 +64,24 @@ Built with the parallel-agent-delivery workflow:
   - `vsync: off (capture run)`, `anisotropic filtering: 8x`, `gl markers: off` (Release, as designed).
 - **Golden scenes: re-recorded and green.** The first re-record was discarded: it passed `run.ps1` but failed the gate's own
   negatives (a x0.8 night darkening passed), because a fire-shadow wedge toggled between runs. Fixed at the root:
-  - **Steady fire-shadow slots (a real in-game bug).** Slots were ranked by flickered brightness (0.65-1.25x at
-    1.7-13.9 Hz), so near-tied fires swapped shadows several times a second. `PointLight.Flicker` now carries the
-    multiplier each producer applied, and `FireShadowAtlas.SelectSlots` ranks by the steady colour
-    (`FireShadowSteadyRankTests`).
+  - **Steady fire-shadow slots (a real in-game bug).** Slots were ranked by the flickered light, so fires tied within
+    ~25% swapped shadows several times a second:
+    - Colour swings 0.65-1.25x at 1.7-13.9 Hz.
+    - Radius swings +-8.75%, which at 60-80% of the radius moves the falloff as much as the colour.
+    - The flame wanders up to 0.12 m.
+
+    Each producer now records what it applied (`PointLight.Flicker`, `PointLight.Wander`). `FireShadowAtlas.SelectSlots`
+    ranks by the steady colour, the steady radius (`FireFlicker.RadiusScaleOf`, shared with `Sample`) and the resting
+    position. The slot itself still follows the live flame.
+
+    Tests: `FireShadowSteadyRankTests` (producer-exact lights, one negative per term), `FireProducerSteadyFieldsTests`,
+    `SteadyRankWiringTests`. Only inside the 16-light cut-off fade band does the ranking still see the live position.
   - **`DREAM_FIRE_CLOCK`** pins the fire flicker for captures (`FireClockPin`).
   - **The golden scenes pin the sun:** `tod:<hours>` after `play`, and `DREAM_DAY_LENGTH_MINUTES=1440` for the
     `play` frame. Under a 36-way parallel record the real-time world clock had moved the sun's shadows.
   - **Result:** noise dropped (night 0.0021 -> 0.000011, noon 0.000098 -> 0.000008, wolf 0.00013 -> 0.000017).
     `test_golden.py` OK, and `run.ps1 -Scene all` passed 3 times out of 3.
-  - **Full suite after these changes:** 10,225 passed, 0 failed.
+  - **Full suite after these changes:** 10,230 passed, 0 failed (on 63b0746f; the wiring tests after it pass 69/69 filtered).
 
 ## Not verified
 
