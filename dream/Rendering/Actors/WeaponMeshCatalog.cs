@@ -205,13 +205,15 @@ public static class WeaponMeshCatalog
         const EquipmentShape Crescent = EquipmentShape.Crescent;
         const EquipmentShape Gem = EquipmentShape.Gem;
         const EquipmentShape Panel = EquipmentShape.Panel;
+        const EquipmentShape Horn = EquipmentShape.Horn;
 
         // Short and thin: a ring pommel, a rolled grip, a drooping hooked guard and a narrow fullered blade.
         Hand("held.weapon.dagger", false,
             Box(0f, 0.043f, 0f, 0.07f, 0.118f, 0.07f, WeaponMaterial.Leather, shape: Shaft),
             Box(0f, -0.027f, 0f, 0.09f, 0.037f, 0.09f, WeaponMaterial.Bone, shape: Ring),
             Box(0f, 0.062f, 0f, 0.075f, 0.018f, 0.075f, WeaponMaterial.DarkIron, shape: Ring),
-            Box(0f, 0.112f, 0f, 0.08f, 0.20f, 0.021f, WeaponMaterial.DarkIron, pitch: 90f, shape: Crescent),
+            Box(0f, 0.112f, 0.052f, 0.030f, 0.115f, 0.030f, WeaponMaterial.DarkIron, pitch: 90f, shape: Horn),
+            Box(0f, 0.112f, -0.052f, 0.030f, 0.115f, 0.030f, WeaponMaterial.DarkIron, pitch: 90f, yaw: 180f, shape: Horn),
             Box(0f, 0.136f, 0f, 0.055f, 0.03f, 0.055f, WeaponMaterial.Steel, shape: Taper),
             Box(0f, 0.257f, 0f, 0.04f, 0.278f, 0.10f, WeaponMaterial.Steel, shape: Blade),
             Box(0f, 0.246f, 0f, 0.05f, 0.182f, 0.03f, WeaponMaterial.DarkIron, shape: BevelBox),
@@ -342,7 +344,8 @@ public static class WeaponMeshCatalog
             Box(0f, -0.06f, 0f, 0.10f, 0.08f, 0.10f, WeaponMaterial.Bone, roll: 180f, shape: Dome),
             Box(0f, -0.015f, 0f, 0.085f, 0.022f, 0.085f, WeaponMaterial.Gilt, shape: Ring),
             Box(0f, -0.115f, 0f, 0.05f, 0.05f, 0.05f, WeaponMaterial.Gilt, roll: 180f, shape: Gem),
-            Box(0f, 0.23f, 0f, 0.09f, 0.28f, 0.05f, WeaponMaterial.Gilt, pitch: 90f, shape: Crescent),
+            Box(0f, 0.23f, 0.075f, 0.045f, 0.145f, 0.045f, WeaponMaterial.Gilt, pitch: 90f, shape: Horn),
+            Box(0f, 0.23f, -0.075f, 0.045f, 0.145f, 0.045f, WeaponMaterial.Gilt, pitch: 90f, yaw: 180f, shape: Horn),
             Box(0f, 0.26f, 0f, 0.07f, 0.04f, 0.07f, WeaponMaterial.Gilt, shape: Taper),
             Box(0f, 0.58f, 0f, 0.05f, 0.66f, 0.17f, WeaponMaterial.Steel, shape: Blade),
             Box(0f, 0.54f, 0f, 0.058f, 0.48f, 0.05f, WeaponMaterial.DarkIron, shape: BevelBox),
@@ -352,7 +355,8 @@ public static class WeaponMeshCatalog
         Hand("held.weapon.iron-blade", false,
             Box(0f, 0.09f, 0f, 0.08f, 0.28f, 0.08f, WeaponMaterial.Leather, shape: Shaft),
             Box(0f, -0.06f, 0f, 0.095f, 0.06f, 0.095f, WeaponMaterial.DarkIron, roll: 180f, shape: Dome),
-            Box(0f, 0.25f, 0f, 0.09f, 0.16f, 0.05f, WeaponMaterial.DarkIron, pitch: 90f, shape: Crescent),
+            Box(0f, 0.25f, 0.085f, 0.055f, 0.17f, 0.055f, WeaponMaterial.DarkIron, pitch: 90f, shape: Horn),
+            Box(0f, 0.25f, -0.085f, 0.055f, 0.17f, 0.055f, WeaponMaterial.DarkIron, pitch: 90f, yaw: 180f, shape: Horn),
             Box(0f, 0.68f, 0f, 0.06f, 0.80f, 0.22f, WeaponMaterial.Steel, shape: Blade),
             Box(0f, 0.66f, -0.10f, 0.07f, 0.72f, 0.04f, WeaponMaterial.DarkIron, shape: BevelBox),
             Box(0f, 0.30f, 0f, 0.065f, 0.10f, 0.09f, WeaponMaterial.DarkIron, shape: Taper),
@@ -453,7 +457,8 @@ public static class WeaponMeshCatalog
         Hand("held.tool.blade", false,
             Box(0f, 0.08f, 0f, 0.07f, 0.22f, 0.07f, WeaponMaterial.Leather, shape: Shaft),
             Box(0f, -0.04f, 0f, 0.085f, 0.06f, 0.085f, WeaponMaterial.Steel, roll: 180f, shape: Dome),
-            Box(0f, 0.20f, 0f, 0.08f, 0.26f, 0.04f, WeaponMaterial.Gilt, pitch: 90f, shape: Crescent),
+            Box(0f, 0.20f, 0.070f, 0.042f, 0.135f, 0.042f, WeaponMaterial.Gilt, pitch: 90f, shape: Horn),
+            Box(0f, 0.20f, -0.070f, 0.042f, 0.135f, 0.042f, WeaponMaterial.Gilt, pitch: 90f, yaw: 180f, shape: Horn),
             Box(0f, 0.23f, 0f, 0.06f, 0.03f, 0.06f, WeaponMaterial.Gilt, shape: Taper),
             Box(0f, 0.62f, 0f, 0.05f, 0.80f, 0.12f, WeaponMaterial.Steel, shape: Blade),
             Box(0f, 0.58f, 0f, 0.055f, 0.56f, 0.04f, WeaponMaterial.DarkIron, shape: BevelBox),

@@ -761,6 +761,9 @@ public static class ArmourMeshCatalog
             Box(0f, -0.30f, -0.34f, 0.44f, 0.05f, 0.06f, Gilt, shape: Panel),
             Box(0f, 0.79f, -0.17f, 0.26f, 0.03f, 0.06f, Gilt, shape: Ring));
 
+        // The leading spars are Horns and the inner ribs are Shafts, which is what a wing frame actually is:
+        // a curved, tapering leading edge carrying straight cross-struts. A frame of four straight sticks
+        // reads as scaffolding.
         // Not cloth, and not two flat violet quads either: a DARK IRON SPAR FRAME - a long leading spar laid
         // along the top of each wing and a shorter rib under it - carrying a smaller arcane membrane inside.
         // The membrane is the smaller area, the frame is what gives the wing an outline, and the two wings
@@ -769,8 +772,8 @@ public static class ArmourMeshCatalog
         Add("worn.back.gossamer-wings", ArmourMount.Back,
             Box(0.345f, 0.705f, -0.30f, 0.26f, 0.42f, 0.05f, ArmourMaterial.Arcane, roll: -14f, yaw: 20f, shape: Membrane),
             Box(-0.345f, 0.705f, -0.30f, 0.26f, 0.42f, 0.05f, ArmourMaterial.Arcane, roll: 14f, yaw: -20f, shape: Membrane),
-            Box(0.33f, 0.88f, -0.31f, 0.05f, 0.46f, 0.04f, Iron, roll: -70f, shape: Shaft),
-            Box(-0.33f, 0.88f, -0.31f, 0.05f, 0.46f, 0.04f, Iron, roll: 70f, shape: Shaft),
+            Box(0.33f, 0.88f, -0.31f, 0.05f, 0.46f, 0.05f, Iron, roll: -70f, shape: Horn),
+            Box(-0.33f, 0.88f, -0.31f, 0.05f, 0.46f, 0.05f, Iron, roll: 70f, yaw: 180f, shape: Horn),
             Box(0.30f, 0.62f, -0.30f, 0.04f, 0.40f, 0.04f, Iron, roll: -40f, shape: Shaft),
             Box(-0.30f, 0.62f, -0.30f, 0.04f, 0.40f, 0.04f, Iron, roll: 40f, shape: Shaft),
             Box(0f, 0.62f, -0.28f, 0.20f, 0.20f, 0.06f, Cold, shape: Lame),
