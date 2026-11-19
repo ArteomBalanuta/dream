@@ -225,8 +225,7 @@ public static class WeaponMeshCatalog
             Box(0f, 0.226f, 0f, 0.09f, 0.36f, 0.045f, WeaponMaterial.DarkIron, pitch: 90f, shape: Crescent),
             Box(0f, 0.226f, 0.175f, 0.045f, 0.05f, 0.045f, WeaponMaterial.Steel, pitch: 90f, shape: Spike),
             Box(0f, 0.226f, -0.175f, 0.045f, 0.05f, 0.045f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
-            Box(0f, 0.256f, 0f, 0.075f, 0.04f, 0.075f, WeaponMaterial.DarkIron, shape: Taper),
-            Box(0f, 0.30f, 0f, 0.05f, 0.10f, 0.07f, WeaponMaterial.Gilt, shape: Taper),
+            Box(0f, 0.29f, 0f, 0.085f, 0.16f, 0.085f, WeaponMaterial.Gilt, shape: EquipmentShape.Lame),
             Box(0f, 0.706f, 0f, 0.05f, 0.86f, 0.15f, WeaponMaterial.Steel, shape: Blade),
             Box(0f, 0.67f, 0f, 0.058f, 0.634f, 0.045f, WeaponMaterial.DarkIron, shape: BevelBox),
             Box(0f, 1.177f, 0f, 0.045f, 0.109f, 0.08f, WeaponMaterial.Steel, shape: Blade));
@@ -253,12 +252,11 @@ public static class WeaponMeshCatalog
             Box(0f, 0.38f, 0f, 0.07f, 1.05f, 0.07f, WeaponMaterial.Wood, shape: Shaft),
             Box(0f, -0.14f, 0f, 0.10f, 0.06f, 0.10f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
             Box(0f, 0.05f, 0f, 0.085f, 0.30f, 0.085f, WeaponMaterial.Leather, shape: Shaft),
-            Box(0f, 0.72f, 0f, 0.115f, 0.035f, 0.115f, WeaponMaterial.DarkIron, shape: Ring),
             Box(0f, 0.86f, 0f, 0.12f, 0.20f, 0.12f, WeaponMaterial.DarkIron, shape: BevelBox),
             Box(0f, 0.86f, 0.21f, 0.05f, 0.40f, 0.32f, WeaponMaterial.Steel, shape: Crescent),
             Box(0f, 0.86f, 0.38f, 0.045f, 0.50f, 0.06f, WeaponMaterial.Steel, shape: Crescent),
             Box(0f, 0.86f, -0.14f, 0.05f, 0.18f, 0.08f, WeaponMaterial.DarkIron, pitch: -90f, shape: Spike),
-            Box(0f, 0.70f, 0.05f, 0.055f, 0.22f, 0.03f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.70f, 0f, 0.105f, 0.22f, 0.105f, WeaponMaterial.DarkIron, shape: EquipmentShape.Lame),
             Box(0f, 0.86f, 0.10f, 0.06f, 0.03f, 0.06f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
             Box(0f, 1.00f, 0f, 0.05f, 0.12f, 0.05f, WeaponMaterial.Steel, shape: Spike));
 
@@ -290,8 +288,7 @@ public static class WeaponMeshCatalog
             Box(0f, 1.00f, 0.22f, 0.24f, 0.14f, 0.28f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
             Box(0f, 0.99f, -0.27f, 0.07f, 0.30f, 0.09f, WeaponMaterial.Steel, pitch: -90f, shape: Spike),
             Box(0f, 0.88f, 0.20f, 0.14f, 0.10f, 0.14f, WeaponMaterial.DarkIron, pitch: 90f, shape: Taper),
-            Box(0f, 0.78f, 0f, 0.11f, 0.06f, 0.11f, WeaponMaterial.Gilt, shape: Ring),
-            Box(0f, 0.86f, 0f, 0.09f, 0.22f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.82f, 0f, 0.115f, 0.30f, 0.115f, WeaponMaterial.DarkIron, shape: EquipmentShape.Lame),
             Box(0.11f, 1.00f, 0f, 0.05f, 0.04f, 0.05f, WeaponMaterial.Steel, roll: -90f, shape: Dome),
             Box(-0.11f, 1.00f, 0f, 0.05f, 0.04f, 0.05f, WeaponMaterial.Steel, roll: 90f, shape: Dome));
 
@@ -301,8 +298,7 @@ public static class WeaponMeshCatalog
             Box(0f, -0.42f, 0f, 0.09f, 0.10f, 0.09f, WeaponMaterial.DarkIron, pitch: 180f, shape: Taper),
             Box(0f, 0.20f, 0f, 0.075f, 0.30f, 0.075f, WeaponMaterial.Leather, shape: Shaft),
             Box(0f, 1.68f, 0f, 0.10f, 0.14f, 0.03f, WeaponMaterial.Cloth, shape: Panel),
-            Box(0f, 1.76f, 0f, 0.085f, 0.03f, 0.085f, WeaponMaterial.Gilt, shape: Ring),
-            Box(0f, 1.80f, 0f, 0.08f, 0.14f, 0.08f, WeaponMaterial.DarkIron, shape: Taper),
+            Box(0f, 1.78f, 0f, 0.09f, 0.20f, 0.09f, WeaponMaterial.DarkIron, shape: EquipmentShape.Lame),
             Box(0f, 1.70f, 0.035f, 0.035f, 0.22f, 0.02f, WeaponMaterial.DarkIron, shape: BevelBox),
             Box(0f, 1.70f, -0.035f, 0.035f, 0.22f, 0.02f, WeaponMaterial.DarkIron, shape: BevelBox),
             Box(0f, 1.90f, 0f, 0.05f, 0.24f, 0.15f, WeaponMaterial.Steel, shape: Blade),
