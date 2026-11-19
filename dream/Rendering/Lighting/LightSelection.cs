@@ -34,9 +34,61 @@ public static class LightSelection
     {
         Span<float> distances = stackalloc float[LightList.MaxLights];
         int count = 0;
-        Insert(first, camera, in frustum, ref list, distances, ref count, carriers);
-        Insert(second, camera, in frustum, ref list, distances, ref count, carriers);
+        float cutoffSquared = float.PositiveInfinity;
+        Insert(first, camera, in frustum, ref list, distances, ref count, carriers, ref cutoffSquared);
+        Insert(second, camera, in frustum, ref list, distances, ref count, carriers, ref cutoffSquared);
         list.Count = count;
+    }
+
+    // World units over which a kept light fades out as it nears the cut-off distance.
+    public const float CutoffFadeBand = 2f;
+
+    // The multiplier on a kept light's colour: 1 when nothing was cut off (cutoffDistance is +infinity),
+    // otherwise it falls linearly from 1 at CutoffFadeBand inside the cut-off to 0 at the cut-off. Distances are linear.
+    public static float CutoffWeight(float distance, float cutoffDistance)
+    {
+        if (float.IsPositiveInfinity(cutoffDistance))
+        {
+            return 1f;
+        }
+
+        return Math.Clamp((cutoffDistance - distance) / CutoffFadeBand, 0f, 1f);
+    }
+
+    // SelectNearest, then each kept light's rgb is scaled by CutoffWeight against the nearest in-frustum light that
+    // was NOT kept (including one pushed out of the last slot). When the 16th and 17th lights swap rank they are
+    // equally far, so both weights are 0 at that moment and the selection does not pop. Stateless, so the two
+    // selections per frame agree and captures stay deterministic. With 16 or fewer candidates nothing is cut off and
+    // the output is bitwise SelectNearest's.
+    // Known trade-off: when many lights sit near the cut-off distance they are all dimmed; continuity requires it.
+    // A light entering through the frustum edge can still step; such pools sit at the edge of the screen.
+    public static void SelectNearestFaded(
+        ReadOnlySpan<PointLight> first,
+        ReadOnlySpan<PointLight> second,
+        Vector3 camera,
+        in ViewFrustum frustum,
+        ref LightList list,
+        Span<int> carriers = default)
+    {
+        Span<float> distances = stackalloc float[LightList.MaxLights];
+        int count = 0;
+        float cutoffSquared = float.PositiveInfinity;
+        Insert(first, camera, in frustum, ref list, distances, ref count, carriers, ref cutoffSquared);
+        Insert(second, camera, in frustum, ref list, distances, ref count, carriers, ref cutoffSquared);
+        list.Count = count;
+
+        if (float.IsPositiveInfinity(cutoffSquared))
+        {
+            return;
+        }
+
+        float cutoff = MathF.Sqrt(cutoffSquared);
+        for (int i = 0; i < count; i++)
+        {
+            float weight = CutoffWeight(MathF.Sqrt(distances[i]), cutoff);
+            Vector4 color = list.Color[i];
+            list.Color[i] = new Vector4(color.X * weight, color.Y * weight, color.Z * weight, color.W);
+        }
     }
 
     // The view-model range: the same lights with their positions moved into eye space, because the
@@ -63,7 +115,8 @@ public static class LightSelection
         ref LightList list,
         Span<float> distances,
         ref int count,
-        Span<int> carriers)
+        Span<int> carriers,
+        ref float cutoffSquared)
     {
         bool carryCarriers = carriers.Length >= LightList.MaxLights;
         for (int i = 0; i < lights.Length; i++)
@@ -83,6 +136,7 @@ public static class LightSelection
             // Full and no nearer than the farthest kept light: equal distance keeps the earlier one.
             if (count == LightList.MaxLights && distance >= distances[count - 1])
             {
+                cutoffSquared = MathF.Min(cutoffSquared, distance);
                 continue;
             }
 
@@ -94,6 +148,12 @@ public static class LightSelection
             }
 
             int last = count < LightList.MaxLights ? count : LightList.MaxLights - 1;
+            if (count == LightList.MaxLights)
+            {
+                // The farthest kept light is pushed out.
+                cutoffSquared = MathF.Min(cutoffSquared, distances[last]);
+            }
+
             for (int j = last; j > slot; j--)
             {
                 distances[j] = distances[j - 1];
