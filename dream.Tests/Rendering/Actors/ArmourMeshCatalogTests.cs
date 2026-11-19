@@ -59,11 +59,15 @@ public class ArmourMeshCatalogTests
         [ArmourMount.Feet] = [new(new(-0.132f, -1.30f, -0.055f), new(0.132f, -0.88f, 0.155f))]
     };
 
-    // The outer bound of every box of a piece: far enough to read as armour, no further.
+    // The outer bound of every box of a piece: far enough to read as armour, no further. The head and
+    // torso boxes grew in pass 3, and only where the band rule below opens: the head's crest reaches
+    // y 1.05 and half-width 0.26, the torso's pauldrons and their horns reach half-width 0.62 and y 1.05,
+    // and the torso's hanging centre lappet falls in FRONT of the thighs toward the knee (y -0.55).
+    // Width is really bounded by the band rule in FitProblem; this is the crude outer box behind it.
     private static readonly Dictionary<ArmourMount, Envelope> Limits = new()
     {
-        [ArmourMount.Head] = new(new(-0.20f, -0.05f, -0.25f), new(0.20f, 0.75f, 0.25f)),
-        [ArmourMount.Torso] = new(new(-0.42f, -0.05f, -0.25f), new(0.42f, 0.95f, 0.25f)),
+        [ArmourMount.Head] = new(new(-0.28f, -0.05f, -0.25f), new(0.28f, 1.05f, 0.25f)),
+        [ArmourMount.Torso] = new(new(-0.64f, -0.55f, -0.25f), new(0.64f, 1.05f, 0.25f)),
         [ArmourMount.Arms] = new(new(-0.25f, -1.10f, -0.25f), new(0.25f, -0.40f, 0.25f)),
         [ArmourMount.Legs] = new(new(-0.20f, -0.80f, -0.22f), new(0.20f, -0.05f, 0.22f)),
         [ArmourMount.Feet] = new(new(-0.20f, -1.36f, -0.15f), new(0.20f, -0.80f, 0.42f))
@@ -88,14 +92,44 @@ public class ArmourMeshCatalogTests
     private const float HeadShell = 0.06f;
     private const float TorsoCeilingMultiplier = 1.6f;
 
-    private readonly record struct FitWindow(float BaseHalfWidth, float MinHalfWidth, float MaxHalfWidth, float MaxHalfDepth);
+    // THE CEILING IS A BAND (pass 3), not one number per mount. The reference silhouette this wave is aimed
+    // at puts almost all of its character in two places - the shoulders and the top of the helm - and neither
+    // fits under a flat 0.416 / 0.18. So the ceiling OPENS exactly where the reference is wide and stays shut
+    // everywhere else, which is what keeps an hourglass an hourglass instead of turning it into a block:
+    //
+    //   Torso, centre at or above y 0.70 (the shoulder band): 0.62, which is 2.4x the 0.26 base. That is what
+    //     a pauldron that rises above the shoulder line and its upswept barbs need.
+    //   Torso, below y 0.70: 0.416, UNCHANGED. The waist is still held to 1.6x, so the cinch is real.
+    //   Head, centre at or above y 0.42 (the top of the bare skull, i.e. a crest): 0.26, and the crest may
+    //     reach y 1.05 - about as tall again as the helm - so horns and fins can read at 28 px.
+    //   Head, below y 0.42: 0.18, UNCHANGED, so a helm still cannot swallow the face.
+    //   Depth: unchanged everywhere. A pauldron or a crest grows sideways and upward, never forward.
+    //
+    // A piece is checked PER PART against the band its own centre falls in, so a wide part at the waist is a
+    // failure even though the piece has a legal wide part at the shoulder; the control test below pins that.
+    private const float TorsoShoulderBandY = 0.70f;
+    private const float TorsoShoulderHalfWidth = 0.62f;     // 2.4x the 0.26 base torso
+    private const float HeadCrestBandY = 0.42f;             // the top of the bare skull
+    private const float HeadCrestHalfWidth = 0.26f;
+    private const float HeadCrestTopY = 1.05f;              // how far above the head frame a crest may reach
+
+    private readonly record struct FitWindow(
+        float BaseHalfWidth,
+        float MinHalfWidth,
+        float MaxHalfWidth,
+        float MaxHalfDepth,
+        float BandY = float.MaxValue,
+        float BandHalfWidth = 0f,
+        float BandTopY = float.MaxValue);
 
     private static readonly Dictionary<ArmourMount, FitWindow> Fit = new()
     {
-        // base head 0.12 x 0.135: floor 0.1465, ceiling 0.18 wide, 0.195 deep
-        [ArmourMount.Head] = new(0.12f, 0.12f + PixelUnits, 0.12f + HeadShell, 0.135f + HeadShell),
-        // base torso 0.26 x 0.15: floor 0.2865, ceiling 0.416 wide, 0.24 deep
-        [ArmourMount.Torso] = new(0.26f, 0.26f + PixelUnits, 0.26f * TorsoCeilingMultiplier, 0.15f * TorsoCeilingMultiplier),
+        // base head 0.12 x 0.135: floor 0.1465, ceiling 0.18 wide, 0.195 deep; crest band above 0.42 to 0.26 / y 1.05
+        [ArmourMount.Head] = new(0.12f, 0.12f + PixelUnits, 0.12f + HeadShell, 0.135f + HeadShell,
+            HeadCrestBandY, HeadCrestHalfWidth, HeadCrestTopY),
+        // base torso 0.26 x 0.15: floor 0.2865, ceiling 0.416 wide, 0.24 deep; shoulder band above 0.70 to 0.62
+        [ArmourMount.Torso] = new(0.26f, 0.26f + PixelUnits, 0.26f * TorsoCeilingMultiplier, 0.15f * TorsoCeilingMultiplier,
+            TorsoShoulderBandY, TorsoShoulderHalfWidth, HeadCrestTopY),
         [ArmourMount.Arms] = new(0.09f, 0f, 0.09f * 2.3f, float.MaxValue),
         [ArmourMount.Legs] = new(0.11f, 0f, 0.11f * 1.7f, float.MaxValue),
         [ArmourMount.Feet] = new(0.132f, 0f, 0.132f * 1.5f, float.MaxValue)
@@ -320,17 +354,18 @@ public class ArmourMeshCatalogTests
 
     [Theory]
     [MemberData(nameof(EveryId))]
-    // The budget rose from 8 to 10 when the pieces were re-sculpted: form first (the shell, the skirt,
-    // the cuff), then the secondary detail that reads at 28x101 px (a rim, a barb, a buckle, a ring row).
-    // Fine texture is the shader's job, not a part's, so the ceiling stays low.
-    public void EveryExpectedId_IsKnown_AndHasThreeToTenParts(string id)
+    // The budget rose from 8 to 10 when the pieces were re-sculpted, and from 10 to 14 when they were
+    // re-shaped to the reference silhouette: form first (the chest, the cinch, the fauld, the pauldron and
+    // its horns, the cuff), then the secondary detail that reads at 28x101 px (a trim line, a barb, a
+    // buckle, a lame step). Fine texture is the shader's job, not a part's, so the ceiling stays low.
+    public void EveryExpectedId_IsKnown_AndHasThreeToFourteenParts(string id)
     {
         Assert.True(ArmourMeshCatalog.IsKnown(id));
         Assert.Contains(id, ArmourMeshCatalog.KnownVisualIds);
         ArmourModel model = Model(id);
 
         Assert.Equal(id, model.VisualId);
-        Assert.InRange(model.Parts.Count, 3, 10);
+        Assert.InRange(model.Parts.Count, 3, 14);
         Assert.All(model.Parts, p => Assert.True(p.Size.X > 0f && p.Size.Y > 0f && p.Size.Z > 0f));
     }
 
@@ -369,7 +404,9 @@ public class ArmourMeshCatalogTests
             ("a nasal bar or a sabaton toe is a Taper", EquipmentShape.Taper),
             ("a lame, belt or buckle is a BevelBox", EquipmentShape.BevelBox),
             ("an arcane stone is a Gem", EquipmentShape.Gem),
-            ("a wing spar is a Shaft", EquipmentShape.Shaft)
+            ("a wing spar is a Shaft", EquipmentShape.Shaft),
+            ("a pauldron barb, a helm crest point or a thigh claw is a Horn", EquipmentShape.Horn),
+            ("a gauntlet cuff, a boot top, a fauld skirt or a helm brim is a Flare", EquipmentShape.Flare)
         ];
         foreach ((string what, EquipmentShape shape) in families)
         {
@@ -569,20 +606,38 @@ public class ArmourMeshCatalogTests
         // the same plank cannot be rotated. Floor (head and torso, the re-authored pieces): the piece must
         // stand at least one pixel proud of the body's half-width, or equipping it does not change the outline.
         ArmourModel model = Model(id);
-        (Vector3 min, Vector3 max) = Union(model);
-        Assert.Null(FitProblem(id, model.Mount, min, max));
+        Assert.Null(FitProblem(id, model.Mount, model.Parts));
     }
 
-    private static string? FitProblem(string id, ArmourMount mount, Vector3 min, Vector3 max)
+    private static string? FitProblem(string id, ArmourMount mount, IReadOnlyList<ArmourPart> parts)
     {
         FitWindow window = Fit[mount];
-        float half = MathF.Max(max.X, -min.X);
-        float depth = MathF.Max(max.Z, -min.Z);
-        if (half > window.MaxHalfWidth + Eps)
+
+        // The ceiling, per part, against the band the part's own CENTRE falls in.
+        foreach (ArmourPart part in parts)
         {
-            return $"{id} half-width {half} exceeds {window.MaxHalfWidth} ({window.MaxHalfWidth / window.BaseHalfWidth:F2}x {window.BaseHalfWidth})";
+            (Vector3 pMin, Vector3 pMax) = PartBounds(part);
+            bool inBand = part.Center.Y >= window.BandY;
+            float allowed = inBand ? window.BandHalfWidth : window.MaxHalfWidth;
+            float partHalf = MathF.Max(pMax.X, -pMin.X);
+            if (partHalf > allowed + Eps)
+            {
+                return inBand
+                    ? $"{id} part at {part.Center} is {partHalf} half-wide, over the band ceiling {allowed}"
+                    : $"{id} part at {part.Center} is {partHalf} half-wide below the band (y {window.BandY}), over {allowed} ({window.MaxHalfWidth / window.BaseHalfWidth:F2}x {window.BaseHalfWidth})";
+            }
+
+            if (pMax.Y > window.BandTopY + Eps)
+            {
+                return $"{id} part at {part.Center} reaches y {pMax.Y}, over the band's top {window.BandTopY}";
+            }
         }
 
+        (Vector3 min, Vector3 max) = (
+            parts.Select(p => PartBounds(p).Min).Aggregate(Vector3.ComponentMin),
+            parts.Select(p => PartBounds(p).Max).Aggregate(Vector3.ComponentMax));
+
+        float depth = MathF.Max(max.Z, -min.Z);
         if (depth > window.MaxHalfDepth + Eps)
         {
             return $"{id} half-depth {depth} exceeds {window.MaxHalfDepth}";
@@ -596,24 +651,104 @@ public class ArmourMeshCatalogTests
         return null;
     }
 
+    // A single box, for the control tests: the band rule is about WHERE a box is, so a control has to be
+    // able to put one box at a chosen height and width.
+    private static ArmourPart[] OneBox(float centreY, float halfWidth, float height, float halfDepth = 0.15f) =>
+        [new(new Vector3(0f, centreY, 0f), new Vector3(halfWidth * 2f, height, halfDepth * 2f), ArmourMaterial.Steel)];
+
     // The numbers the catalog's own section comments state, asserted straight off the parts rather than
-    // through the FitWindow table: "nothing wider than 0.18" on the head, "nothing past 0.416" on the
-    // torso, and the depth bounds that stop a plank being turned 90 degrees to dodge the width rule.
+    // through the FitWindow table: the BAND ceiling and the band's own y, "nothing past 0.18 below the
+    // crest" on the head, "nothing past 0.416 below the shoulder" on the torso, and the depth bounds that
+    // stop a plank being turned 90 degrees to dodge the width rule. bandY = MaxValue means no band at all.
     [Theory]
-    [InlineData(ArmourMount.Head, 0.18f, 0.195f)]
-    [InlineData(ArmourMount.Torso, 0.416f, 0.24f)]
-    [InlineData(ArmourMount.Arms, 0.207f, float.MaxValue)]
-    [InlineData(ArmourMount.Legs, 0.187f, float.MaxValue)]
-    [InlineData(ArmourMount.Feet, 0.198f, float.MaxValue)]
-    public void EveryPieceOfAMount_StandsWithinTheSectionCommentsCeiling(ArmourMount mount, float maxHalfWidth, float maxHalfDepth)
+    [InlineData(ArmourMount.Head, 0.18f, 0.195f, 0.42f, 0.26f)]
+    [InlineData(ArmourMount.Torso, 0.416f, 0.24f, 0.70f, 0.62f)]
+    [InlineData(ArmourMount.Arms, 0.207f, float.MaxValue, float.MaxValue, 0f)]
+    [InlineData(ArmourMount.Legs, 0.187f, float.MaxValue, float.MaxValue, 0f)]
+    [InlineData(ArmourMount.Feet, 0.198f, float.MaxValue, float.MaxValue, 0f)]
+    public void EveryPieceOfAMount_StandsWithinTheSectionCommentsCeiling(
+        ArmourMount mount, float maxHalfWidth, float maxHalfDepth, float bandY, float bandHalfWidth)
     {
         string[] ids = [.. All.Where(id => Model(id).Mount == mount)];
         Assert.NotEmpty(ids);
+
+        // The table the catalog's comments state must be the table the Fit window enforces.
+        Assert.Equal(maxHalfWidth, Fit[mount].MaxHalfWidth, 4);
+        Assert.Equal(maxHalfDepth, Fit[mount].MaxHalfDepth, 4);
+        Assert.Equal(bandY, Fit[mount].BandY, 4);
+        Assert.Equal(bandHalfWidth, Fit[mount].BandHalfWidth, 4);
+
         foreach (string id in ids)
         {
+            foreach (ArmourPart part in Model(id).Parts)
+            {
+                (Vector3 pMin, Vector3 pMax) = PartBounds(part);
+                float allowed = part.Center.Y >= bandY ? bandHalfWidth : maxHalfWidth;
+                float half = MathF.Max(pMax.X, -pMin.X);
+                Assert.True(half <= allowed + Eps, $"{id} part at {part.Center} is {half} half-wide, over {allowed}");
+            }
+
             (Vector3 min, Vector3 max) = Union(Model(id));
-            Assert.True(MathF.Max(max.X, -min.X) <= maxHalfWidth + Eps, $"{id} half-width {MathF.Max(max.X, -min.X)} over {maxHalfWidth}");
             Assert.True(MathF.Max(max.Z, -min.Z) <= maxHalfDepth + Eps, $"{id} half-depth {MathF.Max(max.Z, -min.Z)} over {maxHalfDepth}");
+        }
+    }
+
+    // The widest half-width among the parts whose CENTRE falls in [yMin, yMax) - the measure the silhouette
+    // brief is written in, because a piece's outline at a height is set by the parts centred near it.
+    private static float HalfWidthIn(ArmourModel model, float yMin, float yMax)
+    {
+        float[] halves = [.. model.Parts.Where(p => p.Center.Y >= yMin && p.Center.Y < yMax)
+            .Select(p => MathF.Max(PartBounds(p).Max.X, -PartBounds(p).Min.X))];
+        return halves.Length == 0 ? 0f : halves.Max();
+    }
+
+    // The six points of the pass-3 silhouette brief, asserted so the shape cannot drift back to a column of
+    // recoloured tubes while every other gate stays green. They are art rules, so each is stated in the terms
+    // the brief states it in, and each is deliberately a LOW bar: they catch a regression, not a style.
+    [Fact]
+    public void EveryPiece_HitsTheSixPointsOfTheSilhouetteBrief()
+    {
+        // 1. The shoulders ARE the silhouette: every body piece carries a pauldron in the shoulder band that
+        //    stands past the 0.416 the waist is held to, and it rises clearly above the shoulder line (0.90).
+        foreach (string id in Body)
+        {
+            ArmourModel model = Model(id);
+            float shoulders = HalfWidthIn(model, TorsoShoulderBandY, float.MaxValue);
+            Assert.True(shoulders > 0.45f, $"{id} shoulders reach only {shoulders}; the pauldrons are not the silhouette");
+            Assert.True(Union(model).Max.Y > 0.95f, $"{id} tops out at {Union(model).Max.Y}, not above the shoulder line");
+
+            // 2. Hourglass: wide at the shoulders, cinched at the waist, flared again over the hips.
+            float waist = HalfWidthIn(model, 0.28f, 0.55f);
+            float hips = HalfWidthIn(model, -0.05f, 0.28f);
+            Assert.True(waist > 0f && hips > 0f, $"{id} has no waist or no hip tier");
+            Assert.True(shoulders >= waist + 0.20f, $"{id} shoulders {shoulders} are not clear of its waist {waist}");
+            Assert.True(hips >= waist + 0.05f, $"{id} hips {hips} do not flare past its waist {waist}");
+
+            // 4. A hanging centre panel, between the legs and reaching toward the knee.
+            Assert.Contains(model.Parts, p => MathF.Abs(p.Center.X) < 0.05f && PartBounds(p).Min.Y < -0.25f);
+        }
+
+        // 3. A tall vertical crest on every head, rising well above the top of the bare skull (0.42).
+        foreach (string id in Head)
+        {
+            ArmourModel model = Model(id);
+            Assert.Contains(model.Parts, p => p.Shape == EquipmentShape.Horn && p.Center.Y >= HeadCrestBandY);
+            Assert.True(Union(model).Max.Y > HeadCrestBandY + 0.15f, $"{id} crest reaches only {Union(model).Max.Y}");
+        }
+
+        // 5. Flared ends, not tubes: every fitted piece bells out somewhere (a cuff, a boot top, a hem, a brim).
+        foreach (string id in Head.Concat(Body).Concat(Hands).Concat(Legs).Concat(Feet))
+        {
+            Assert.Contains(Model(id).Parts, p => p.Shape == EquipmentShape.Flare);
+        }
+
+        // 6. A bright trim LINE along the borders: a light material (Steel, Gilt or Bone) on a part that is a
+        //    line or an edge - something under 0.06 on one axis - never on a mass.
+        foreach (string id in Head.Concat(Body).Concat(Hands).Concat(Legs).Concat(Feet))
+        {
+            Assert.Contains(Model(id).Parts, p =>
+                p.Material is ArmourMaterial.Steel or ArmourMaterial.Gilt or ArmourMaterial.Bone
+                && MathF.Min(p.Size.X, MathF.Min(p.Size.Y, p.Size.Z)) <= 0.06f);
         }
     }
 
@@ -622,11 +757,39 @@ public class ArmourMeshCatalogTests
     {
         // Control: the window has to be able to fail on each side. A model precisely as wide as the body (the
         // measured leather-vest before its yoke, 0.26 against 0.26), a plank rotated to be deep, and a block.
-        Assert.NotNull(FitProblem("exact-body", ArmourMount.Torso, new(-0.26f, 0f, -0.15f), new(0.26f, 0.9f, 0.15f)));
-        Assert.NotNull(FitProblem("exact-head", ArmourMount.Head, new(-0.12f, 0f, -0.135f), new(0.12f, 0.4f, 0.135f)));
-        Assert.NotNull(FitProblem("sandwich-board", ArmourMount.Head, new(-0.17f, 0f, -0.25f), new(0.17f, 0.5f, 0.25f)));
-        Assert.NotNull(FitProblem("block", ArmourMount.Torso, new(-0.5f, 0f, -0.15f), new(0.5f, 0.9f, 0.15f)));
-        Assert.Null(FitProblem("fits", ArmourMount.Head, new(-0.17f, 0f, -0.17f), new(0.17f, 0.5f, 0.17f)));
+        Assert.NotNull(FitProblem("exact-body", ArmourMount.Torso, OneBox(0.45f, 0.26f, 0.90f)));
+        Assert.NotNull(FitProblem("exact-head", ArmourMount.Head, OneBox(0.20f, 0.12f, 0.40f, 0.135f)));
+        Assert.NotNull(FitProblem("sandwich-board", ArmourMount.Head, OneBox(0.25f, 0.17f, 0.50f, 0.25f)));
+        Assert.NotNull(FitProblem("block", ArmourMount.Torso, OneBox(0.45f, 0.50f, 0.90f)));
+        Assert.Null(FitProblem("fits", ArmourMount.Head, OneBox(0.25f, 0.17f, 0.50f, 0.17f)));
+    }
+
+    [Fact]
+    public void TheFitBand_OpensOnlyAtTheShouldersAndTheCrest()
+    {
+        // The control the band rule lives or dies by. The SAME wide box passes at the shoulder and fails at
+        // the waist; a test that let a wide piece through at the waist would be worse than no test at all,
+        // because it would quietly turn the hourglass back into a block.
+        ArmourPart shoulder = new(new Vector3(0.40f, 0.82f, 0f), new Vector3(0.40f, 0.20f, 0.30f), ArmourMaterial.DarkIron);
+        ArmourPart mirror = shoulder with { Center = new Vector3(-0.40f, 0.82f, 0f) };
+        ArmourPart body = new(new Vector3(0f, 0.45f, 0f), new Vector3(0.60f, 0.90f, 0.30f), ArmourMaterial.DarkIron);
+
+        Assert.Null(FitProblem("shoulder", ArmourMount.Torso, [body, shoulder, mirror]));
+
+        // The same pair of boxes, dropped to the waist, is a failure: that is the whole point of the band.
+        Assert.NotNull(FitProblem("waist", ArmourMount.Torso,
+            [body, shoulder with { Center = new Vector3(0.40f, 0.42f, 0f) }, mirror with { Center = new Vector3(-0.40f, 0.42f, 0f) }]));
+
+        // Past the band ceiling itself fails even at the shoulder, and so does a crest that grows too tall.
+        Assert.NotNull(FitProblem("too-wide-shoulder", ArmourMount.Torso,
+            [body, shoulder with { Size = new Vector3(0.60f, 0.20f, 0.30f) }, mirror]));
+
+        ArmourPart skull = new(new Vector3(0f, 0.22f, 0f), new Vector3(0.34f, 0.44f, 0.34f), ArmourMaterial.DarkIron);
+        ArmourPart crest = new(new Vector3(0f, 0.70f, 0f), new Vector3(0.20f, 0.56f, 0.10f), ArmourMaterial.DarkIron);
+        Assert.Null(FitProblem("crest", ArmourMount.Head, [skull, crest]));
+        Assert.NotNull(FitProblem("tall-crest", ArmourMount.Head, [skull, crest with { Size = new Vector3(0.20f, 0.80f, 0.10f) }]));
+        Assert.NotNull(FitProblem("wide-crest", ArmourMount.Head, [skull, crest with { Size = new Vector3(0.56f, 0.56f, 0.10f) }]));
+        Assert.NotNull(FitProblem("wide-brow", ArmourMount.Head, [skull with { Size = new Vector3(0.50f, 0.44f, 0.34f) }, crest]));
     }
 
     [Fact]

@@ -161,6 +161,19 @@ WORN_SET_SPREAD_MIN = 0.29
 # met without the defect it was meant to prevent is measuring the old art, not legibility. What the gate still
 # enforces is intact and is the point: the dressed figure keeps a real range (0.3261) and stays clearly above the
 # undressed figure's own 0.2780, so equipping still adds contrast rather than flattening the silhouette.
+#
+# Pass 3 (2026-11-19) re-shaped the armour to the reference silhouette - big upswept pauldrons, a crested helm,
+# a cinched waist, flared cuffs and boot tops - and this number did NOT move, which is the whole point of
+# recording it. The first cut of that art measured 0.1988, far through the floor, because the new masses (the
+# pauldron shells, the helm crest, the fauld) are DarkIron and nothing bright was left on them; the floor was
+# not lowered to fit. Instead the art was corrected in the direction the brief already asks for - a thin bright
+# trim line along the borders of a dark plate - which is what the references have and what the first cut had
+# dropped: a steel lame standing on each pauldron's outer border took the cuirass from 0.2481 to 0.3522, and a
+# steel crown rim at the crest's root plus a steel lip under the helm brim took the greathelm from 0.2744 to
+# 0.3297. MEASURED on the shipped pass-3 catalog: 0.3167 (az 35 p10 0.0104 p90 0.3272; az 145 p10 0.0172
+# p90 0.3716), comfortably over the unchanged 0.29. The lesson worth keeping is that this gate failing is a
+# signal that the LIGHT PLACEMENT is wrong, not that the floor is: a dark mass with no bright border has
+# nothing for the key light to catch, at any size.
 CLIP_SHARE_MAX = 0.01      # see gate_clipping: at most 1% of a material's visible pixels may be fully saturated
 CLIP_MIN_PIXELS = 12       # a material shown in fewer pixels than this is too small for a share to mean anything
 WORN_SET_IDS = ("worn.head.greathelm", "worn.body.plate-cuirass", "worn.back.hooded-cloak")
