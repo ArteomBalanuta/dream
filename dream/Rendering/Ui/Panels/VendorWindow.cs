@@ -1,4 +1,5 @@
 using Dream.Rendering.Hud;
+using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 using OpenTK.Mathematics;
 
@@ -36,6 +37,9 @@ public static class VendorWindow
 
     // How far the ember and cold frame reach past the board edge.
     private const float FrameInflateUnits = 2f;
+
+    // The longest item kind looked up in the catalog (the same bound as a ground item's name lookup).
+    private const int MaxKindLength = 64;
 
     private static readonly UiColor GoldColor = new(0xD8, 0xB4, 0x5A, 255);
     private static readonly UiColor Unaffordable = new(0xB0, 0xB0, 0xB0, 255);
@@ -102,6 +106,12 @@ public static class VendorWindow
             }
         }
 
+        if (hovered >= 0 && TryWareSnapshot(vendor.StockAt(hovered).ItemKind, out InventoryItemSnapshot ware))
+        {
+            // The bag's own tooltip, fed the ware instead of a slot: same panel, same placement.
+            st.SetHover(-1, VendorGrid.ItemRect(in l, win, anchors[hovered], footprints[hovered]), in ware, vendor.StockAt(hovered).Price);
+        }
+
         // Pass one: the board, its frame, and every click. Pass two: the icons. Pass three: the text.
         DrawBoard(c, s, l, win, owner, hovered);
         DrawSellCue(c, s, l, win, sell, fx, pointer);
@@ -153,6 +163,47 @@ public static class VendorWindow
         }
 
         DrawText(c, s, l, win, v, vendor, fx, anchors, footprints, stock, hovered, gold);
+    }
+
+    // A ware is an item that has not been rolled: its base definition, Common. The id is the kind's stable
+    // hash made negative, so it never meets a real instance id and does not change between frames (the
+    // tooltip cache compares it). False for a kind the catalog does not know; never throws.
+    internal static bool TryWareSnapshot(string? kind, out InventoryItemSnapshot ware)
+    {
+        ware = default;
+        if (string.IsNullOrEmpty(kind) || kind.Length > MaxKindLength)
+        {
+            return false;
+        }
+
+        ItemDefinition? definition;
+        try
+        {
+            if (!ContentCatalog.Shipped.TryGetItem(kind, out definition) || definition is null)
+            {
+                return false;
+            }
+        }
+        catch (ContentValidationException)
+        {
+            return false;
+        }
+
+        long id = -1 - (VendorGrid.KindIdentity(kind) & long.MaxValue);
+        ware = new InventoryItemSnapshot(
+            id,
+            kind,
+            definition.DisplayName,
+            definition.VisualId,
+            1,
+            definition.Description,
+            definition.DetailLines,
+            definition.Modifiers.Count == 0 ? null : definition.Modifiers,
+            definition.HeldLight,
+            definition.EquipSlotMask,
+            ItemRarity.Common,
+            false);
+        return true;
     }
 
     // The widget id of stock line n: it folds the item kind in, so a stock that renumbers between a press

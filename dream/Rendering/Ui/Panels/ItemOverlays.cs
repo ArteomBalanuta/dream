@@ -26,6 +26,15 @@ public sealed class InventoryUiState
 
     public UiRect HoverRect { get; private set; }
 
+    // A hover that carries its own item (a shop ware, which is in neither the bag nor the wells), and the
+    // price to show under it. The vendor window sets it BEFORE InventoryWindow.BeginFrame runs, so
+    // BeginFrame keeps it; ItemOverlays.Build consumes and clears it every frame, so it never outlives one.
+    public bool HoverItemActive { get; private set; }
+
+    public InventoryItemSnapshot HoverItem { get; private set; }
+
+    public long HoverPrice { get; private set; }
+
     public bool DragActive { get; private set; }
 
     public bool DragCancelled { get; private set; }
@@ -74,7 +83,8 @@ public sealed class InventoryUiState
     // survives unless its item is gone.
     internal void BeginFrame(HudView v)
     {
-        HoverActive = false;
+        // A hover carrying its own item was set earlier this frame by the vendor window (it builds first).
+        HoverActive = HoverItemActive;
         object? slots = v.Inventory?.Slots;
         object? equipment = v.Inventory?.Equipment;
         bool changed = _keySet && (!ReferenceEquals(slots, _slotsKey) || !ReferenceEquals(equipment, _equipmentKey));
@@ -105,6 +115,26 @@ public sealed class InventoryUiState
         HoverActive = true;
         HoverSource = source;
         HoverRect = rect;
+        HoverItemActive = false;
+        HoverItem = default;
+    }
+
+    // A hover on an item that is in no slot: the tooltip draws this item, placed at rect, with its price.
+    internal void SetHover(int source, UiRect rect, in InventoryItemSnapshot item, long price)
+    {
+        HoverActive = true;
+        HoverSource = source;
+        HoverRect = rect;
+        HoverItemActive = true;
+        HoverItem = item;
+        HoverPrice = price;
+    }
+
+    internal void ClearItemHover()
+    {
+        HoverItemActive = false;
+        HoverItem = default;
+        HoverPrice = 0;
     }
 
     internal void StartDrag(int source, HudView v)
@@ -192,6 +222,7 @@ public sealed class InventoryUiState
     internal void ResetAll()
     {
         HoverActive = false;
+        ClearItemHover();
         ClearDrag();
         CloseMenu();
         CloseConfirm();
@@ -212,7 +243,8 @@ internal sealed class TooltipContent
         Detail,
         Tier,
         Bonus,
-        Count
+        Count,
+        Price
     }
 
     public readonly List<(string Text, LineKind Kind)> Lines = new(16);
@@ -224,13 +256,16 @@ internal sealed class TooltipContent
     public object? Modifiers;
     public int StackCount;
     public ItemRarity Rarity;
+
+    // The shop price shown on the last line, or -1 for none (a bag or worn item).
+    public long Price = -1;
     public float WrapWidth;
 
     // The glyph size the lines were wrapped at. Without it, changing ui_scale while hovering kept the
     // lines broken for the old size: the text got bigger but the wrap points did not move.
     public float TextPx;
 
-    public bool Matches(in InventoryItemSnapshot item, float wrapWidth, float textPx) =>
+    public bool Matches(in InventoryItemSnapshot item, long price, float wrapWidth, float textPx) =>
         ItemInstanceId == item.ItemInstanceId
         && ReferenceEquals(DisplayName, item.DisplayName)
         && ReferenceEquals(Description, item.Description)
@@ -238,6 +273,7 @@ internal sealed class TooltipContent
         && ReferenceEquals(Modifiers, item.Modifiers)
         && StackCount == item.StackCount
         && Rarity == item.Rarity
+        && Price == price
         && WrapWidth == wrapWidth
         && TextPx == textPx;
 }
@@ -276,6 +312,7 @@ public static class ItemOverlays
         if (!v.InventoryOpen)
         {
             ReleaseModal(i, st);
+            st.ClearItemHover();
             return;
         }
 
@@ -284,6 +321,8 @@ public static class ItemOverlays
         {
             DrawTooltip(c, v, l, s, st);
         }
+
+        st.ClearItemHover();
 
         if (st.MenuOpen)
         {
@@ -350,11 +389,21 @@ public static class ItemOverlays
 
     private static void DrawTooltip(IUiCanvas c, HudView v, in UiLayout l, UiSpriteTable s, InventoryUiState st)
     {
-        HudItemView[] source = st.HoverSource >= EquipmentSlots.FirstSlotIndex ? v.Worn : v.Backpack;
-        int index = st.HoverSource >= EquipmentSlots.FirstSlotIndex ? st.HoverSource - EquipmentSlots.FirstSlotIndex : st.HoverSource;
-        if (!InventoryWindow.TryItem(source, index, out InventoryItemSnapshot item))
+        InventoryItemSnapshot item;
+        long price = -1;
+        if (st.HoverItemActive)
         {
-            return;
+            item = st.HoverItem;
+            price = st.HoverPrice;
+        }
+        else
+        {
+            HudItemView[] source = st.HoverSource >= EquipmentSlots.FirstSlotIndex ? v.Worn : v.Backpack;
+            int index = st.HoverSource >= EquipmentSlots.FirstSlotIndex ? st.HoverSource - EquipmentSlots.FirstSlotIndex : st.HoverSource;
+            if (!InventoryWindow.TryItem(source, index, out item))
+            {
+                return;
+            }
         }
 
         float scale = l.Scale;
@@ -363,7 +412,7 @@ public static class ItemOverlays
         // The same size wraps, measures and draws: one of them taken elsewhere is a tooltip whose
         // lines are broken for a glyph size it is not drawn at.
         UiSizedText t = UiText.AtCanvasScale(c);
-        TooltipContent content = BuildContent(c, st, item, maxWidth, in t);
+        TooltipContent content = BuildContent(c, st, item, price, maxWidth, in t);
         if (content.Lines.Count == 0)
         {
             return;
@@ -399,7 +448,7 @@ public static class ItemOverlays
             {
                 TooltipContent.LineKind.Name or TooltipContent.LineKind.Tier => ItemTierStyle.ColorOf(tier),
                 TooltipContent.LineKind.Bonus => ItemTierStyle.Bonus,
-                TooltipContent.LineKind.Description or TooltipContent.LineKind.Count => ItemTierStyle.Dim,
+                TooltipContent.LineKind.Description or TooltipContent.LineKind.Count or TooltipContent.LineKind.Price => ItemTierStyle.Dim,
                 _ => ItemTierStyle.Body
             };
             float x = panel.X + padX + MathF.Max(0f, (widest - UiText.Measure(c, text, in t)) * 0.5f);
@@ -419,10 +468,10 @@ public static class ItemOverlays
         MathF.Max(9f * uiScale, InventoryWindow.BodyHeight(c) + (3f * uiScale));
 
     private static TooltipContent BuildContent(
-        IUiCanvas c, InventoryUiState st, in InventoryItemSnapshot item, float maxWidth, in UiSizedText t)
+        IUiCanvas c, InventoryUiState st, in InventoryItemSnapshot item, long price, float maxWidth, in UiSizedText t)
     {
         TooltipContent? cached = st.Tooltip;
-        if (cached is not null && cached.Matches(item, maxWidth, t.Px))
+        if (cached is not null && cached.Matches(item, price, maxWidth, t.Px))
         {
             return cached;
         }
@@ -436,6 +485,7 @@ public static class ItemOverlays
         content.Modifiers = item.Modifiers;
         content.StackCount = item.StackCount;
         content.Rarity = item.Rarity;
+        content.Price = price;
         content.WrapWidth = maxWidth;
         content.TextPx = t.Px;
         content.Lines.Clear();
@@ -474,6 +524,11 @@ public static class ItemOverlays
         if (item.StackCount > 1)
         {
             content.Lines.Add(($"Count: {item.StackCount}", TooltipContent.LineKind.Count));
+        }
+
+        if (price >= 0)
+        {
+            content.Lines.Add(($"Price {price} gold", TooltipContent.LineKind.Price));
         }
 
         return content;
