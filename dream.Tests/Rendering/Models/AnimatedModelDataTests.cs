@@ -76,16 +76,42 @@ public class AnimatedModelDataTests : IClassFixture<GltfModelRootFixture>
         {
             AnimatedModelMaterialData decoded = data.Materials[material.LogicalIndex];
             Assert.Equal(HasTexture(material, "BaseColor"), decoded.BaseColorTexture != null);
-            Assert.Equal(HasTexture(material, "Normal"), decoded.NormalTexture != null);
-            Assert.Equal(HasTexture(material, "MetallicRoughness"), decoded.MetallicRoughnessTexture != null);
             Assert.Equal(HasTexture(material, "Emissive"), decoded.EmissiveTexture != null);
-            Assert.Equal(HasTexture(material, "Occlusion"), decoded.OcclusionTexture != null);
 
             if (decoded.BaseColorTexture != null)
             {
                 Assert.Equal(DecodeReference(material, "BaseColor"), decoded.BaseColorTexture.Rgba);
             }
         }
+    }
+
+    // The shaders sample only baseColor and emissive, so a normal, metallic-roughness or occlusion
+    // map in the glTF is never decoded: the decoded material has no field for it, and the decoded
+    // texture count is exactly the baseColor and emissive maps the glTF carries.
+    [Theory]
+    [MemberData(nameof(ModelPaths))]
+    public async Task Load_DecodesOnlyBaseColorAndEmissiveMaps(string modelPath)
+    {
+        AnimatedModelData data = await LoadSharedOffThread(modelPath);
+
+        string[] decodedFields = typeof(AnimatedModelMaterialData).GetFields()
+            .Where(field => field.FieldType == typeof(DecodedTexture))
+            .Select(field => field.Name)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(new[] { "BaseColorTexture", "EmissiveTexture" }, decodedFields);
+
+        foreach (Material material in data.Model.LogicalMaterials)
+        {
+            AnimatedModelMaterialData decoded = data.Materials[material.LogicalIndex];
+            int expected = (HasTexture(material, "BaseColor") ? 1 : 0) + (HasTexture(material, "Emissive") ? 1 : 0);
+            Assert.Equal(expected, GetTextures(decoded).Count());
+        }
+
+        string source = ReadSource("dream/Rendering/Models/AnimatedModelData.cs");
+        Assert.DoesNotContain("DecodeTexture(material, \"Normal\")", source);
+        Assert.DoesNotContain("DecodeTexture(material, \"MetallicRoughness\")", source);
+        Assert.DoesNotContain("DecodeTexture(material, \"Occlusion\")", source);
     }
 
     [Theory]
@@ -285,10 +311,7 @@ public class AnimatedModelDataTests : IClassFixture<GltfModelRootFixture>
         new[]
         {
             material.BaseColorTexture,
-            material.NormalTexture,
-            material.MetallicRoughnessTexture,
-            material.EmissiveTexture,
-            material.OcclusionTexture
+            material.EmissiveTexture
         }.OfType<DecodedTexture>();
 
     private static bool HasTexture(Material material, string channelName)
