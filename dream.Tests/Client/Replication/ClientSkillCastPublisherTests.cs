@@ -39,6 +39,19 @@ public class ClientSkillCastPublisherTests
         Assert.Equal(range, e.Range);
         Assert.Equal(Origin, e.Origin);
         Assert.Equal(Vector3.UnitX, e.Direction);
+        Assert.Equal(0, e.CasterActorId);
+    }
+
+    [Fact]
+    public void Caster_Id_Is_Carried_On_The_Event_From_Both_Entries()
+    {
+        (SceneEventHub hub, List<SkillCastEvent> seen) = Listen();
+
+        Assert.True(ClientSkillCastPublisher.Publish(hub, new AbilityUsedResult("skill.cleave", 0, 0, 0), Origin, Vector3.UnitX, 42));
+        Assert.True(ClientSkillCastPublisher.Publish(hub, SkillKind.MeleeArc, Origin, Vector3.UnitX, 3.5f, 77));
+
+        Assert.Equal(42, seen[0].CasterActorId);
+        Assert.Equal(77, seen[1].CasterActorId);
     }
 
     [Fact]

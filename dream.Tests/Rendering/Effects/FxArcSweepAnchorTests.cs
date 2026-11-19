@@ -7,7 +7,8 @@ using Xunit;
 namespace Dream.Tests.Rendering.Effects;
 
 // The server sweeps a Cleave from where the caster stands on each active tick, so the effect must be anchored
-// to the caster's position when the swing turns active, not the position the cast was published with.
+// to the caster's position when the swing turns active, not the position the cast was published with. The anchor
+// is the located position itself, so a remote pose that lags the cast origin does not leave a gap.
 public class FxArcSweepAnchorTests
 {
     private const int Caster = 7;
@@ -77,6 +78,35 @@ public class FxArcSweepAnchorTests
         Advance(simulation, 4f / 64f);
         Vector3 later = QuadPosition(simulation);
         Assert.Equal(laid.X, later.X, 1);
+    }
+
+    [Fact]
+    public void A_Lagging_Locator_Anchors_The_Crescent_To_The_Located_Pose_Not_To_The_Cast_Origin()
+    {
+        // The cast origin is the server position; the interpolated remote pose trails it by half a metre.
+        Mover mover = new() { Position = Origin - new Vector3(0.5f, 0f, 0f) };
+        FxSimulation simulation = new(3u) { CasterLocator = mover.Locate };
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f, Caster);
+        Advance(simulation, MeleeArcSwing.WindupSeconds + 2f / 64f);
+
+        Vector3 quad = QuadPosition(simulation);
+        Assert.Equal(Origin.X - 0.5f, quad.X, 2);
+        Assert.Equal(Origin.Z, quad.Z, 2);
+    }
+
+    [Fact]
+    public void A_Caster_Jumping_Further_Than_The_Cap_Stops_Being_Followed()
+    {
+        Mover mover = new();
+        FxSimulation simulation = new(3u) { CasterLocator = mover.Locate };
+        simulation.SpawnSkillCast(SkillFxKind.Arc, Origin, Vector3.UnitX, 3.5f, Caster);
+        Advance(simulation, 4f / 64f);
+        mover.Position += new Vector3(1f, 0f, 0f);
+        Advance(simulation, 2f / 64f);
+        mover.Position += new Vector3(40f, 0f, 0f);
+        Advance(simulation, MeleeArcSwing.WindupSeconds);
+
+        Assert.Equal(Origin.X + 1f, QuadPosition(simulation).X, 2);
     }
 
     [Fact]

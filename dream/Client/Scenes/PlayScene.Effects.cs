@@ -22,16 +22,22 @@ public partial class PlayScene
 
     // Where a caster is now, for effects that follow it: the local player's own position, else a tracked remote
     // player's interpolated one. Same convention as the cast origin published for each.
-    private bool TryLocateFxCaster(int actorId, out Vector3 position)
+    private bool TryLocateFxCaster(int actorId, out Vector3 position) =>
+        LocateFxCaster(actorId, LocalActorId, _runtime.Player.GetWorldPosition(), _scenePresenter, RemotePlayerRenderTick, out position);
+
+    // The local actor is located at the supplied local position; any other actor at its interpolated remote pose.
+    internal static bool LocateFxCaster(
+        int actorId, int localActorId, Vector3 localPosition, ClientScenePresenter presenter, double renderTick, out Vector3 position)
     {
-        if (actorId == LocalActorId)
+        if (actorId == localActorId)
         {
-            position = _runtime.Player.GetWorldPosition();
+            position = localPosition;
             return true;
         }
 
-        return _scenePresenter.TryGetRemotePlayerPosition(actorId, RemotePlayerRenderTick, out position);
+        return presenter.TryGetRemotePlayerPosition(actorId, renderTick, out position);
     }
+
     private FxFlashList? _fxFlashes;
     private FxShadowList? _fxShadows;
     private FxEventBridge? _fxBridge;

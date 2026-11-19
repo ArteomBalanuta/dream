@@ -56,6 +56,7 @@ public class ClientSnapshotCastApplierTests
         Assert.Equal(Origin, e.Origin);
         Assert.Equal(range, e.Range);
         Assert.Equal(new Vector3(0.6f, 0f, 0.8f), e.Direction);
+        Assert.Equal(PeerActorId, e.CasterActorId);
     }
 
     [Fact]

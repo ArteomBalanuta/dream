@@ -118,15 +118,10 @@ public sealed class FxSimulation
     // Sweep sparks ride the painted edge, a little inside it, from the caster's left tip to the right.
     private const float ArcSparkRadiusFraction = 0.9f;
     private const float ArcSparkHeight = 0.25f;
+    // A caster that moves further than this between two looks has teleported; the sweep stops following it.
+    private const float MaxFollowJump = 3f;
     public const int MaxPendingArcSweeps = 8;
 
-    // Where an actor is now, by id; false when unknown or gone. Set once at scene setup.
-    public delegate bool ActorLocator(int actorId, out Vector3 position);
-
-    // Lets a timed effect follow its caster: the server sweeps a Cleave from where the caster stands on each active
-    // tick, so the effect is anchored to the caster's current position, not the one it had at the cast. Null (or an
-    // unknown actor) keeps the position the cast was published with.
-    public ActorLocator? CasterLocator { get; set; }
     private const float RingLife = 0.6f;
     private const float RingStartHalfSize = 0.3f;
     private const float RingEndHalfSize = 0.9f;
@@ -184,6 +179,8 @@ public sealed class FxSimulation
         public int CasterActorId;
         public Vector3 LastCasterPosition;
         public bool HasCasterPosition;
+        public float AnchorLift;
+        public bool FollowLost;
         public bool Aimed;
         public float Range;
         public float Elapsed;
@@ -191,6 +188,14 @@ public sealed class FxSimulation
         public int SparksEmitted;
         public int Remaining;
     }
+
+    // Where an actor is now, by id; false when unknown or gone. Set once at scene setup.
+    public delegate bool ActorLocator(int actorId, out Vector3 position);
+
+    // Lets a timed effect follow its caster: the server sweeps a Cleave from where the caster stands on each active
+    // tick, so the effect is anchored to the caster's current position, not the one it had at the cast. Null (or an
+    // unknown actor) keeps the position the cast was published with.
+    public ActorLocator? CasterLocator { get; set; }
 
     public FxSimulation(uint seed = FxRandom.DefaultSeed)
     {
@@ -345,12 +350,6 @@ public sealed class FxSimulation
                         Range = range > 0f ? range : DefaultArcRange,
                         Remaining = MaxCastParticles
                     };
-                    if (casterActorId != 0 && CasterLocator is { } locate && locate(casterActorId, out Vector3 at))
-                    {
-                        queued.LastCasterPosition = at;
-                        queued.HasCasterPosition = true;
-                    }
-
                     _sweeps[_sweepCount++] = queued;
                     return;
                 }
@@ -910,23 +909,35 @@ public sealed class FxSimulation
         }
     }
 
-    // Moves the sweep's origin by however far its caster has moved since the last look. A delta, not the caster's
-    // position, so it holds whatever convention the cast origin and the locator each use. An actor the locator
-    // does not know leaves the origin where it was; the crescent itself is laid once, at activation, and stays.
+    // Anchors the sweep's origin to its caster's located position, absolute: a remote caster's pose lags the cast
+    // origin (the server position at the cast tick) by the interpolation delay, so following by displacement would
+    // keep that gap and draw the crescent ahead of the body. The cast origin may sit at a different height than the
+    // located position (a remote cast is published from the eye, a local one from the body), so the vertical gap
+    // seen on the first sighting is kept as a fixed lift; horizontally the anchor is the located position. A caster
+    // the locator does not know leaves the origin where it was. A jump of more than MaxFollowJump in one look
+    // (a teleport or respawn) ends the following and keeps the last anchor. The crescent itself is laid once, at
+    // activation, and stays.
     private void FollowCaster(ref ArcSweep sweep)
     {
-        if (sweep.CasterActorId == 0 || CasterLocator is not { } locate || !locate(sweep.CasterActorId, out Vector3 now))
+        if (sweep.FollowLost || sweep.CasterActorId == 0 || CasterLocator is not { } locate
+            || !locate(sweep.CasterActorId, out Vector3 now))
         {
             return;
         }
 
-        if (sweep.HasCasterPosition)
+        if (!sweep.HasCasterPosition)
         {
-            sweep.Origin += now - sweep.LastCasterPosition;
+            sweep.AnchorLift = sweep.Origin.Y - now.Y;
+            sweep.HasCasterPosition = true;
+        }
+        else if ((now - sweep.LastCasterPosition).LengthSquared > MaxFollowJump * MaxFollowJump)
+        {
+            sweep.FollowLost = true;
+            return;
         }
 
         sweep.LastCasterPosition = now;
-        sweep.HasCasterPosition = true;
+        sweep.Origin = new Vector3(now.X, now.Y + sweep.AnchorLift, now.Z);
     }
 
     private int SweepRoom(ref ArcSweep sweep)

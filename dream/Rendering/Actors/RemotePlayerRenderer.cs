@@ -109,7 +109,7 @@ public sealed class RemotePlayerRenderer : IDisposable
                 PlayerAnimationStateMachine.LegTwist(
                     remotePlayer.Pose.Facing.X, remotePlayer.Pose.Facing.Z, remotePlayer.TravelDirection.X, remotePlayer.TravelDirection.Z),
                 remotePlayer.SkillSwingSerial);
-            animation.Machine.SeedRemote(in inputs);
+            animation.Machine.SeedRemote(in inputs, remotePlayer.SkillSwingAgeSeconds);
             PlayerAnimationFrame frame = animation.Machine.Update(in inputs, deltaTime);
             _clipTracker.ApplyFrame(remotePlayer.ActorId, in frame, instance);
             instance.Update(deltaTime);

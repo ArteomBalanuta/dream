@@ -29,4 +29,7 @@ public readonly record struct RemotePlayerPresentationState(
     float DeathAgeSeconds = float.PositiveInfinity,
     Vector3 TravelDirection = default,
     // Counts MeleeArc cast events the snapshots carried for this player; a new value plays the cleave clip.
-    int SkillSwingSerial = 0);
+    int SkillSwingSerial = 0,
+    // Seconds since the latest counted skill swing (infinity when none), so a remote player first drawn long after
+    // its cast does not replay it.
+    float SkillSwingAgeSeconds = float.PositiveInfinity);

@@ -146,41 +146,86 @@ public class ClientScenePresenterSkillSwingTests
     private static PlayerAnimationInputs Draw(int skillSerial) =>
         new(true, 0f, false, 0, 0, false, false, false, 0f, skillSerial);
 
-    // A remote player first seen in the same snapshot as their cast: the presenter counts 1 before anything is drawn,
-    // and the renderer seeds the machine through SeedRemote, so that first cleave still plays.
+    private static RemotePlayerPresentationState StateOf(ClientScenePresenter presenter, double tick, int actorId)
+    {
+        foreach (RemotePlayerPresentationState state in presenter.BuildRemotePlayerStates(tick))
+        {
+            if (state.ActorId == actorId)
+            {
+                return state;
+            }
+        }
+
+        throw new InvalidOperationException($"no remote player {actorId}");
+    }
+
+    private static PlayerAnimationFrame SeedAndUpdate(PlayerAnimationStateMachine machine, int serial, float ageSeconds)
+    {
+        PlayerAnimationInputs inputs = Draw(serial);
+        machine.SeedRemote(in inputs, ageSeconds);
+        return machine.Update(in inputs, 1f / 60f);
+    }
+
+    // A remote player first seen in the same snapshot as their cast, drawn at once: the swing is fresh, so it plays.
     [Fact]
-    public void ACastInTheSnapshotThatCreatesThePlayer_StillPlaysTheFirstCleave()
+    public void ACastInTheSnapshotThatCreatesThePlayer_DrawnImmediately_PlaysTheCleave()
     {
         ClientScenePresenter presenter = new(Local);
         presenter.ApplySnapshot(Snapshot(10, [Remote(2, "remote-a")], [Cast(2)]));
-        int serial = SerialOf(presenter, 10, 2);
-        Assert.Equal(1, serial);
+        RemotePlayerPresentationState state = StateOf(presenter, 10, 2);
+        Assert.Equal(1, state.SkillSwingSerial);
+        Assert.True(state.SkillSwingAgeSeconds < PlayerAnimationStateMachine.CleaveSeconds);
 
-        PlayerAnimationStateMachine machine = new();
-        PlayerAnimationInputs inputs = Draw(serial);
-        machine.SeedRemote(in inputs);
-        PlayerAnimationFrame frame = machine.Update(in inputs, 1f / 60f);
+        PlayerAnimationFrame frame = SeedAndUpdate(new PlayerAnimationStateMachine(), state.SkillSwingSerial, state.SkillSwingAgeSeconds);
 
         Assert.Equal(PlayerAnimationStateMachine.CleaveClip, frame.Clip);
     }
 
-    // Older casts seen before the first draw (a model that finished loading late) are not replayed.
     [Fact]
-    public void StaleCastsCountedBeforeTheFirstDraw_AreNotReplayed()
+    public void ARemoteWithNoCast_HasNoSwingAge()
+    {
+        ClientScenePresenter presenter = new(Local);
+        presenter.ApplySnapshot(Snapshot(10, [Remote(2, "remote-a")], null));
+
+        Assert.True(float.IsPositiveInfinity(StateOf(presenter, 10, 2).SkillSwingAgeSeconds));
+    }
+
+    // A cast long before the first drawn frame (the player walked into view minutes later) does not replay.
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void ACastLongBeforeTheFirstDraw_IsNotReplayed(int serial)
+    {
+        PlayerAnimationFrame frame = SeedAndUpdate(
+            new PlayerAnimationStateMachine(), serial, PlayerAnimationStateMachine.CleaveSeconds + 0.01f);
+
+        Assert.NotEqual(PlayerAnimationStateMachine.CleaveClip, frame.Clip);
+    }
+
+    // Several casts counted before the first draw, the newest still fresh: only the newest plays, once.
+    [Fact]
+    public void SeveralCastsWithAFreshNewest_PlayOnlyTheNewestOnce()
     {
         ClientScenePresenter presenter = new(Local);
         ActorSnapshot[] remotes = [Remote(2, "remote-a")];
         presenter.ApplySnapshot(Snapshot(10, remotes, [Cast(2)]));
         presenter.ApplySnapshot(Snapshot(12, remotes, [Cast(2), Cast(2)]));
-        int serial = SerialOf(presenter, 12, 2);
-        Assert.Equal(3, serial);
+        RemotePlayerPresentationState state = StateOf(presenter, 12, 2);
+        Assert.Equal(3, state.SkillSwingSerial);
 
         PlayerAnimationStateMachine machine = new();
-        PlayerAnimationInputs inputs = Draw(serial);
-        machine.SeedRemote(in inputs);
-        PlayerAnimationFrame frame = machine.Update(in inputs, 1f / 60f);
+        PlayerAnimationFrame first = SeedAndUpdate(machine, state.SkillSwingSerial, state.SkillSwingAgeSeconds);
+        Assert.Equal(PlayerAnimationStateMachine.CleaveClip, first.Clip);
 
-        Assert.NotEqual(PlayerAnimationStateMachine.CleaveClip, frame.Clip);
+        // Same serial next frame: nothing queued behind it, and the clip runs out.
+        PlayerAnimationInputs again = Draw(state.SkillSwingSerial);
+        PlayerAnimationFrame last = first;
+        for (int i = 0; i < 120; i++)
+        {
+            last = machine.Update(in again, 1f / 60f);
+        }
+
+        Assert.NotEqual(PlayerAnimationStateMachine.CleaveClip, last.Clip);
     }
 
     // The first-serial-is-a-baseline rule for attack serials is unchanged by seeding.
@@ -194,5 +239,22 @@ public class ClientScenePresenterSkillSwingTests
         PlayerAnimationFrame frame = machine.Update(in inputs, 1f / 60f);
 
         Assert.NotEqual(PlayerAnimationStateMachine.MeleeClip, frame.Clip);
+    }
+
+    // The FX caster locator: the local actor resolves to the local position, a tracked remote to its pose, a stranger to nothing.
+    [Fact]
+    public void LocateFxCaster_ChoosesTheLocalPositionForTheLocalActorAndThePresenterForRemotes()
+    {
+        ClientScenePresenter presenter = new(Local);
+        presenter.ApplySnapshot(Snapshot(10, [Remote(2, "remote-a")], null));
+        Vector3 localPosition = new(1f, 2f, 3f);
+
+        Assert.True(Dream.Client.Scenes.PlayScene.LocateFxCaster(1, 1, localPosition, presenter, 10, out Vector3 local));
+        Assert.Equal(localPosition, local);
+
+        Assert.True(Dream.Client.Scenes.PlayScene.LocateFxCaster(2, 1, localPosition, presenter, 10, out Vector3 remote));
+        Assert.Equal(new Vector3(10f, 1.5f, 10f), remote);
+
+        Assert.False(Dream.Client.Scenes.PlayScene.LocateFxCaster(99, 1, localPosition, presenter, 10, out _));
     }
 }

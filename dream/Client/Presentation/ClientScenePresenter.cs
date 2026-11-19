@@ -351,7 +351,10 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
                     ? float.PositiveInfinity
                     : (float)Stopwatch.GetElapsedTime(entry.DiedAtTimestamp).TotalSeconds,
                 entry.IsMoving ? entry.TravelDirection() : Vector3.Zero,
-                entry.SkillSwingSerial));
+                entry.SkillSwingSerial,
+                entry.SkillSwingTimestamp == 0L
+                    ? float.PositiveInfinity
+                    : (float)Stopwatch.GetElapsedTime(entry.SkillSwingTimestamp).TotalSeconds));
         }
 
         return _remotePlayerStates;
@@ -559,6 +562,7 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
             if (cast.Kind == SkillKind.MeleeArc && _remotePlayers.TryGetValue(cast.ActorId, out RemotePlayerEntry? entry))
             {
                 entry.SkillSwingSerial++;
+                entry.SkillSwingTimestamp = Stopwatch.GetTimestamp();
             }
         }
     }
@@ -716,6 +720,9 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
 
         // MeleeArc cast events seen for this player; a new value is a new Cleave swing.
         public int SkillSwingSerial { get; set; }
+
+        // Stopwatch timestamp of the latest counted skill swing; 0 when none.
+        public long SkillSwingTimestamp { get; set; }
 
         public bool Airborne { get; set; }
 
