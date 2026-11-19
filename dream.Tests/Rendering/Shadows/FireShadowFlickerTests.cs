@@ -394,7 +394,10 @@ public class FireShadowFlickerTests
     public void The_Scene_Feeds_The_Placed_Fires_The_Presentation_Clock_So_Production_Is_Not_Frozen()
     {
         string placed = FireShadowSamplingMirrorTests.Read("dream", "Client", "Scenes", "PlayScene.PlacedLights.cs");
-        Assert.Contains("_clientPresentationTimeSeconds);", placed);
+        Assert.Contains("FireClockSeconds);", placed);
+        // FireClockSeconds is the presentation clock unless a capture pins it with DREAM_FIRE_CLOCK.
+        string effects = FireShadowSamplingMirrorTests.Read("dream", "Client", "Scenes", "PlayScene.Effects.cs");
+        Assert.Contains("FireClockPin.Resolve(_clientPresentationTimeSeconds)", effects);
         Assert.Contains("lights,", placed);
 
         // And PlacedLightIndex honours it: with a clock the brazier is built from FireFlicker.Sample, without one it is the base light.

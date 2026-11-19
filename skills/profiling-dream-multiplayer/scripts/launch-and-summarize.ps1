@@ -158,6 +158,7 @@ $processes = New-Object System.Collections.Generic.List[object]
 $commonEnv = @{
     DREAM_RENDER_PERF_LOG = '1'
     DREAM_NET_DIAGNOSTICS = '1'
+    DREAM_VSYNC = 'off'
 }
 
 Write-Section 'Launch'

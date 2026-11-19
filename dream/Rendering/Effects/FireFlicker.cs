@@ -161,6 +161,14 @@ public static class FireFlicker
         }
     }
 
+    /// <summary>
+    /// The multiplier of a fire's radius at an intensity multiplier: the ONE place the radius-follows-intensity rule
+    /// lives, so the producers (through <see cref="Sample"/>) and the shadow ranking (which divides it back out) agree.
+    /// A missing, non-positive or non-finite intensity is no flicker: 1.
+    /// </summary>
+    public static float RadiusScaleOf(float intensity) =>
+        float.IsFinite(intensity) && intensity > 0f ? 1f + RadiusFollow * (intensity - 1f) : 1f;
+
     public static float Amplitude(FireFlickerKind kind) => kind switch
     {
         FireFlickerKind.HeldTorch => TorchAmplitude,
@@ -191,7 +199,7 @@ public static class FireFlicker
         f *= 1f - GustDepth * Gust(t, seed);
         f = Math.Clamp(f, 1f - amplitude, 1f + amplitude);
 
-        float radiusScale = 1f + RadiusFollow * (f - 1f);
+        float radiusScale = RadiusScaleOf(f);
         // The wander: the same three octaves on every axis, but with per-axis constant phase terms
         // that are not proportional between the axes, so no two axes are a fixed phase shift of each
         // other at a shared frequency and the path the flame traces does not close into an ellipse.

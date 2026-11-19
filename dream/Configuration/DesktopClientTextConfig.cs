@@ -96,6 +96,7 @@ public static class DesktopClientTextConfig
             $"damage_text_speed={Format(config.FloatingCombatText.MotionSpeedMultiplier)}",
             $"damage_text_crit_depth={Format(config.FloatingCombatText.CriticalDepthMultiplier)}",
             $"max_fps={config.MaxFramesPerSecond}",
+            $"vsync={VSyncSettings.Describe(config.VSync)}",
             $"msaa={config.MsaaSamples}",
             $"admin_hud={(config.AdminHud ? 1 : 0)}",
             $"ui_scale={Format(config.UiScale)}",
@@ -150,6 +151,12 @@ public static class DesktopClientTextConfig
         if (key == "audio_enabled")
         {
             config.AudioEnabled = HudOptions.ParseFlag(value) ?? true;
+            return;
+        }
+
+        if (key == "vsync")
+        {
+            config.VSync = VSyncSettings.Parse(value) ?? VSyncSettings.Default;
             return;
         }
 

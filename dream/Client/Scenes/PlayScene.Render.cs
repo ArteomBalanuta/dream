@@ -28,6 +28,16 @@ public partial class PlayScene
     private BoundaryMistVoidRenderer? _boundaryMist;
     private readonly BoundaryMistSettings _boundaryMistSettings = BoundaryMistSettings.FromEnvironment();
 
+    // Debug-group names for frame captures (RenderDoc, Nsight); they cost nothing unless GPU markers are on.
+    private static readonly GpuDebugLabel ShadowsGroup = new("Shadows");
+    private static readonly GpuDebugLabel WorldGroup = new("World");
+    private static readonly GpuDebugLabel ActorsGroup = new("Actors");
+    private static readonly GpuDebugLabel BoundaryVoidGroup = new("Boundary void");
+    private static readonly GpuDebugLabel EffectsGroup = new("Effects");
+    private static readonly GpuDebugLabel DebugOverlaysGroup = new("Debug overlays");
+    private static readonly GpuDebugLabel ViewModelGroup = new("View model");
+    private static readonly GpuDebugLabel HudGroup = new("HUD");
+
     public void Render(FrameEventArgs args, bool windowFocused, MouseState mouseState, Action<Vector2i> applyClientSize)
     {
         // Render primarily consumes scene/runtime state for desktop presentation, even though
@@ -90,7 +100,10 @@ public partial class PlayScene
         gpuTimer.BeginSection(GpuTimerSection.Shadows);
         // SetFrameLighting ran above (PrepareShadows writes the sun matrix into that block and uploads it), and the focus is
         // the one the fog and the props use: the camera's isometric focus, else the camera itself.
-        _render.PrepareShadows(presentation.Camera, _render.FogOrigin ?? presentation.Camera.Position, presentation.VisibleWorld);
+        using (GpuDebug.Scope(ShadowsGroup))
+        {
+            _render.PrepareShadows(presentation.Camera, _render.FogOrigin ?? presentation.Camera.Position, presentation.VisibleWorld);
+        }
         long worldDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.World);
         // The boundary mist wall's inputs go up with the frame lighting inside DrawWorld.
@@ -99,6 +112,7 @@ public partial class PlayScene
             _runtime.Map.Depth,
             _clientPresentationTimeSeconds,
             _boundaryMistSettings.Enabled);
+        GpuDebug.Push(WorldGroup);
         WorldRenderStats worldRenderStats = _render.World.DrawWorld(presentation);
         if (!_readiness.Ready)
         {
@@ -109,10 +123,12 @@ public partial class PlayScene
         // follows the placed lights collected above, so each light has its bowl.
         _render.Props.Update(presentation.VisibleWorld, _render.PlacedLights);
         _render.Props.Draw(presentation.Camera, _render.FogOrigin ?? presentation.Camera.Position);
+        GpuDebug.Pop();
         // Actors runs from the enemies through the sky, then the Effects section takes over. A
         // section cannot reopen within a frame, so the debug and viewmodel draws that follow are
         // untimed. BeginSection ends the open section first, so the timer queries never nest.
         gpuTimer.BeginSection(GpuTimerSection.Actors);
+        GpuDebug.Push(ActorsGroup);
         long enemyDrawStart = Stopwatch.GetTimestamp();
         _render.Enemies.DrawAtRenderTick(
             presentation.Camera,
@@ -154,6 +170,7 @@ public partial class PlayScene
         double remotePlayerDrawMilliseconds = Stopwatch.GetElapsedTime(remotePlayerDrawStart).TotalMilliseconds;
         LogRemotePlayerRenderDiagnostics(presentation.Camera, remotePlayerStates, remoteRenderStats);
         DrawEconomyEntities(presentation.Camera, (float)args.Time);
+        GpuDebug.Pop();
 
         // Sky pass, still inside the Actors GPU section: after every opaque actor, so it shades only
         // the pixels left at depth 1, and before the debug and viewmodel passes. It restores the
@@ -166,12 +183,16 @@ public partial class PlayScene
 
         // Boundary void pass, every camera mode: smoke on the pixels whose view ray reaches the floor
         // plane outside the map. After the sky, so the smoke covers it; it restores the world state.
+        GpuDebug.Push(BoundaryVoidGroup);
         if (_boundaryMistSettings.Enabled)
         {
             _boundaryMist?.Draw(presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
         }
+        GpuDebug.Pop();
 
+        GpuDebug.Push(EffectsGroup);
         DrawEffectsPass(in sky, in presentation, gpuTimer, (float)args.Time);
+        GpuDebug.Pop();
 
         DedicatedServerPerformanceSnapshot serverPerformance =
             _localServer?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
@@ -219,11 +240,13 @@ public partial class PlayScene
         if (_settings.ShowCollisionGeometry)
         {
             long debugDrawStart = Stopwatch.GetTimestamp();
+            GpuDebug.Push(DebugOverlaysGroup);
             _render.Debug.DrawCollisionBodies(presentation.MapCollisionBodies, presentation.Camera);
             if (presentation.PlayerCollisionBody != null)
             {
                 _render.DrawCollisionBody(presentation.PlayerCollisionBody, presentation.Camera);
             }
+            GpuDebug.Pop();
             performance = performance with
             {
                 DebugDrawMilliseconds = Stopwatch.GetElapsedTime(debugDrawStart).TotalMilliseconds
@@ -233,7 +256,10 @@ public partial class PlayScene
         if (_settings.CameraViewMode == CameraViewMode.FirstPerson)
         {
             long viewModelDrawStart = Stopwatch.GetTimestamp();
-            _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
+            using (GpuDebug.Scope(ViewModelGroup))
+            {
+                _render.ViewModels.Draw(_viewModelController.CurrentFrameState);
+            }
             performance = performance with
             {
                 ViewModelDrawMilliseconds = Stopwatch.GetElapsedTime(viewModelDrawStart).TotalMilliseconds
@@ -242,6 +268,7 @@ public partial class PlayScene
 
         long hudDrawStart = Stopwatch.GetTimestamp();
         gpuTimer.BeginSection(GpuTimerSection.Hud);
+        GpuDebug.Push(HudGroup);
         _render.WorldTransferHud = CaptureWorldTransferHudState(_remoteClient);
         _render.HudScene = new HudSceneState(LastReportedPlayerPosition);
         AdvanceHudCaptureScript();
@@ -261,6 +288,7 @@ public partial class PlayScene
                 performance,
                 _scenePresenter,
                 RemotePlayerRenderTick);
+        GpuDebug.Pop();
         gpuTimer.EndFrame();
         _lastHudDrawMilliseconds = Stopwatch.GetElapsedTime(hudDrawStart).TotalMilliseconds;
         LogRenderPerformanceIfEnabled(args, performance, windowFocused);

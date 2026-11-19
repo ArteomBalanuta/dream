@@ -114,7 +114,8 @@ public class GrimLookHistogramTests(ITestOutputHelper output)
         Assert.True(shadowed.MeanSat <= MeanSatMax, $"{name}: mean saturation {shadowed.MeanSat}");
     }
 
-    // The sun and cloud shadows multiply the SUN term only (dreamDirectShaded), so the unshadowed mirror stays truthful only
+    // The cloud mask multiplies the SUN term only and the map's visibility the dominant light's term (dreamDirectShaded; at night the
+    // moon's, but this mirror has no occluders, so its maths is unchanged), so the unshadowed mirror stays truthful only
     // while the sun contributes nothing at these hours. Pin that: if the sky keyframes ever put real sun here, this fails and
     // the mirror must gain the sun visibility and the cloud mask.
     [Theory]

@@ -22,25 +22,28 @@ FireShadowSamplingMirrorTests / ShadowDisabledIsIdentityTests on the C# side:
     direct(n)  = max(dot(n,sunDir),0)*sunI*sunCol
                + max(dot(n,moonDir),0)*moonI*moonCol                            lighting.glsl dreamDirect
     directShaded(n,p) = max(dot(n,sunDir),0)*sunI*sunCol*sunMask*sunV
-               + max(dot(n,moonDir),0)*moonI*moonCol                            clouds.glsl dreamDirectShaded
+               + max(dot(n,moonDir),0)*moonI*moonCol*moonV                      clouds.glsl dreamDirectShaded
     points: s = d^2/r^2 ; f = clamp(1-s,0,1)^2 / (1 + 1.5*s)
             contribution = colour * f * (0.25 + 0.75*max(dot(n,l),0)) * lightV  pointLights.glsl dreamPointLights
     albedo = texel/255 * baseColorFactor        # the texture bytes ARE linear albedo
 
-sunMask = 1 - cloudShadowStrength*cover(sun ray at the cloud plane) and sunV = dreamSunVisibility(p,n), the sun
-map's visibility; lightV = dreamFireVisibility, the fire atlas's visibility for that light. Each is 1.0 when
-nothing is modelled, and the engine applies them to the SUN term and to each point light only: the moon term is
-never dimmed. direct(n) (dreamDirect) is directShaded with sunMask = sunV = 1 and stays the contract of the
-callers that have no fragment position (boundaryMist, warMist).
+sunMask = 1 - cloudShadowStrength*cover(sun ray at the cloud plane); the shadow map's visibility v =
+dreamSunVisibility(p,n) belongs to the DOMINANT light, the one the map was rendered from (dreamShadowMapIsSun):
+sunV = v and moonV = 1 when the sun dominates, sunV = 1 and moonV = v when the moon does. lightV =
+dreamFireVisibility, the fire atlas's visibility for that light. Each is 1.0 when nothing is modelled, and the
+engine applies them to the dominant directional term and to each point light. direct(n) (dreamDirect) is
+directShaded with sunMask = sunV = 1 and stays the contract of the callers that have no fragment position
+(boundaryMist, warMist).
 
 What this instrument does NOT model, stated plainly. It has no scene geometry and no cloud sheet, so it measures
-the UNOCCLUDED case (sunMask = sunV = lightV = 1 unless a caller passes otherwise via Directional.shade and
-PointLight.visibility). That is exact where it is used: the A3/M3 figure is measured at night (night_env, hours
-20:00-04:00), where the sun intensity is exactly 0 and so the cloud mask and the sun map multiply nothing, and the
-moon is never dimmed. For the fire it is a LOWER BOUND: with real fire shadows the figure self-shadows (an arm
-across the torso, a head over the shoulders), which can only widen the measured value spread, never narrow it,
-so a figure that meets A3 here meets it in the game. At a DAY hour the engine would dim the sun by the cloud
-shadow (coverage 0.30-0.45 all day) and by the sun map; night_env refuses day hours rather than quietly
+the UNOCCLUDED case (sunMask = sunV = moonV = lightV = 1 unless a caller passes otherwise via Directional.shade
+and PointLight.visibility). With no geometry moonV is 1, so the instrument is exact for the unoccluded case: the
+A3/M3 figure is measured at night (night_env, hours 20:00-04:00), where the sun intensity is exactly 0 and so the
+cloud mask multiplies nothing. Once figures shadow themselves the moon map can dim the moon term too, which, like
+the fire, can only widen the measured spread. For the fire it is a LOWER BOUND: with real fire shadows the figure
+self-shadows (an arm across the torso, a head over the shoulders), which can only widen the measured value spread,
+never narrow it, so a figure that meets A3 here meets it in the game. At a DAY hour the engine would dim the sun by
+the cloud shadow (coverage 0.30-0.45 all day) and by the sun map; night_env refuses day hours rather than quietly
 disagreeing with the engine.
 
 One deliberate deviation from the spec's prose: the spec writes the point window as (1-s)^2, the shader writes
@@ -115,7 +118,7 @@ def _smoothstep(e0: float, e1: float, x: float) -> float:
 class Directional:
     direction: tuple        # unit, towards the light (the shader dots the normal with it directly)
     colour: tuple           # already multiplied by its intensity
-    shade: float = 1.0      # the multiplier on this light's term: sunMask*sunV for the sun, always 1.0 for the moon
+    shade: float = 1.0      # the multiplier on this light's term: sunMask*sunV for the sun, moonV (the map's visibility when the moon dominates, else 1.0) for the moon
 
 
 @dataclass(frozen=True)
@@ -486,8 +489,11 @@ CONTRACT = (
     ("lighting.glsl", "return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb"),
     ("lighting.glsl", "+ max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;"),
     ("clouds.glsl",
-     "return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask * dreamSunVisibility(fragPos, n)"),
-    ("clouds.glsl", "+ max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;"),
+     "return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask * (sunMap ? v : 1.0)"),
+    ("clouds.glsl", "float v = dreamSunVisibility(fragPos, n);"),
+    ("clouds.glsl", "bool sunMap = dreamShadowMapIsSun();"),
+    ("clouds.glsl",
+     "+ max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb * (sunMap ? 1.0 : v);"),
     ("clouds.glsl", "sunMask = 1.0 - uCloudParams.z * dreamCloudCover(onPlane.xz);"),
     ("pointLights.glsl", "float s = d2 / (r * r);"),
     ("pointLights.glsl", "float f = clamp(1.0 - s, 0.0, 1.0);"),
@@ -501,7 +507,7 @@ HEADER_FRAGMENTS = (
     "out  = clamp(max(albedo*G, albedo*floor) * exposure + emissive, 0, 1)",
     "ambient(n) = mix(ambientGround, ambientSky, n.y*0.5 + 0.5)",
     "directShaded(n,p) = max(dot(n,sunDir),0)*sunI*sunCol*sunMask*sunV",
-    "+ max(dot(n,moonDir),0)*moonI*moonCol",
+    "+ max(dot(n,moonDir),0)*moonI*moonCol*moonV",
     "s = d^2/r^2 ; f = clamp(1-s,0,1)^2 / (1 + 1.5*s)",
     "contribution = colour * f * (0.25 + 0.75*max(dot(n,l),0)) * lightV",
 )
@@ -536,11 +542,15 @@ def check_contract_against_shaders(shader_dir=None, doc: str | None = None) -> i
     scale = float(next(l for n, l in CONTRACT if "ActorDirectScale = " in l).split("=")[1].strip(" ;"))
     if scale != ACTOR_DIRECT_SCALE:
         problems.append(f"ACTOR_DIRECT_SCALE {ACTOR_DIRECT_SCALE} != the shader's {scale}")
-    # The moon term must stay undimmed in dreamDirectShaded: exactly one factor-less moon term, no sunMask/visibility on it.
+    # The moon term carries the map visibility when the moon dominates: exactly one moon term, with the (sunMap ? 1.0 : v)
+    # select and no bare moon term left, and the sun term carries the opposite select.
     shaded = source("clouds.glsl")
-    moon_term = "+ max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;"
-    if shaded.count(moon_term) != 1:
-        problems.append("clouds.glsl: the moon term of dreamDirectShaded is no longer a bare, undimmed term")
+    bare_moon = "uMoonColor.rgb;"
+    moon_term = "uMoonColor.rgb * (sunMap ? 1.0 : v);"
+    if shaded.count(moon_term) != 1 or shaded.count(bare_moon) != 0:
+        problems.append("clouds.glsl: the moon term of dreamDirectShaded no longer carries the map visibility (dreamSunVisibility)")
+    if shaded.count("sunMask * (sunMap ? v : 1.0)") != 1:
+        problems.append("clouds.glsl: the sun term of dreamDirectShaded no longer carries the map visibility (dreamSunVisibility)")
     if problems:
         raise AssertionError("enginelook.py has diverged from the shaders:\n  " + "\n  ".join(problems))
     return len(CONTRACT) + len(HEADER_FRAGMENTS)
@@ -610,7 +620,7 @@ def _selftest() -> None:
     assert again["spread"] == two["spread"], "rasteriser is not deterministic"
 
     # the visibility multiplicands: a point light's term scales EXACTLY by its visibility, and the sun's by its shade;
-    # the moon is never dimmed (clouds.glsl applies sunMask*sunV to the sun term only)
+    # the dominant light's term carries the map visibility: sunMask*sunV on the sun, moonV on the moon
     pt = np.zeros((1, 3))
     up = np.array([[0.0, 1.0, 0.0]])
     lit_light = PointLight((0.0, 1.0, 2.0), BRAZIER_RADIUS, (1.0, 0.7, 0.4))
@@ -627,7 +637,7 @@ def _selftest() -> None:
     assert np.allclose(both[0], np.array([1.0, 1.0, 1.0]) * 0.35 + np.array([0.2, 0.3, 0.5])), both
     assert np.allclose(direct_term(up, Env((0,) * 3, (0,) * 3, 1.0, 0.0, 1.0, (Directional(sun.direction, sun.colour),), ())),
                        [[1.0, 1.0, 1.0]]), "shade defaults to 1.0: the engine contract"
-    print("visibility: point lights scale exactly by lightV, the sun by sunMask*sunV, the moon is never dimmed")
+    print("visibility: point lights scale exactly by lightV, the sun by sunMask*sunV, the moon by moonV")
 
     # the header, this module and the shaders agree - and the check really fails when they do not
     checked = check_contract_against_shaders()
@@ -639,7 +649,7 @@ def _selftest() -> None:
         for name in {n for n, _ in CONTRACT}:
             text = (_shader_dir() / name).read_text(encoding="utf-8")
             if name == "clouds.glsl":
-                text = text.replace("* sunMask * dreamSunVisibility(fragPos, n)", "* sunMask")
+                text = text.replace("* sunMask * (sunMap ? v : 1.0)", "* sunMask")
             (tmp / name).write_text(text, encoding="utf-8")
         try:
             check_contract_against_shaders(tmp)
@@ -647,6 +657,14 @@ def _selftest() -> None:
             assert "dreamSunVisibility" in str(e), e
         else:
             raise SystemExit("the contract check did not fail on a shader that dropped the sun visibility")
+        (tmp / "clouds.glsl").write_text(
+            (_shader_dir() / "clouds.glsl").read_text(encoding="utf-8").replace(" * (sunMap ? 1.0 : v);", ";"), encoding="utf-8")
+        try:
+            check_contract_against_shaders(tmp)
+        except AssertionError as e:
+            assert "moon term" in str(e), e
+        else:
+            raise SystemExit("the contract check did not fail on a shader that dropped the moon visibility")
         try:
             check_contract_against_shaders(doc=__doc__.replace("sunMask*sunV", "sunMask"))
         except AssertionError:

@@ -169,6 +169,9 @@ public sealed class Shader : IDisposable
         LightListBuffer.BindProgramBlock(program);
         BoundaryMistBuffer.BindProgramBlock(program);
         FireShadowListBuffer.BindProgramBlock(program);
+        GpuDebug.LabelObject(ObjectLabelIdentifier.Program, program,
+            Path.GetFileName(vertexPath) + "+" + Path.GetFileName(fragmentPath)
+            + (fragmentDefine != null ? " " + fragmentDefine : ""));
         GLUtils.CheckGLError("Shader creation");
     }
 

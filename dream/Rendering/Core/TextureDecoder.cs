@@ -63,7 +63,7 @@ public static class TextureDecoder
         GL.TexImage2D(
             TextureTarget.Texture2D,
             0,
-            PixelInternalFormat.Rgba,
+            PixelInternalFormat.Rgba8,
             texture.Width,
             texture.Height,
             0,
@@ -97,7 +97,7 @@ public static class TextureDecoder
         GL.TexImage2D(
             TextureTarget.Texture2D,
             0,
-            PixelInternalFormat.Rgba,
+            PixelInternalFormat.Rgba8,
             texture.Width,
             texture.Height,
             0,
@@ -117,6 +117,7 @@ public static class TextureDecoder
         GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
         if (generateMipmaps)
         {
+            TextureAnisotropy.Apply(TextureTarget.Texture2D);
             if (IsPowerOfTwo(texture.Width) && IsPowerOfTwo(texture.Height))
             {
                 // GenerateMipmap is driver defined and may clamp at the edge, which seams a tiling texture at
@@ -183,7 +184,7 @@ public static class TextureDecoder
             GL.TexImage2D(
                 TextureTarget.Texture2D,
                 index,
-                PixelInternalFormat.Rgba,
+                PixelInternalFormat.Rgba8,
                 w,
                 h,
                 0,

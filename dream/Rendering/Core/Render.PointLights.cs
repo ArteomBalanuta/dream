@@ -14,8 +14,12 @@ public partial class Render
     public const string DebugPointLightsEnvironmentVariable = "DREAM_DEBUG_POINT_LIGHTS";
     public const int MaxDebugPointLights = 64;
 
-    // Ring layout: lights on a horizontal circle around the camera, a little below eye height.
+    // Ring layout: lights on a horizontal spiral around the camera, a little below eye height. Light i sits at
+    // DebugRingDistance + i * DebugRingStep from it, so the lights have distinct ranks: with more than
+    // LightList.MaxLights in view the selection has a real cut-off, and the kept lights keep their weight except
+    // those within CutoffFadeBand of it. (On a flat circle they would all tie at the cut-off and fade to black.)
     public const float DebugRingDistance = 6f;
+    public const float DebugRingStep = 0.5f;
     public const float DebugRingHeight = -1f;
     public const float DebugLightRadius = 8f;
 
@@ -33,6 +37,8 @@ public partial class Render
     private LightList _selectedLights;
     // The CarrierActorId of each selected light, by list index (see LightSelection.SelectNearest).
     private readonly int[] _selectedLightCarriers = new int[LightList.MaxLights];
+    private readonly float[] _selectedLightFlicker = new float[LightList.MaxLights];
+    private readonly Vector3[] _selectedLightWander = new Vector3[LightList.MaxLights];
 
     public LightCollector Lights { get; } = new();
 
@@ -51,16 +57,18 @@ public partial class Render
             : 0;
 
     // Writes the ring around `camera` into `ring` (one light per element). Deterministic: the same
-    // camera position always gives the same lights.
+    // camera position always gives the same lights. SelectPointLights passes the position the selection ranks
+    // from: FogOrigin (the isometric camera focus) when the scene sets it, else the camera eye.
     public static void FillDebugPointLightRing(Span<PointLight> ring, Vector3 camera)
     {
         for (int i = 0; i < ring.Length; i++)
         {
             float angle = i * MathF.Tau / ring.Length;
+            float distance = DebugRingDistance + i * DebugRingStep;
             Vector3 position = camera + new Vector3(
-                MathF.Cos(angle) * DebugRingDistance,
+                MathF.Cos(angle) * distance,
                 DebugRingHeight,
-                MathF.Sin(angle) * DebugRingDistance);
+                MathF.Sin(angle) * distance);
             ring[i] = new PointLight(position, DebugLightRadius, DebugRingColors[i % DebugRingColors.Length]);
         }
     }
@@ -80,6 +88,6 @@ public partial class Render
         }
 
         ViewFrustum frustum = ViewFrustum.FromViewAndProjection(view, _projection);
-        LightSelection.SelectNearest(Lights.Lights, _debugPointLights, cameraPosition, in frustum, ref _selectedLights, _selectedLightCarriers);
+        LightSelection.SelectNearestFaded(Lights.Lights, _debugPointLights, cameraPosition, in frustum, ref _selectedLights, _selectedLightCarriers, _selectedLightFlicker, _selectedLightWander);
     }
 }

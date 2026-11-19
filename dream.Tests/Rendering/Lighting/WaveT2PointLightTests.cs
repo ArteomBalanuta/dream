@@ -435,15 +435,15 @@ public class WaveT2PointLightTests
         Render.FillDebugPointLightRing(b, camera);
 
         Assert.Equal(a, b);
-        foreach (PointLight light in a)
+        for (int i = 0; i < a.Length; i++)
         {
-            Vector3 offset = light.Position - camera;
+            Vector3 offset = a[i].Position - camera;
             Assert.Equal(Render.DebugRingHeight, offset.Y, 5);
-            Assert.Equal(Render.DebugRingDistance, offset.Xz.Length, 4);
-            Assert.Equal(Render.DebugLightRadius, light.Radius);
+            Assert.Equal(Render.DebugRingDistance + i * Render.DebugRingStep, offset.Xz.Length, 4);
+            Assert.Equal(Render.DebugLightRadius, a[i].Radius);
         }
 
-        // All 16 equally near: selection keeps them (the ones in view) in ring order.
+        // Selection keeps the ones in view.
         LightList list = default;
         LightSelection.SelectNearest(a, camera, ViewFrustum.FromViewAndProjection(
             Matrix4.LookAt(camera, camera - Vector3.UnitZ, Vector3.UnitY), Projection), ref list);

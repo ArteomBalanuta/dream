@@ -1,5 +1,6 @@
 using System.IO;
 using OpenTK.Mathematics;
+using OpenTK.Windowing.Common;
 using Xunit;
 using Dream.Application;
 using Dream.Configuration;
@@ -13,6 +14,41 @@ namespace Dream.Tests.Configuration;
 
 public class DesktopClientTextConfigTests
 {
+    [Theory]
+    [InlineData(VSyncMode.Off, "vsync=off")]
+    [InlineData(VSyncMode.On, "vsync=on")]
+    [InlineData(VSyncMode.Adaptive, "vsync=adaptive")]
+    public void VSync_RoundTrips_And_Is_Written_Right_After_MaxFps(VSyncMode mode, string line)
+    {
+        string path = Path.Combine(Directory.CreateTempSubdirectory().FullName, "desktop-client.txt");
+        DesktopClientTextConfig.Save(path, new DesktopClientConfig { VSync = mode });
+
+        string[] lines = File.ReadAllLines(path);
+        int maxFps = Array.FindIndex(lines, l => l.StartsWith("max_fps=", StringComparison.Ordinal));
+        Assert.Equal(line, lines[maxFps + 1]);
+        Assert.Equal(mode, DesktopClientTextConfig.LoadOrCreate(path).VSync);
+    }
+
+    [Fact]
+    public void VSync_Missing_Key_Loads_As_Adaptive()
+    {
+        string path = Path.Combine(Directory.CreateTempSubdirectory().FullName, "desktop-client.txt");
+        File.WriteAllText(path, "max_fps=120" + Environment.NewLine);
+        Assert.Equal(VSyncMode.Adaptive, DesktopClientTextConfig.LoadOrCreate(path).VSync);
+    }
+
+    [Fact]
+    public void VSync_Unknown_Value_Keeps_The_Default_And_Undefined_Enum_Is_Sanitized()
+    {
+        string path = Path.Combine(Directory.CreateTempSubdirectory().FullName, "desktop-client.txt");
+        File.WriteAllText(path, "vsync=sometimes" + Environment.NewLine);
+        Assert.Equal(VSyncSettings.Default, DesktopClientTextConfig.LoadOrCreate(path).VSync);
+
+        DesktopClientConfig config = new() { VSync = (VSyncMode)42 };
+        config.Sanitize();
+        Assert.Equal(VSyncSettings.Default, config.VSync);
+    }
+
     [Fact]
     public void LoadOrCreate_Writes_Default_File_When_Missing()
     {

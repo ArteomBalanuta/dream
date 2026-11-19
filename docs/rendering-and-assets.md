@@ -13,19 +13,39 @@ At construction time, `Render`:
 - Initializes ImGui and its supporting OpenGL resources
 - Exposes `WorldRenderer`, `DebugRenderer`, `ViewModelRenderer`, and `HudRenderer` as scene-facing collaborators
 
-The current frame order is:
+The current frame order (`PlayScene.Render.cs`; each step is a GPU debug group of the same name, see GPU debugging):
 
-1. world cubes
-2. world-space animated enemies
-3. local player model when third-person view is enabled
-4. world-space remote player models
-5. the sky (only the pixels nothing covered; see Sky and time of day)
-6. the effects pass (particles and light halos; see Effects)
-7. collision/debug overlays
-8. first-person viewmodels when first-person view is enabled
-9. HUD and ImGui
+1. Shadows: the sun (or, at night, moon) shadow map, then the fire shadow atlas
+2. World: terrain, ground scatter and props
+3. Actors: enemies, the local player (third person), remote players and economy entities; the sky shades the pixels
+   nothing covered, but only outside the isometric view, which is the only reachable one
+4. Boundary void: smoke past the map edge
+5. Effects: particles and light halos (see Effects)
+6. Debug overlays: collision geometry, when enabled
+7. View model: first-person hands, when first-person view is enabled
+8. HUD: the HUD and ImGui
 
 That ordering keeps enemy actors in the same depth-tested world layer as cubes, keeps the hands and held item visually above the world, and still lets the HUD render last.
+
+### OpenGL version, frame pacing and GPU debugging
+
+- **Context.** The client asks for an OpenGL **4.5** core context first and falls back to **3.3** core. A hidden 1x1
+  probe window is tried before the game window exists, so only context creation is ever retried
+  (`Program.RunDesktop`, `GlContextVersion`). `DREAM_GL_VERSION=3.3` skips the 4.5 attempt. The startup log prints
+  `[startup] gl: requested ..., got ...`. **No feature may depend on more than 3.3**: shaders stay `#version 330`, and
+  KHR_debug and anisotropic filtering are optional extensions behind support checks.
+- **VSync.** `vsync=off|on|adaptive` in `config/desktop-client.txt` (default `adaptive`), `DREAM_VSYNC` for one run,
+  and a row in the options menu. OpenTK's own VSync is always Off; `Game` sets `GLFW.SwapInterval` itself: 0, 1, or -1
+  for adaptive when the driver has `swap_control_tear` (else 1). Capture runs (`DREAM_HUD_CAPTURE`) are always off.
+  With VSync on, the `max_fps` sleep cap is raised to at least twice the refresh rate so it never fights the swap.
+- **Anisotropic filtering.** Mipmapped world, model and terrain textures get 8x by default (`DREAM_ANISOTROPY`: a
+  number up to 16, `<= 1` turns it off), clamped to the driver's maximum. UI, font and particle atlases do not.
+  Every texture uses a sized `Rgba8` internal format.
+- **GPU debugging.** `GpuDebug` pushes KHR_debug groups around every pass above and labels every shader program, so a
+  RenderDoc or Nsight capture reads as a tree. On in DEBUG builds or when RenderDoc is attached; `DREAM_GL_MARKERS=1|0`
+  forces it. `RenderDocHook` attaches the RenderDoc in-app API before the first context: unset `DREAM_RENDERDOC`
+  attaches only if RenderDoc already injected itself, `1` loads it from the default install path, any other value is a
+  path to `renderdoc.dll`. `DREAM_RENDERDOC_CAPTURE_FRAME=<n>` captures presented frame n.
 
 ## Shader Usage
 
@@ -439,8 +459,11 @@ Texture loading currently happens inside `AnimatedModel.LoadTexture()`. The impl
 - Reads image content from the glTF texture's primary image
 - Loads the image with `ImageSharp`
 - Flips the image vertically
-- Uploads it to OpenGL as a 2D texture
-- Generates mipmaps
+- Uploads it to OpenGL as a 2D texture (`Rgba8`)
+- Generates mipmaps and applies anisotropic filtering
+
+Only the base colour and emissive maps are decoded. The glTF normal, metallic-roughness and occlusion maps are skipped,
+because no shader samples them; using them is future work.
 
 Texture handles are stored for disposal later.
 

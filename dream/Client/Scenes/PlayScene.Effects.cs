@@ -12,6 +12,9 @@ namespace Dream.Client.Scenes;
 
 public partial class PlayScene
 {
+    // The clock the fire flickers on: the presentation clock, or the DREAM_FIRE_CLOCK pin for captures.
+    private double FireClockSeconds => FireClockPin.Resolve(_clientPresentationTimeSeconds);
+
     // The effects pass (particles and light halos). The renderer is created in the constructor
     // with the other GL resources and disposed with the scene; the simulation, the flash lights,
     // the contact shadows and the bridge that feeds them combat events are plain CPU state. All of
@@ -80,7 +83,7 @@ public partial class PlayScene
             sky.StarVisibility,
             basis,
             // The clock the lights flicker on, so a halo breathes with its own light.
-            _clientPresentationTimeSeconds);
+            FireClockSeconds);
         _fxLastNight = sky.StarVisibility;
         flashes.Advance(deltaSeconds);
         simulation.Advance(in inputs, _render.Lights.Lights);
