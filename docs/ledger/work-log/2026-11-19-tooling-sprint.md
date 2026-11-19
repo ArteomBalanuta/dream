@@ -48,3 +48,29 @@
   may need a few frames to settle.
 - The worktree inventory found 256 worktrees holding about 130 GB of build output; the tool reports and cleans
   build output only, and never removes a dirty, locked or unmerged worktree.
+
+## Review fixes (three loops)
+
+- **Unsafe data wipe.** `capture.ps1 -DataDir` resolved relative paths against the .NET working directory and guarded only
+  three paths, so `-DataDir .` could wipe a home folder. It now resolves through PowerShell, wipes only under `-OutRoot` or a
+  folder carrying its own `.dream-capture-data` marker, and refuses roots, the repo, bins, HOME and their ancestors.
+- **Silent test log.** `tools/dev/test.ps1` buffered output behind event handlers and could drop the summary line, so the
+  duration CSV recorded 0/0/0. It now streams both pipes on the main thread, exits on the real process code after a short
+  grace even if a build server holds the pipes, and forces English CLI output for the summary parse.
+- **Worktree cleanup safety.** `tools/dev/worktrees.ps1` also treats a worktree as busy when a build process names it or its
+  `obj` folders changed in the last 10 minutes, skips locked worktrees, and never cleans or removes one touched within
+  `-MinIdleHours` (default 6), so a freshly reset swarm worktree cannot be mistaken for a merged one.
+- **Scope of auto-connect and assets.** A leftover `DREAM_HUD_CAPTURE` implies auto-connect only on the local path, never
+  to a remote server. The schema script and migrations always come from next to the exe (`AssetPaths.BundledConfig`), so
+  `DREAM_ASSET_ROOT` cannot apply a work-in-progress migration to a real database.
+- **Dev command exposure.** A same-machine tunnel makes remote players look like loopback, so a dedicated server now logs a
+  warning whenever dev commands are on, and the docs say so. `/dev give` checks bag room with the inventory service's own
+  board and returns any borrowed gold piece on failure.
+- **Golden gates that could not fail.** The first gates passed a 40% night darkening and a vanished player figure. They now
+  combine per-step pixel noise, a global tone check (mean, channel means and luma percentiles) and a gain-normalised 8x8
+  block check, with limits derived from many recorded runs. A 20% darkening fails every scene and a removed player figure
+  fails noon and the wolf scene. The wolf scene had flaked because it snapped a live wolf mid-bite while a floating damage
+  number rose at a run-dependent height; it now clears the wolf and snaps a settled frame (24 of 24 fresh runs pass; the
+  removed-figure negative fails at 2.2x its limit).
+- Night and wolf scenes still cannot see sprite-sized changes inside torch-lit areas, because fire flicker is not pinnable
+  without a game change.
