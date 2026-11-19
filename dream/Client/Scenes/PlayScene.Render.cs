@@ -183,18 +183,16 @@ public partial class PlayScene
 
         // Boundary void pass, every camera mode: smoke on the pixels whose view ray reaches the floor
         // plane outside the map. After the sky, so the smoke covers it; it restores the world state.
+        GpuDebug.Push(BoundaryVoidGroup);
         if (_boundaryMistSettings.Enabled)
         {
-            using (GpuDebug.Scope(BoundaryVoidGroup))
-            {
-                _boundaryMist?.Draw(presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
-            }
+            _boundaryMist?.Draw(presentation.Camera.GetViewMatrix(), _render.ProjectionMatrix);
         }
+        GpuDebug.Pop();
 
-        using (GpuDebug.Scope(EffectsGroup))
-        {
-            DrawEffectsPass(in sky, in presentation, gpuTimer, (float)args.Time);
-        }
+        GpuDebug.Push(EffectsGroup);
+        DrawEffectsPass(in sky, in presentation, gpuTimer, (float)args.Time);
+        GpuDebug.Pop();
 
         DedicatedServerPerformanceSnapshot serverPerformance =
             _localServer?.LatestPerformance ?? DedicatedServerPerformanceSnapshot.Empty;
