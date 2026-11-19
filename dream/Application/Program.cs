@@ -6,6 +6,10 @@ using Dream.Server.Items;
 using Dream.Server.Persistence;
 using Dream.Server.Worlds;
 using Dream.Simulation.World;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Common;
+using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace Dream.Application;
 
@@ -135,9 +139,58 @@ public static class Program
         return false;
     }
 
+    // Picks the first attempt whose context can be created. A probe that throws GLFWException, while
+    // another attempt remains, means that version is unavailable; the last attempt is never probed.
+    internal static Version SelectContextVersion(
+        IReadOnlyList<Version> attempts,
+        Action<Version> probe,
+        Action<string> log)
+    {
+        for (int i = 0; i + 1 < attempts.Count; i++)
+        {
+            try
+            {
+                probe(attempts[i]);
+                return attempts[i];
+            }
+            catch (GLFWException ex)
+            {
+                log(
+                    $"[startup] gl: {GlContextVersion.Describe(attempts[i])} context unavailable ({ex.Message}), "
+                    + $"falling back to {GlContextVersion.Describe(attempts[i + 1])}");
+            }
+        }
+
+        return attempts[^1];
+    }
+
+    // Creates and destroys a hidden 1x1 core-profile window, so a refused version is found before
+    // the Game constructor has side effects.
+    private static void ProbeContext(Version version)
+    {
+        using NativeWindow probe = new(new NativeWindowSettings
+        {
+            APIVersion = version,
+            Profile = ContextProfile.Core,
+            ClientSize = new Vector2i(1, 1),
+            StartVisible = false,
+            StartFocused = false,
+        });
+    }
+
     private static int RunDesktop()
     {
-        using var game = new Game();
+        IReadOnlyList<Version> attempts = GlContextVersion.AttemptsFromEnvironment();
+        Version version = attempts[0];
+        if (attempts.Count > 1)
+        {
+            // GLFW init failures (no display, no driver) are not a version problem and propagate here.
+            GLFWProvider.EnsureInitialized();
+            version = SelectContextVersion(attempts, ProbeContext, Console.WriteLine);
+        }
+
+        // Game is constructed once, with no retry: only the context creation above is ever retried.
+        using var game = new Game(version);
         try
         {
             game.Run();
