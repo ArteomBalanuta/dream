@@ -113,11 +113,14 @@ public static class FireShadowAtlas
             // it breathes with (FireFlicker.RadiusScaleOf, the one formula the producers use) out of the radius, because the
             // windowed falloff is far more radius-sensitive than colour-sensitive near the edge. The flame's positional
             // wander is undone too: the producer's offset (wander[i], zero when absent) is subtracted, so the score is measured from
-            // the fire's resting position. The slot itself still uses the wandering position.
+            // the fire's resting position (a non-finite offset counts as zero). The slot itself still uses the wandering position.
+            // Inside the 16-light cut-off fade band the ranking still follows the fade weight, which uses the live positions
+            // (only with >16 candidates and a fire within 2 m of the cut-off).
             bool valid = i < flicker.Length && float.IsFinite(flicker[i]) && flicker[i] > 0f;
             float steady = valid ? 1f / flicker[i] : 1f;
             float radius = valid ? positionRadius.W / FireFlicker.RadiusScaleOf(flicker[i]) : positionRadius.W;
-            Vector3 rest = positionRadius.Xyz - (i < wander.Length ? wander[i] : Vector3.Zero);
+            bool wanders = i < wander.Length && float.IsFinite(wander[i].X) && float.IsFinite(wander[i].Y) && float.IsFinite(wander[i].Z);
+            Vector3 rest = positionRadius.Xyz - (wanders ? wander[i] : Vector3.Zero);
             float score = Score(list.Color[i].Xyz * steady, rest, radius, focus);
             if (!float.IsFinite(score))
             {

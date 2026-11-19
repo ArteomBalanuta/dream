@@ -7,7 +7,8 @@ using Xunit;
 
 namespace Dream.Tests.Rendering.Shadows;
 
-// The fire shadow slots are ranked by the STEADY light (colour / Flicker, radius / RadiusScaleOf(Flicker)), so near-tied fires
+// The fire shadow slots are ranked by the STEADY light (colour / Flicker, radius / RadiusScaleOf(Flicker), resting position
+// = Position - Wander), so near-tied fires
 // do not swap slots as their flames flicker. The lights are built exactly as the producers build them (position + Offset,
 // radius * RadiusScale, colour * Intensity). The synthetic negatives rank by the old, partial rules and must swap.
 public class FireShadowSteadyRankTests
@@ -218,6 +219,31 @@ public class FireShadowSteadyRankTests
         Assert.Equal(a, b);
     }
 
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void BadWander_RanksFromTheLivePosition(float bad)
+    {
+        Vector3[] wander = new Vector3[LightList.MaxLights];
+        Array.Fill(wander, new Vector3(0f, bad, 0f));
+        int[] a = new int[ShadowSettings.MaxCastingFireCount];
+        int[] b = new int[ShadowSettings.MaxCastingFireCount];
+        LightList list = default;
+        list.Count = 3;
+        for (int i = 0; i < 3; i++)
+        {
+            // Nearer lights last, so a ranking that works (rather than skipping every NaN score) reverses the index order.
+            list.PositionRadius[i] = new Vector4(Focus + new Vector3(0f, 0f, 1f + (2f * (2 - i))), 8f);
+            list.Color[i] = new Vector4(1f, 1f, 1f, 0f);
+        }
+
+        int expected = FireShadowAtlas.SelectSlots(in list, Focus, 4, a);
+        Assert.Equal(3, expected);
+        Assert.Equal(expected, FireShadowAtlas.SelectSlots(in list, Focus, 4, b, default, wander));
+        Assert.Equal(a, b);
+    }
+
     [Fact]
     public void ParallelArrays_StayAlignedThroughInsertions()
     {
@@ -245,11 +271,15 @@ public class FireShadowSteadyRankTests
         }
 
         ShadowFrame frame = default;
-        FireShadowAtlas.FillSlots(in list, Focus, 4, 1f, ref frame, carriers, flickers);
+        FireShadowAtlas.FillSlots(in list, Focus, 4, 1f, ref frame, carriers, flickers, wanders);
         Assert.Equal(4, frame.FireCount);
         for (int s = 0; s < frame.FireCount; s++)
         {
             Assert.Equal(carriers[frame.Fires[s].LightIndex], frame.Fires[s].CarrierActorId);
+            // The slot keeps the LIVE (wandering) position and far plane, not the resting one.
+            Vector4 live = list.PositionRadius[frame.Fires[s].LightIndex];
+            Assert.Equal(live.Xyz, frame.Fires[s].Position);
+            Assert.Equal(FireShadowAtlas.FarPlane(live.W), frame.Fires[s].Far, 5);
         }
     }
 }
