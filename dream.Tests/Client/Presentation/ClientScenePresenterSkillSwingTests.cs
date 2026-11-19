@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Client.Presentation;
+using Dream.Rendering.Actors;
 using Dream.Multiplayer.Protocol;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Content;
@@ -140,5 +141,58 @@ public class ClientScenePresenterSkillSwingTests
 
         Assert.Equal(1, SerialOf(presenter, 12, 2));
         Assert.Equal(1, SerialOf(presenter, 12, 3));
+    }
+
+    private static PlayerAnimationInputs Draw(int skillSerial) =>
+        new(true, 0f, false, 0, 0, false, false, false, 0f, skillSerial);
+
+    // A remote player first seen in the same snapshot as their cast: the presenter counts 1 before anything is drawn,
+    // and the renderer seeds the machine through SeedRemote, so that first cleave still plays.
+    [Fact]
+    public void ACastInTheSnapshotThatCreatesThePlayer_StillPlaysTheFirstCleave()
+    {
+        ClientScenePresenter presenter = new(Local);
+        presenter.ApplySnapshot(Snapshot(10, [Remote(2, "remote-a")], [Cast(2)]));
+        int serial = SerialOf(presenter, 10, 2);
+        Assert.Equal(1, serial);
+
+        PlayerAnimationStateMachine machine = new();
+        PlayerAnimationInputs inputs = Draw(serial);
+        machine.SeedRemote(in inputs);
+        PlayerAnimationFrame frame = machine.Update(in inputs, 1f / 60f);
+
+        Assert.Equal(PlayerAnimationStateMachine.CleaveClip, frame.Clip);
+    }
+
+    // Older casts seen before the first draw (a model that finished loading late) are not replayed.
+    [Fact]
+    public void StaleCastsCountedBeforeTheFirstDraw_AreNotReplayed()
+    {
+        ClientScenePresenter presenter = new(Local);
+        ActorSnapshot[] remotes = [Remote(2, "remote-a")];
+        presenter.ApplySnapshot(Snapshot(10, remotes, [Cast(2)]));
+        presenter.ApplySnapshot(Snapshot(12, remotes, [Cast(2), Cast(2)]));
+        int serial = SerialOf(presenter, 12, 2);
+        Assert.Equal(3, serial);
+
+        PlayerAnimationStateMachine machine = new();
+        PlayerAnimationInputs inputs = Draw(serial);
+        machine.SeedRemote(in inputs);
+        PlayerAnimationFrame frame = machine.Update(in inputs, 1f / 60f);
+
+        Assert.NotEqual(PlayerAnimationStateMachine.CleaveClip, frame.Clip);
+    }
+
+    // The first-serial-is-a-baseline rule for attack serials is unchanged by seeding.
+    [Fact]
+    public void SeedRemote_StillBaselinesTheAttackSerial()
+    {
+        PlayerAnimationStateMachine machine = new();
+        PlayerAnimationInputs inputs = new(true, 0f, false, 4, 0, true, false, false, 0f, 0);
+        machine.SeedRemote(in inputs);
+
+        PlayerAnimationFrame frame = machine.Update(in inputs, 1f / 60f);
+
+        Assert.NotEqual(PlayerAnimationStateMachine.MeleeClip, frame.Clip);
     }
 }

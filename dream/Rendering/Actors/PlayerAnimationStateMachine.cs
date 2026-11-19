@@ -277,6 +277,27 @@ public sealed class PlayerAnimationStateMachine
             ? WalkClip
             : clipName;
 
+    // The most skill swings a remote player can have counted and still have the newest one be the cast of the very
+    // snapshot that first showed them.
+    public const int FirstSightingSwingSerial = 1;
+
+    // Baselines a remote player's machine on the first frame it is drawn. Attack and hit serials baseline on what
+    // they are (a first serial only sets the baseline). A skill serial of FirstSightingSwingSerial is the cast
+    // carried by the snapshot that created the player, which the presenter counts before anything is drawn, so it
+    // baselines at 0 and that first swing still plays; a larger serial is older casts, and baselines as it is.
+    public void SeedRemote(in PlayerAnimationInputs inputs)
+    {
+        if (_seeded)
+        {
+            return;
+        }
+
+        _seeded = true;
+        _lastAttackSerial = inputs.AttackSerial;
+        _lastHitSerial = inputs.HitSerial;
+        _lastSkillSwingSerial = inputs.SkillSwingSerial == FirstSightingSwingSerial ? 0 : inputs.SkillSwingSerial;
+    }
+
     public PlayerAnimationFrame Update(in PlayerAnimationInputs inputs, float deltaSeconds)
     {
         float dt = Math.Clamp(deltaSeconds, 0f, 0.25f);

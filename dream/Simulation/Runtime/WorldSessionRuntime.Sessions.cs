@@ -305,6 +305,9 @@ public sealed partial class WorldSessionRuntime
         player.ProtectedThroughTick = 0;
         player.ProtectionHeldSinceTick = 0;
         _pendingLoot.Remove(sessionId);
+        // A swing in flight dies with the occupant: the primary seat's combatant is reused, so a rejoin would
+        // otherwise pass the same-combatant check of the swing's re-validation and finish it.
+        CancelMeleeSwings(sessionId);
         // A session id can be reused by a later join: it must not inherit this one's kill credit.
         IReadOnlyList<EnemyActor> creditedEnemies = _enemies.ActiveActors;
         for (int i = 0; i < creditedEnemies.Count; i++)

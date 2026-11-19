@@ -239,4 +239,98 @@ public sealed class MeleeSwingWindowTests
         rig.Tick(Window + 5);
         Assert.Equal(2, rig.Hits.Count);
     }
+
+    // ---- PvP: the same re-checks apply to a player in the cone.
+
+    private static readonly PlayerSessionId B = new("swing-b");
+
+    // A second seat standing in A's arc with PvP on and both seats past join protection.
+    private static IAuthoritativePlayerTarget AddVictim(Rig rig)
+    {
+        rig.Runtime.PvpEnabled = true;
+        rig.Runtime.AttachRemoteSession(B, "Bob");
+        rig.Tick(10);
+        WaveIRuntimeKit.EndProtection(rig.Runtime, A);
+        WaveIRuntimeKit.EndProtection(rig.Runtime, B);
+        IAuthoritativePlayerTarget victim = WaveIRuntimeKit.Target(rig.Runtime, B.Value);
+        Vector3 facing = new(rig.Target.Facing.X, 0f, rig.Target.Facing.Z);
+        facing.Normalize();
+        victim.SetWorldPosition(rig.Target.Position + (facing * 1.5f));
+        victim.Combatant.Health.SetAuthoritativeState(10_000, 10_000);
+        return victim;
+    }
+
+    [Fact]
+    public void APlayerInTheCone_IsHitInTheWindow_WhichProvesThePvpRigsBelowCanFail()
+    {
+        using Rig rig = new();
+        IAuthoritativePlayerTarget victim = AddVictim(rig);
+        Assert.True(rig.Cast().Accepted);
+
+        rig.Tick(Window + 5);
+
+        Assert.True(victim.Combatant.Health.CurrentHealth < 10_000);
+    }
+
+    [Fact]
+    public void AVictimWhoGainsSpawnProtectionInTheWindup_IsNotHit()
+    {
+        using Rig rig = new();
+        IAuthoritativePlayerTarget victim = AddVictim(rig);
+        Assert.True(rig.Cast().Accepted);
+
+        rig.Tick(5);
+        Assert.True(rig.Runtime.Sessions.TryGet(B, out ConnectedPlayer? bob));
+        bob!.ProtectedThroughTick = rig.Now + 1_000;
+        rig.Tick(Window + 5);
+
+        Assert.Equal(10_000, victim.Combatant.Health.CurrentHealth);
+    }
+
+    [Fact]
+    public void AVictimWhoDiesInTheWindup_IsNotHit()
+    {
+        using Rig rig = new();
+        IAuthoritativePlayerTarget victim = AddVictim(rig);
+        Assert.True(rig.Cast().Accepted);
+
+        rig.Tick(5);
+        victim.Combatant.Health.ApplyDamage(1_000_000);
+        Assert.False(victim.Combatant.Health.IsAlive);
+        int hits = 0;
+        rig.Events.Subscribe<DamageAppliedEvent>(damage => { if (damage.Actor.Id == victim.Combatant.Actor.Id) { hits++; } });
+        rig.Tick(Window + 5);
+
+        Assert.Equal(0, hits);
+    }
+
+    [Fact]
+    public void PvpTurnedOffMidSwing_NoPlayerIsHitAfterwards()
+    {
+        using Rig rig = new();
+        IAuthoritativePlayerTarget victim = AddVictim(rig);
+        Assert.True(rig.Cast().Accepted);
+
+        rig.Tick(MeleeArcSwing.WindupTicks - 3);
+        rig.Runtime.PvpEnabled = false;
+        rig.Tick(Window + 5);
+
+        Assert.Equal(10_000, victim.Combatant.Health.CurrentHealth);
+    }
+
+    [Fact]
+    public void ACasterWhoDetachesAndReattachesInsideTheWindow_HasNoSwing()
+    {
+        using Rig rig = new();
+        rig.AddEnemy(rig.InFront(1.5f));
+        Assert.True(rig.Cast().Accepted);
+
+        rig.Tick(5);
+        rig.Runtime.DetachRemoteSession(A);
+        rig.Runtime.AttachRemoteSession(A, "Alice");
+        WaveIRuntimeKit.EnterCombat(rig.Runtime, A);
+        rig.Tick(Window + 5);
+
+        Assert.Empty(rig.Hits);
+    }
 }

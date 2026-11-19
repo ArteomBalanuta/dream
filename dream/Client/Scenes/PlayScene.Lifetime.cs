@@ -98,6 +98,7 @@ public partial class PlayScene
         PreloadModels();
         if (_fxSimulation != null && _fxFlashes != null)
         {
+            _fxSimulation.CasterLocator = TryLocateFxCaster;
             _fxBridge = new FxEventBridge(_events, _fxSimulation, _fxFlashes);
         }
         _combatFeedback = new CombatFeedbackSystem(_events, new FloatingCombatTextSystem(), () => _runtime.Player.Combatant.Actor.Id);

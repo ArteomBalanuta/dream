@@ -119,6 +119,14 @@ public sealed class FxSimulation
     private const float ArcSparkRadiusFraction = 0.9f;
     private const float ArcSparkHeight = 0.25f;
     public const int MaxPendingArcSweeps = 8;
+
+    // Where an actor is now, by id; false when unknown or gone. Set once at scene setup.
+    public delegate bool ActorLocator(int actorId, out Vector3 position);
+
+    // Lets a timed effect follow its caster: the server sweeps a Cleave from where the caster stands on each active
+    // tick, so the effect is anchored to the caster's current position, not the one it had at the cast. Null (or an
+    // unknown actor) keeps the position the cast was published with.
+    public ActorLocator? CasterLocator { get; set; }
     private const float RingLife = 0.6f;
     private const float RingStartHalfSize = 0.3f;
     private const float RingEndHalfSize = 0.9f;
@@ -173,6 +181,9 @@ public sealed class FxSimulation
     {
         public Vector3 Origin;
         public Vector3 Aim;
+        public int CasterActorId;
+        public Vector3 LastCasterPosition;
+        public bool HasCasterPosition;
         public bool Aimed;
         public float Range;
         public float Elapsed;
@@ -301,7 +312,7 @@ public sealed class FxSimulation
         }
     }
 
-    public void SpawnSkillCast(SkillFxKind kind, Vector3 origin, Vector3 direction, float range)
+    public void SpawnSkillCast(SkillFxKind kind, Vector3 origin, Vector3 direction, float range, int casterActorId = 0)
     {
         if (!float.IsFinite(origin.X) || !float.IsFinite(origin.Y) || !float.IsFinite(origin.Z))
         {
@@ -325,14 +336,22 @@ public sealed class FxSimulation
                 planned = (aimed ? 1 : 0) + ArcSparks + ArcEmbers;
                 if (_sweepCount < _sweeps.Length)
                 {
-                    _sweeps[_sweepCount++] = new ArcSweep
+                    ArcSweep queued = new()
                     {
                         Origin = origin,
+                        CasterActorId = casterActorId,
                         Aim = aim,
                         Aimed = aimed,
                         Range = range > 0f ? range : DefaultArcRange,
                         Remaining = MaxCastParticles
                     };
+                    if (casterActorId != 0 && CasterLocator is { } locate && locate(casterActorId, out Vector3 at))
+                    {
+                        queued.LastCasterPosition = at;
+                        queued.HasCasterPosition = true;
+                    }
+
+                    _sweeps[_sweepCount++] = queued;
                     return;
                 }
 
@@ -874,6 +893,7 @@ public sealed class FxSimulation
         {
             ref ArcSweep sweep = ref _sweeps[i];
             sweep.Elapsed += dt;
+            FollowCaster(ref sweep);
             if (sweep.Elapsed >= MeleeArcSwing.WindupSeconds)
             {
                 EmitArcSweep(ref sweep);
@@ -888,6 +908,25 @@ public sealed class FxSimulation
 
             i++;
         }
+    }
+
+    // Moves the sweep's origin by however far its caster has moved since the last look. A delta, not the caster's
+    // position, so it holds whatever convention the cast origin and the locator each use. An actor the locator
+    // does not know leaves the origin where it was; the crescent itself is laid once, at activation, and stays.
+    private void FollowCaster(ref ArcSweep sweep)
+    {
+        if (sweep.CasterActorId == 0 || CasterLocator is not { } locate || !locate(sweep.CasterActorId, out Vector3 now))
+        {
+            return;
+        }
+
+        if (sweep.HasCasterPosition)
+        {
+            sweep.Origin += now - sweep.LastCasterPosition;
+        }
+
+        sweep.LastCasterPosition = now;
+        sweep.HasCasterPosition = true;
     }
 
     private int SweepRoom(ref ArcSweep sweep)

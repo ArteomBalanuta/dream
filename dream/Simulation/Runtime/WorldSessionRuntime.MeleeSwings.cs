@@ -1,4 +1,5 @@
 using Dream.Multiplayer.Protocol;
+using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Content;
 using Dream.Simulation.Players;
@@ -42,6 +43,29 @@ public sealed partial class WorldSessionRuntime
         swing.Caster = caster;
         swing.HitSet.Clear();
         _pendingMeleeSwings.Add(swing);
+    }
+
+    // Drops every swing the session has in flight, with no refund, and returns them to the pool.
+    private void CancelMeleeSwings(PlayerSessionId sessionId)
+    {
+        int write = 0;
+        for (int read = 0; read < _pendingMeleeSwings.Count; read++)
+        {
+            PendingMeleeSwing swing = _pendingMeleeSwings[read];
+            if (swing.Message.SessionId != sessionId)
+            {
+                _pendingMeleeSwings[write++] = swing;
+                continue;
+            }
+
+            swing.Message = null!;
+            swing.Skill = null!;
+            swing.Caster = null!;
+            swing.HitSet.Clear();
+            _meleeSwingPool.Push(swing);
+        }
+
+        _pendingMeleeSwings.RemoveRange(write, _pendingMeleeSwings.Count - write);
     }
 
     private void AdvancePendingMeleeSwings(ulong tick)

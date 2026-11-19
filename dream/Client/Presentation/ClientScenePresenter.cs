@@ -357,6 +357,21 @@ public sealed class ClientScenePresenter : IEnemyRenderPoseSource, IPlayerActorS
         return _remotePlayerStates;
     }
 
+    // A tracked remote player's interpolated position on the render timeline. False for an unknown actor or one
+    // with nothing to sample (the local player has no entry here).
+    public bool TryGetRemotePlayerPosition(int actorId, double renderTick, out Vector3 position)
+    {
+        if (_remotePlayers.TryGetValue(actorId, out RemotePlayerEntry? entry)
+            && entry.Buffer.TrySample(renderTick, out InterpolatedActorPose pose))
+        {
+            position = pose.Position;
+            return true;
+        }
+
+        position = default;
+        return false;
+    }
+
     public int RemoteEnemyBufferCount => _remoteEnemies.Count;
 
     public int GetRemoteEnemySampleCount(int actorId)

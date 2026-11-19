@@ -19,6 +19,19 @@ public partial class PlayScene
     // scene then runs without effects: no particles, no flashes, no shadows.
     private FxRenderer? _fxRenderer;
     private FxSimulation? _fxSimulation;
+
+    // Where a caster is now, for effects that follow it: the local player's own position, else a tracked remote
+    // player's interpolated one. Same convention as the cast origin published for each.
+    private bool TryLocateFxCaster(int actorId, out Vector3 position)
+    {
+        if (actorId == LocalActorId)
+        {
+            position = _runtime.Player.GetWorldPosition();
+            return true;
+        }
+
+        return _scenePresenter.TryGetRemotePlayerPosition(actorId, RemotePlayerRenderTick, out position);
+    }
     private FxFlashList? _fxFlashes;
     private FxShadowList? _fxShadows;
     private FxEventBridge? _fxBridge;

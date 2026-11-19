@@ -14,7 +14,7 @@ public static class ClientSkillCastPublisher
 {
     // Returns true when an event was published. An unknown key, an unmapped kind or a non-finite
     // origin/direction publishes nothing. A zero direction is legal: it tells the effect to burst radially.
-    public static bool Publish(SceneEventHub events, AbilityUsedResult result, Vector3 origin, Vector3 forward)
+    public static bool Publish(SceneEventHub events, AbilityUsedResult result, Vector3 origin, Vector3 forward, int casterActorId = 0)
     {
         if (events == null || result == null || !IsFinite(origin) || !IsFinite(forward))
         {
@@ -26,13 +26,13 @@ public static class ClientSkillCastPublisher
             return false;
         }
 
-        return Publish(events, skill.Kind, origin, forward, skill.Range);
+        return Publish(events, skill.Kind, origin, forward, skill.Range, casterActorId);
     }
 
     // The shared tail, and the entry for a peer's cast, whose kind, origin and range arrive on the wire.
     // An unmapped kind, a non-finite vector or a negative/non-finite range publishes nothing. A range of
     // zero is legal only for Mend, which has none; an Arc or Bolt of no reach is nonsense and is dropped.
-    public static bool Publish(SceneEventHub events, SkillKind skillKind, Vector3 origin, Vector3 forward, float range)
+    public static bool Publish(SceneEventHub events, SkillKind skillKind, Vector3 origin, Vector3 forward, float range, int casterActorId = 0)
     {
         if (events == null || !IsFinite(origin) || !IsFinite(forward) || !float.IsFinite(range) || range < 0f)
         {
@@ -66,7 +66,7 @@ public static class ClientSkillCastPublisher
         float lengthSquared = direction.LengthSquared;
         direction = lengthSquared > 1e-6f ? direction / MathF.Sqrt(lengthSquared) : Vector3.Zero;
 
-        events.Publish(new SkillCastEvent(kind, origin, direction, range));
+        events.Publish(new SkillCastEvent(kind, origin, direction, range, casterActorId));
         return true;
     }
 

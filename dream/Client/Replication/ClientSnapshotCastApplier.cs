@@ -35,7 +35,7 @@ public static class ClientSnapshotCastApplier
                 continue;
             }
 
-            if (ClientSkillCastPublisher.Publish(events, cast.Kind, cast.Origin, cast.Direction, cast.Range))
+            if (ClientSkillCastPublisher.Publish(events, cast.Kind, cast.Origin, cast.Direction, cast.Range, cast.ActorId))
             {
                 published++;
             }

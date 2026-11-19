@@ -52,7 +52,7 @@ public sealed class FxEventBridge : IDisposable
     // No flash light for a cast: the flash list's four slots are tuned for hits and deaths.
     private void OnSkillCast(SkillCastEvent evt)
     {
-        _simulation.SpawnSkillCast(evt.Kind, evt.Origin, evt.Direction, evt.Range);
+        _simulation.SpawnSkillCast(evt.Kind, evt.Origin, evt.Direction, evt.Range, evt.CasterActorId);
     }
 
     private void OnActorDied(ActorDiedEvent evt)

@@ -308,7 +308,8 @@ public partial class PlayScene
                     _events,
                     used,
                     _runtime.Player.GetWorldPosition(),
-                    _runtime.Player.Camera.HorizontalForward);
+                    _runtime.Player.Camera.HorizontalForward,
+                    LocalActorId);
             }
         }
     }
