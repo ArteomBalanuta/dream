@@ -350,11 +350,14 @@ void main()
         // up toward a real metal reflectance); a dielectric reflects a neutral 4%.
         vec3 f0 = mix(vec3(0.04), baseColor.rgb * 2.2, metallic);
 
-        // Sun, moon and every point light. The sun lobe takes the shadow map, so plate inside a
-        // doorway does not glint; the point lobe takes the fire shadows inside dreamPointSpecular.
+        // Sun, moon and every point light. The dominant light's lobe (the one the map was rendered
+        // from: the sun by day, the moon by night) takes the shadow map, so plate inside a doorway does
+        // not glint; the other lobe gets exactly 1.0. The point lobe takes the fire shadows inside dreamPointSpecular.
+        float mapV = dreamSunVisibility(fragPos, n);
+        bool sunMap = dreamShadowMapIsSun();
         vec3 spec = dreamEquipLobe(n, v, uSunDirection.xyz, shin, f0)
-            * uSunDirection.w * uSunColor.rgb * dreamSunVisibility(fragPos, n);
-        spec += dreamEquipLobe(n, v, uMoonDirection.xyz, shin, f0) * uMoonDirection.w * uMoonColor.rgb;
+            * uSunDirection.w * uSunColor.rgb * (sunMap ? mapV : 1.0);
+        spec += dreamEquipLobe(n, v, uMoonDirection.xyz, shin, f0) * uMoonDirection.w * uMoonColor.rgb * (sunMap ? 1.0 : mapV);
         spec += dreamPointSpecular(n, fragPos, v, shin, f0);
 
         // Fresnel edge sheen: the sky caught on a rim. Metal takes most of it, leather a little.
