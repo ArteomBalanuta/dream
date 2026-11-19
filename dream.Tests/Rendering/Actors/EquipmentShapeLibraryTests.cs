@@ -45,6 +45,46 @@ public class EquipmentShapeLibraryTests
         [EquipmentShape.Membrane] = 330,
     };
 
+    // Not an assertion: an escape hatch. Set DREAM_SHAPE_DUMP to a directory and this writes every
+    // shape as a Wavefront OBJ, which can then be rendered from the game's own camera angle outside
+    // the engine. That is how Lame was caught: its first ring table stepped the radius by 0.01 with
+    // a hard normal split at each join, which is a crease nobody can see, and it rendered as a plain
+    // tapering shell. Reading the ring table would not have shown it. With no variable set this does
+    // nothing, so it costs the suite a method call.
+    [Fact]
+    public void EveryShapeDumpsToObjWhenAsked()
+    {
+        string dir = Environment.GetEnvironmentVariable("DREAM_SHAPE_DUMP") ?? string.Empty;
+        if (dir.Length == 0)
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(dir);
+        foreach (EquipmentShape shape in Enum.GetValues<EquipmentShape>())
+        {
+            StaticWorldChunkMesh mesh = EquipmentShapeLibrary.Build(shape);
+            using StreamWriter w = new(Path.Combine(dir, shape + ".obj"));
+            foreach (StaticWorldVertex v in mesh.Vertices)
+            {
+                w.WriteLine($"v {v.Position.X:F6} {v.Position.Y:F6} {v.Position.Z:F6}");
+            }
+
+            foreach (StaticWorldVertex v in mesh.Vertices)
+            {
+                w.WriteLine($"vn {v.Normal.X:F6} {v.Normal.Y:F6} {v.Normal.Z:F6}");
+            }
+
+            for (int i = 0; i < mesh.Indices.Count; i += 3)
+            {
+                int a = (int)mesh.Indices[i] + 1;
+                int b = (int)mesh.Indices[i + 1] + 1;
+                int c = (int)mesh.Indices[i + 2] + 1;
+                w.WriteLine($"f {a}//{a} {b}//{b} {c}//{c}");
+            }
+        }
+    }
+
     public static IEnumerable<object[]> EveryShape() =>
         Enum.GetValues<EquipmentShape>().Select(shape => new object[] { shape });
 

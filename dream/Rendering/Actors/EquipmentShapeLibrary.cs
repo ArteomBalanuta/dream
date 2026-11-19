@@ -766,12 +766,19 @@ public static class EquipmentShapeLibrary
     // not read as a barrel. The sweep widens toward the hem so the fauld stands off the thighs.
     private static void AppendCuirass(MeshWriter writer)
     {
-        ReadOnlySpan<float> heights = [-0.5f, -0.3f, -0.06f, 0.2f, 0.42f, 0.5f];
-        ReadOnlySpan<float> radiusX = [0.46f, 0.50f, 0.38f, 0.47f, 0.50f, 0.47f];
-        ReadOnlySpan<float> radiusZ = [0.36f, 0.39f, 0.29f, 0.36f, 0.38f, 0.35f];
-        ReadOnlySpan<float> sweeps = [255f, 250f, 240f, 236f, 232f, 228f];
+        ReadOnlySpan<float> heights = [-0.5f, -0.32f, -0.06f, 0.18f, 0.40f, 0.5f];
+        ReadOnlySpan<float> radiusX = [0.44f, 0.50f, 0.32f, 0.44f, 0.50f, 0.46f];
+        ReadOnlySpan<float> radiusZ = [0.34f, 0.39f, 0.24f, 0.33f, 0.38f, 0.34f];
+        ReadOnlySpan<float> sweeps = [258f, 252f, 238f, 234f, 230f, 226f];
         ReadOnlySpan<float> offsetZ = [0.01f, 0f, 0f, 0.01f, 0.02f, 0.02f];
-        AppendArcShell(writer, 11, heights, radiusX, radiusZ, sweeps, offsetZ, 0.12f);
+
+        // The waist ring is HARD. A pinch of 0.50 -> 0.32 is a real hourglass in the geometry, but a
+        // smooth one, and a smooth change of section across a part twenty pixels wide is a gradient
+        // the resolve flattens. Splitting the normal at the waist turns the pinch into a LINE - the
+        // belt line every cuirass in the references has - and a line survives where a gradient does
+        // not. The two rings either side of it stay smooth, so the chest and the fauld still curve.
+        bool[] hardRing = [false, false, true, false, false, false];
+        AppendArcShell(writer, 11, heights, radiusX, radiusZ, sweeps, offsetZ, 0.12f, hardRing);
     }
 
     // A limb shell that TAPERS: a greave, a bracer, a vambrace, a boot shaft. Wide at the +Y end
@@ -795,9 +802,14 @@ public static class EquipmentShapeLibrary
     // like from the game camera.
     private static void AppendLame(MeshWriter writer)
     {
-        ReadOnlySpan<float> heights = [-0.5f, -0.34f, -0.3f, -0.08f, -0.04f, 0.2f, 0.24f, 0.5f];
-        ReadOnlySpan<float> radiusX = [0.36f, 0.40f, 0.41f, 0.45f, 0.46f, 0.49f, 0.50f, 0.46f];
-        ReadOnlySpan<float> radiusZ = [0.36f, 0.40f, 0.41f, 0.45f, 0.46f, 0.49f, 0.50f, 0.46f];
+        // A SAWTOOTH radius, not a ramp. Each tier flares out as it rises and the next one starts
+        // again further in, so the rim of every plate stands proud of the plate above it and the
+        // step casts a hard line. The first attempt ramped 0.40 -> 0.50 smoothly with hard rings at
+        // the joins, and it rendered as a plain tapering shell: a hard normal split across a 0.01
+        // radius change is a crease nobody can see. The jump has to be in the GEOMETRY.
+        ReadOnlySpan<float> heights = [-0.5f, -0.34f, -0.33f, -0.10f, -0.09f, 0.14f, 0.15f, 0.5f];
+        ReadOnlySpan<float> radiusX = [0.34f, 0.46f, 0.36f, 0.48f, 0.38f, 0.50f, 0.40f, 0.50f];
+        ReadOnlySpan<float> radiusZ = [0.34f, 0.46f, 0.36f, 0.48f, 0.38f, 0.50f, 0.40f, 0.50f];
         ReadOnlySpan<float> sweeps = [232f, 232f, 230f, 230f, 228f, 228f, 226f, 226f];
         ReadOnlySpan<float> offsetZ = [0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f];
         bool[] hardRing = [false, true, true, true, true, true, true, false];
