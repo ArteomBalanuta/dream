@@ -22,8 +22,9 @@ SPARK, EMBER, DUST, ASH, HALO, HALO_CORE = range(0, 4), range(4, 8), range(8, 12
 FLAME, BLOB = range(18, 22), 22
 ARC, BOLT, RING = 23, range(24, 26), 26
 HIT = range(27, 31)  # flash, star, slash, splat: additive hit marks
-ADDITIVE = (*SPARK, *EMBER, *DUST, HALO, HALO_CORE, *BOLT, *HIT)
-RESERVED = range(31, 32)
+TRAIL = 31  # the Cleave blade trail band
+ADDITIVE = (*SPARK, *EMBER, *DUST, HALO, HALO_CORE, *BOLT, *HIT, TRAIL)
+RESERVED = range(0)  # no cell is reserved
 # Cap on the sheet size. Raised from 32 KB when the arc, bolt and ring cells were added: the sheet's
 # dimensions, grid and GPU cost are unchanged, only four more cells carry pixels. The four hit marks fit
 # under it by being coarsely levelled (HIT_STEP in gen_particles.py), so the cap did not move.
@@ -85,6 +86,11 @@ def check_frames(sheet: np.ndarray) -> list[str]:
                 errs.append(f"frame {index}: hit mark peak {rgb.max()} outside 200-245")
             if (rgb.max(axis=2) != rgb.min(axis=2)).any():
                 errs.append(f"frame {index}: hit mark not neutral (the particle tint sets the colour)")
+        if index == TRAIL:
+            if not 230 <= rgb.max() <= 245:
+                errs.append(f"frame {index}: trail peak {rgb.max()} outside 230-245")
+            if (rgb.max(axis=2) != rgb.min(axis=2)).any():
+                errs.append(f"frame {index}: trail not neutral")
         if index in BOLT and not 200 <= rgb.max() <= 245:
             errs.append(f"frame {index}: bolt core peak {rgb.max()} outside 200-245")
         if index == RING and rgb[CELL // 2, CELL // 2].max() > 8:
@@ -194,6 +200,38 @@ def arc_self_test(sheet: np.ndarray) -> list[str]:
     return errs
 
 
+TRAIL_PLATEAU_PX = 20.0  # restated from FxBladeTrailGeometry (CellPlateauFraction = 20 / 32)
+
+
+def trail_errors(c: np.ndarray) -> list[str]:
+    """The trail band: a flat peak along the centre row out to the plateau, nothing at 25 px, core row brightest."""
+    errs = []
+    lum = c[..., :3].max(axis=2).astype(float)
+    centre = lum[CELL // 2 - 1 : CELL // 2 + 1].max(axis=0)  # the two rows straddling the cell centre
+    peak = centre.max()
+    xs = np.abs(np.arange(CELL) + 0.5 - CELL / 2)
+    flat = centre[xs <= TRAIL_PLATEAU_PX - 1.0]
+    if peak <= 0 or (np.abs(flat - peak) > 0.03 * peak).any():
+        errs.append(f"trail plateau not flat within 3% of {peak:.0f} for |x| <= {TRAIL_PLATEAU_PX - 1.0} px")
+    if (centre[xs >= 25.0] > 0.02 * max(lum.max(), 1.0)).any():
+        errs.append("trail not faded to <= 2% of peak at |x| >= 25 px")
+    core = lum[:, CELL // 2].max()
+    if lum[:, CELL // 2].argmax() not in (CELL // 2 - 1, CELL // 2) or core < lum.max() - 0.5:
+        errs.append("trail core row is not the brightest")
+    return errs
+
+
+def trail_self_test(sheet: np.ndarray) -> list[str]:
+    """Synthetic negative: a band shortened to 14 px must fail the plateau gate."""
+    good = cell(sheet, TRAIL).copy()
+    if trail_errors(good):
+        return []  # the real cell is reported by the caller
+    ys, xs = np.mgrid[0:CELL, 0:CELL]
+    short = good.copy()
+    short[np.abs(xs + 0.5 - CELL / 2) > 14] = 0
+    return [] if trail_errors(short) else ["trail gate self-test: a band shortened to 14 px passed"]
+
+
 def generator_errors(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     errs = [f"{path.name}: contains {b}" for b in BANNED if b in text]
@@ -215,12 +253,14 @@ def main() -> int:
         errs += check_frames(np.asarray(img))
         errs += arc_geometry_errors(cell(np.asarray(img), ARC))
         errs += arc_self_test(np.asarray(img))
+        errs += trail_errors(cell(np.asarray(img), TRAIL))
+        errs += trail_self_test(np.asarray(img))
     expect = {"size": [512, 256], "columns": COLUMNS, "rows": ROWS, "cell": CELL, "margin": MARGIN, "yDown": True, "alpha": "premultiplied", "image": "particles.png"}
     errs += [f"json {k}: {doc.get(k)!r}" for k, v in expect.items() if doc.get(k) != v]
     indices = [f["index"] for f in doc.get("frames", [])]
-    if indices != list(range(31)):
+    if indices != list(range(32)):
         errs.append(f"json frames {indices}")
-    if doc.get("reserved") != [31, 31]:
+    if doc.get("reserved") != []:
         errs.append(f"json reserved {doc.get('reserved')}")
     if png.stat().st_size > MAX_PNG_BYTES:
         errs.append(f"png is {png.stat().st_size} bytes, over {MAX_PNG_BYTES}")

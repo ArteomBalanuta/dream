@@ -157,15 +157,17 @@
    "alpha": "zero",
    "index": 30,
    "name": "splat"
+  },
+  {
+   "alpha": "zero",
+   "index": 31,
+   "name": "trail"
   }
  ],
  "image": "particles.png",
  "margin": 4,
  "origin": "top-left",
- "reserved": [
-  31,
-  31
- ],
+ "reserved": [],
  "rows": 4,
  "size": [
   512,
