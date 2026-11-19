@@ -97,9 +97,16 @@ public static class EquipmentTintCatalog
         ["worn.feet.plate-sabatons"] = EquipmentTier.Rare,
         ["worn.legs.plate-greaves"] = EquipmentTier.Rare,
 
-        // Worn - epic: the grave mantle and the gossamer wings.
+        // Worn - epic: the grave mantle, the gossamer wings and the royal sorcerer's regalia -
+        // enamelled indigo plate and gold, worn by what casts rather than what swings.
         ["worn.back.grave-mantle"] = EquipmentTier.Epic,
         ["worn.back.gossamer-wings"] = EquipmentTier.Epic,
+        ["worn.head.sorcerer-crown"] = EquipmentTier.Epic,
+        ["worn.body.sorcerer-regalia"] = EquipmentTier.Epic,
+        ["worn.hands.sorcerer-gauntlets"] = EquipmentTier.Epic,
+        ["worn.legs.sorcerer-greaves"] = EquipmentTier.Epic,
+        ["worn.feet.sorcerer-sabatons"] = EquipmentTier.Epic,
+        ["worn.back.sorcerer-mantle"] = EquipmentTier.Epic,
 
         // Worn - legendary: the ember that burns beside you.
         ["worn.companion.ember-wisp"] = EquipmentTier.Legendary,
