@@ -1,4 +1,4 @@
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Actors;
 
@@ -119,9 +119,27 @@ public sealed class ArmourModel(string visualId, ArmourMount mount, ArmourPart[]
 // world X and which becomes world Z. A Panel is thin in its own Z, so yaw: 90f hangs it at the side of
 // a limb and pitch: 90f lays it flat (a boot sole). A Dome caps its own +Y, so pitch: 90f makes a knee
 // cop or a toe cap that bulges forward. A Spike points along its own +Y. A Horn is thick at its own -Y
-// and curves toward its own +Z as it rises, so yaw: 180f sweeps it BACKWARDS and a roll leans it out to
-// the side; a Flare is narrow at its own -Y and bells out at +Y, so pitch: 180f turns it into a skirt,
-// a brim or a hem that widens as it falls.
+// and curves toward its own +Z as it rises; a Flare is narrow at its own -Y and bells out at +Y, so
+// pitch: 180f turns it into a skirt, a brim or a hem that widens as it falls.
+//
+// TWO THINGS PASS 4 GOT WRONG, both of them orientation, both found in the engine and not in a test:
+//
+//   A PLATE THAT CAPS A LIMB MUST BE TURNED. Unrotated, a Plate's opening faces -Z, which is right for
+//   a cuirass or a greave (the body fills the gap) and wrong for a shoulder cap: the camera looks down
+//   and forward, sees straight into the hollow, and the pauldron reads as a detached horseshoe floating
+//   beside the figure. The big pauldrons are now `pitch: -90f`, which lays the shell axis front-to-back
+//   and turns the opening DOWNWARD onto the shoulder. Note what that does to the authored Size: the
+//   part's own Y becomes world DEPTH and its own Z becomes world HEIGHT, so a cap authored
+//   (0.46, 0.30, 0.26) is 0.46 wide, 0.30 deep and 0.26 tall. EquipmentShape.cs states the rule; the
+//   catalog test "no plate off the midline is left unrotated" is what stops it coming back.
+//
+//   A HORN'S ROLL IS APPLIED BEFORE ITS YAW. Rotations go pitch, then roll, then yaw, so on a horn that
+//   is swept backwards with yaw: 180f the yaw also flips the roll's direction: a roll of -30 on the +X
+//   side leans the horn INWARD over the figure, not outward. Every backswept horn therefore carries a
+//   POSITIVE roll on the +X side and a negative roll on -X - the opposite of what reads naturally - and
+//   the mirrored pair is authored that way on purpose. A Horn also needs real depth in its own Z to show
+//   its sweep: the mesh is fitted to its authored box, so a horn authored 0.07 deep and 0.40 tall is a
+//   straight spike with a kink, and one authored a third as deep as it is tall is a horn.
 public static class ArmourMeshCatalog
 {
     private static readonly List<ArmourModel> Ordered = BuildModels();
@@ -229,8 +247,8 @@ public static class ArmourMeshCatalog
             Box(-0.155f, 0.10f, 0f, 0.22f, 0.20f, 0.04f, Leather, yaw: -90f, shape: Panel),
             Box(0f, 0.395f, 0f, 0.30f, 0.035f, 0.30f, Ash, shape: Ring),
             Box(0f, 0.47f, 0f, 0.09f, 0.06f, 0.09f, Bone, shape: Dome),
-            Box(0.085f, 0.58f, -0.02f, 0.08f, 0.26f, 0.08f, Leather, roll: -16f, yaw: 180f, shape: Horn),
-            Box(-0.085f, 0.58f, -0.02f, 0.08f, 0.26f, 0.08f, Leather, roll: 16f, yaw: 180f, shape: Horn),
+            Box(0.085f, 0.57f, -0.05f, 0.08f, 0.24f, 0.16f, Leather, roll: 16f, yaw: 180f, shape: Horn),
+            Box(-0.085f, 0.57f, -0.05f, 0.08f, 0.24f, 0.16f, Leather, roll: -16f, yaw: 180f, shape: Horn),
             Box(0f, 0.30f, 0.15f, 0.09f, 0.07f, 0.06f, Gilt, shape: BevelBox),
             Box(0f, 0.17f, 0.155f, 0.26f, 0.05f, 0.05f, Gilt, shape: BevelBox));
 
@@ -247,9 +265,9 @@ public static class ArmourMeshCatalog
             Box(0f, 0.22f, 0.17f, 0.05f, 0.26f, 0.04f, Steel, pitch: 180f, shape: Taper),
             Box(0f, 0.40f, 0f, 0.06f, 0.10f, 0.30f, Iron, shape: BevelBox),
             Box(0f, 0.455f, 0f, 0.22f, 0.035f, 0.26f, Gilt, shape: Ring),
-            Box(0f, 0.66f, -0.01f, 0.07f, 0.40f, 0.07f, Iron, yaw: 180f, shape: Horn),
-            Box(0.07f, 0.63f, -0.02f, 0.09f, 0.34f, 0.09f, Iron, roll: -18f, yaw: 180f, shape: Horn),
-            Box(-0.07f, 0.63f, -0.02f, 0.09f, 0.34f, 0.09f, Iron, roll: 18f, yaw: 180f, shape: Horn),
+            Box(0f, 0.64f, -0.06f, 0.07f, 0.38f, 0.20f, Iron, yaw: 180f, shape: Horn),
+            Box(0.07f, 0.59f, -0.05f, 0.08f, 0.28f, 0.16f, Iron, roll: 18f, yaw: 180f, shape: Horn),
+            Box(-0.07f, 0.59f, -0.05f, 0.08f, 0.28f, 0.16f, Iron, roll: -18f, yaw: 180f, shape: Horn),
             Box(0.155f, 0.30f, 0.05f, 0.03f, 0.03f, 0.03f, Steel, roll: -90f, shape: Spike),
             Box(-0.155f, 0.30f, 0.05f, 0.03f, 0.03f, 0.03f, Steel, roll: 90f, shape: Spike));
 
@@ -270,13 +288,13 @@ public static class ArmourMeshCatalog
             Box(0f, 0.085f, 0f, 0.355f, 0.13f, 0.355f, Iron, pitch: 180f, shape: Flare),
             Box(0f, 0.035f, 0f, 0.36f, 0.05f, 0.36f, Steel, pitch: 180f, shape: Flare),
             Box(0f, 0.48f, 0f, 0.34f, 0.05f, 0.34f, Steel, shape: Ring),
-            Box(0f, 0.75f, -0.01f, 0.07f, 0.58f, 0.07f, Iron, yaw: 180f, shape: Horn),
-            Box(0.105f, 0.66f, -0.02f, 0.09f, 0.46f, 0.09f, Iron, roll: -20f, yaw: 180f, shape: Horn),
-            Box(-0.105f, 0.66f, -0.02f, 0.09f, 0.46f, 0.09f, Iron, roll: 20f, yaw: 180f, shape: Horn),
+            Box(0f, 0.72f, -0.07f, 0.07f, 0.54f, 0.24f, Iron, yaw: 180f, shape: Horn),
+            Box(0.105f, 0.62f, -0.06f, 0.09f, 0.38f, 0.18f, Iron, roll: 20f, yaw: 180f, shape: Horn),
+            Box(-0.105f, 0.62f, -0.06f, 0.09f, 0.38f, 0.18f, Iron, roll: -20f, yaw: 180f, shape: Horn),
             Box(0f, 0.58f, -0.02f, 0.30f, 0.14f, 0.06f, Red, yaw: 90f, shape: Panel),
             Box(0f, 0.02f, 0f, 0.34f, 0.06f, 0.34f, Iron, shape: Ring),
-            Box(0.13f, 0.40f, 0.10f, 0.045f, 0.10f, 0.045f, Gilt, roll: -35f, shape: Horn),
-            Box(-0.13f, 0.40f, 0.10f, 0.045f, 0.10f, 0.045f, Gilt, roll: 35f, shape: Horn),
+            Box(0.13f, 0.40f, 0.10f, 0.045f, 0.10f, 0.08f, Gilt, roll: -35f, shape: Horn),
+            Box(-0.13f, 0.40f, 0.10f, 0.045f, 0.10f, 0.08f, Gilt, roll: 35f, shape: Horn),
             Box(0f, 0.30f, 0.165f, 0.22f, 0.04f, 0.04f, Steel, shape: BevelBox));
 
         // ---- Body: sits on the tunic. Chest y 0..0.86 to |x| <= 0.19, hip skirt to |x| <= 0.26 (y 0..0.30),
@@ -295,10 +313,21 @@ public static class ArmourMeshCatalog
         //   upper chest plate   y 0.44..0.90   half 0.22..0.24
         //   waist plate         y 0.28..0.54   half 0.20        <- the cinch
         //   fauld / skirt       y 0.00..0.33   half 0.27..0.28  <- a Flare, so it widens as it falls
-        //   pauldrons           y 0.73..0.97   half 0.47..0.60  <- plus horns swept up and back
-        //   hanging lappet      y -0.52..0.24                   <- the centre panel every reference has
+        //   pauldrons           y 0.69..0.97   half 0.46..0.58  <- plus horns swept up and back
+        //   hanging lappet      y -0.31..0.25                   <- the centre panel every reference has
         // The lappet is why this mount's limit reaches below the torso: it hangs in FRONT of the thighs
         // (z ~ +0.16) toward the knee, which is the fourth point of the silhouette brief.
+        //
+        // PASS 4: THE SHOULDERS HAVE TO MEET THE BODY. The pass-3 pauldrons stood at half-width 0.60 with
+        // their inner edge at 0.20, just outside the chest's 0.195, and the gap read as a prop hanging in
+        // the air beside the figure. Every shoulder cap now BURIES its inner edge in the torso mass (inner
+        // edge <= 0.13, well inside the chest), and the gorget ring was widened to 0.34 - the widest a light
+        // level ring may be - so there is a visible yoke running from one cap to the other across the throat.
+        // Overlap costs nothing here: nothing is sorted and nothing z-fights at this scale, so a big outer
+        // piece is biased inward until it touches rather than placed to just miss.
+        //
+        // And the hierarchy: the shoulders are the statement, the helm crest is second, everything else
+        // supports them. The lappets were 0.64..0.76 long and competed with both; they are 0.52..0.56 now.
 
         // A boiled-leather vest: a chest shell over a cinched waist and a belt, an ash skirt flaring over the
         // hips with a gilt trim line at its hem, a cloth lappet hanging to the thigh, a bone gorget, and a
@@ -309,15 +338,15 @@ public static class ArmourMeshCatalog
             Box(0f, 0.41f, 0f, 0.40f, 0.24f, 0.32f, Leather, shape: Plate),
             Box(0f, 0.16f, 0f, 0.56f, 0.33f, 0.34f, Ash, pitch: 180f, shape: Flare),
             Box(0f, 0.60f, 0.165f, 0.16f, 0.36f, 0.03f, Cold, shape: Panel),
-            Box(0f, 0.88f, 0f, 0.22f, 0.05f, 0.22f, Bone, shape: Ring),
+            Box(0f, 0.875f, 0f, 0.34f, 0.05f, 0.26f, Bone, shape: Ring),
             Box(0f, 0.33f, 0f, 0.42f, 0.06f, 0.34f, Leather, shape: BevelBox),
             Box(0f, 0.33f, 0.18f, 0.08f, 0.08f, 0.04f, Gilt, shape: BevelBox),
             Box(0f, 0.63f, 0f, 0.49f, 0.05f, 0.345f, Leather, shape: BevelBox),
-            Box(0.36f, 0.83f, 0f, 0.36f, 0.20f, 0.30f, Leather, shape: Dome),
-            Box(-0.36f, 0.83f, 0f, 0.36f, 0.20f, 0.30f, Leather, shape: Dome),
-            Box(0.44f, 0.90f, -0.04f, 0.09f, 0.26f, 0.09f, Leather, roll: -30f, yaw: 180f, shape: Horn),
-            Box(-0.44f, 0.90f, -0.04f, 0.09f, 0.26f, 0.09f, Leather, roll: 30f, yaw: 180f, shape: Horn),
-            Box(0f, -0.12f, 0.16f, 0.18f, 0.72f, 0.035f, Ash, shape: Panel),
+            Box(0.33f, 0.82f, 0f, 0.42f, 0.22f, 0.32f, Leather, shape: Dome),
+            Box(-0.33f, 0.82f, 0f, 0.42f, 0.22f, 0.32f, Leather, shape: Dome),
+            Box(0.42f, 0.88f, -0.06f, 0.09f, 0.24f, 0.18f, Leather, roll: 30f, yaw: 180f, shape: Horn),
+            Box(-0.42f, 0.88f, -0.06f, 0.09f, 0.24f, 0.18f, Leather, roll: -30f, yaw: 180f, shape: Horn),
+            Box(0f, -0.02f, 0.165f, 0.15f, 0.54f, 0.035f, Ash, shape: Panel),
             Box(0f, 0.015f, 0f, 0.55f, 0.035f, 0.34f, Gilt, shape: Ring));
 
         // A mail shirt: the same hourglass, but read as a dense EVEN mass of blackened rings - every tier the
@@ -329,15 +358,15 @@ public static class ArmourMeshCatalog
             Box(0f, 0.41f, 0f, 0.40f, 0.24f, 0.32f, Iron, shape: Plate),
             Box(0f, 0.16f, 0f, 0.54f, 0.33f, 0.34f, Iron, pitch: 180f, shape: Flare),
             Box(0f, 0.86f, 0f, 0.24f, 0.045f, 0.24f, Steel, shape: Ring),
-            Box(0.32f, 0.80f, 0f, 0.30f, 0.18f, 0.30f, Iron, shape: Dome),
-            Box(-0.32f, 0.80f, 0f, 0.30f, 0.18f, 0.30f, Iron, shape: Dome),
-            Box(0.30f, 0.66f, 0f, 0.26f, 0.24f, 0.14f, Iron, yaw: 90f, shape: Plate),
-            Box(-0.30f, 0.66f, 0f, 0.26f, 0.24f, 0.14f, Iron, yaw: -90f, shape: Plate),
-            Box(0.40f, 0.88f, -0.03f, 0.08f, 0.22f, 0.08f, Iron, roll: -34f, yaw: 180f, shape: Horn),
-            Box(-0.40f, 0.88f, -0.03f, 0.08f, 0.22f, 0.08f, Iron, roll: 34f, yaw: 180f, shape: Horn),
+            Box(0.28f, 0.79f, 0f, 0.36f, 0.20f, 0.32f, Iron, shape: Dome),
+            Box(-0.28f, 0.79f, 0f, 0.36f, 0.20f, 0.32f, Iron, shape: Dome),
+            Box(0.26f, 0.66f, 0f, 0.26f, 0.24f, 0.18f, Iron, yaw: 90f, shape: Plate),
+            Box(-0.26f, 0.66f, 0f, 0.26f, 0.24f, 0.18f, Iron, yaw: -90f, shape: Plate),
+            Box(0.40f, 0.86f, -0.05f, 0.08f, 0.22f, 0.16f, Iron, roll: 34f, yaw: 180f, shape: Horn),
+            Box(-0.40f, 0.86f, -0.05f, 0.08f, 0.22f, 0.16f, Iron, roll: -34f, yaw: 180f, shape: Horn),
             Box(0f, 0.33f, 0f, 0.43f, 0.05f, 0.345f, Iron, shape: Ring),
             Box(0f, 0.58f, 0f, 0.47f, 0.04f, 0.35f, Iron, shape: Ring),
-            Box(0f, -0.10f, 0.155f, 0.16f, 0.64f, 0.04f, Cold, shape: Panel),
+            Box(0f, -0.01f, 0.155f, 0.14f, 0.52f, 0.04f, Cold, shape: Panel),
             Box(0f, 0.01f, 0f, 0.53f, 0.035f, 0.33f, Iron, shape: Ring));
 
         // A plate cuirass, the full statement of the brief. A wrapped breastplate (a vertical arc, so the camera
@@ -358,14 +387,14 @@ public static class ArmourMeshCatalog
             Box(0f, 0.40f, 0f, 0.40f, 0.26f, 0.32f, Iron, shape: Plate),
             Box(0f, 0.16f, 0f, 0.56f, 0.33f, 0.34f, Iron, pitch: 180f, shape: Flare),
             Box(0f, 0.33f, 0.17f, 0.44f, 0.05f, 0.03f, Red, shape: Panel),
-            Box(0f, 0.90f, 0f, 0.24f, 0.05f, 0.24f, Steel, shape: Ring),
-            Box(0.40f, 0.86f, 0f, 0.40f, 0.22f, 0.32f, Iron, shape: Plate),
-            Box(-0.40f, 0.86f, 0f, 0.40f, 0.22f, 0.32f, Iron, shape: Plate),
-            Box(0.48f, 0.88f, -0.05f, 0.09f, 0.32f, 0.09f, Iron, roll: -30f, yaw: 180f, shape: Horn),
-            Box(-0.48f, 0.88f, -0.05f, 0.09f, 0.32f, 0.09f, Iron, roll: 30f, yaw: 180f, shape: Horn),
-            Box(0.59f, 0.86f, 0f, 0.05f, 0.24f, 0.33f, Steel, shape: BevelBox),
-            Box(-0.59f, 0.86f, 0f, 0.05f, 0.24f, 0.33f, Steel, shape: BevelBox),
-            Box(0f, -0.14f, 0.165f, 0.20f, 0.76f, 0.04f, Iron, shape: Panel),
+            Box(0f, 0.90f, 0f, 0.34f, 0.05f, 0.26f, Steel, shape: Ring),
+            Box(0.35f, 0.84f, 0f, 0.46f, 0.30f, 0.26f, Iron, pitch: -90f, shape: Plate),
+            Box(-0.35f, 0.84f, 0f, 0.46f, 0.30f, 0.26f, Iron, pitch: -90f, shape: Plate),
+            Box(0.46f, 0.88f, -0.06f, 0.09f, 0.30f, 0.20f, Iron, roll: 30f, yaw: 180f, shape: Horn),
+            Box(-0.46f, 0.88f, -0.06f, 0.09f, 0.30f, 0.20f, Iron, roll: -30f, yaw: 180f, shape: Horn),
+            Box(0.55f, 0.84f, 0f, 0.06f, 0.26f, 0.34f, Steel, shape: BevelBox),
+            Box(-0.55f, 0.84f, 0f, 0.06f, 0.26f, 0.34f, Steel, shape: BevelBox),
+            Box(0f, -0.03f, 0.165f, 0.17f, 0.56f, 0.04f, Iron, shape: Panel),
             Box(0f, 0.02f, 0f, 0.55f, 0.04f, 0.34f, Gilt, shape: Ring));
 
         // ---- Hands (one arm, centred on the arm's own axis): cover y -0.95..-0.55, |x| <= 0.09, |z| <= 0.09.
@@ -380,8 +409,8 @@ public static class ArmourMeshCatalog
             Box(0f, -0.70f, 0.11f, 0.10f, 0.20f, 0.03f, Leather, shape: Panel),
             Box(0.07f, -0.92f, 0.11f, 0.04f, 0.05f, 0.04f, Bone, pitch: 90f, shape: Spike),
             Box(-0.07f, -0.92f, 0.11f, 0.04f, 0.05f, 0.04f, Bone, pitch: 90f, shape: Spike),
-            Box(0.085f, -0.60f, -0.02f, 0.06f, 0.16f, 0.06f, Leather, roll: -24f, yaw: 180f, shape: Horn),
-            Box(-0.085f, -0.60f, -0.02f, 0.06f, 0.16f, 0.06f, Leather, roll: 24f, yaw: 180f, shape: Horn),
+            Box(0.085f, -0.60f, -0.02f, 0.06f, 0.16f, 0.12f, Leather, roll: 24f, yaw: 180f, shape: Horn),
+            Box(-0.085f, -0.60f, -0.02f, 0.06f, 0.16f, 0.12f, Leather, roll: -24f, yaw: 180f, shape: Horn),
             Box(0f, -0.84f, 0f, 0.26f, 0.04f, 0.26f, Leather, shape: Ring));
 
         Add("worn.hands.iron-gauntlets", ArmourMount.Arms,
@@ -393,8 +422,8 @@ public static class ArmourMeshCatalog
             Box(0f, -0.74f, 0f, 0.27f, 0.05f, 0.27f, Iron, shape: BevelBox),
             Box(0.07f, -0.95f, 0.10f, 0.04f, 0.07f, 0.04f, Steel, pitch: 90f, shape: Spike),
             Box(-0.07f, -0.95f, 0.10f, 0.04f, 0.07f, 0.04f, Steel, pitch: 90f, shape: Spike),
-            Box(0.10f, -0.60f, -0.03f, 0.07f, 0.20f, 0.07f, Iron, roll: -28f, yaw: 180f, shape: Horn),
-            Box(-0.10f, -0.60f, -0.03f, 0.07f, 0.20f, 0.07f, Iron, roll: 28f, yaw: 180f, shape: Horn),
+            Box(0.10f, -0.60f, -0.03f, 0.07f, 0.20f, 0.14f, Iron, roll: 28f, yaw: 180f, shape: Horn),
+            Box(-0.10f, -0.60f, -0.03f, 0.07f, 0.20f, 0.14f, Iron, roll: -28f, yaw: 180f, shape: Horn),
             Box(0f, -0.83f, 0f, 0.28f, 0.04f, 0.28f, Gilt, shape: Ring));
 
         Add("worn.hands.plate-gauntlets", ArmourMount.Arms,
@@ -407,8 +436,8 @@ public static class ArmourMeshCatalog
             Box(0f, -0.88f, 0.08f, 0.20f, 0.05f, 0.18f, Steel, shape: BevelBox),
             Box(0.08f, -0.98f, 0.08f, 0.04f, 0.08f, 0.04f, Steel, pitch: 90f, shape: Spike),
             Box(-0.08f, -0.98f, 0.08f, 0.04f, 0.08f, 0.04f, Steel, pitch: 90f, shape: Spike),
-            Box(0.11f, -0.58f, -0.03f, 0.08f, 0.24f, 0.08f, Iron, roll: -26f, yaw: 180f, shape: Horn),
-            Box(-0.11f, -0.58f, -0.03f, 0.08f, 0.24f, 0.08f, Iron, roll: 26f, yaw: 180f, shape: Horn),
+            Box(0.11f, -0.58f, -0.03f, 0.08f, 0.24f, 0.16f, Iron, roll: 26f, yaw: 180f, shape: Horn),
+            Box(-0.11f, -0.58f, -0.03f, 0.08f, 0.24f, 0.16f, Iron, roll: -26f, yaw: 180f, shape: Horn),
             Box(0f, -0.70f, 0f, 0.30f, 0.04f, 0.30f, Gilt, shape: Ring));
 
         // ---- Legs (one leg): cover y -0.75..-0.10, |x| <= 0.11, |z| <= 0.11.
@@ -431,8 +460,8 @@ public static class ArmourMeshCatalog
             Box(0f, -0.72f, 0f, 0.32f, 0.08f, 0.32f, Leather, pitch: 180f, shape: Flare),
             Box(0f, -0.555f, 0.16f, 0.07f, 0.05f, 0.05f, Steel, shape: BevelBox),
             Box(0f, -0.28f, 0f, 0.32f, 0.04f, 0.32f, Cold, shape: Ring),
-            Box(0.09f, -0.19f, -0.02f, 0.05f, 0.14f, 0.05f, Leather, roll: -20f, yaw: 180f, shape: Horn),
-            Box(-0.09f, -0.19f, -0.02f, 0.05f, 0.14f, 0.05f, Leather, roll: 20f, yaw: 180f, shape: Horn));
+            Box(0.09f, -0.19f, -0.02f, 0.05f, 0.14f, 0.10f, Leather, roll: 20f, yaw: 180f, shape: Horn),
+            Box(-0.09f, -0.19f, -0.02f, 0.05f, 0.14f, 0.10f, Leather, roll: -20f, yaw: 180f, shape: Horn));
 
         Add("worn.legs.plated-leggings", ArmourMount.Legs,
             Box(0f, -0.43f, 0f, 0.30f, 0.68f, 0.30f, Cold, shape: Plate),
@@ -444,8 +473,8 @@ public static class ArmourMeshCatalog
             Box(0f, -0.52f, 0f, 0.33f, 0.04f, 0.33f, Iron, shape: Ring),
             Box(0f, -0.40f, 0.17f, 0.05f, 0.07f, 0.05f, Steel, pitch: 90f, shape: Spike),
             Box(0f, -0.345f, 0.13f, 0.18f, 0.03f, 0.14f, Steel, shape: Ring),
-            Box(0.095f, -0.22f, -0.02f, 0.06f, 0.18f, 0.06f, Iron, roll: -22f, yaw: 180f, shape: Horn),
-            Box(-0.095f, -0.22f, -0.02f, 0.06f, 0.18f, 0.06f, Iron, roll: 22f, yaw: 180f, shape: Horn),
+            Box(0.095f, -0.22f, -0.02f, 0.06f, 0.18f, 0.12f, Iron, roll: 22f, yaw: 180f, shape: Horn),
+            Box(-0.095f, -0.22f, -0.02f, 0.06f, 0.18f, 0.12f, Iron, roll: -22f, yaw: 180f, shape: Horn),
             Box(0f, -0.665f, 0f, 0.31f, 0.035f, 0.31f, Gilt, shape: Ring));
 
         Add("worn.legs.chain-chausses", ArmourMount.Legs,
@@ -458,8 +487,8 @@ public static class ArmourMeshCatalog
             Box(0f, -0.56f, 0f, 0.33f, 0.10f, 0.33f, Iron, pitch: 180f, shape: Taper),
             Box(0f, -0.45f, 0.15f, 0.16f, 0.06f, 0.16f, Steel, pitch: 90f, shape: Dome),
             Box(0f, -0.70f, 0f, 0.32f, 0.08f, 0.32f, Iron, pitch: 180f, shape: Flare),
-            Box(0.09f, -0.20f, -0.02f, 0.05f, 0.16f, 0.05f, Iron, roll: -18f, yaw: 180f, shape: Horn),
-            Box(-0.09f, -0.20f, -0.02f, 0.05f, 0.16f, 0.05f, Iron, roll: 18f, yaw: 180f, shape: Horn),
+            Box(0.09f, -0.20f, -0.02f, 0.05f, 0.16f, 0.10f, Iron, roll: 18f, yaw: 180f, shape: Horn),
+            Box(-0.09f, -0.20f, -0.02f, 0.05f, 0.16f, 0.10f, Iron, roll: -18f, yaw: 180f, shape: Horn),
             Box(0f, -0.62f, 0f, 0.33f, 0.03f, 0.33f, Gilt, shape: Ring));
 
         Add("worn.legs.plate-greaves", ArmourMount.Legs,
@@ -472,8 +501,8 @@ public static class ArmourMeshCatalog
             Box(0f, -0.665f, 0f, 0.26f, 0.04f, 0.26f, Steel, shape: Ring),
             Box(0f, -0.36f, 0.18f, 0.05f, 0.08f, 0.05f, Steel, pitch: 90f, shape: Spike),
             Box(0f, -0.30f, 0f, 0.35f, 0.035f, 0.35f, Gilt, shape: Ring),
-            Box(0.10f, -0.17f, -0.02f, 0.06f, 0.20f, 0.06f, Iron, roll: -24f, yaw: 180f, shape: Horn),
-            Box(-0.10f, -0.17f, -0.02f, 0.06f, 0.20f, 0.06f, Iron, roll: 24f, yaw: 180f, shape: Horn),
+            Box(0.10f, -0.17f, -0.02f, 0.06f, 0.20f, 0.12f, Iron, roll: 24f, yaw: 180f, shape: Horn),
+            Box(-0.10f, -0.17f, -0.02f, 0.06f, 0.20f, 0.12f, Iron, roll: -24f, yaw: 180f, shape: Horn),
             Box(0f, -0.74f, 0.08f, 0.30f, 0.05f, 0.26f, Iron, shape: BevelBox));
 
         // ---- Feet (one leg): cover y -1.30..-0.88, |x| <= 0.132, z -0.05..+0.15.
@@ -491,8 +520,8 @@ public static class ArmourMeshCatalog
             Box(0f, -1.04f, 0.04f, 0.30f, 0.05f, 0.32f, Leather, shape: Ring),
             Box(0f, -1.14f, 0.03f, 0.32f, 0.10f, 0.33f, Leather, pitch: 180f, shape: Flare),
             Box(0f, -0.98f, 0.17f, 0.08f, 0.05f, 0.06f, Gilt, shape: BevelBox),
-            Box(0.085f, -0.95f, -0.02f, 0.05f, 0.14f, 0.05f, Leather, roll: -20f, yaw: 180f, shape: Horn),
-            Box(-0.085f, -0.95f, -0.02f, 0.05f, 0.14f, 0.05f, Leather, roll: 20f, yaw: 180f, shape: Horn));
+            Box(0.085f, -0.95f, -0.02f, 0.05f, 0.14f, 0.10f, Leather, roll: 20f, yaw: 180f, shape: Horn),
+            Box(-0.085f, -0.95f, -0.02f, 0.05f, 0.14f, 0.10f, Leather, roll: -20f, yaw: 180f, shape: Horn));
 
         Add("worn.feet.iron-boots", ArmourMount.Feet,
             Box(0f, -1.09f, 0.07f, 0.30f, 0.44f, 0.34f, Iron, shape: Plate),
@@ -503,8 +532,8 @@ public static class ArmourMeshCatalog
             Box(0f, -1.16f, -0.09f, 0.05f, 0.10f, 0.05f, Iron, pitch: -90f, shape: Spike),
             Box(0f, -1.12f, 0.04f, 0.33f, 0.10f, 0.33f, Iron, pitch: 180f, shape: Flare),
             Box(0f, -0.82f, 0.03f, 0.31f, 0.035f, 0.31f, Gilt, shape: Ring),
-            Box(0.10f, -0.94f, -0.03f, 0.06f, 0.16f, 0.06f, Iron, roll: -22f, yaw: 180f, shape: Horn),
-            Box(-0.10f, -0.94f, -0.03f, 0.06f, 0.16f, 0.06f, Iron, roll: 22f, yaw: 180f, shape: Horn),
+            Box(0.10f, -0.94f, -0.03f, 0.06f, 0.16f, 0.12f, Iron, roll: 22f, yaw: 180f, shape: Horn),
+            Box(-0.10f, -0.94f, -0.03f, 0.06f, 0.16f, 0.12f, Iron, roll: -22f, yaw: 180f, shape: Horn),
             Box(0f, -1.04f, 0.05f, 0.32f, 0.05f, 0.32f, Iron, shape: Ring));
 
         Add("worn.feet.plate-sabatons", ArmourMount.Feet,
@@ -516,13 +545,25 @@ public static class ArmourMeshCatalog
             Box(0f, -1.14f, 0.05f, 0.35f, 0.12f, 0.37f, Iron, pitch: 180f, shape: Flare),
             Box(0f, -0.82f, 0.02f, 0.33f, 0.035f, 0.33f, Steel, shape: Ring),
             Box(0f, -1.20f, 0.38f, 0.05f, 0.07f, 0.05f, Steel, pitch: 90f, shape: Spike),
-            Box(0.11f, -0.94f, -0.03f, 0.07f, 0.18f, 0.07f, Iron, roll: -24f, yaw: 180f, shape: Horn),
-            Box(-0.11f, -0.94f, -0.03f, 0.07f, 0.18f, 0.07f, Iron, roll: 24f, yaw: 180f, shape: Horn),
+            Box(0.11f, -0.94f, -0.03f, 0.07f, 0.18f, 0.14f, Iron, roll: 24f, yaw: 180f, shape: Horn),
+            Box(-0.11f, -0.94f, -0.03f, 0.07f, 0.18f, 0.14f, Iron, roll: -24f, yaw: 180f, shape: Horn),
             Box(0f, -1.05f, 0.05f, 0.33f, 0.05f, 0.35f, Iron, shape: Ring),
             Box(0f, -1.26f, 0.18f, 0.26f, 0.06f, 0.22f, Gilt, shape: BevelBox));
 
         // ---- Back (torso frame): the torso back surface is at z >= -0.14 and the panels hang off it at
-        // z -0.18..-0.30. Above y 0.30 nothing is wider than 1.6x the torso (0.416); the hem may flare to 0.50.
+        // z -0.22..-0.34. Above y 0.30 nothing is wider than 1.6x the torso (0.416); the hem may flare to 0.50.
+        //
+        // PASS 4: A CLOAK FRAMES THE FIGURE, IT DOES NOT REPLACE IT. In the engine the pass-3 cloaks read as
+        // large flat dark panels crossing in FRONT of the legs - separate props hanging off the figure rather
+        // than cloth on it - and they filled the waist back in, which cost the hourglass the body pieces had
+        // just been given. Three changes, all of them subtraction:
+        //   narrower  - every fall lost 0.04..0.10 of width, so the legs show between and outside them;
+        //   further back - the tiers moved from -0.19..-0.28 to -0.22..-0.34, a full panel thickness behind
+        //     where they were, so under a camera looking down and forward they sit behind the leg, not on it;
+        //   shorter - no fall now reaches the knee (y -0.43). The longest, the hooded cloak, hems at about
+        //     -0.44; the travel cloak and the mantle stop at the hip.
+        // The cloaks keep their order - hooded longest, mantle broadest, travel shortest - because that is
+        // what tells them apart at 28 px; they just stop being the whole lower silhouette.
 
         // Every cloak is a TAPERED STACK of Panels, never one plank: narrow at the shoulders (<= 0.44), widest
         // near the hem, each tier 0.03 further back (half the 0.06 thickness, so neighbouring tiers do not
@@ -534,46 +575,49 @@ public static class ArmourMeshCatalog
         // Short and ragged: a leather yoke with a clasp, a narrow upper back and FOUR falls hung in pairs,
         // each yawed away from the next so no two take the same light. A single wide tier (this one was
         // 0.70 across) reads as a plank nailed to the figure however well it is pitched: the cure is to
-        // split it, turn the halves, and let daylight between them.
+        // split it, turn the halves, and let daylight between them. Hip length: the falls end at about
+        // y -0.08, well above the knee, so the whole leg is the figure's own.
         Add("worn.back.travel-cloak", ArmourMount.Back,
-            Box(0f, 0.84f, -0.19f, 0.38f, 0.10f, 0.06f, Leather, shape: Panel),
-            Box(0f, 0.74f, -0.19f, 0.30f, 0.05f, 0.06f, Leather, shape: BevelBox),
-            Box(0f, 0.52f, -0.22f, 0.34f, 0.44f, 0.06f, Ash, pitch: 3f, shape: Panel),
-            Box(0.19f, 0.10f, -0.25f, 0.26f, 0.44f, 0.06f, Ash, pitch: 6f, yaw: 18f, shape: Panel),
-            Box(-0.19f, 0.10f, -0.25f, 0.26f, 0.44f, 0.06f, Cold, pitch: 6f, yaw: -18f, shape: Panel),
-            Box(0.145f, -0.30f, -0.28f, 0.22f, 0.34f, 0.06f, Ash, pitch: 10f, yaw: 12f, shape: Panel),
-            Box(-0.145f, -0.26f, -0.28f, 0.22f, 0.26f, 0.06f, Cold, pitch: 10f, yaw: -12f, shape: Panel),
+            Box(0f, 0.84f, -0.22f, 0.38f, 0.10f, 0.06f, Leather, shape: Panel),
+            Box(0f, 0.74f, -0.22f, 0.30f, 0.05f, 0.06f, Leather, shape: BevelBox),
+            Box(0f, 0.56f, -0.26f, 0.30f, 0.36f, 0.06f, Ash, pitch: 3f, shape: Panel),
+            Box(0.20f, 0.26f, -0.30f, 0.20f, 0.40f, 0.06f, Ash, pitch: 6f, yaw: 18f, shape: Panel),
+            Box(-0.20f, 0.26f, -0.30f, 0.20f, 0.40f, 0.06f, Cold, pitch: 6f, yaw: -18f, shape: Panel),
+            Box(0.155f, 0.06f, -0.34f, 0.18f, 0.28f, 0.06f, Ash, pitch: 10f, yaw: 12f, shape: Panel),
+            Box(-0.155f, 0.10f, -0.34f, 0.18f, 0.20f, 0.06f, Cold, pitch: 10f, yaw: -12f, shape: Panel),
             Box(0f, 0.90f, -0.17f, 0.10f, 0.04f, 0.08f, Steel, shape: BevelBox),
             Box(0f, 0.90f, -0.14f, 0.07f, 0.07f, 0.07f, Gilt, pitch: 90f, shape: Ring));
 
-        // Long, to the ankle, but hung as SIX narrow lengths in mirrored pairs rather than as three broad
-        // tiers: the wide tiers (0.56 and 0.70 across) buried the legs in one flat dark slab that had no
-        // curvature to show. Each pair is yawed apart, each length of a pair is cut to a different height,
-        // so the hem steps instead of running straight across and the legs show between the falls.
+        // The long one - to just above the knee, not to the ankle - hung as SIX narrow lengths in mirrored
+        // pairs rather than as three broad tiers: the wide tiers (0.56 and 0.70 across) buried the legs in one
+        // flat dark slab that had no curvature to show, and the ankle-length version of those lengths crossed
+        // in front of the shins. Each pair is yawed apart, each length of a pair is cut to a different height,
+        // so the hem steps instead of running straight across and the legs show between and below the falls.
         // Above it all a raised standing collar (not a hood) with a bone rim, and a clasp bar at the throat.
         Add("worn.back.hooded-cloak", ArmourMount.Back,
-            Box(0f, 0.60f, -0.19f, 0.34f, 0.68f, 0.06f, Ash, pitch: 2f, shape: Panel),
-            Box(0.17f, -0.02f, -0.22f, 0.30f, 0.52f, 0.06f, Cold, pitch: 5f, yaw: 16f, shape: Panel),
-            Box(-0.17f, -0.02f, -0.22f, 0.30f, 0.52f, 0.06f, Ash, pitch: 5f, yaw: -16f, shape: Panel),
-            Box(0.135f, -0.56f, -0.25f, 0.24f, 0.52f, 0.06f, Ash, pitch: 8f, yaw: 12f, shape: Panel),
-            Box(-0.135f, -0.68f, -0.25f, 0.24f, 0.44f, 0.06f, Cold, pitch: 8f, yaw: -12f, shape: Panel),
-            Box(0.10f, -0.94f, -0.28f, 0.20f, 0.40f, 0.06f, Ash, pitch: 12f, yaw: 8f, shape: Panel),
-            Box(-0.10f, -0.90f, -0.28f, 0.20f, 0.34f, 0.06f, Cold, pitch: 12f, yaw: -8f, shape: Panel),
-            Box(0f, 1.00f, -0.19f, 0.34f, 0.30f, 0.06f, Ash, pitch: -10f, shape: Panel),
-            Box(0f, 1.175f, -0.19f, 0.24f, 0.03f, 0.06f, Bone, shape: Ring),
+            Box(0f, 0.62f, -0.22f, 0.32f, 0.60f, 0.06f, Ash, pitch: 2f, shape: Panel),
+            Box(0.185f, 0.12f, -0.26f, 0.22f, 0.44f, 0.06f, Cold, pitch: 5f, yaw: 16f, shape: Panel),
+            Box(-0.185f, 0.12f, -0.26f, 0.22f, 0.44f, 0.06f, Ash, pitch: 5f, yaw: -16f, shape: Panel),
+            Box(0.16f, -0.18f, -0.30f, 0.20f, 0.42f, 0.06f, Ash, pitch: 8f, yaw: 12f, shape: Panel),
+            Box(-0.16f, -0.10f, -0.30f, 0.20f, 0.34f, 0.06f, Cold, pitch: 8f, yaw: -12f, shape: Panel),
+            Box(0.125f, -0.25f, -0.34f, 0.17f, 0.36f, 0.06f, Ash, pitch: 12f, yaw: 8f, shape: Panel),
+            Box(-0.125f, -0.30f, -0.34f, 0.17f, 0.28f, 0.06f, Cold, pitch: 12f, yaw: -8f, shape: Panel),
+            Box(0f, 1.00f, -0.22f, 0.34f, 0.30f, 0.06f, Ash, pitch: -10f, shape: Panel),
+            Box(0f, 1.175f, -0.22f, 0.24f, 0.03f, 0.06f, Bone, shape: Ring),
             Box(0f, 0.86f, -0.17f, 0.26f, 0.05f, 0.07f, Iron, shape: BevelBox));
 
         // A broad shoulder mantle, layered and drooping at the points with iron barbs, over a short tapered
-        // back panel.
+        // back panel. The mantle is the BROAD one, so its falls are the shortest of the three: the character
+        // is all at the shoulders and the hem stops at the hip rather than competing with them.
         Add("worn.back.grave-mantle", ArmourMount.Back,
             Box(0f, 0.84f, -0.08f, 0.50f, 0.10f, 0.40f, Cold, shape: Plate),
             Box(0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: -18f, shape: Panel),
             Box(-0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: 18f, shape: Panel),
             Box(0f, 0.66f, -0.10f, 0.66f, 0.10f, 0.36f, Ash, shape: Panel),
             Box(0f, 0.905f, -0.08f, 0.26f, 0.03f, 0.22f, Bone, shape: Ring),
-            Box(0f, 0.30f, -0.19f, 0.36f, 0.56f, 0.06f, Cold, pitch: 3f, shape: Panel),
-            Box(-0.17f, -0.29f, -0.22f, 0.30f, 0.62f, 0.06f, Ash, pitch: 6f, yaw: -14f, shape: Panel),
-            Box(0.18f, -0.24f, -0.25f, 0.32f, 0.52f, 0.06f, Cold, pitch: 8f, yaw: 14f, shape: Panel),
+            Box(0f, 0.40f, -0.22f, 0.32f, 0.44f, 0.06f, Cold, pitch: 3f, shape: Panel),
+            Box(-0.175f, 0.08f, -0.26f, 0.24f, 0.36f, 0.06f, Ash, pitch: 6f, yaw: -14f, shape: Panel),
+            Box(0.185f, 0.12f, -0.30f, 0.26f, 0.28f, 0.06f, Cold, pitch: 8f, yaw: 14f, shape: Panel),
             Box(0.34f, 0.74f, -0.06f, 0.07f, 0.07f, 0.07f, Iron, roll: -40f, shape: Spike),
             Box(-0.34f, 0.74f, -0.06f, 0.07f, 0.07f, 0.07f, Iron, roll: 40f, shape: Spike));
 
@@ -583,15 +627,15 @@ public static class ArmourMeshCatalog
         // are yawed apart (not merely rolled) so they face different ways and take visibly different light
         // instead of reading as one saturated tone. Bone is kept for the barbed tips only.
         Add("worn.back.gossamer-wings", ArmourMount.Back,
-            Box(0.345f, 0.705f, -0.26f, 0.26f, 0.42f, 0.02f, ArmourMaterial.Arcane, roll: -14f, yaw: 20f, shape: Panel),
-            Box(-0.345f, 0.705f, -0.26f, 0.26f, 0.42f, 0.02f, ArmourMaterial.Arcane, roll: 14f, yaw: -20f, shape: Panel),
-            Box(0.33f, 0.88f, -0.27f, 0.05f, 0.46f, 0.04f, Iron, roll: -70f, shape: Shaft),
-            Box(-0.33f, 0.88f, -0.27f, 0.05f, 0.46f, 0.04f, Iron, roll: 70f, shape: Shaft),
-            Box(0.30f, 0.62f, -0.26f, 0.04f, 0.40f, 0.04f, Iron, roll: -40f, shape: Shaft),
-            Box(-0.30f, 0.62f, -0.26f, 0.04f, 0.40f, 0.04f, Iron, roll: 40f, shape: Shaft),
-            Box(0f, 0.62f, -0.24f, 0.20f, 0.20f, 0.06f, Cold, shape: Plate),
-            Box(0.46f, 0.94f, -0.27f, 0.05f, 0.08f, 0.05f, Bone, roll: -20f, shape: Spike),
-            Box(-0.46f, 0.94f, -0.27f, 0.05f, 0.08f, 0.05f, Bone, roll: 20f, shape: Spike));
+            Box(0.345f, 0.705f, -0.30f, 0.26f, 0.42f, 0.02f, ArmourMaterial.Arcane, roll: -14f, yaw: 20f, shape: Panel),
+            Box(-0.345f, 0.705f, -0.30f, 0.26f, 0.42f, 0.02f, ArmourMaterial.Arcane, roll: 14f, yaw: -20f, shape: Panel),
+            Box(0.33f, 0.88f, -0.31f, 0.05f, 0.46f, 0.04f, Iron, roll: -70f, shape: Shaft),
+            Box(-0.33f, 0.88f, -0.31f, 0.05f, 0.46f, 0.04f, Iron, roll: 70f, shape: Shaft),
+            Box(0.30f, 0.62f, -0.30f, 0.04f, 0.40f, 0.04f, Iron, roll: -40f, shape: Shaft),
+            Box(-0.30f, 0.62f, -0.30f, 0.04f, 0.40f, 0.04f, Iron, roll: 40f, shape: Shaft),
+            Box(0f, 0.62f, -0.28f, 0.20f, 0.20f, 0.06f, Cold, shape: Plate),
+            Box(0.46f, 0.94f, -0.31f, 0.05f, 0.08f, 0.05f, Bone, roll: -20f, shape: Spike),
+            Box(-0.46f, 0.94f, -0.31f, 0.05f, 0.08f, 0.05f, Bone, roll: 20f, shape: Spike));
 
         // ---- Companion (torso frame): a free-floating wisp, no envelope.
         Add("worn.companion.ember-wisp", ArmourMount.Companion,

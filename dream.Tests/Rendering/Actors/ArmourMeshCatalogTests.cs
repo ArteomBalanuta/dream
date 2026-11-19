@@ -1,4 +1,4 @@
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 using SharpGLTF.Schema2;
 using Xunit;
 using Dream.Rendering.Actors;
@@ -822,13 +822,16 @@ public class ArmourMeshCatalogTests
             Assert.True(half <= allowed + Eps, $"{id} box at {part.Center} is {half} half-wide, over {allowed}");
 
             // Nothing hangs further back than the contract's panel depth plus the swing of the pitch.
-            Assert.True(min.Z >= -0.42f, $"{id} box at {part.Center} reaches back to {min.Z}");
+            Assert.True(min.Z >= -0.44f, $"{id} box at {part.Center} reaches back to {min.Z}");
         }
 
-        // Hanging panels sit behind the torso back surface (z -0.14) and clear of it.
+        // Hanging panels sit behind the torso back surface (z -0.14) and clear of it. The far bound moved
+        // from -0.30 to -0.34 in pass 4, which is deliberate and is the whole point of the change: at the
+        // isometric angle a fall at -0.28 still projected ONTO the leg, and the cloaks read as dark planks
+        // crossing in front of the figure. One more panel thickness of depth puts them behind it.
         foreach (ArmourPart panel in model.Parts.Where(p => p.Center.Z <= CloakPanelZ))
         {
-            Assert.True(panel.Center.Z >= -0.30f - Eps, $"{id} panel at {panel.Center} hangs too far back");
+            Assert.True(panel.Center.Z >= -0.34f - Eps, $"{id} panel at {panel.Center} hangs too far back");
         }
     }
 
@@ -892,16 +895,108 @@ public class ArmourMeshCatalogTests
         Assert.True(bottoms.Max() - bottoms.Min() >= 0.05f, $"{id} hem steps only {bottoms.Max() - bottoms.Min()}");
     }
 
+    // The knee, in the torso frame the Back mount is authored in: the leg pieces put their knee cop at
+    // y -0.42..-0.45, so this is where the leg's own silhouette starts to matter most.
+    private const float KneeY = -0.43f;
+
     [Theory]
-    [InlineData("worn.back.travel-cloak", -0.45f)]
-    [InlineData("worn.back.hooded-cloak", -1.00f)]
-    [InlineData("worn.back.grave-mantle", -0.50f)]
-    public void EveryCloak_ReachesItsContractLength(string id, float hemAtMost)
+    [InlineData("worn.back.travel-cloak", -0.06f)]
+    [InlineData("worn.back.hooded-cloak", -0.38f)]
+    [InlineData("worn.back.grave-mantle", -0.09f)]
+    public void EveryCloak_HangsToItsContractLength_AndStopsAtTheKnee(string id, float hemAtMost)
     {
         // An absolute length, stated as a contract and not read off the baked geometry: every relative check
         // survives scaling a cloak's y by half, which turns a calf-length cloak into a waist cape.
+        //
+        // Pass 4 made it a BAND rather than a floor, and the upper side is the new half. The pass-3 lengths
+        // (-0.45, -1.00, -0.50) put two of the three cloaks across the shins, and in the engine they stopped
+        // reading as cloth on a figure and started reading as a dark plank the figure stood behind. A cloak
+        // frames the figure; the legs must survive below it. So no cloak may reach the knee, and the hooded
+        // one - still clearly the longest - hems just above it.
         (Vector3 min, _) = Union(Model(id));
         Assert.True(min.Y <= hemAtMost, $"{id} hem is at {min.Y}, above its contract length {hemAtMost}");
+        Assert.True(min.Y > KneeY - 0.02f, $"{id} hem reaches {min.Y}, past the knee at {KneeY}");
+    }
+
+    // ---- The three pass-4 assembly gates. Each one pins a FIX that was found in the engine and that every
+    // gate in this file was happy with, so each is written in terms of the defect rather than of a number.
+
+    [Fact]
+    public void NoPlateOffTheMidline_IsLeftUnrotated()
+    {
+        // A Plate's shell axis is +Y and its opening faces -Z (EquipmentShape.cs). Unrotated that is right
+        // for a cuirass or a greave, which stand on the midline and have the body behind them to fill the
+        // gap. It is wrong for anything that CAPS a limb off to one side: the camera looks down and forward,
+        // looks straight into the hollow, and a pauldron built that way reads as a detached horseshoe
+        // floating beside the figure - which is exactly what the first cut of the big pauldrons did.
+        //
+        // So: a Plate whose centre is off the body's midline must be turned, either `pitch: -90f` (the
+        // opening goes downward onto the limb) or `yaw: +-90f` (the opening goes against the body).
+        foreach (string id in All)
+        {
+            foreach (ArmourPart part in Model(id).Parts.Where(p => p.Shape == EquipmentShape.Plate))
+            {
+                if (MathF.Abs(part.Center.X) <= 0.12f)
+                {
+                    continue;
+                }
+
+                Assert.True(
+                    part.PitchDegrees != 0f || part.YawDegrees != 0f,
+                    $"{id} caps a limb at x {part.Center.X} with an unrotated Plate: its hollow back faces the camera");
+            }
+        }
+    }
+
+    [Fact]
+    public void EveryShoulderCap_BuriesItsInnerEdgeInTheTorso()
+    {
+        // The other half of the same defect, and the one the captures showed even on the pieces whose
+        // pauldrons were closed Domes: the cap did not MEET the body. A shoulder piece standing at half-width
+        // 0.60 with its inner edge at 0.20 - just outside the chest's 0.195 - leaves a hairline of daylight
+        // between the cap and the torso, and at 28 px a hairline is the difference between armour and a prop.
+        // Overlap is free here (nothing is sorted, nothing z-fights at this scale), so every cap is biased
+        // inward until its inner edge is INSIDE the chest.
+        const float ChestHalfWidth = 0.195f;
+        foreach (string id in Body)
+        {
+            ArmourPart[] caps =
+            [
+                .. Model(id).Parts.Where(p =>
+                    p.Shape is EquipmentShape.Plate or EquipmentShape.Dome
+                    && p.Center.Y >= TorsoShoulderBandY
+                    && MathF.Abs(p.Center.X) > 0.15f)
+            ];
+            Assert.True(caps.Length >= 2, $"{id} has no pair of shoulder caps");
+            foreach (ArmourPart cap in caps)
+            {
+                (Vector3 min, Vector3 max) = PartBounds(cap);
+                float inner = cap.Center.X > 0f ? min.X : -max.X;
+                Assert.True(inner <= ChestHalfWidth, $"{id} shoulder cap at {cap.Center} stops at x {inner}, clear of the torso ({ChestHalfWidth})");
+            }
+        }
+    }
+
+    [Fact]
+    public void NoBackSlotPart_ReachesInFrontOfTheLegs_OrBelowTheKnee()
+    {
+        // The cloaks' half of the pass-4 assembly fix. A back piece hangs BEHIND the figure: anything of it
+        // that falls below the hips must stay behind the torso's own back surface (z -0.14), or at the
+        // isometric angle it projects across the thigh and the cloak reads as a plank the figure is standing
+        // behind rather than as cloth on its shoulders. And nothing in the slot reaches the knee, so the leg
+        // silhouette - which every leg piece in this catalog is sculpted for - survives below the hem.
+        foreach (string id in Back)
+        {
+            foreach (ArmourPart part in Model(id).Parts)
+            {
+                (Vector3 min, Vector3 max) = PartBounds(part);
+                Assert.True(min.Y > KneeY - 0.02f, $"{id} part at {part.Center} falls to {min.Y}, past the knee at {KneeY}");
+                if (min.Y < 0f)
+                {
+                    Assert.True(max.Z <= -0.14f, $"{id} part at {part.Center} hangs to {min.Y} and reaches forward to z {max.Z}, in front of the legs");
+                }
+            }
+        }
     }
 
     [Fact]
