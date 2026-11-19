@@ -109,6 +109,51 @@ public sealed class PlaySceneHeldLightsTests
     }
 
     [Fact]
+    public void ThirdPerson_WithAFlamePoint_AnchorsTheLocalLightToTheFlame()
+    {
+        LightCollector lights = new();
+        Vector3 body = new(5f, 1f, 5f);
+        Vector3 facing = Vector3.UnitX;
+        Vector3 flameModelPoint = new(0.4f, 1.9f, 0.2f);
+        PlayScene.LocalHeldLight local = new(
+            HeldLightKind.Torch, ActorId: 1, FirstPerson: false, body, facing, HasFlame: true, FlameModelPoint: flameModelPoint);
+
+        PlayScene.AddHeldLights(lights, in local, CameraPosition, CameraFront, CameraRight, CameraUp, [], timeSeconds: 1.0);
+
+        Assert.Equal(1, lights.Count);
+        Vector3 expected = Vector3.TransformPosition(flameModelPoint, PlayerRenderState.CreateModelMatrix(body, facing));
+        AssertWithinTheFlameWander(expected, lights.Lights[0].Position);
+    }
+
+    [Fact]
+    public void RemotePlayer_WithAFlamePoint_AnchorsItsLightToTheFlame_AndWithoutOneToTheBody()
+    {
+        RemotePlayerPresentationState hit = Remote(2, new Vector3(10f, 0f, 3f), HeldLightKind.Torch);
+        RemotePlayerPresentationState miss = Remote(3, new Vector3(20f, 0f, 3f), HeldLightKind.Lantern);
+        Vector3 flameModelPoint = new(-0.3f, 1.7f, 0.5f);
+        FakeFlames flames = new(hit.ActorId, flameModelPoint);
+        LightCollector lights = new();
+        PlayScene.LocalHeldLight none = new(HeldLightKind.None, ActorId: 1, FirstPerson: true, Vector3.Zero, -Vector3.UnitZ);
+
+        PlayScene.AddHeldLights(
+            lights, in none, CameraPosition, CameraFront, CameraRight, CameraUp, [hit, miss], timeSeconds: 1.0, remoteFlames: flames);
+
+        Assert.Equal(2, lights.Count);
+        Vector3 expected = Vector3.TransformPosition(flameModelPoint, PlayerRenderState.CreateModelMatrix(hit.Pose.Position, hit.Pose.Facing));
+        AssertWithinTheFlameWander(expected, lights.Lights[0].Position);
+        Assert.Equal(HeldLightAnchor.Body(miss.Pose.Position, miss.Pose.Facing), lights.Lights[1].Position);
+    }
+
+    private sealed class FakeFlames(int actorId, Vector3 point) : IHeldFlamePointLookup
+    {
+        public bool TryGetHeldFlameModelPoint(int id, out Vector3 modelPoint)
+        {
+            modelPoint = id == actorId ? point : Vector3.Zero;
+            return id == actorId;
+        }
+    }
+
+    [Fact]
     public void NoHeldLight_AddsNothing()
     {
         LightCollector lights = new();
@@ -150,6 +195,42 @@ public sealed class PlaySceneHeldLightsTests
         }, iterations: 1000);
 
         Assert.Equal(9, lights.Count);
+    }
+
+    [Fact]
+    public void CollectingHeldLights_WithFlamePoints_AllocatesNothingPerFrame()
+    {
+        LightCollector lights = new();
+        PlayScene.LocalHeldLight local = new(
+            HeldLightKind.Torch, ActorId: 1, FirstPerson: false, Vector3.Zero, -Vector3.UnitZ,
+            HasFlame: true, FlameModelPoint: new Vector3(0.4f, 1.9f, 0.2f));
+        List<RemotePlayerPresentationState> remoteList = [];
+        for (int i = 0; i < 8; i++)
+        {
+            remoteList.Add(Remote(10 + i, new Vector3(i, 0f, -i), i % 2 == 0 ? HeldLightKind.Torch : HeldLightKind.Lantern));
+        }
+
+        IReadOnlyList<RemotePlayerPresentationState> remotes = remoteList;
+        IHeldFlamePointLookup flames = new AlwaysFlames();
+        double time = 0.0;
+
+        AllocationAssert.AtMost(0, () =>
+        {
+            lights.Clear();
+            time += 1.0 / 60.0;
+            PlayScene.AddHeldLights(lights, in local, CameraPosition, CameraFront, CameraRight, CameraUp, remotes, time, flames);
+        }, iterations: 1000);
+
+        Assert.Equal(9, lights.Count);
+    }
+
+    private sealed class AlwaysFlames : IHeldFlamePointLookup
+    {
+        public bool TryGetHeldFlameModelPoint(int actorId, out Vector3 modelPoint)
+        {
+            modelPoint = new Vector3(-0.3f, 1.7f, 0.5f);
+            return true;
+        }
     }
 
     [Fact]

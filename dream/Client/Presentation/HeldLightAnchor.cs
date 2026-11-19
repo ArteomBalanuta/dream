@@ -2,7 +2,9 @@ using OpenTK.Mathematics;
 
 namespace Dream.Client.Presentation;
 
-// Where a held light sits in the world (wave T2): near the right hand. First person anchors to the
+// Where a held light sits in the world (wave T2): near the right hand. Third person and remote players use
+// Body only as the fallback, when no flame point of the drawn item is known (the figure was not drawn this
+// frame); otherwise the light rides the flame of the torch in the animated hand (HeldWeaponRenderer.TryGetFlameModelPoint). First person anchors to the
 // camera so the light follows the view; third person and remote players anchor to the body pose
 // (the actor's world position) and its horizontal facing.
 public static class HeldLightAnchor
