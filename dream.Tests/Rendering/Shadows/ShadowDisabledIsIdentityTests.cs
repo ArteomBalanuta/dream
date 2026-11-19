@@ -9,7 +9,7 @@ namespace Dream.Tests.Rendering.Shadows;
 // DREAM_SHADOWS=0 must reproduce the pre-shadow frame. The argument, in four steps, each pinned below:
 //   1. With shadows off the C# side hands the shaders strength 0 (sun) and count 0 (fires): ShadowFrame.None.
 //   2. With those, dreamSunVisibility and dreamFireVisibility return a literal 1.0 BEFORE any texture fetch.
-//   3. Strip the two new multiplicands from the shader text and what is left is, character for character, the pre-shadow
+//   3. Strip the new multiplicands (the dominant light's visibility, the other term's literal 1.0, the fire visibility) from the shader text and what is left is, character for character, the pre-shadow
 //      expression (embedded below as it was on master before the wave).
 //   4. x * 1.0 == x exactly in IEEE-754, so the lighting sums are bitwise the pre-shadow ones.
 // What this cannot show: that a given GPU driver compiles `* 1.0` to a no-op (every one does: the factor is a constant-returning
@@ -131,7 +131,12 @@ public class ShadowDisabledIsIdentityTests
         string body = FunctionBody(clouds, "vec3 dreamDirectShaded(vec3 n, vec3 fragPos)");
         Assert.Single(Regex.Matches(body, @"dreamSunVisibility\(fragPos, n\)"));
 
-        string stripped = body.Replace(" * dreamSunVisibility(fragPos, n)", string.Empty);
+        // The one visibility call and its two select factors (the dominant light's term takes it, the other takes a literal 1.0).
+        string stripped = body
+            .Replace("    float v = dreamSunVisibility(fragPos, n);\n", string.Empty)
+            .Replace("    bool sunMap = dreamShadowMapIsSun();\n", string.Empty)
+            .Replace(" * (sunMap ? v : 1.0)", string.Empty)
+            .Replace(" * (sunMap ? 1.0 : v)", string.Empty);
         Assert.Contains(PreShadowSunLine, stripped);
     }
 
@@ -174,8 +179,8 @@ public class ShadowDisabledIsIdentityTests
 
         (string Shader, string Line)[] contract =
         [
-            ("clouds.glsl", "return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask * dreamSunVisibility(fragPos, n)"),
-            ("clouds.glsl", "+ max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;"),
+            ("clouds.glsl", "return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask * (sunMap ? v : 1.0)"),
+            ("clouds.glsl", "+ max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb * (sunMap ? 1.0 : v);"),
             ("lighting.glsl", "vec3 dreamAmbient(vec3 n) { return mix(uAmbientGround.rgb, uAmbientSky.rgb, n.y * 0.5 + 0.5); }"),
             ("enemyFragment.glsl", "const float ActorDirectScale = 0.75;"),
             ("enemyFragment.glsl", "lit = max(lit, baseColor.rgb * uLightingParams.y);"),
@@ -190,6 +195,7 @@ public class ShadowDisabledIsIdentityTests
 
         // The header states the visibility terms and cites symbols, not the line numbers that went stale.
         Assert.Contains("sunMask*sunV", py);
+        Assert.Contains("moonI*moonCol*moonV", py);
         Assert.Contains("lightV", py);
         Assert.Contains("def check_contract_against_shaders", py);
         Assert.DoesNotMatch(@"enemyFragment\.glsl:\d+", py);

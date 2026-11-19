@@ -6,6 +6,11 @@ using Dream.Server.Items;
 using Dream.Server.Persistence;
 using Dream.Server.Worlds;
 using Dream.Simulation.World;
+using OpenTK.Mathematics;
+using Dream.Rendering.Core;
+using OpenTK.Windowing.Common;
+using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace Dream.Application;
 
@@ -135,9 +140,95 @@ public static class Program
         return false;
     }
 
+    // Picks the first attempt whose context can be created. A probe that throws GLFWException, while
+    // another attempt remains, means that version is unavailable; the last attempt is never probed.
+    internal static Version SelectContextVersion(
+        IReadOnlyList<Version> attempts,
+        Action<Version> probe,
+        Action<string> log)
+    {
+        for (int i = 0; i + 1 < attempts.Count; i++)
+        {
+            try
+            {
+                probe(attempts[i]);
+                return attempts[i];
+            }
+            catch (GLFWException ex)
+            {
+                log(
+                    $"[startup] gl: {GlContextVersion.Describe(attempts[i])} context unavailable ({ex.Message}), "
+                    + $"falling back to {GlContextVersion.Describe(attempts[i + 1])}");
+            }
+        }
+
+        return attempts[^1];
+    }
+
+    // Creates and destroys a hidden 1x1 core-profile window, so a refused version is found before
+    // the Game constructor has side effects. OpenTK's default GLFW error handler throws from inside the
+    // native callback, mid glfwCreateWindow, which skips GLFW's own cleanup and leaks a hidden window per
+    // refused probe. So the handler is swapped for one that only records the message while the probe runs,
+    // the failure is raised here outside the native frame, and a throwing handler is always put back.
+    private static void ProbeContext(Version version)
+    {
+        string? recorded = null;
+        ErrorCode recordedCode = ErrorCode.NoError;
+        GLFWProvider.SetErrorCallback((error, description) =>
+        {
+            if (recorded == null)
+            {
+                recorded = $"{error}: {description}";
+                recordedCode = error;
+            }
+        });
+        try
+        {
+            using NativeWindow probe = new(new NativeWindowSettings
+            {
+                APIVersion = version,
+                Profile = ContextProfile.Core,
+                ClientSize = new Vector2i(1, 1),
+                StartVisible = false,
+                StartFocused = false,
+#if DEBUG
+                // The same flag the real window asks for, so a driver that refuses a debug 4.5 context falls back here.
+                Flags = ContextFlags.Debug,
+#endif
+            });
+        }
+        catch (Exception ex) when (recorded != null && ex is not (GLFWException or OutOfMemoryException))
+        {
+            // GLFWException has no inner-exception constructor, so the caught exception's detail goes in the message.
+            throw new GLFWException($"{recorded} ({ex.GetType().Name}: {ex.Message})", recordedCode);
+        }
+        finally
+        {
+            // Same behaviour as OpenTK's default handler: surface every GLFW error as an exception.
+            GLFWProvider.SetErrorCallback((error, description) => throw new GLFWException(description, error));
+        }
+
+        if (recorded != null)
+        {
+            throw new GLFWException(recorded, recordedCode);
+        }
+    }
+
     private static int RunDesktop()
     {
-        using var game = new Game();
+        // RenderDoc hooks the GL driver when it loads, so it attaches before the first context (the probe below) exists.
+        RenderDocHook.TryAttach(Environment.GetEnvironmentVariable);
+        IReadOnlyList<Version> attempts = GlContextVersion.AttemptsFromEnvironment();
+        Version version = attempts[0];
+        if (attempts.Count > 1)
+        {
+            // GLFW init failures (no display, no driver) are not a version problem and propagate here.
+            GLFWProvider.EnsureInitialized();
+            version = SelectContextVersion(attempts, ProbeContext, Console.WriteLine);
+        }
+
+        // Game is constructed once, with no retry: only the context creation above is ever retried.
+        using var game = new Game(version);
         try
         {
             game.Run();

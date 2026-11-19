@@ -201,7 +201,7 @@ public partial class Render
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.BindTexture(TextureTarget.Texture2D, _fontTexture);
         // GetTexDataAsRGBA32 returns R,G,B,A bytes.
-        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8,
             width, height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
 
         GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,

@@ -24,8 +24,8 @@ Build the capture exe first (see the capture skill), or pass `-Bin`.
 ## Scene file `scenes/<name>.json`
 
 ```json
-{"script":"play,keys:g:3,wait:120,snap","timeOfDay":"noon","seed":1,
- "env":["DREAM_FX_CLOCK=10","DREAM_MAX_FPS=60"],
+{"script":"play,tod:12,keys:g:3,wait:120,snap","timeOfDay":"noon","seed":1,
+ "env":["DREAM_FX_CLOCK=10","DREAM_FIRE_CLOCK=10","DREAM_DAY_LENGTH_MINUTES=1440","DREAM_MAX_FPS=60"],
  "pixelThreshold":0.08,"maxFraction":0.002,"ignore":[[0,0,200,40]]}
 ```
 
@@ -68,7 +68,9 @@ tools/golden/golden.py selftest` is the short form.
 
 | Source | Effect | Handled by |
 |---|---|---|
-| Fire flicker (+-25% intensity, wall clock; torch, braziers, lamps, their shadows) | the dominant noise: brightness of the lit ground and the position of soft shadow edges | cannot be pinned (`DREAM_FX_CLOCK` pins clouds, sway and mist but explicitly NOT fire); high `pixelThreshold` (noon/wolf 0.2, night 0.3), noise-derived limits, the gain-normalised block check |
+| Fire flicker (+-25% intensity, wall clock; torch, braziers, lamps, their shadows) | the dominant noise: brightness of the lit ground and the position of soft shadow edges | pinned by `DREAM_FIRE_CLOCK=10` (particles and embers still run live); `pixelThreshold` (noon/wolf 0.2, night 0.3), noise-derived limits, the gain-normalised block check |
+| Fire-shadow slot choice (which 4 fires cast shadows) | a whole shadow wedge appeared in some runs and not others | fixed in the engine on 2026-11-19: slots are ranked by each fire's steady brightness (`PointLight.Flicker` divided back out), so flicker can no longer swap them |
+| Sun position: the world clock runs in real time, so a run under load (a 36-way `-Record -Parallel`) snaps later and the sun's shadows have moved | a sun-shadow band over the barrel in wolf-staged 01-play differed between record and compare | `tod:<hours>` as the second script step pins the visual time for every step after it, and `DREAM_DAY_LENGTH_MINUTES=1440` slows the clock 48x for the `play` frame before it |
 | Clouds, wind sway, boundary mist | none once pinned | `DREAM_FX_CLOCK=10` |
 | Frame timing | none (server rolls) | `DREAM_MAX_FPS=60`, `-Seed 1` |
 | Wolf bite: floating damage number (12 or 18) and hit flash | wolf-staged only | the scene no longer captures a live wolf. The wolf bites at a real-time phase the script cannot pin, so the number floats from the player's head (y 430) to the Gate Warden (y 185) at a different height in every run (failed 5 of 16 runs: block 0.14-0.31 vs 0.06 at x 704..736, y 320..430). The script spawns the wolf, aims at it (`aimenemy`, the pointer stays latched so the player keeps the Combat pose and facing), then `dev:clear`s it and waits 120 frames (+30 from the dev step) for every number to expire before the snap. There is no damage-number `ignore` rect any more; only the chat log `[0,840,340,90]` (three dev lines) and the health orb `[180,890,140,134]` are masked, so the whole world and the player are compared |
@@ -115,3 +117,12 @@ small, so the scene uses `blockFloor` 0.04 and `blockMultiplier` 3 (the 0.06 flo
 committed baseline: x0.8 everywhere FAILs (tone p10 0.226 vs 0.040), player figure painted out FAILs at 2.2x the block limit
 (0.088 vs 0.040). Caveat: lowering the floor to 0.04 with the 5x multiplier is NOT safe: a block at (304,816) shows a rare
 0.048 mode that a 12-run baseline had recorded as 0.01 noise; the 36-run baseline covers it.
+
+## Re-recorded 2026-11-19 (graphics quick wins)
+
+The baselines went stale when the torch-flame fix landed and the quick-wins wave added moon shadows. Before re-recording,
+the fire-shadow slot choice was made steady and the fire clock and sun were pinned (table above). Run-to-run noise
+(`selfDiffFraction`) dropped from 0.0021 to 0.000011 (night), 0.000098 to 0.000008 (noon) and 0.00013 to 0.000017
+(wolf-staged). `test_golden.py` (all real-baseline negatives) OK, and `run.ps1 -Scene all -Parallel` 3 times, all PASS.
+A re-record without those fixes passed `run.ps1` but failed the negatives (a x0.8 night darkening passed): always run
+`test_golden.py` before committing baselines.

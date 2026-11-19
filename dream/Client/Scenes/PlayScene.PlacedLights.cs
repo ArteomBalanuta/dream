@@ -12,6 +12,6 @@ public partial class PlayScene
     {
         _render.PlacedLights.Collect(
             presentation.VisibleWorld, presentation.Camera.Position, lights, _render.CurrentFrameLighting.SunDirection.W,
-            _clientPresentationTimeSeconds);
+            FireClockSeconds);
     }
 }

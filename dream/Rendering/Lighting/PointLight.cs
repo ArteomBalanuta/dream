@@ -15,4 +15,9 @@ namespace Dream.Rendering.Lighting;
 // CarrierActorId is the actor holding a held light (the key the actor shadow casters are owned by: the server actor id),
 // and 0 for every other light, a placed fire's FlickerSeed included. The fire shadow pass keeps that actor out of this
 // light's own tiles; it is independent of FlickerSeed, which only picks the flicker phase.
-public readonly record struct PointLight(Vector3 Position, float Radius, Vector3 Color, int FlickerSeed = 0, int CarrierActorId = 0);
+//
+// Flicker is the intensity multiplier the producer already applied to Color (1 = steady, the default). The fire shadow
+// pass divides it back out to rank lights by their steady brightness, so two fires do not swap shadow slots as they flicker.
+// Wander is the offset the producer added to the fire's resting position (Position - Wander is where the flame rests):
+// the fire shadow pass ranks by the resting position, so a wandering flame does not swap shadow slots. Zero for a light that does not wander.
+public readonly record struct PointLight(Vector3 Position, float Radius, Vector3 Color, int FlickerSeed = 0, int CarrierActorId = 0, float Flicker = 1f, Vector3 Wander = default);

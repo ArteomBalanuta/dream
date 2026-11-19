@@ -236,12 +236,9 @@ public sealed class AnimatedModelData
 
             materialData.EmissiveUvScroll = ReadEmissiveUvScroll(material.Extras);
 
-            // Decode textures
+            // Decode textures: only the maps the shaders sample (base colour and emissive).
             materialData.BaseColorTexture = DecodeTexture(material, "BaseColor");
-            materialData.NormalTexture = DecodeTexture(material, "Normal");
-            materialData.MetallicRoughnessTexture = DecodeTexture(material, "MetallicRoughness");
             materialData.EmissiveTexture = DecodeTexture(material, "Emissive");
-            materialData.OcclusionTexture = DecodeTexture(material, "Occlusion");
 
             // Log material properties
             Log($"Material '{material.Name}':");
@@ -251,10 +248,7 @@ public sealed class AnimatedModelData
             Log($"  RoughnessFactor: {materialData.RoughnessFactor}");
             Log($"  AlphaMode: {materialData.AlphaMode}, AlphaCutoff: {materialData.AlphaCutoff}");
             Log($"  Has BaseColorTexture: {materialData.BaseColorTexture != null}");
-            Log($"  Has NormalTexture: {materialData.NormalTexture != null}");
-            Log($"  Has MetallicRoughnessTexture: {materialData.MetallicRoughnessTexture != null}");
             Log($"  Has EmissiveTexture: {materialData.EmissiveTexture != null}");
-            Log($"  Has OcclusionTexture: {materialData.OcclusionTexture != null}");
 
             materials[material.LogicalIndex] = materialData;
         }
@@ -379,10 +373,7 @@ public sealed class AnimatedModelMaterialData
     public float AlphaCutoff;
     public AlphaMode AlphaMode;
     public DecodedTexture? BaseColorTexture;
-    public DecodedTexture? NormalTexture;
-    public DecodedTexture? MetallicRoughnessTexture;
     public DecodedTexture? EmissiveTexture;
-    public DecodedTexture? OcclusionTexture;
 }
 
 public readonly record struct AnimatedModelSkinJoint(int NodeIndex, Matrix4 InverseBindMatrix);

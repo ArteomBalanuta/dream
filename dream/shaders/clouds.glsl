@@ -78,6 +78,10 @@ vec3 dreamDirectShaded(vec3 n, vec3 fragPos)
         vec3 onPlane = fragPos + uSunDirection.xyz * ((CloudPlaneY - fragPos.y) / uSunDirection.y);
         sunMask = 1.0 - uCloudParams.z * dreamCloudCover(onPlane.xz);
     }
-    return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask * dreamSunVisibility(fragPos, n)
-         + max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb;
+    // The map's visibility belongs to the DOMINANT light's term (the one the map was rendered from), the other
+    // term gets exactly 1.0, so strength 0 leaves both terms bitwise unchanged. A select, not a mix.
+    float v = dreamSunVisibility(fragPos, n);
+    bool sunMap = dreamShadowMapIsSun();
+    return max(dot(n, uSunDirection.xyz), 0.0) * uSunDirection.w * uSunColor.rgb * sunMask * (sunMap ? v : 1.0)
+         + max(dot(n, uMoonDirection.xyz), 0.0) * uMoonDirection.w * uMoonColor.rgb * (sunMap ? 1.0 : v);
 }

@@ -1,4 +1,5 @@
 using System.Globalization;
+using OpenTK.Windowing.Common;
 
 namespace Dream.Configuration;
 
@@ -35,6 +36,21 @@ public static class FrameRateCap
     public static int ResolveFromEnvironment(int configValue)
     {
         return Resolve(configValue, Environment.GetEnvironmentVariable(EnvironmentVariable));
+    }
+
+    /// <summary>
+    /// The sleep-pacing frequency to hand the window. With the swap interval doing the pacing the cap
+    /// only backstops a driver that ignores it, so it is lifted to twice the refresh rate unless it was
+    /// deliberately set below the refresh rate. Off keeps the cap as is.
+    /// </summary>
+    public static int ResolveUpdateFrequency(int cap, VSyncMode mode, int refreshHz)
+    {
+        if (mode == VSyncMode.Off || cap == Uncapped || refreshHz <= 0 || cap < refreshHz)
+        {
+            return cap;
+        }
+
+        return Sanitize(Math.Max(cap, 2 * refreshHz));
     }
 
     public static string Describe(int hz)

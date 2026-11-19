@@ -3,6 +3,7 @@ using Dream.Configuration;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Menu;
+using OpenTK.Windowing.Common;
 
 namespace Dream.Client.Menu;
 
@@ -13,6 +14,8 @@ public static class MenuOptionRows
     // The frame caps the slider steps through; 0 is uncapped.
     public static readonly int[] MsaaSteps = [0, 2, 4];
     public static readonly int[] FrameCaps = [30, 60, 90, 120, 144, 240, FrameRateCap.Uncapped];
+
+    public static readonly VSyncMode[] VSyncSteps = [VSyncMode.Off, VSyncMode.On, VSyncMode.Adaptive];
 
     public const float UiScaleMin = 0.75f;
     public const float UiScaleMax = 4f;
@@ -58,6 +61,19 @@ public static class MenuOptionRows
                 },
                 value => FrameRateCap.Describe(FrameCaps[Math.Clamp((int)MathF.Round(value), 0, FrameCaps.Length - 1)]),
                 persist),
+            MenuOptionRow.Slider(
+                "VSync",
+                0f,
+                VSyncSteps.Length - 1,
+                1f,
+                () => VSyncIndex(config.VSync),
+                value =>
+                {
+                    config.VSync = VSyncSteps[Math.Clamp((int)MathF.Round(value), 0, VSyncSteps.Length - 1)];
+                    onFrameCapChanged();
+                },
+                value => VSyncDisplay(VSyncSteps[Math.Clamp((int)MathF.Round(value), 0, VSyncSteps.Length - 1)]),
+                persist),
             // The sample count is a window-creation hint, so it cannot change under a running window.
             // The value is saved and takes effect the next time the game is launched; no apply callback.
             MenuOptionRow.Slider(
@@ -95,6 +111,16 @@ public static class MenuOptionRows
                 persist)
         ];
     }
+
+    public static float VSyncIndex(VSyncMode mode) =>
+        Math.Max(0, Array.IndexOf(VSyncSteps, Enum.IsDefined(mode) ? mode : VSyncSettings.Default));
+
+    public static string VSyncDisplay(VSyncMode mode) => mode switch
+    {
+        VSyncMode.On => "On",
+        VSyncMode.Adaptive => "Adaptive",
+        _ => "Off"
+    };
 
     public static float MsaaIndex(int samples) => Array.IndexOf(MsaaSteps, MsaaSettings.Sanitize(samples));
 

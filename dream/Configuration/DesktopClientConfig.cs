@@ -2,6 +2,7 @@ using Dream.Application;
 using Dream.Client.Startup;
 using Dream.Rendering.Hud;
 using Dream.Server;
+using OpenTK.Windowing.Common;
 
 namespace Dream.Configuration;
 
@@ -28,6 +29,9 @@ public sealed class DesktopClientConfig
 
     // Render frame cap in FPS; 0 means uncapped.
     public int MaxFramesPerSecond { get; set; } = FrameRateCap.Default;
+
+    // Swap interval: Off, On or Adaptive (config key vsync). DREAM_VSYNC overrides it for one run.
+    public VSyncMode VSync { get; set; } = VSyncSettings.Default;
 
     // Multisample count of the window's default framebuffer (0, 2 or 4). Consumed at window creation,
     // so a change takes effect on the next launch.
@@ -96,6 +100,11 @@ public sealed class DesktopClientConfig
 
         FloatingCombatText = FloatingCombatText.Clamp();
         MaxFramesPerSecond = FrameRateCap.Sanitize(MaxFramesPerSecond);
+        if (!Enum.IsDefined(VSync))
+        {
+            VSync = VSyncSettings.Default;
+        }
+
         MsaaSamples = MsaaSettings.Sanitize(MsaaSamples);
         UiScale = HudOptions.SanitizeUiScale(UiScale);
         VolumeMaster = SanitizeVolume(VolumeMaster, 0.8f);

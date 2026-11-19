@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Dream.Rendering.Core;
 using Dream.Rendering.Ground;
 using Dream.Rendering.Sky;
@@ -24,6 +26,9 @@ public sealed class FrameLightingBuffer : IDisposable
     public const float ViewModelAmbientFloor = 0.03f;
 
     private int _handle;
+    private FrameLighting _lastWorld;
+    private FrameLighting _lastViewModel;
+    private bool _hasUploaded;
 
     public FrameLightingBuffer()
     {
@@ -110,12 +115,28 @@ public sealed class FrameLightingBuffer : IDisposable
         // The cloud and sun-shadow terms are world-space functions and cannot ride the eye-space view-model range: ForViewModel zeroes them.
         FrameLighting viewModel = ForViewModel(in world, in view);
 
-        GL.BindBuffer(BufferTarget.UniformBuffer, _handle);
-        GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero, FrameLighting.SizeInBytes, ref world);
-        GL.BufferSubData(BufferTarget.UniformBuffer, (IntPtr)ViewModelOffset, FrameLighting.SizeInBytes, ref viewModel);
-        GL.BindBuffer(BufferTarget.UniformBuffer, 0);
-        RenderCounters.CountUniformUpload();
+        // The frame uploads twice (shadow prep, then the world pass) with identical contents: skip the repeat.
+        if (!_hasUploaded || !SameBytes(in world, in _lastWorld) || !SameBytes(in viewModel, in _lastViewModel))
+        {
+            GL.BindBuffer(BufferTarget.UniformBuffer, _handle);
+            GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero, FrameLighting.SizeInBytes, ref world);
+            GL.BufferSubData(BufferTarget.UniformBuffer, (IntPtr)ViewModelOffset, FrameLighting.SizeInBytes, ref viewModel);
+            GL.BindBuffer(BufferTarget.UniformBuffer, 0);
+            RenderCounters.CountUniformUpload();
+            _lastWorld = world;
+            _lastViewModel = viewModel;
+            _hasUploaded = true;
+        }
+
         BindWorld();
+    }
+
+    // True when both structs hold the same bytes. Allocation free.
+    public static bool SameBytes(in FrameLighting a, in FrameLighting b)
+    {
+        ReadOnlySpan<FrameLighting> left = MemoryMarshal.CreateReadOnlySpan(ref Unsafe.AsRef(in a), 1);
+        ReadOnlySpan<FrameLighting> right = MemoryMarshal.CreateReadOnlySpan(ref Unsafe.AsRef(in b), 1);
+        return MemoryMarshal.AsBytes(left).SequenceEqual(MemoryMarshal.AsBytes(right));
     }
 
     public void BindWorld()

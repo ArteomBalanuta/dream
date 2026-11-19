@@ -119,7 +119,7 @@ public sealed class PlacedLightIndex
                     int seed = FireFlicker.SeedFor(placed.Position);
                     FireFlickerSample fire = FireFlicker.Sample(FireFlickerKind.Brazier, placed.Position, clock, seed);
                     lights.Add(new PointLight(
-                        placed.Position + fire.Offset, placed.Radius * fire.RadiusScale, placed.Color * (strength * fire.Intensity), seed));
+                        placed.Position + fire.Offset, placed.Radius * fire.RadiusScale, placed.Color * (strength * fire.Intensity), seed, 0, fire.Intensity, fire.Offset));
                 }
                 else
                 {

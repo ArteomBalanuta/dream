@@ -102,10 +102,10 @@ public class ShadowFrameContractTests
     }
 
     [Fact]
-    public void The_Sun_Visibility_Is_Multiplied_Into_The_Sun_Term_At_Exactly_One_Place()
+    public void The_Sun_Visibility_Is_Multiplied_Into_The_Dominant_Lights_Term_At_Exactly_One_Place()
     {
         // D1 shipped pixel-identical: nothing outside its own definition called the function. D3 added the one call in
-        // clouds.glsl's dreamDirectShaded, on the sun term only.
+        // clouds.glsl's dreamDirectShaded, on the dominant light's term.
         foreach (string file in Directory.GetFiles(Path.Combine(RepoRoot(), "dream", "shaders"), "*.glsl"))
         {
             string text = Regex.Replace(File.ReadAllText(file), @"//[^
@@ -114,7 +114,7 @@ public class ShadowFrameContractTests
             // The sculpted-equipment wave added the third and last caller: enemyFragment.glsl gates
             // the equipment SPECULAR on the same visibility, so a pauldron does not glint while the
             // figure stands in a doorway's shadow. Still exactly one call per file, still only on
-            // the sun term, and still nothing else in the tree calls it.
+            // the dominant light's term, and still nothing else in the tree calls it.
             if (Path.GetFileName(file) is "lighting.glsl" or "clouds.glsl" or "enemyFragment.glsl")
             {
                 Assert.Equal(1, calls);
