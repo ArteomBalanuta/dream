@@ -67,6 +67,9 @@ public static class ShadowCasterPass
         return target is null ? default : Run(target, in frame, focus);
     }
 
+    private static readonly GpuDebugLabel SunMapGroup = new("Sun shadow map");
+    private static readonly GpuDebugLabel FireAtlasGroup = new("Fire shadow atlas");
+
     /// <summary>The pass proper, against any target. The sun map first, then slot-major, face-major over the fire tiles.</summary>
     public static ShadowPassStats Run(IShadowPassTarget target, in ShadowFrame frame, Vector3 focus)
     {
@@ -80,6 +83,7 @@ public static class ShadowCasterPass
             // is not SunActive, because the strength stays 0 until the maps are sampled while the map is still rendered.
             if (frame.SunTexelWorld > 0f)
             {
+                using GpuDebugScope sunGroup = GpuDebug.Scope(SunMapGroup);
                 target.BeginSun();
                 Matrix4 identity = Matrix4.Identity;
                 ViewFrustum frustum = ShadowCasterSelection.SunFrustum(in frame.SunLightViewProjection);
@@ -91,6 +95,7 @@ public static class ShadowCasterPass
 
             ReadOnlySpan<FireShadowSlot> fires = frame.Fires;
             int count = Math.Clamp(frame.FireCount, 0, fires.Length);
+            using GpuDebugScope fireGroup = GpuDebug.Scope(FireAtlasGroup);
             for (int slot = 0; slot < count; slot++)
             {
                 FireShadowSlot fire = fires[slot];
