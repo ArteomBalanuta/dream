@@ -2,7 +2,7 @@
   "script": "play,keys:g:3,wait:120,snap",
   "timeOfDay": "noon",
   "seed": 1,
-  "env": ["DREAM_FX_CLOCK=10", "DREAM_MAX_FPS=60"],
+  "env": ["DREAM_FX_CLOCK=10", "DREAM_FIRE_CLOCK=10", "DREAM_MAX_FPS=60"],
   "pixelThreshold": 0.2,
   "maxFraction": 0.0004,
   "ignore": []

@@ -65,7 +65,7 @@ public partial class PlayScene
             carrierId);
         AddHeldLights(
             lights, in local, camera.Position, camera.Front, camera.Right, camera.Up, remotePlayers,
-            _clientPresentationTimeSeconds, _render.RemotePlayers);
+            FireClockSeconds, _render.RemotePlayers);
     }
 
     // Hands the local avatar renderer this frame's held items and animation events: a swing when the

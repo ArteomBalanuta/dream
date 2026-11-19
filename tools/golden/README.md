@@ -25,7 +25,7 @@ Build the capture exe first (see the capture skill), or pass `-Bin`.
 
 ```json
 {"script":"play,keys:g:3,wait:120,snap","timeOfDay":"noon","seed":1,
- "env":["DREAM_FX_CLOCK=10","DREAM_MAX_FPS=60"],
+ "env":["DREAM_FX_CLOCK=10","DREAM_FIRE_CLOCK=10","DREAM_MAX_FPS=60"],
  "pixelThreshold":0.08,"maxFraction":0.002,"ignore":[[0,0,200,40]]}
 ```
 
@@ -68,7 +68,7 @@ tools/golden/golden.py selftest` is the short form.
 
 | Source | Effect | Handled by |
 |---|---|---|
-| Fire flicker (+-25% intensity, wall clock; torch, braziers, lamps, their shadows) | the dominant noise: brightness of the lit ground and the position of soft shadow edges | cannot be pinned (`DREAM_FX_CLOCK` pins clouds, sway and mist but explicitly NOT fire); high `pixelThreshold` (noon/wolf 0.2, night 0.3), noise-derived limits, the gain-normalised block check |
+| Fire flicker (+-25% intensity, wall clock; torch, braziers, lamps, their shadows) | the dominant noise: brightness of the lit ground and the position of soft shadow edges | pinned by `DREAM_FIRE_CLOCK=10` (particles and embers still run live); `pixelThreshold` (noon/wolf 0.2, night 0.3), noise-derived limits, the gain-normalised block check |
 | Clouds, wind sway, boundary mist | none once pinned | `DREAM_FX_CLOCK=10` |
 | Frame timing | none (server rolls) | `DREAM_MAX_FPS=60`, `-Seed 1` |
 | Wolf bite: floating damage number (12 or 18) and hit flash | wolf-staged only | the scene no longer captures a live wolf. The wolf bites at a real-time phase the script cannot pin, so the number floats from the player's head (y 430) to the Gate Warden (y 185) at a different height in every run (failed 5 of 16 runs: block 0.14-0.31 vs 0.06 at x 704..736, y 320..430). The script spawns the wolf, aims at it (`aimenemy`, the pointer stays latched so the player keeps the Combat pose and facing), then `dev:clear`s it and waits 120 frames (+30 from the dev step) for every number to expire before the snap. There is no damage-number `ignore` rect any more; only the chat log `[0,840,340,90]` (three dev lines) and the health orb `[180,890,140,134]` are masked, so the whole world and the player are compared |
