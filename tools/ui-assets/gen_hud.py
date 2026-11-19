@@ -266,9 +266,195 @@ def desat(img, amount, dim):
     return out
 
 
+GEM_PX = GEM_U * U.SCALE   # 200
+GEM_R_U, GEM_C_U = 24.0, 24.9   # the stone's radius and centre in its 50 u sprite (alpha spans x 3..196, y 8..191 px)
+
+# Per-stone grade. cap is the brightest channel the glass may reach (the engine's gem pass multiplies up from here),
+# keep the share of chroma that survives, knee where the highlight compression starts. The traced stone peaks at 1.00
+# with p99 0.99 and a ruby saturation near 1.0; what the grade leaves is measured in check_hud.
+GEM_GRADE = {
+    "hp": dict(cap=0.80, knee=0.34, keep=0.64, tint=(0.95, 0.58, 0.76), gain=1.85, core=(0.46, 0.50), glow=(0.19, 0.004, 0.028), hl=(0.36, 0.19, 0.18)),
+    "mp": dict(cap=0.50, knee=0.26, keep=0.48, tint=(0.86, 0.95, 1.00), gain=1.45, core=(0.54, 0.50), glow=(0.045, 0.10, 0.25), hl=(0.24, 0.31, 0.42)),
+}
+# glow is the candlelight that burns through the liquid (an sRGB add at the lit core, brighter where the fluid is thick
+# and along the thin lip of each clot); hl is the pale, wet, broken sheen on the upper-left glass. Neither may reach plastic:
+# the highlight stays well under luma 0.80.
+
+
+def _smoothstep(a, b, x):
+    t = np.clip((x - a) / (b - a), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def _noise_px(seed: str, scale_u: float, octaves: int = 3) -> np.ndarray:
+    return U.fbm(GEM_PX, GEM_PX, seed, scale_u, octaves)
+
+
+def _stretch(a: np.ndarray, ky: float) -> np.ndarray:
+    """Vertical smear of a noise field: slow viscous runs rather than round blobs."""
+    h, w = a.shape
+    small = np.asarray(Image.fromarray(a.astype(np.float32), "F").resize((w, max(2, int(h * ky))), Image.BICUBIC), dtype=np.float32)
+    return np.asarray(Image.fromarray(small, "F").resize((w, h), Image.BICUBIC), dtype=np.float32)
+
+
+def _cracks(seed: str, kind: str) -> np.ndarray:
+    """Hairline cracks in the glass as a 0..1 line mask at stone resolution: a few jagged runs from the rim inwards, one
+    fork each at most. Drawn at 4x and averaged, so each is about a quarter of a unit wide."""
+    from PIL import ImageDraw
+    r = U.rng(f"{seed}.cracks.{kind}")
+    S4 = 4
+    im = Image.new("L", (GEM_PX * S4, GEM_PX * S4), 0)
+    d = ImageDraw.Draw(im)
+    cx = cy = GEM_PX * S4 / 2
+    rad = GEM_R_U * U.SCALE * S4
+    for k in range(4):
+        ang = math.radians((200, 292, 24, 118)[k] + (r.random() - 0.5) * 30 + (0 if kind == "hp" else 14))
+        x, y = cx + rad * 0.98 * math.cos(ang), cy + rad * 0.98 * math.sin(ang)
+        heading = ang + math.pi
+        pts = [(x, y)]
+        for _ in range(int(10 + r.random() * 8)):
+            heading += (r.random() - 0.5) * 1.15
+            step = (1.9 + r.random() * 2.4) * U.SCALE * S4
+            x, y = x + step * math.cos(heading), y + step * math.sin(heading)
+            pts.append((x, y))
+            if r.random() < 0.10:   # a fork that dies quickly
+                bx, by, ba = x, y, heading + (0.9 if r.random() < 0.5 else -0.9)
+                fork = [(bx, by)]
+                for _ in range(3):
+                    ba += (r.random() - 0.5) * 0.9
+                    bx, by = bx + 1.6 * U.SCALE * S4 * math.cos(ba), by + 1.6 * U.SCALE * S4 * math.sin(ba)
+                    fork.append((bx, by))
+                d.line(fork, fill=170, width=int(S4 * 0.7))
+        d.line(pts, fill=255, width=S4)
+    a = np.asarray(im, dtype=np.float32) / 255
+    return a.reshape(GEM_PX, S4, GEM_PX, S4).mean(axis=(1, 3))
+
+
+def _swell(n: int, base: float, amp: float, phase: float, ends: float = 0.0) -> list:
+    """Radii of a forged bar that was beaten thicker in places: a slow swell plus a taper at both ends."""
+    out = []
+    for k in range(n):
+        t = k / (n - 1)
+        out.append(max(0.3, (base + amp * math.sin(t * math.tau * 1.5 + phase)) * (1 - ends * (2 * abs(t - 0.5)) ** 3)))
+    return out
+
+
+def _cage_relief(kind: str) -> BarRelief:
+    """A forged iron cage the orb sits inside: a girdle ring hugging the rim, a crown band and a lower band, two bowed
+    ribs, all hammered to uneven widths, a boss rivet where they cross and on the girdle, and four heavy claws that bite
+    over the glass. The second stone is the first mirrored, so its claws curl the other way."""
+    r = BarRelief(GEM_U, GEM_U, "iron.black", 0.0)
+    cx, cy, R = GEM_C_U + 0.1, GEM_C_U, GEM_R_U
+    m = -1.0 if kind == "mp" else 1.0
+    # the girdle: a heavy ring on the rim, so the cage reads as seated in the bar and not floating on the glass
+    ring = [(cx + (R - 0.4) * math.cos(t), cy + (R - 0.4) * math.sin(t)) for t in np.linspace(0, math.tau, 96)]
+    r.sweep(ring, _swell(96, 1.95, 0.55, 0.6), z=1.0, mat="iron.warm", flatten=0.90, step_px=2.0)
+    bands = []
+    for lat_deg, w, tag, ph in ((34, 1.95, "upper", 0.4), (-24, 1.75, "lower", 2.1)):
+        lat = math.radians(lat_deg)
+        y0, rx = cy - R * math.sin(lat), R * math.cos(lat) * 0.985
+        pts = [(cx + rx * math.cos(t), y0 + rx * 0.30 * math.sin(t)) for t in np.linspace(math.radians(8), math.radians(172), 44)]
+        r.sweep(pts, _swell(44, w, 0.55, ph, 0.25), z=1.3, mat="iron.warm", flatten=0.90, step_px=2.0)
+        bands.append(pts)
+    ribs = []
+    for i, s in enumerate((-0.54, 0.54)):
+        pts = [(cx + R * 0.97 * s * math.sin(t), cy - R * 0.97 * math.cos(t)) for t in np.linspace(math.radians(22), math.radians(158), 44)]
+        r.sweep(pts, _swell(44, 1.75, 0.50, 1.3 + i, 0.30), z=1.35, mat="iron", flatten=0.90, step_px=2.0)
+        ribs.append(pts)
+    for i, rib in enumerate(ribs):
+        for j, band in enumerate(bands):
+            best = min(((ax - bx) ** 2 + (ay - by) ** 2, (ax + bx) / 2, (ay + by) / 2) for ax, ay in rib for bx, by in band)
+            r.dome(best[1], best[2], 2.2, z=float(r.h[int(best[2] * PPU), int(best[1] * PPU)]) + 0.35, mat="iron.rivet", seed=f"gem.cage.{kind}.rv{i}{j}", collar=True)
+    for i, tdeg in enumerate((-70, -20, 25, 70, 115, 160, 205, 250)):
+        t = math.radians(tdeg)
+        x, y = cx + (R - 0.4) * math.cos(t), cy + (R - 0.4) * math.sin(t)
+        r.dome(x, y, 1.4, z=float(r.h[int(y * PPU), int(x * PPU)]) + 0.3, mat="iron.rivet", seed=f"gem.cage.{kind}.gr{i}", collar=True)
+    for i, ang in enumerate((-132, -48, 138, 44)):
+        a = math.radians(ang)
+        ux, uy = math.cos(a), math.sin(a)
+        base = (cx + (R + 0.8) * ux, cy + (R + 0.8) * uy)
+        pts = [(base[0] - ux * t * 13.0 - math.sin(t * 2.4) * uy * 2.0 * m, base[1] - uy * t * 13.0 + math.sin(t * 2.4) * ux * 2.0 * m) for t in np.linspace(0, 1, 20)]
+        r.sweep(pts, [3.5 - 3.35 * (k / 19) ** 0.75 for k in range(20)], z=1.5, mat="iron.warm", flatten=0.55, step_px=2.0)
+    return r
+
+
+def _cage_layer(kind: str) -> np.ndarray:
+    r = _cage_relief(kind)
+    img = _lit(r, f"gem.cage.{kind}", wear=0.14, grime=0.85, rust=0.42, dust=0.03, detail=0.8, exposure=0.78)
+    return forge.downsample(img).astype(np.float32) / 255
+
+
+def _grade_glass(kind: str, state: str, px: np.ndarray, cage: np.ndarray) -> np.ndarray:
+    """Candy to blood: highlights compressed so no plastic flare survives, chroma pulled in, the liquid mottled with slow
+    vertical runs and dark clots, soot settled along the rim and the cage, hairline cracks, and the cage over the lot."""
+    g = GEM_GRADE[kind]
+    a = px[..., 3].astype(np.float32) / 255
+    rgb = px[..., :3].astype(np.float32) / 255
+    y = (rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
+    rgb = np.clip(y + (rgb - y) * g["keep"], 0, None) * np.array(g["tint"], np.float32) * g["gain"]
+    v = rgb.max(axis=2, keepdims=True)
+    span = g["cap"] - g["knee"]
+    v2 = np.where(v > g["knee"], g["knee"] + span * (1 - np.exp(-(v - g["knee"]) / span)), v)
+    rgb = rgb * (v2 / np.maximum(v, 1e-6))
+    # the traced soft boxes are pale and desaturated: that is reflection, and a wet oily sheen reads as plastic, so it sinks into the liquid
+    mx0, mn0 = rgb.max(axis=2, keepdims=True), rgb.min(axis=2, keepdims=True)
+    pale = _smoothstep(0.10, 0.28, mn0 / np.maximum(mx0, 1e-6)) * _smoothstep(0.14, 0.30, mx0)
+    rgb = rgb * (1 - 0.45 * pale)
+    seed = f"gem.{kind}"
+    run = _stretch(_noise_px(seed + ".run", 3.2), 0.28)
+    clot = _noise_px(seed + ".clot", 1.7)
+    clots = _smoothstep(0.60, 0.74, clot)
+    if state == "empty":
+        rgb = rgb * 0.30   # drained glass is soot-dark: the lit fluid is what shows the level (the C# gem test counts the pixels that differ)
+    if state == "full":
+        body = 1.0 + 0.52 * (run - 0.5) - 0.40 * clots * (0.5 + 0.5 * run)
+        rgb = rgb * body[..., None]
+        yy, xx = np.mgrid[0:GEM_PX, 0:GEM_PX].astype(np.float32)
+        rpx = GEM_R_U * U.SCALE
+        d2 = ((xx - GEM_PX * g["core"][0]) ** 2 + (yy - GEM_PX * g["core"][1]) ** 2) / (0.95 * rpx) ** 2
+        core = np.exp(-d2) * (0.55 + 0.80 * run)
+        lip = clots * (1 - _smoothstep(0.74, 0.80, clot))
+        glow = np.array(g["glow"], np.float32)
+        rgb = rgb + (core + 0.9 * lip * (0.3 + 0.7 * np.exp(-d2 / 3.0)))[..., None] * glow * a[..., None]
+        ang = np.arctan2(yy - GEM_PX / 2, xx - GEM_PX / 2)
+        rad = np.hypot(yy - GEM_PX / 2, xx - GEM_PX / 2) / rpx
+        dang = np.abs(((ang - math.radians(-135 if kind == "hp" else -45) + math.pi) % math.tau) - math.pi)
+        arc = _smoothstep(math.radians(46), math.radians(14), dang) * _smoothstep(0.50, 0.62, rad) * (1 - _smoothstep(0.80, 0.90, rad))
+        broken = _smoothstep(0.50, 0.64, _noise_px(seed + ".wet", 1.1, octaves=2))
+        rgb = rgb + (arc * broken * 0.85)[..., None] * np.array(g["hl"], np.float32)
+        rgb = rgb * (1 - 0.10 * _smoothstep(0.80, 1.0, rad))[..., None]   # the outer glass falls away: the lit part is a core, not the whole stone
+    rim = 1 - _smoothstep(0.50, 0.97, forge.blur(a, 4.5 * U.SCALE))
+    pit = _noise_px(seed + ".soot", 0.9, octaves=2)
+    smudge = _noise_px(seed + ".smudge", 4.0)
+    soot = np.clip(0.40 * rim * (0.4 + 0.8 * smudge) + 0.35 * _smoothstep(0.66, 0.78, pit) * (0.35 + 0.65 * rim)
+                   + 0.35 * _smoothstep(0.55, 0.85, forge.blur(cage[..., 3], 2.2 * U.SCALE)), 0, 0.85)
+    rgb = rgb * (1 - soot[..., None] * 0.80) + soot[..., None] * np.array((0.012, 0.011, 0.010), np.float32)
+    crack = _cracks(seed, kind)
+    shifted = np.roll(crack, (-1, -1), axis=(0, 1))
+    rgb = rgb * (1 - 0.88 * crack[..., None]) + np.array(g["tint"], np.float32) * (np.clip(shifted - crack, 0, 1) * 0.16)[..., None]
+    sh = np.roll(forge.blur(cage[..., 3], 1.7 * U.SCALE), (int(2.2 * U.SCALE), int(1.6 * U.SCALE)), axis=(0, 1))   # the cast shadow lands on the fluid beneath
+    rgb = rgb * (1 - 0.62 * sh[..., None])
+    ca = cage[..., 3:4]
+    rgb = rgb * (1 - ca) + cage[..., :3] * ca
+    out8 = (np.clip(rgb, 0, 1) * 255 + 0.5).astype(np.uint8)
+    out = np.dstack((out8, px[..., 3]))
+    out[..., :3][px[..., 3] == 0] = 0
+    return out
+
+
 def gem_set(kind):
-    """The four gem layers from the ray tracer. All share the pivot at the stone's centre."""
+    """The four gem layers from the ray tracer, aged. All share the pivot at the stone's centre. The traced stone is a
+    clean faceted ruby or sapphire; here it becomes blood or ink in soot-streaked glass held in a forged iron cage. The
+    cage and the soot are baked into full and empty alike, so the fill level slides behind them."""
     layers = gemtrace.render_set(kind)
+    cage = _cage_layer(kind)
+    cage[..., 3] *= (layers["full"][..., 3] > 0)
+    for k in ("full", "empty"):
+        layers[k] = _grade_glass(kind, k, layers[k], cage)
+    sp = layers["spec"].copy()
+    keep = (1 - cage[..., 3:4]) * (0.45 + 0.30 * _noise_px(f"gem.{kind}.glint", 2.5)[..., None])   # broken sheens, not a plastic gleam
+    sp[..., :3] = (sp[..., :3].astype(np.float32) * keep).astype(np.uint8)
+    layers["spec"] = sp
     piv = (GEM_U * 2, GEM_U * 2)
     return [U.Sprite(f"gem.{kind}.{k}", layers[k], pivot=piv) for k in ("full", "empty", "mask", "spec")]
 
@@ -1337,7 +1523,8 @@ CLOTH = (6.0, 0.9, 0.8)
 
 
 def _icon_render(r, seed):
-    return forge.downsample(_lit(r, seed, wear=0.2, grime=0.4, rust=0.04, dust=0.03, detail=0.5, exposure=1.15))
+    # tarnished, pitted and soot-dark: the brass glyphs were clean flat gold (grime .4, rust .04, exposure 1.15)
+    return forge.downsample(_lit(r, seed, wear=0.26, grime=0.85, rust=0.26, dust=0.05, detail=1.1, exposure=0.92))
 
 
 def icon_banner():

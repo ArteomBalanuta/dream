@@ -110,6 +110,7 @@ public static class InventoryWindow
         }
 
         st.BeginFrame(v);
+        VendorFxState.Current.BeginFrame(v);
         bool live = !st.ModalOpen;
         bool dragging = i.ActiveDragPayload >= 0;
         UiRect win = l.Inventory;
@@ -174,7 +175,19 @@ public static class InventoryWindow
         {
             if (st.DragActive && !st.DragCancelled && payload == st.DragSource)
             {
-                if (TryResolveRelease(l, win, v, payload, dropPosition, out InventoryHudAction action) == DropVerdict.Valid)
+                // One release, exactly one action: the shop is resolved first, and when it answers (Valid or
+                // Invalid) the bag and the ground are not asked, so a drop never both sells and moves.
+                DropVerdict shop = VendorGrid.TryResolveSell(in l, v, payload, dropPosition, out VendorHudAction sell);
+                if (shop == DropVerdict.Valid)
+                {
+                    a.Vendor(sell);
+                    i.Emit(UiFeedback.Coin);
+                }
+                else if (shop == DropVerdict.Invalid)
+                {
+                    i.Emit(UiFeedback.Refuse);
+                }
+                else if (TryResolveRelease(l, win, v, payload, dropPosition, out InventoryHudAction action) == DropVerdict.Valid)
                 {
                     a.Inventory(action);
                 }
@@ -214,9 +227,14 @@ public static class InventoryWindow
     }
 
     // The bag cell under p (0..63), or -1 off the board (or for a non-finite p).
-    internal static int CellAt(in UiLayout l, UiRect win, Vector2 p)
+    internal static int CellAt(in UiLayout l, UiRect win, Vector2 p) => CellIn(BagRect(l, win), in l, p);
+
+    // The cell of ANY board laid out on the bag's grid (8 x 8 at CellUnits pitch) under p, or -1 off it.
+    // The shop board mirrors the bag exactly, so both boards resolve a point through this one method:
+    // two copies of this arithmetic could drift, and a drift would put the drop on a different cell
+    // from the one the player saw highlighted.
+    internal static int CellIn(UiRect board, in UiLayout l, Vector2 p)
     {
-        UiRect board = BagRect(l, win);
         if (!board.Contains(p))
         {
             return -1;
@@ -711,6 +729,18 @@ public static class InventoryWindow
         UiSprite overlay = default;
         bool haveOverlay = drag.Cells != 0 && s.TryGet(overlayName, out overlay);
 
+        // The buy flash: the cells of the item that just arrived from the shop glow ember and fade.
+        VendorFxState fx = VendorFxState.Current;
+        float flash = fx.FlashLevel(v.AnimationSeconds);
+        ulong flashCells = 0;
+        UiSprite emberOverlay = default;
+        bool haveFlash = flash > 0f
+            && fx.FlashAnchor >= 0
+            && IsPlaced(v, fx.FlashAnchor)
+            && BagGrid.TryMask(fx.FlashAnchor, v.BagFootprints[fx.FlashAnchor], out flashCells)
+            && s.TryGet(UiSpriteNames.CellOverlayEmber, out emberOverlay);
+        UiColor flashTint = new(255, 255, 255, (byte)Math.Clamp((int)MathF.Round(255f * flash), 0, 255));
+
         for (int cell = 0; cell < BagGrid.CellCount; cell++)
         {
             UiRect r = SlotRect(l, win, cell);
@@ -737,6 +767,11 @@ public static class InventoryWindow
             if (haveOverlay && (drag.Cells & (1UL << cell)) != 0)
             {
                 c.Tile(overlay, r, White);
+            }
+
+            if (haveFlash && (flashCells & (1UL << cell)) != 0)
+            {
+                c.Tile(emberOverlay, r, flashTint);
             }
         }
     }

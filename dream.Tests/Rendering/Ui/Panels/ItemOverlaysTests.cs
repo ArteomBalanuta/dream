@@ -15,7 +15,11 @@ public sealed class ItemOverlaysTests : IDisposable
     private static readonly int HeadMask = EquipmentSlots.MaskOf(EquipmentSlot.Head);
     private static readonly int MainMask = EquipmentSlots.MaskOf(EquipmentSlot.MainHand);
 
-    public void Dispose() => _scene.Dispose();
+    public void Dispose()
+    {
+        _scene.Dispose();
+        VendorFxState.Reset();
+    }
 
     private void RightClickSlot(int slot)
     {
@@ -663,6 +667,63 @@ public sealed class ItemOverlaysTests : IDisposable
         Assert.False(CharacterPanelModel.CanEquipTo(HeadMask, EquipmentSlot.Body));
         Assert.False(CharacterPanelModel.CanEquipTo(0, EquipmentSlot.MainHand));
         Assert.True(CharacterPanelModel.CanEquipTo(-1, EquipmentSlot.OffHand));
+    }
+
+    // ---- the grid shop's frames -----------------------------------------------------------------
+
+    private void ShopBuild(IUiCanvas canvas)
+    {
+        VendorWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+        InventoryWindow.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+        ItemOverlays.Build(canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _scene.Actions);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ShopFrame_HoveredOrWithASellInFlight_AllocatesNothingOnceWarm(bool dragging)
+    {
+        VendorFxState.Reset();
+        _scene.Items[9] = InventoryScene.Item(31, "axe.twinbit", rarity: ItemRarity.Rare);
+        _scene.Items[40] = InventoryScene.Item(32, "gem.amber");
+        _scene.Refresh();
+        // The shipped catalog's footprints, as in play: the scene's own lookup builds a string per call.
+        _scene.View.FootprintOf = BagGrid.FootprintOf;
+        VendorHudState vendor = new();
+        vendor.Open(
+            900,
+            "Old Mara",
+            [new VendorStockLine("axe.twinbit", "Axe", 40), new VendorStockLine("gem.amber", "Amber", 5), new VendorStockLine("nothing.known", "Relic", 99999)]);
+        _scene.View.Vendor = vendor;
+        NullCanvas canvas = new(_scene.Table);
+        if (dragging)
+        {
+            _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(9));
+            _scene.Input.StartDrag = true;
+            ShopBuild(canvas);
+            _scene.Input.EndFrame();
+            Assert.Equal(9, _scene.Input.ActiveDragPayload);
+            _scene.Input.Pointer = InventoryScene.Centre(VendorGrid.CellRect(_scene.Layout, _scene.Layout.Character, 27));
+        }
+        else
+        {
+            _scene.Input.Pointer = InventoryScene.Centre(VendorGrid.CellRect(_scene.Layout, _scene.Layout.Character, 0));
+        }
+
+        for (int n = 0; n < 3; n++)
+        {
+            _scene.View.AnimationSeconds = 1f + (n * 0.05f);
+            ShopBuild(canvas);
+        }
+
+        long bytes = Dream.Tests.Utilities.AllocationAssert.AtMost(0, () =>
+        {
+            _scene.View.AnimationSeconds += 0.05f;
+            ShopBuild(canvas);
+        });
+
+        Assert.Equal(0L, bytes);
+        VendorFxState.Reset();
     }
 
     // Draws nothing, measures with a fixed width: enough to prove a steady frame allocates nothing.

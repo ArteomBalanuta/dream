@@ -18,7 +18,11 @@ public sealed class InventoryWindowTests : IDisposable
     private static readonly int RingMask = EquipmentSlots.MaskOf(EquipmentSlot.RingLeft) | EquipmentSlots.MaskOf(EquipmentSlot.RingRight);
     private static readonly int HandsMask = EquipmentSlots.MaskOf(EquipmentSlot.MainHand) | EquipmentSlots.MaskOf(EquipmentSlot.OffHand);
 
-    public void Dispose() => _scene.Dispose();
+    public void Dispose()
+    {
+        _scene.Dispose();
+        VendorFxState.Reset();
+    }
 
     // Pick up at one point, move, release at another. Two frames.
     private void Drag(Vector2 from, Vector2 to)
@@ -1607,5 +1611,277 @@ public sealed class InventoryWindowTests : IDisposable
         _scene.Frame();
 
         Assert.Empty(_scene.Actions.Picked);
+    }
+
+    // ---- drag to sell (the grid shop) -------------------------------------------------------
+
+    private sealed class SellActions : IHudActions
+    {
+        public List<InventoryHudAction> Inventory { get; } = new();
+
+        public List<VendorHudAction> Sold { get; } = new();
+
+        void IHudActions.Inventory(InventoryHudAction action) => Inventory.Add(action);
+
+        public void CloseInventory()
+        {
+        }
+
+        public void Vendor(VendorHudAction action) => Sold.Add(action);
+    }
+
+    private readonly SellActions _sell = new();
+    private ShopSpyInput? _spy;
+
+    private ShopSpyInput Spy => _spy ??= new ShopSpyInput(_scene.Input);
+
+    private void OpenShop()
+    {
+        VendorFxState.Reset();
+        _scene.View.Vendor = new VendorHudState();
+        _scene.View.Vendor.Open(900, "Old Mara", [new VendorStockLine("gem.amber", "Amber", 5)]);
+    }
+
+    // One frame in ClassicHud order with the shop open: vendor window, inventory, overlays.
+    private void ShopFrame()
+    {
+        _scene.Canvas.Calls.Clear();
+        VendorWindow.Build(_scene.Canvas, Spy, _scene.View, _scene.Layout, _scene.Table, _sell);
+        InventoryWindow.Build(_scene.Canvas, Spy, _scene.View, _scene.Layout, _scene.Table, _sell);
+        ItemOverlays.Build(_scene.Canvas, Spy, _scene.View, _scene.Layout, _scene.Table, _sell);
+        _scene.Input.EndFrame();
+    }
+
+    private Vector2 OverShop(int cell = 27) =>
+        InventoryScene.Centre(VendorGrid.CellRect(_scene.Layout, _scene.Layout.Character, cell));
+
+    private static Vector2 OverWorld() => new(40f, 40f);
+
+    private void HoldOverShop(Vector2 from, Vector2 to)
+    {
+        _scene.Input.Pointer = from;
+        _scene.Input.StartDrag = true;
+        ShopFrame();
+        _scene.Input.Pointer = to;
+        ShopFrame();
+    }
+
+    private void ReleaseAt(Vector2 to)
+    {
+        _scene.Input.Pointer = to;
+        _scene.Input.ReleaseDrag = true;
+        ShopFrame();
+    }
+
+    [Fact]
+    public void DragToSell_ABagItemReleasedOnTheShop_SellsItAndNothingElse()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+        OpenShop();
+
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(9)), OverShop());
+        ReleaseAt(OverShop());
+
+        Assert.Equal(new VendorHudAction(VendorHudActionKind.Sell, null, 9, 77), Assert.Single(_sell.Sold));
+        Assert.Empty(_sell.Inventory);
+        Assert.Equal([UiFeedback.Coin], Spy.Emitted);
+        Assert.False(InventoryUiState.Current.DragActive);
+    }
+
+    [Fact]
+    public void DragToSell_OneReleaseIsExactlyOneAction_NeverASaleAndAGroundDrop()
+    {
+        // A release over the shop is a sale and not also a drop; a release over the world is a drop and
+        // not also a sale. The shop is resolved first and the inventory resolve never runs after it.
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+        OpenShop();
+
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(9)), OverShop());
+        ReleaseAt(OverShop());
+        Assert.Single(_sell.Sold);
+        Assert.Empty(_sell.Inventory);
+
+        _sell.Sold.Clear();
+        Spy.Emitted.Clear();
+        Assert.False(VendorGrid.OverShop(_scene.Layout, _scene.View, OverWorld()));
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(9)), OverWorld());
+        ReleaseAt(OverWorld());
+
+        Assert.Empty(_sell.Sold);
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Drop, 9, 0, 77), Assert.Single(_sell.Inventory));
+        Assert.Empty(Spy.Emitted);
+    }
+
+    [Fact]
+    public void DragToSell_AWornItemOnTheShop_IsRefusedColdAndSendsNothing()
+    {
+        _scene.Worn[2] = InventoryScene.Item(5, "helm.gilded", HeadMask);
+        _scene.Refresh();
+        OpenShop();
+
+        HoldOverShop(InventoryScene.Centre(_scene.Well(2)), OverShop());
+        ReleaseAt(OverShop());
+
+        Assert.Empty(_sell.Sold);
+        Assert.Empty(_sell.Inventory);
+        Assert.Equal([UiFeedback.Refuse], Spy.Emitted);
+    }
+
+    [Fact]
+    public void DragToSell_ABagItemThatIsAlsoWorn_IsRefused()
+    {
+        InventoryItemSnapshot helm = InventoryScene.Item(5, "helm.gilded", HeadMask);
+        _scene.Items[4] = helm;
+        _scene.Worn[2] = helm;
+        _scene.Refresh();
+        OpenShop();
+
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(4)), OverShop());
+        ReleaseAt(OverShop());
+
+        Assert.Empty(_sell.Sold);
+        Assert.Empty(_sell.Inventory);
+        Assert.Equal([UiFeedback.Refuse], Spy.Emitted);
+    }
+
+    [Fact]
+    public void DragToSell_WithNoVendorOpen_IsNeverASale()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+        VendorFxState.Reset();
+
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(9)), OverShop());
+        ReleaseAt(OverShop());
+
+        Assert.Empty(_sell.Sold);
+        Assert.Empty(Spy.Emitted);
+    }
+
+    [Fact]
+    public void DragToSell_ABagToBagMove_StillMovesWithTheShopOpen()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+        OpenShop();
+
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(9)), InventoryScene.Centre(_scene.Slot(40)));
+        ReleaseAt(InventoryScene.Centre(_scene.Slot(40)));
+
+        Assert.Equal(new InventoryHudAction(InventoryHudActionKind.Move, 9, 40), Assert.Single(_sell.Inventory));
+        Assert.Empty(_sell.Sold);
+        Assert.Empty(Spy.Emitted);
+    }
+
+    [Fact]
+    public void DragToSell_TheShopFrameIgnitesForASaleAndGoesColdForARefusal()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Worn[2] = InventoryScene.Item(5, "helm.gilded", HeadMask);
+        _scene.Refresh();
+        OpenShop();
+
+        // The animation clock runs: the ember rises over EmberRiseSeconds.
+        _scene.View.AnimationSeconds = 1f;
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(9));
+        _scene.Input.StartDrag = true;
+        ShopFrame();
+        Assert.Equal(0f, VendorFxState.Current.EmberLevel);
+        _scene.Input.Pointer = OverShop();
+        _scene.View.AnimationSeconds = 1.05f;
+        ShopFrame();
+        Assert.InRange(VendorFxState.Current.EmberLevel, 0.01f, 0.99f);
+        _scene.View.AnimationSeconds = 1.2f;
+        ShopFrame();
+        Assert.Equal(1f, VendorFxState.Current.EmberLevel);
+        if (_scene.Table.TryGet(UiSpriteNames.ShopFrameEmber, out _))
+        {
+            Assert.Single(_scene.Canvas.Named(UiSpriteNames.ShopFrameEmber));
+            Assert.Empty(_scene.Canvas.Named(UiSpriteNames.ShopFrameCold));
+        }
+
+        // Off the board the ember falls again.
+        _scene.Input.Pointer = OverWorld();
+        _scene.View.AnimationSeconds = 1.4f;
+        ShopFrame();
+        Assert.Equal(0f, VendorFxState.Current.EmberLevel);
+
+        // A worn item reads cold and never ignites.
+        _scene.Input.ReleaseDrag = true;
+        ShopFrame();
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Well(2));
+        _scene.Input.StartDrag = true;
+        _scene.View.AnimationSeconds = 2f;
+        ShopFrame();
+        _scene.Input.Pointer = OverShop();
+        _scene.View.AnimationSeconds = 2.2f;
+        ShopFrame();
+        Assert.Equal(0f, VendorFxState.Current.EmberLevel);
+        if (_scene.Table.TryGet(UiSpriteNames.ShopFrameCold, out _))
+        {
+            Assert.Single(_scene.Canvas.Named(UiSpriteNames.ShopFrameCold));
+            Assert.Empty(_scene.Canvas.Named(UiSpriteNames.ShopFrameEmber));
+        }
+    }
+
+    [Fact]
+    public void DragToSell_TheGhostOverTheShopIsWarmEmber_NotTheRedOfAGroundDrop()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+        OpenShop();
+        UiColor plain = new(255, 255, 255, 200);
+
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(9)), OverShop());
+        UiColor sell = _scene.Canvas.Named("item.gem.amber").Last().Color;
+        Assert.NotEqual(plain, sell);
+        Assert.True(sell.R == 255 && sell.G > 160 && sell.B < sell.G, $"a warm ember, not {sell}");
+
+        _scene.Input.Pointer = OverWorld();
+        ShopFrame();
+        UiColor ground = _scene.Canvas.Named("item.gem.amber").Last().Color;
+        Assert.True(ground.G < 140, "the ground drop keeps its red");
+        Assert.NotEqual(sell, ground);
+    }
+
+    [Fact]
+    public void DragToSell_ASnapshotThatChangesMidDrag_CancelsTheDrag_AndSellsNothing()
+    {
+        _scene.Items[9] = InventoryScene.Item(77, "gem.amber");
+        _scene.Refresh();
+        OpenShop();
+
+        HoldOverShop(InventoryScene.Centre(_scene.Slot(9)), OverShop());
+        Assert.True(InventoryUiState.Current.DragActive);
+
+        // The bag changes under the drag: the slot may no longer hold what was picked up.
+        _scene.Items[9] = InventoryScene.Item(78, "gem.azure");
+        _scene.Refresh();
+        ShopFrame();
+        Assert.True(InventoryUiState.Current.DragCancelled);
+
+        ReleaseAt(OverShop());
+
+        Assert.Empty(_sell.Sold);
+        Assert.Empty(_sell.Inventory);
+        Assert.DoesNotContain(UiFeedback.Coin, Spy.Emitted);
+    }
+
+    [Fact]
+    public void TheShopBoardAndTheBagBoardAgreeOnTheCellUnderAnyPoint()
+    {
+        UiLayout l = _scene.Layout;
+        UiRect win = l.Character;
+        UiRect board = VendorGrid.BoardRect(l, win);
+        for (float y = board.Y - 6f; y < board.Bottom + 6f; y += 3.7f)
+        {
+            for (float x = board.X - 6f; x < board.Right + 6f; x += 3.7f)
+            {
+                Vector2 p = new(x, y);
+                Assert.Equal(InventoryWindow.CellAt(l, win, p), VendorGrid.CellAt(l, win, p));
+            }
+        }
     }
 }

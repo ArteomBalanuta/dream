@@ -7,12 +7,41 @@ using Xunit;
 
 namespace Dream.Tests.Rendering.Ui.Panels;
 
-// M3: the vendor window. It draws only with the inventory and a vendor open, shows the stock and the
-// wallet, turns a click on a stock row into a Buy pick and a click on Sell into a Sell pick of the
-// selected bag item, pages the sell list, and drops a selection whose item is gone.
+// Wraps the scripted input and records the feedback sounds a panel asks for (the fake input drops them).
+public sealed class ShopSpyInput(InventoryFakeInput inner) : IUiInput
+{
+    public List<UiFeedback> Emitted { get; } = new();
+
+    public bool Button(int id, UiRect r) => inner.Button(id, r);
+
+    public bool Hovered(int id, UiRect r) => inner.Hovered(id, r);
+
+    public bool RightClicked(int id, UiRect r) => inner.RightClicked(id, r);
+
+    public bool BeginDrag(int id, UiRect r, int payload) => inner.BeginDrag(id, r, payload);
+
+    public bool TryEndDrag(out int payload, out Vector2 dropPosition) => inner.TryEndDrag(out payload, out dropPosition);
+
+    public int ActiveDragPayload => inner.ActiveDragPayload;
+
+    public bool ModalActive
+    {
+        get => inner.ModalActive;
+        set => inner.ModalActive = value;
+    }
+
+    public UiPointer Pointer => ((IUiInput)inner).Pointer;
+
+    public void Emit(UiFeedback feedback) => Emitted.Add(feedback);
+}
+
+// The grid shop: it draws only with the inventory and a vendor open, places the stock by footprint on a
+// board that mirrors the bag, turns a click on an item into a Buy of that kind (and nothing else), refuses
+// a price above the wallet, and drops a click whose stock changed between press and release.
 public sealed class VendorWindowTests : IDisposable
 {
     private readonly InventoryScene _scene = new();
+    private readonly ShopSpyInput _input;
 
     private sealed class VendorActions : IHudActions
     {
@@ -42,10 +71,16 @@ public sealed class VendorWindowTests : IDisposable
 
     public VendorWindowTests()
     {
+        VendorFxState.Reset();
         _scene.View.Vendor = _vendor;
+        _input = new ShopSpyInput(_scene.Input);
     }
 
-    public void Dispose() => _scene.Dispose();
+    public void Dispose()
+    {
+        _scene.Dispose();
+        VendorFxState.Reset();
+    }
 
     private void OpenVendor(params VendorStockLine[] stock) => _vendor.Open(900, "Old Mara", stock);
 
@@ -55,7 +90,7 @@ public sealed class VendorWindowTests : IDisposable
     private void Frame()
     {
         _scene.Canvas.Calls.Clear();
-        VendorWindow.Build(_scene.Canvas, _scene.Input, _scene.View, _scene.Layout, _scene.Table, _actions);
+        VendorWindow.Build(_scene.Canvas, _input, _scene.View, _scene.Layout, _scene.Table, _actions);
         _scene.Input.EndFrame();
     }
 
@@ -69,21 +104,11 @@ public sealed class VendorWindowTests : IDisposable
         Frame();
     }
 
-    private UiRect BuyRow(int n) => Units(19f, 58f + (n * 13f), 152f, 12f);
+    // The rect of the item anchored at a cell of the SHOP board, 1x1 unless a footprint is given.
+    private UiRect Shop(int anchor, ItemFootprint? f = null) =>
+        VendorGrid.ItemRect(_scene.Layout, _scene.Layout.Character, anchor, f ?? ItemFootprint.One);
 
-    private UiRect SellRow(int n) => Units(19f, 182f + (n * 13f), 152f, 12f);
-
-    private UiRect SellButton() => Units(19f, 182f + (8 * 13f) + 6f, 152f, 16f);
-
-    private void AddBagItems(int count)
-    {
-        for (int n = 0; n < count; n++)
-        {
-            _scene.Items[n] = InventoryScene.Item(100 + n, "gem.amber");
-        }
-
-        _scene.Refresh();
-    }
+    private UiRect ShopCell(int cell) => VendorGrid.CellRect(_scene.Layout, _scene.Layout.Character, cell);
 
     [Fact]
     public void ADrawnWindowNeedsAnOpenVendorAndAnOpenInventory()
@@ -102,115 +127,153 @@ public sealed class VendorWindowTests : IDisposable
     }
 
     [Fact]
-    public void TheWindowShowsTheStockWithPricesAndTheWallet()
+    public void TheBoardShowsTheStockWithPricesAndTheWallet_AndTheOldListsAreGone()
     {
-        OpenVendor(new VendorStockLine("tool.torch", "Torch", 12), new VendorStockLine("tool.field-blade", "Field Blade", 300));
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 12), new VendorStockLine("gem.azure", "Azure", 300));
         SetGold(50);
 
         Frame();
 
         Assert.True(_scene.Canvas.HasText("Gold 50"));
-        Assert.True(_scene.Canvas.HasText("Torch"));
-        Assert.True(_scene.Canvas.HasText("Field Blade"));
+        Assert.True(_scene.Canvas.HasText("For sale"));
+        Assert.False(_scene.Canvas.HasText("Your goods"));
+        Assert.False(_scene.Canvas.HasText("Sell"));
         // Each text is drawn twice (shadow first), so the last call is the coloured one.
         CanvasCall affordable = _scene.Canvas.Texts.Last(t => t.Text == "12");
         CanvasCall tooDear = _scene.Canvas.Texts.Last(t => t.Text == "300");
         Assert.NotEqual(affordable.Color, tooDear.Color);
         Assert.Equal(ItemTierStyle.Danger, tooDear.Color);
+        // Icons, not names: the name is only the fallback for an item with no art.
+        Assert.False(_scene.Canvas.HasText("Amber"));
+        Assert.Single(_scene.Canvas.Named("item.gem.amber"));
     }
 
     [Fact]
-    public void ClickingAStockRowPicksABuyOfThatKind()
+    public void StockIsPlacedByFootprint_AndEachIconSitsOnItsItemsCells()
     {
-        OpenVendor(new VendorStockLine("tool.torch", "Torch", 12), new VendorStockLine("tool.field-blade", "Field Blade", 300));
+        OpenVendor(
+            new VendorStockLine("axe.twinbit", "Axe", 10),   // 2x3, cells 0..
+            new VendorStockLine("gem.amber", "Amber", 5));   // 1x1, first free cell is 2
 
-        Click(BuyRow(1));
+        Frame();
+
+        CanvasCall blade = Assert.Single(_scene.Canvas.Named("item.axe.twinbit"));
+        UiRect bladeBox = Shop(0, new ItemFootprint(2, 3));
+        Assert.Equal(InventoryWindow.IconRect(_scene.Table.Get("item.axe.twinbit"), bladeBox, _scene.Layout.Scale), blade.Rect);
+        CanvasCall amber = Assert.Single(_scene.Canvas.Named("item.gem.amber"));
+        Assert.Equal(InventoryWindow.IconRect(_scene.Table.Get("item.gem.amber"), Shop(2), _scene.Layout.Scale), amber.Rect);
+    }
+
+    [Fact]
+    public void AnItemWithNoArtShowsItsNameInItsCell()
+    {
+        OpenVendor(new VendorStockLine("nothing.known", "Mystery Relic", 9));
+
+        Frame();
+
+        Assert.Contains(_scene.Canvas.Texts, t => t.Text.StartsWith("Myst", StringComparison.Ordinal));
+        Assert.True(_scene.Canvas.HasText("9"));
+    }
+
+    [Fact]
+    public void EveryShopSpriteIsOptional_TheWindowDrawsWithoutThem()
+    {
+        // The art workstream lands the five sprites separately: a missing one is skipped, never a throw
+        // and never a missing board (the bag's own cell art stands in).
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 12));
+
+        Frame();
+
+        int cells = _scene.Canvas.Calls.Count(c => c.Name is "shop.cell.empty" or "cell.empty" or "shop.cell.occupied" or "cell.occupied");
+        Assert.Equal(BagGrid.CellCount, cells);
+    }
+
+    [Fact]
+    public void ClickingAnItemBuysThatKind_WithACoinAndNothingElse()
+    {
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 12), new VendorStockLine("gem.azure", "Azure", 30));
+        SetGold(100);
+
+        Click(Shop(1));
 
         VendorHudAction pick = Assert.Single(_actions.Picked);
         Assert.Equal(VendorHudActionKind.Buy, pick.Kind);
-        Assert.Equal("tool.field-blade", pick.ItemKind);
+        Assert.Equal("gem.azure", pick.ItemKind);
+        Assert.Equal([UiFeedback.Coin], _input.Emitted);
     }
 
     [Fact]
-    public void SellNeedsASelection_ThenPicksTheSelectedItemAndClearsIt()
+    public void ClickingAnEmptyCellBuysNothing()
     {
-        OpenVendor();
-        AddBagItems(3);
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 12));
+        SetGold(100);
 
-        Click(SellButton());
+        Click(ShopCell(40));
+        Click(ShopCell(1));
+
         Assert.Empty(_actions.Picked);
-
-        Click(SellRow(1));
-        Assert.Equal(1, _vendor.SelectedAnchor);
-        Assert.Equal(101, _vendor.SelectedItemId);
-        Assert.Empty(_actions.Picked);
-
-        Click(SellButton());
-        VendorHudAction pick = Assert.Single(_actions.Picked);
-        Assert.Equal(VendorHudActionKind.Sell, pick.Kind);
-        Assert.Equal(1, pick.SlotIndex);
-        Assert.Equal(101, pick.ItemInstanceId);
-        Assert.Equal(-1, _vendor.SelectedAnchor);
-
-        Click(SellButton());
-        Assert.Single(_actions.Picked);
+        Assert.Empty(_input.Emitted);
     }
 
     [Fact]
-    public void WornAndMultiCellItemsAreListedOncePerItem_AndWornAreSkipped()
+    public void APriceAboveTheWalletIsRefused_AndABuyThatIsAffordableIsNot()
     {
-        OpenVendor();
-        _scene.Items[0] = InventoryScene.Item(100, "gem.amber");
-        _scene.Items[1] = InventoryScene.Item(101, "gem.amber");
-        _scene.Equipped[1] = true;
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 300));
+        SetGold(299);
+
+        Click(Shop(0));
+
+        Assert.Empty(_actions.Picked);
+        Assert.Equal([UiFeedback.Refuse], _input.Emitted);
+
+        SetGold(300);
+        Click(Shop(0));
+        Assert.Equal("gem.amber", Assert.Single(_actions.Picked).ItemKind);
+    }
+
+    [Fact]
+    public void NoClickBuysWhileAMenuHoldsTheWindowModal()
+    {
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 12));
+        SetGold(100);
+        _scene.Items[3] = InventoryScene.Item(1, "gem.amber");
         _scene.Refresh();
+        _scene.Input.Pointer = InventoryScene.Centre(_scene.Slot(3));
+        _scene.Input.RightClick = true;
+        _scene.Frame();
+        Assert.True(InventoryUiState.Current.ModalOpen);
 
-        Assert.Equal(1, VendorWindow.CountSellable(_scene.View));
-    }
+        Click(Shop(0));
 
-    [Fact]
-    public void TheSellListPages_AndThePageSticksInRange()
-    {
-        OpenVendor();
-        AddBagItems(10);
-
-        Frame();
-        Assert.True(_scene.Canvas.HasText("1/2"));
-        Assert.True(_scene.Canvas.HasText("Item 107"));
-        Assert.False(_scene.Canvas.HasText("Item 108"));
-
-        UiRect next = Units(19f + 152f - 14f, 168f, 14f, 12f);
-        Click(next);
-        Frame();
-        Assert.Equal(1, _vendor.SellPage);
-        Assert.True(_scene.Canvas.HasText("2/2"));
-        Assert.True(_scene.Canvas.HasText("Item 108"));
-        Assert.False(_scene.Canvas.HasText("Item 100"));
-
-        _vendor.SellPage = 40;
-        Frame();
-        Assert.Equal(1, _vendor.SellPage);
-
-        _vendor.SellPage = -3;
-        Frame();
-        Assert.Equal(0, _vendor.SellPage);
-    }
-
-    [Fact]
-    public void ASelectionWhoseItemIsGoneIsDropped()
-    {
-        OpenVendor();
-        AddBagItems(2);
-        Click(SellRow(0));
-        Assert.Equal(0, _vendor.SelectedAnchor);
-
-        _scene.Items[0] = null;
-        _scene.Refresh();
-        Frame();
-
-        Assert.Equal(-1, _vendor.SelectedAnchor);
-        Click(SellButton());
         Assert.Empty(_actions.Picked);
+    }
+
+    [Fact]
+    public void ABuyedItemThatLandsInTheBag_FlashesItsBagCell()
+    {
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 12));
+        SetGold(100);
+        _scene.View.AnimationSeconds = 10f;
+        Click(Shop(0));
+        Assert.Equal(-1, VendorFxState.Current.FlashAnchor);
+
+        // The server answers: the amber arrives on the first free bag cell.
+        _scene.Items[0] = InventoryScene.Item(5, "gem.amber");
+        _scene.Refresh();
+        _scene.View.AnimationSeconds = 10.1f;
+        _scene.Frame();
+
+        Assert.Equal(0, VendorFxState.Current.FlashAnchor);
+        Assert.InRange(VendorFxState.Current.FlashLevel(10.1f), 0.01f, 1f);
+        if (_scene.Table.TryGet(UiSpriteNames.CellOverlayEmber, out _))
+        {
+            Assert.NotEmpty(_scene.Canvas.Named(UiSpriteNames.CellOverlayEmber));
+        }
+
+        // The flash is over after FlashSeconds.
+        _scene.View.AnimationSeconds = 10.1f + VendorFxState.FlashSeconds + 0.05f;
+        _scene.Frame();
+        Assert.Equal(-1, VendorFxState.Current.FlashAnchor);
     }
 
     [Fact]
@@ -227,14 +290,15 @@ public sealed class VendorWindowTests : IDisposable
     public void HostileNamesAreCutAndStayLiteral()
     {
         string hostile = "%s{0}" + new string('x', 400);
-        _scene.Items[0] = InventoryScene.Item(100, "gem.amber") with { DisplayName = hostile };
-        _scene.Refresh();
-        _vendor.Open(900, new string('T', 500), [new VendorStockLine("tool.torch", hostile, long.MaxValue)]);
+        _vendor.Open(900, new string('T', 500), [new VendorStockLine("gem.amber", hostile, long.MaxValue)]);
 
+        // Hovered, the name and price show in the band above the board.
+        _scene.Input.Pointer = InventoryScene.Centre(Shop(0));
         Frame();
 
         Assert.All(_scene.Canvas.Texts, t => Assert.True(t.Text.Length <= 64, t.Text));
         Assert.Contains(_scene.Canvas.Texts, t => t.Text.StartsWith("%s{0}xxx", StringComparison.Ordinal));
+        Assert.True(_scene.Canvas.HasText("Price " + int.MaxValue));
     }
 
     [Fact]
@@ -282,10 +346,9 @@ public sealed class VendorWindowTests : IDisposable
     }
 
     [Fact]
-    public void AClickInAVendorRowGap_SendsNoPickupForAGroundLabelBehindTheWindow()
+    public void AClickInAShopGap_SendsNoPickupForAGroundLabelBehindTheWindow()
     {
-        OpenVendor(new VendorStockLine("tool.torch", "Torch", 12), new VendorStockLine("tool.field-blade", "Field Blade", 300));
-        // The gap between the first two stock rows (rows are 12 units tall on a 13 unit pitch).
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 12), new VendorStockLine("gem.azure", "Azure", 30));
         UiRect gap = Units(19f, 58f + 12f, 152f, 1f);
         Vector2 spot = InventoryScene.Centre(gap);
         _scene.View.Labels = [new HudWorldLabel(spot, "Torch", "", new HudLabelClick(HudLabelClickKind.PickUpGround, 77))];
@@ -303,5 +366,102 @@ public sealed class VendorWindowTests : IDisposable
         _scene.Input.LeftClick = true;
         WorldLabelsPanel.Build(_scene.Canvas, _scene.Input, _scene.View, _scene.Layout, _actions);
         Assert.Equal([77L], _actions.PickedUp);
+    }
+
+    // ---- BH-INPUT-3 on the shop cell: the REAL router, press then release ----------------------------
+
+    private UiPointer At(Vector2 p, bool left) => new(p, left, false, true);
+
+    private void RealFrame(UiInputRouter router, Vector2 at, bool left)
+    {
+        router.BeginFrame(At(at, left));
+        _scene.Canvas.Calls.Clear();
+        VendorWindow.Build(_scene.Canvas, router, _scene.View, _scene.Layout, _scene.Table, _actions);
+        router.EndFrame();
+    }
+
+    private void PressAndRelease(Vector2 at, Action? betweenPressAndRelease)
+    {
+        UiInputRouter router = new();
+        RealFrame(router, at, left: false);
+        RealFrame(router, at, left: true);
+        betweenPressAndRelease?.Invoke();
+        RealFrame(router, at, left: false);
+    }
+
+    [Fact]
+    public void AStableStock_BuysTheKindUnderThePointer_ThroughTheRealRouter()
+    {
+        OpenVendor(
+            new VendorStockLine("gem.amber", "Amber", 5),
+            new VendorStockLine("gem.azure", "Azure", 5),
+            new VendorStockLine("gem.ruby", "Ruby", 5));
+        SetGold(100);
+
+        PressAndRelease(InventoryScene.Centre(Shop(1)), null);
+
+        Assert.Equal("gem.azure", Assert.Single(_actions.Picked).ItemKind);
+    }
+
+    // BH-INPUT-3: the id carries the KIND, not the cell. The press is on the azure in cell 1; the amber is
+    // withdrawn while the button is down, so the azure moves to cell 0 and the ruby comes under the
+    // pointer. The release must never buy the ruby. (It still resolves to the azure the player pressed,
+    // exactly as a held bag row keeps its own item.)
+    [Fact]
+    public void AStockThatRenumbersMidPress_NeverBuysTheItemThatMovedUnderThePointer()
+    {
+        OpenVendor(
+            new VendorStockLine("gem.amber", "Amber", 5),
+            new VendorStockLine("gem.azure", "Azure", 5),
+            new VendorStockLine("gem.ruby", "Ruby", 5));
+        SetGold(100);
+
+        // The pointer is on the azure in cell 1. The amber is withdrawn while the button is down, so the
+        // azure moves to cell 0 and the ruby comes under the pointer.
+        PressAndRelease(
+            InventoryScene.Centre(Shop(1)),
+            () => OpenVendor(new VendorStockLine("gem.azure", "Azure", 5), new VendorStockLine("gem.ruby", "Ruby", 5)));
+
+        Assert.DoesNotContain(_actions.Picked, p => p.ItemKind == "gem.ruby");
+        Assert.All(_actions.Picked, p => Assert.Equal("gem.azure", p.ItemKind));
+    }
+
+    [Fact]
+    public void ThePressedKindLeavingTheStockMidPress_DropsTheClickAltogether()
+    {
+        OpenVendor(
+            new VendorStockLine("gem.amber", "Amber", 5),
+            new VendorStockLine("gem.azure", "Azure", 5),
+            new VendorStockLine("gem.ruby", "Ruby", 5));
+        SetGold(100);
+
+        PressAndRelease(
+            InventoryScene.Centre(Shop(1)),
+            () => OpenVendor(new VendorStockLine("gem.amber", "Amber", 5), new VendorStockLine("gem.ruby", "Ruby", 5)));
+
+        Assert.Empty(_actions.Picked);
+    }
+
+    [Fact]
+    public void TheShopCellIdFoldsTheKindIn_NotTheIndex()
+    {
+        // The same kind keeps its id wherever the stock puts it; two kinds never share one.
+        int a = HudWidgetId.Of(VendorWindow.IdShopCell, VendorGrid.KindIdentity("gem.amber"));
+        Assert.Equal(a, HudWidgetId.Of(VendorWindow.IdShopCell, VendorGrid.KindIdentity("gem.amber")));
+        Assert.NotEqual(a, HudWidgetId.Of(VendorWindow.IdShopCell, VendorGrid.KindIdentity("gem.azure")));
+        Assert.NotEqual(a, VendorWindow.IdShopCell);
+    }
+
+    // One click on a stock that lists the same kind twice is one purchase, not one per line: the two lines
+    // share a widget id and the router answers by id alone.
+    [Fact]
+    public void DuplicateStockKinds_OneClickBuysExactlyOnce_ThroughTheRealRouter()
+    {
+        OpenVendor(new VendorStockLine("gem.amber", "Amber", 5), new VendorStockLine("gem.amber", "Amber", 5));
+        SetGold(100);
+
+        PressAndRelease(InventoryScene.Centre(Shop(0)), null);
+
+        Assert.Equal("gem.amber", Assert.Single(_actions.Picked).ItemKind);
     }
 }

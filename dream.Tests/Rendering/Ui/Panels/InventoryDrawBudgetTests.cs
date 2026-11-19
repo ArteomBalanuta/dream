@@ -17,6 +17,11 @@ public sealed class InventoryDrawBudgetTests : IDisposable
 {
     private const int PlayBudget = 12;
     private const int WindowBudget = 16;
+
+    // With the vendor window open beside the full bag. Measured with no shop art in the atlas yet: 11 commands
+    // at rest and 12 with a sell in flight (ghost plus cue); 14 leaves room for the forged shop sprites to split a
+    // page group once. Still under WindowBudget, which is not raised.
+    private const int VendorBudget = 14;
     private const int MaxQuads = 8192;
 
     private readonly ITestOutputHelper _output;
@@ -24,7 +29,11 @@ public sealed class InventoryDrawBudgetTests : IDisposable
 
     public InventoryDrawBudgetTests(ITestOutputHelper output) => _output = output;
 
-    public void Dispose() => _scene.Dispose();
+    public void Dispose()
+    {
+        _scene.Dispose();
+        VendorFxState.Reset();
+    }
 
     private sealed class NoActions : IHudActions
     {
@@ -204,5 +213,63 @@ public sealed class InventoryDrawBudgetTests : IDisposable
         Assert.Equal(0, batch.DroppedQuads);
         Assert.InRange(batch.QuadCount, 1, MaxQuads - 1);
         Assert.True(batch.CommandCount <= WindowBudget, $"{batch.CommandCount} commands while dragging, budget {WindowBudget}");
+    }
+
+    // The shop open beside the full bag: the vendor window's pages sit between the window-art groups, so it
+    // is measured on its own (recorded as VendorBudget) instead of silently raising WindowBudget.
+    private void OpenShop()
+    {
+        VendorHudState vendor = new();
+        vendor.Open(
+            900,
+            "Old Mara",
+            [
+                new VendorStockLine("axe.twinbit", "Axe", 40),
+                new VendorStockLine("gem.amber", "Amber", 5),
+                new VendorStockLine("helm.gilded", "Helm", 12),
+                new VendorStockLine("gear.iron-band", "Band", 99999),
+                new VendorStockLine("gear.leather-cap", "Cap", 7),
+                new VendorStockLine("bow.verdant", "Bow", 300),
+            ]);
+        _scene.View.Vendor = vendor;
+    }
+
+    [Theory]
+    [InlineData(1280, 720)]
+    [InlineData(1920, 1080)]
+    [InlineData(1100, 700)]
+    public void FullInventory_WithTheShopOpen_StaysInsideTheVendorBudget(int w, int h)
+    {
+        Populate();
+        OpenShop();
+
+        UiBatch batch = Build(w, h, [At(new Vector2(5f, 5f)), At(new Vector2(5f, 5f))]);
+
+        _output.WriteLine($"shop open {w}x{h}: commands={batch.CommandCount} quads={batch.QuadCount} dropped={batch.DroppedQuads}");
+        Assert.True(batch.CommandCount <= VendorBudget, $"{batch.CommandCount} commands with the shop open, budget {VendorBudget}");
+        Assert.InRange(batch.QuadCount, 1, MaxQuads - 1);
+        Assert.Equal(0, batch.DroppedQuads);
+    }
+
+    [Theory]
+    [InlineData(1280, 720)]
+    [InlineData(1920, 1080)]
+    public void FullInventory_WithTheShopOpenAndASellInFlight_StaysInsideTheVendorBudget(int w, int h)
+    {
+        Populate();
+        OpenShop();
+        int anchor = AnchorOfFirst(2, 3);
+        UiLayout layout = UiLayout.Create(w, h, 0f);
+        Vector2 from = InventoryScene.Centre(InventoryWindow.SlotRect(layout, layout.Inventory, anchor));
+        Vector2 over = InventoryScene.Centre(VendorGrid.CellRect(layout, layout.Character, 27));
+        List<ScriptedPointerFrame> script = new();
+        HudCapturePointerPlan.Drag(script, from, over, release: false);
+
+        UiBatch batch = Build(w, h, script.Select(f => new UiPointer(f.Position, f.LeftDown, f.RightDown, true)));
+
+        _output.WriteLine($"shop sell {w}x{h}: commands={batch.CommandCount} quads={batch.QuadCount} dropped={batch.DroppedQuads}");
+        Assert.True(InventoryUiState.Current.DragActive);
+        Assert.Equal(0, batch.DroppedQuads);
+        Assert.True(batch.CommandCount <= VendorBudget, $"{batch.CommandCount} commands while selling, budget {VendorBudget}");
     }
 }

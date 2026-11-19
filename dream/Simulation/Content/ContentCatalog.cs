@@ -40,13 +40,15 @@ public sealed partial class ContentCatalog
     // Vendors and gold (M3).
     public const int MaxNpcs = 64;
 
-    // The most stock entries one vendor may be authored with. The vendor window draws
-    // VendorWindow.BuyRows fixed row plates from the art and has no pager over the buy list (only the
-    // sell list pages), and VendorHudState keeps at most MaxStock lines, so a ninth stock entry is
-    // simply unbuyable - it never appears in any UI and nothing says so at load (BH-CONTENT-1). The
-    // shipped quartermaster already has 6 of 8. Rendering cannot be referenced from the simulation, so
-    // the number is repeated here and ContentVendorStockCapTests pins the two together. Raising it
-    // means teaching the vendor window to page or scroll the buy list: that is UI work, not content.
+    // The most stock entries one vendor may be authored with. The original reason was that the vendor
+    // window drew eight fixed row plates with no pager, so a ninth entry was simply unbuyable and
+    // nothing said so at load (BH-CONTENT-1). The window is now a grid board instead, so the binding
+    // constraint has changed: VendorHudState keeps at most MaxStock lines, and each ware has to FIT on
+    // the board by its own footprint - a ware that does not fit is placed nowhere and is unbuyable in
+    // exactly the old way. Eight is kept as the conservative authoring limit (the shipped
+    // quartermaster has 6). Rendering cannot be referenced from the simulation, so the number lives
+    // here and ContentVendorStockCapTests pins it against the board, the hud cap AND a real placement
+    // of the shipped stock. Raising it means proving the larger stock still places by footprint.
     public const int MaxNpcStock = 8;
     public const int MaxNpcGreetingLength = 400;
     public const float MaxNpcOffset = 1000f;
@@ -965,12 +967,14 @@ public sealed partial class ContentCatalog
                 throw Fail(
                     NpcsFileName,
                     $"{path}.stock",
-                    $"has more than {MaxNpcStock} entries; the vendor window draws only the first few "
-                        + "buy rows and has no pager, so the rest would be unbuyable");
+                    $"has more than {MaxNpcStock} entries; the vendor window keeps at most "
+                        + $"{MaxNpcStock} of them, so the rest would never be drawn and would be unbuyable");
             }
 
             List<NpcStockEntry> stock = [];
             HashSet<string> stocked = new(StringComparer.OrdinalIgnoreCase);
+            // The cells this vendor's wares have taken so far, in the window's own first-fit order.
+            ulong boardOccupied = 0;
             int stockIndex = 0;
             foreach (JsonElement entryElement in stockElement.EnumerateArray())
             {
@@ -999,6 +1003,25 @@ public sealed partial class ContentCatalog
                 if (price <= item.SellPrice)
                 {
                     throw Fail(NpcsFileName, $"{entryPath}.price", $"{price} must exceed the sell price {item.SellPrice} of '{item.Key}'");
+                }
+
+                // BH-CONTENT-1, second half: the entry count is no longer the binding constraint. The
+                // vendor window is a grid board, and a ware is drawn only where it FITS by its own
+                // footprint, in this same first-fit order. Five 4x4 wares pass the count check, fill the
+                // 64-cell board with four of them, and leave the fifth placed nowhere and unbuyable -
+                // the exact bug the cap was created to close. So the load places the stock for real.
+                if (BagGrid.FirstFit(boardOccupied, item.Footprint) is var anchor and >= 0
+                    && BagGrid.TryMask(anchor, item.Footprint, out ulong mask))
+                {
+                    boardOccupied |= mask;
+                }
+                else
+                {
+                    throw Fail(
+                        NpcsFileName,
+                        $"{entryPath}.item",
+                        $"'{item.Key}' is {item.Footprint.Cols}x{item.Footprint.Rows} and finds no room left on the "
+                            + $"{BagGrid.Columns}x{BagGrid.Rows} shop board, so it would be drawn nowhere and could not be bought");
                 }
 
                 stock.Add(new NpcStockEntry(item.Key, price));

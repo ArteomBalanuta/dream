@@ -225,8 +225,86 @@ def check_ramps() -> list[str]:
     return errs
 
 
+# The engine multiplies UI albedo up to about 2.17x with no tonemap, so an authored channel above ~0.40 blooms into candy.
+# Measured on the shipped icons (non-emissive pixels, alpha > 0.8); the ceilings carry a little room over the worst icon.
+# Before the aging pass the same icons peaked at 1.00 with p99 0.95 and sat at saturation 0.9, which is the candy this gate stops.
+GOLD_GAP = 12    # gilded helm median (84, 72, 55): g - b = 17, was > 40 when the gold was pure toy gold
+BLUE_GAP = 4     # azure feather (74, 81, 90): b - r = 16; travel cloak (19, 21, 25): b - r = 6 once rebuilt as dark wool; was 25
+RED_GAP = 8      # hunting spear (41, 27, 25): r - g = 14; was 15
+BONE_MIN = 70    # bone cuirass median (100, 98, 94): min channel 94; was 120, which no 0.40-ceiling icon can reach
+CEIL_P99 = 0.46          # per icon, p99 of max(R,G,B) over lit (non-emissive) pixels; measured worst 0.443 (consumable.greater-mana)
+CEIL_P999 = 0.48         # per icon, p99.9 of the same; measured worst 0.451
+CEIL_EMIT_P99 = 0.54     # emissive pixels (flames, glass, wisp) may sit higher; measured worst 0.510 (item.tool.torch)
+SAT_P90 = 0.70           # per icon, p90 of (max-min)/max over pixels whose max channel is above 0.15; measured worst 0.671 (potion.mana); was 0.526 before the item-colour revival
+SAT_CANDY_SHARE = 0.01   # share of pixels that are both saturated (>0.80) and bright (max > 0.30); measured worst 0.000
+
+
+def lit_pixels(doc: dict, sheet: np.ndarray, mask: np.ndarray, name: str, emissive: bool) -> np.ndarray:
+    r = doc["sprites"][name]
+    s = sheet[r["y"] : r["y"] + r["h"], r["x"] : r["x"] + r["w"]]
+    m = mask[r["y"] : r["y"] + r["h"], r["x"] : r["x"] + r["w"], 3]
+    sel = (s[..., 3] > 204) & ((m > 64) if emissive else (m <= 64))
+    return s[sel][:, :3].astype(float) / 255
+
+
+def brightness_stats(doc: dict, sheet: np.ndarray, mask: np.ndarray) -> dict:
+    """name -> (p99 of the brightest channel, p99.9, emissive p99, p90 saturation, candy share)."""
+    out = {}
+    for name in FOOTPRINT:
+        if name not in doc["sprites"]:
+            continue
+        p = lit_pixels(doc, sheet, mask, name, False)
+        e = lit_pixels(doc, sheet, mask, name, True)
+        if len(p) == 0:
+            continue
+        mx, mn = p.max(1), p.min(1)
+        vis = mx > 0.15
+        sat = (mx - mn)[vis] / mx[vis]
+        candy = float(((mx - mn) / np.maximum(mx, 1e-6) > 0.80)[mx > 0.30].sum()) / len(p)
+        out[name] = (float(np.percentile(mx, 99)), float(np.percentile(mx, 99.9)),
+                     float(np.percentile(e.max(1), 99)) if len(e) > 20 else 0.0,
+                     float(np.percentile(sat, 90)) if len(sat) else 0.0, candy)
+    return out
+
+
+# A tier ramp is meant to be brighter than Common, so each sheet has its own ceilings. Measured (worst icon per quantity;
+# quantities are the MAX CHANNEL p99 / p99.9 and saturation p90, 0..1, as defined in brightness_stats):
+#   items.png          p99 0.443  p99.9 0.451  emissive p99 0.510  sat p90 0.671  candy 0.000
+#   items_uncommon.png p99 0.804  p99.9 0.835  emissive p99 0.816  sat p90 0.641  candy 0.000
+#   items_rare.png     p99 0.846  p99.9 0.863  emissive p99 0.761  sat p90 0.725  candy 0.000
+# All three peaked at 1.00 before the ageing pass. The ceilings carry a little room over the worst icon of each sheet.
+SHEET_CEILINGS = {
+    "items.png": (CEIL_P99, CEIL_P999, CEIL_EMIT_P99, SAT_P90, SAT_CANDY_SHARE),
+    "items_uncommon.png": (0.84, 0.87, 0.86, 0.67, SAT_CANDY_SHARE),
+    "items_rare.png": (0.89, 0.91, 0.84, 0.76, SAT_CANDY_SHARE),
+}
+
+
+def check_brightness(doc: dict, sheet: np.ndarray) -> list[str]:
+    """No icon may drift back to bright, saturated toy colour, on the Common sheet or on either tier sheet a rarer
+    item draws from (the sheet argument is items.png; the tier sheets are read here)."""
+    mask = np.asarray(Image.open(ITEMS / "items_mask.png").convert("RGBA"))
+    errs = []
+    for image, (c99, c999, cemit, csat, ccandy) in SHEET_CEILINGS.items():
+        pix = sheet if image == "items.png" else np.asarray(Image.open(ITEMS / image).convert("RGBA"))
+        for name, (p99, p999, ep99, sat, candy) in brightness_stats(doc, pix, mask).items():
+            tag = f"{image}:{name}"
+            if p99 > c99:
+                errs.append(f"{tag}: p99 channel {p99:.3f} over the {c99} ceiling")
+            if p999 > c999:
+                errs.append(f"{tag}: p99.9 channel {p999:.3f} over {c999}")
+            if ep99 > cemit:
+                errs.append(f"{tag}: emissive p99 {ep99:.3f} over {cemit}")
+            if sat > csat:
+                errs.append(f"{tag}: p90 saturation {sat:.2f} over {csat}")
+            if candy > ccandy:
+                errs.append(f"{tag}: {candy:.3f} of pixels are bright and saturated")
+    return errs
+
+
 def check_palette(doc: dict, sheet: np.ndarray) -> list[str]:
-    """Hue signals from spec 02 s7 that a recolour could silently lose."""
+    """Hue signals from spec 02 s7 that a recolour could silently lose. The absolute levels were re-tuned for the
+    aged, <= 0.40 icons; the hue directions are the ones the spec asks for."""
     errs = []
 
     def typical_rgb(name):
@@ -235,15 +313,22 @@ def check_palette(doc: dict, sheet: np.ndarray) -> list[str]:
         return np.median(s[s[..., 3] > 200][:, :3], axis=0)
 
     for name, test, label in (
-        ("item.helm.gilded", lambda c: c[0] > c[1] > c[2] + 40, "gold"),
-        ("item.feather.azure", lambda c: c[2] > c[0] + 25, "blue"),
-        ("item.gear.travel-cloak", lambda c: c[2] > c[0] + 25, "navy"),
-        ("item.gear.hunting-spear", lambda c: c[0] > c[1] + 15, "red"),
-        ("item.armor.bone", lambda c: c.min() > 120, "pale"),
+        ("item.helm.gilded", lambda c: c[0] > c[1] > c[2] + GOLD_GAP, "gold"),
+        ("item.feather.azure", lambda c: c[2] > c[0] + BLUE_GAP, "blue"),
+        ("item.gear.travel-cloak", lambda c: c[2] > c[0] + BLUE_GAP, "navy"),
+        ("item.gear.hunting-spear", lambda c: c[0] > c[1] + RED_GAP, "red"),
     ):
         c = typical_rgb(name)
         if not test(c):
             errs.append(f"{name}: not {label}: {c.round()}")
+    # bone stays the palest of the set: the old absolute floor (min channel > 120) cannot hold under a 0.40 ceiling,
+    # so it is now relative to the other hue anchors, plus a floor on its own
+    bone = typical_rgb("item.armor.bone")
+    if bone.min() <= BONE_MIN:
+        errs.append(f"item.armor.bone: not pale: {bone.round()}")
+    for other in ("item.helm.gilded", "item.feather.azure", "item.gear.travel-cloak", "item.gear.hunting-spear"):
+        if typical_rgb(other).mean() >= bone.mean():
+            errs.append(f"item.armor.bone: not paler than {other}")
     return errs
 
 
@@ -260,6 +345,7 @@ def main() -> int:
     errs += check_aura(doc)
     errs += check_ramps()
     errs += check_palette(doc, sheet)
+    errs += check_brightness(doc, sheet)
     errs += generator_errors(TOOLS / "gen_items.py")
     for f in ITEMS.iterdir():
         if re.search(uiart.FORBIDDEN_NAMES.pattern, f.name, re.I):

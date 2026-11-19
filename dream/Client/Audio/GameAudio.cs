@@ -116,7 +116,13 @@ public static class GameAudio
 
     private static void PlayUiFeedback(UiFeedback feedback)
     {
-        SoundId id = feedback == UiFeedback.Click ? SoundId.UiClick : SoundId.UiHover;
+        SoundId id = feedback switch
+        {
+            UiFeedback.Click => SoundId.UiClick,
+            UiFeedback.Coin => SoundId.VendorCoin,
+            UiFeedback.Refuse => SoundId.VendorRefuse,
+            _ => SoundId.UiHover
+        };
         LogPlay(id, false);
         s_current.Play(id);
     }

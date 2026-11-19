@@ -60,6 +60,9 @@ def expected() -> dict[str, tuple[int, int]]:
         m[f"sil.{n}"] = (40, 60)
     for n in ("empty", "occupied", "hover", "invalid", "overlay.hover", "overlay.invalid"):
         m[f"cell.{n}"] = (20, 20)
+    for n in ("shop.cell.empty", "shop.cell.occupied", "cell.overlay.ember"):
+        m[n] = (20, 20)
+    m["shop.frame.ember"] = m["shop.frame.cold"] = (16, 16)
     for st in ("normal", "hover"):
         m[f"win.setoption.tab.{st}"] = (33, 6)
         m[f"win.arrow.down.{st}"] = (13, 7)
@@ -362,12 +365,131 @@ def check_shipped() -> None:
         fail(e)
 
 
+def rgb_mean(img: np.ndarray, sel: np.ndarray) -> np.ndarray:
+    return img[..., :3][sel].astype(float).mean(axis=0)
+
+
+def _seam_ok(c: np.ndarray) -> bool:
+    c = np.asarray(c, dtype=int)
+    jx, jy = np.abs(c[:, -1] - c[:, 0]).mean(), np.abs(c[-1] - c[0]).mean()
+    ix = max(np.abs(c[:, k] - c[:, k + 1]).mean() for k in range(0, 6))
+    iy = max(np.abs(c[k] - c[k + 1]).mean() for k in range(0, 6))
+    return jx <= ix * 1.6 + 2 and jy <= iy * 1.6 + 2
+
+
+def check_shop() -> None:
+    """The five sprites the shop board draws: a grate cell that is measurably not the bag's niche, a stocked tile, a flash
+    for the receiving bag cell and two 9-slice frames, ember (warm, heat only in its cavities) and cold (blue-grey)."""
+    import json
+
+    doc = json.loads(JSON.read_text(encoding="utf-8"))
+    sp = doc["sprites"]
+    for n in ("shop.cell.empty", "shop.cell.occupied", "cell.overlay.ember", "shop.frame.ember", "shop.frame.cold"):
+        if n not in sp:
+            fail(f"{n}: missing from the atlas")
+            return
+    for n in ("shop.cell.occupied", "cell.overlay.ember"):
+        if sp[n]["tile"] != "xy":
+            fail(f"{n}: tile {sp[n]['tile']!r}, want 'xy'")
+    if sp["shop.cell.empty"]["tile"] != "none" or sp["shop.cell.empty"]["slice"]:
+        fail("shop.cell.empty is a single cell: no tile, no slice")
+    for n in ("shop.frame.ember", "shop.frame.cold"):
+        if sp[n]["slice"] != [16, 16, 16, 16]:
+            fail(f"{n}: slice {sp[n]['slice']}, want 4 u (16 px) all round")
+    # the shop cell: opaque, quiet, and a different object from the bag cell
+    sc, bc = px("shop.cell.empty"), px("cell.empty")
+    if sc[..., 3].min() != 255:
+        fail("shop.cell.empty must be opaque")
+    face = med(sc, 5, 5, 15, 15)
+    if not SHOP_FACE[0] <= face <= SHOP_FACE[1]:
+        fail(f"shop.cell.empty face luma {face:.3f} outside {SHOP_FACE}: an icon must read over it")
+    lit = (med(sc, 6, 0.6, 14, 1.8) + med(sc, 0.6, 6, 1.8, 14)) / 2
+    dark = (med(sc, 6, 18.2, 14, 19.4) + med(sc, 18.2, 6, 19.4, 14)) / 2
+    if lit < dark + SHOP_KEY:
+        fail(f"shop.cell.empty rim {lit:.3f} not brighter than {dark:.3f} by {SHOP_KEY}: the key light comes from the upper left")
+    diff = np.abs(sc[..., :3].astype(float) - bc[..., :3].astype(float)).mean()
+    if diff < SHOP_DIFF:
+        fail(f"shop.cell.empty differs from cell.empty by only {diff:.1f} (want {SHOP_DIFF}): the shop cell must read as another object")
+    inner = (slice(int(4 * S), int(16 * S)),) * 2
+    grate, niche = luma(sc[inner]).std(), luma(bc[inner]).std()
+    if grate < niche * SHOP_TEXTURE:
+        fail(f"shop.cell.empty interior contrast {grate:.3f} is not {SHOP_TEXTURE}x the niche's {niche:.3f}: no grate")
+    # the stocked tile: a lattice like the bag's, dark, warm against it, and it tiles
+    so, bo = px("shop.cell.occupied"), px("cell.occupied")
+    v = med(so, 4, 4, 16, 16)
+    if not 0.025 <= v <= 0.20:
+        fail(f"shop.cell.occupied face luma {v:.3f} outside .025..0.2")
+    if med(so, 0, 4, 0.5, 16) >= v * 0.85:
+        fail("shop.cell.occupied: edge lattice line not visible")
+    wo, wb = rgb_mean(so, so[..., 3] > 0), rgb_mean(bo, bo[..., 3] > 0)
+    if (wo[0] - wo[2]) < (wb[0] - wb[2]) + SHOP_WARM:
+        fail(f"shop.cell.occupied must lean warmer than cell.occupied by {SHOP_WARM}: R-B {wo[0] - wo[2]:.1f} against {wb[0] - wb[2]:.1f}")
+    if not _seam_ok(so):
+        fail("shop.cell.occupied: tiling seam")
+    # the buy flash: warm, translucent, never solid, tiles
+    ov = px("cell.overlay.ember")
+    a = ov[..., 3].astype(float) / 255
+    if not (FLASH_A[0] <= a.min() and a.max() <= FLASH_A[1]):
+        fail(f"cell.overlay.ember alpha {a.min():.2f}..{a.max():.2f} outside {FLASH_A}")
+    if a.std() < 0.02:
+        fail("cell.overlay.ember is a flat fill: the heat must run in veins")
+    wm = rgb_mean(ov, ov[..., 3] > 0)
+    if wm[0] < wm[2] + FLASH_WARM:
+        fail(f"cell.overlay.ember must lean warm: {wm.round()}")
+    if not _seam_ok(ov):
+        fail("cell.overlay.ember: tiling seam")
+    # the frames: an opaque iron ring round a fully transparent middle, ember warm and cold blue
+    n4 = 4 * S
+    for name in ("shop.frame.ember", "shop.frame.cold"):
+        f = px(name)
+        mid = f[n4:-n4, n4:-n4, 3]
+        if mid.max() != 0:
+            fail(f"{name}: the 9-slice middle must be fully transparent (max alpha {mid.max()})")
+        ring = f[int(1.0 * S) : int(2.0 * S), n4:-n4, 3]
+        if ring.min() < 200:
+            fail(f"{name}: the ring is not solid along its edge (min alpha {ring.min()})")
+        for sl in (f[:n4, :n4, 3], f[:n4, -n4:, 3], f[-n4:, :n4, 3], f[-n4:, -n4:, 3]):
+            if sl.max() < 250:
+                fail(f"{name}: a corner is empty")
+    fe, fc = px("shop.frame.ember"), px("shop.frame.cold")
+    me, mc = rgb_mean(fe, fe[..., 3] > 200), rgb_mean(fc, fc[..., 3] > 200)
+    if me[0] - me[2] < EMBER_RB:
+        fail(f"shop.frame.ember must lean warm: R-B {me[0] - me[2]:.1f}, want {EMBER_RB}")
+    if mc[2] - mc[0] < COLD_BR:
+        fail(f"shop.frame.cold must lean blue: B-R {mc[2] - mc[0]:.1f}, want {COLD_BR}")
+    solid_e = fe[..., 3] > 200
+    hot = solid_e & (fe[..., 0].astype(int) > 150) & (fe[..., 0].astype(int) > 2 * fe[..., 2].astype(int))
+    share = hot.sum() / max(int(solid_e.sum()), 1)
+    if not EMBER_HOT[0] <= share <= EMBER_HOT[1]:
+        fail(f"shop.frame.ember: glowing share {share:.3f} outside {EMBER_HOT}: heat belongs in the cavities, the metal stays metal")
+    if ((fc[..., 3] > 200) & (fc[..., 0].astype(int) > 150) & (fc[..., 0].astype(int) > 2 * fc[..., 2].astype(int))).any():
+        fail("shop.frame.cold: has heat in it")
+    le = luma(fe)[solid_e].mean()
+    if le > EMBER_LUMA:
+        fail(f"shop.frame.ember: the ring is too bright overall ({le:.3f} > {EMBER_LUMA})")
+
+
+# Measured on the shipped sprites; each constant carries what was measured (filled in after the render).
+SHOP_FACE = (0.05, 0.24)   # shop.cell.empty face luma: measured 0.115 (cell.empty 0.133)
+SHOP_KEY = 0.06            # lit-minus-dark rim luma: measured 0.112 (cell.empty 0.165)
+SHOP_DIFF = 12.0           # mean abs RGB difference to cell.empty: measured 17.9
+SHOP_TEXTURE = 2.0         # interior luma std against the niche's: measured 2.62 (0.116 against 0.044)
+SHOP_WARM = 4.0            # R-B lead of shop.cell.occupied over cell.occupied: measured 5.6 (+3.0 against -2.6)
+FLASH_A = (0.15, 0.60)     # cell.overlay.ember alpha range: measured 0.259..0.506, std 0.064
+FLASH_WARM = 100.0         # cell.overlay.ember R-B: measured 150 (mean 193, 107, 43)
+EMBER_RB = 25.0            # shop.frame.ember R-B over the ring: measured 44.8
+COLD_BR = 10.0             # shop.frame.cold B-R over the ring: measured 18.0
+EMBER_HOT = (0.03, 0.30)   # share of ring pixels that glow (R > 150 and R > 2B): measured 0.179
+EMBER_LUMA = 0.32          # the ring is iron with heat in it, not a glowing band: measured mean luma 0.263
+
+
 def main() -> int:
     check_sprites()
     check_source()
     check_colours()
     check_silhouettes()
     check_seams()
+    check_shop()
     if "--fast" not in sys.argv:
         check_shipped()
     for e in errors:

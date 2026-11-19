@@ -154,16 +154,41 @@ def check_gems(errs, S):
         full, empty, mask, spec = (S(f"gem.{kind}.{x}") for x in ("full", "empty", "mask", "spec"))
         ins = full[..., 3] > 127
         rgb = full[..., :3].astype(int)
+        # Blood and ink in a cage, not candy. These were a saturated body (R > 190 with G, B < 80, share >= 0.06), deep
+        # facets at R 40..130 and hot highlights over luma 0.80 (share >= 0.01): the toy ruby. They are re-tuned to the
+        # aged stone; every number is measured on the shipped sprites (hp / mp).
         if hue == "red":
-            body = (rgb[..., 0] > 190) & (rgb[..., 1] < 80) & (rgb[..., 2] < 80)
-            deep = (rgb[..., 0] > 40) & (rgb[..., 0] < 130) & (rgb[..., 1] < 30) & (rgb[..., 2] < 40)
+            body = (rgb[..., 0] > 70) & (rgb[..., 0] > 1.8 * rgb[..., 1]) & (rgb[..., 0] > 1.8 * rgb[..., 2])
+            deep = (rgb[..., 0] > 20) & (rgb[..., 0] < 130) & (rgb[..., 1] < 30) & (rgb[..., 2] < 40)
         else:
-            body = (rgb[..., 2] > 190) & (rgb[..., 0] < 80)
-            deep = (rgb[..., 2] > 40) & (rgb[..., 2] < 140) & (rgb[..., 0] < 30)
-        hot = luma(full) > 0.80
-        for label, m, need in (("saturated body", body, 0.06), ("deep facets", deep, 0.02), ("hot highlights", hot, 0.01)):
+            body = (rgb[..., 2] > 70) & (rgb[..., 2] > 1.5 * rgb[..., 0]) & (rgb[..., 2] > 1.5 * rgb[..., 1])   # symmetric with the red test: no teal or cyan stone
+            deep = (rgb[..., 2] > 20) & (rgb[..., 2] < 140) & (rgb[..., 0] < 30)
+        fl = rgb / 255.0
+        sat = (fl.max(axis=2) - fl.min(axis=2)) / np.maximum(fl.max(axis=2), 1e-6)
+        iron = (sat < 0.30) & (luma(full) > 0.06) & (luma(full) < 0.6)
+        for label, m, need in (("oxidised body", body, 0.35), ("deep glass", deep, 0.30), ("iron cage", iron, 0.06)):   # SHARE of the stone, measured hp / mp: body 0.467 / 0.396, deep 0.328 / 0.338, iron 0.108 / 0.096
             if (m & ins).sum() < need * ins.sum():
                 errs.append(f"gem.{kind}.full: {label} cover {(m & ins).sum() / ins.sum():.3f} of the stone, want {need}")
+        if (luma(full)[ins] > 0.80).mean() > 0.004:   # LUMA share over 0.80, measured 0.0017 / 0.0005 after the iteration-3 relight (0.0023 / 0.0003 before): no plastic hot spot survives
+            errs.append(f"gem.{kind}.full: plastic highlights cover {(luma(full)[ins] > 0.80).mean():.4f} of the stone")
+        if np.percentile(fl.max(axis=2)[ins], 99) > 0.86:   # MAX-CHANNEL (not luma) p99, measured 0.835 / 0.682
+            errs.append(f"gem.{kind}.full: p99 channel {np.percentile(fl.max(axis=2)[ins], 99):.3f} over the 0.86 ceiling")
+        # the glass alone (HSV S > 0.45; the near-neutral iron cage drags a whole-sprite mean down): lit through, still oxidised
+        glass = ins & (sat > 0.45)
+        # MAX CHANNEL, not luma. On a blood-red stone the red channel is roughly 3x the luma, so this
+        # number is NOT comparable with check_art.py's glass_p95, which is luma on the same sprite at a
+        # different sampling resolution. Keep the two apart, or a bound from one gets read against the
+        # other and a fail looks like a comfortable pass - which is exactly what happened once here.
+        gv = fl.max(axis=2)[glass]
+        # measured MAX-CHANNEL glass p95 0.784 (hp) / 0.608 (mp). The real legibility contract is the
+        # C# ClassicHudGemTests, which counts the pixels differing between fill 0 and fill 1: measured
+        # 3050 (health) and 3025 (mana) against its floor of 2000.
+        if np.percentile(gv, 95) < 0.40:
+            errs.append(f"gem.{kind}.full: glass p95 {np.percentile(gv, 95):.3f} under 0.40: the fluid is not lit")
+        if sat[glass].mean() < 0.70:   # measured 0.802 / 0.722
+            errs.append(f"gem.{kind}.full: glass saturation {sat[glass].mean():.3f} under 0.70")
+        if np.percentile(sat[ins], 50) > 0.85:   # measured median saturation 0.76 / 0.70
+            errs.append(f"gem.{kind}.full: median saturation {np.percentile(sat[ins], 50):.2f} is candy")
         if not (np.array_equal(full[..., 3], empty[..., 3]) and np.array_equal(full[..., 3], mask[..., 3]) and np.array_equal(full[..., 3], spec[..., 3])):
             errs.append(f"gem.{kind}: alpha differs across layers")
         # mask: R rises upward and spans the stone, with no stray islands at 25, 50 and 75 percent

@@ -1,258 +1,276 @@
 using Dream.Rendering.Hud;
+using Dream.Simulation.Content;
+using Dream.Simulation.Inventory;
 using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Ui.Panels;
 
-// The vendor window (M3): the stone frame of the character window, in its place while a vendor is open.
-// A buy list of what the vendor sells (a click buys one), the wallet in the second title strip, and a
-// paged sell list of the bag with a Sell button. Draws nothing without an inventory open and a vendor
-// open. Every pick is only an IHudActions call; the server checks the NPC, range, stock, gold and
-// slot. Strings (the vendor's name, item names) are cut to their box and never format strings.
+// The vendor window: the stone frame of the character window, in its place while a vendor is open, with
+// the vendor's stock on an 8x8 board that mirrors the bag cell for cell (VendorGrid). Stock is placed by
+// real item footprints in stock order. A click on an item buys one; dragging a bag item onto the board
+// sells it (the release itself is resolved by InventoryWindow, which owns the drag; this window only
+// draws the reaction: the frame ignites for a sale and goes cold for a refusal). Draws nothing without an
+// inventory open and a vendor open. Every pick is only an IHudActions call; the server checks the NPC,
+// range, stock, gold and slot. Strings are cut to their box and never format strings. Every shop sprite
+// is drawn through TryGet, so the window is complete without the forged art.
 public static class VendorWindow
 {
-    public const int BuyRows = 8;
-    public const int SellRows = 8;
-
-    private const float RowX = 19f;
-    private const float RowW = 152f;
-    private const float RowH = 12f;
-    private const float RowPitch = 13f;
-    private const float BuyTop = 58f;
-    private const float SellHeadTop = 168f;
-    private const float SellTop = 182f;
-    private const float PagerW = 14f;
-    private const float ButtonH = 16f;
-
-    // Text sizes in window units (1 u = Scale px); the boxes are the art's, so each is capped by its box.
+    // Text sizes in window units (1 u = Scale px) for the grid shop's own lines and cells; the boxes are
+    // the art's, so each is capped by its box.
     internal const float RowTextUnits = 9.5f;
     internal const float HeadTextUnits = 8f;
-    internal const float ButtonTextUnits = 9.5f;
+    internal const float CellTextUnits = 8f;
 
-    // Widget ids, clear of the inventory (0x100..0x502) and the character window (0x310..).
-    internal const int IdBuyRow = InventoryWindow.IdBase + 0x600;
-    internal const int IdSellRow = InventoryWindow.IdBase + 0x620;
-    internal const int IdPagePrev = InventoryWindow.IdBase + 0x640;
-    internal const int IdPageNext = InventoryWindow.IdBase + 0x641;
-    internal const int IdSellButton = InventoryWindow.IdBase + 0x642;
+    // The lines of the free band above the board (58..190 u): the "For sale" head, then the hovered
+    // item's name and price, or the hints.
+    private const float TextX = 19f;
+    private const float TextW = 152f;
+    private const float TextH = 12f;
+    private const float HeadTop = 46f;
+    private const float InfoTop = 58f;
+    private const float InfoPitch = 13f;
+
+    // Widget ids, clear of the inventory (0x100..0x502) and the character window (0x310..). A shop cell's
+    // id is HudWidgetId.Of(IdShopCell, VendorGrid.KindIdentity(kind)), never IdShopCell + index.
+    internal const int IdShopCell = InventoryWindow.IdBase + 0x700;
     internal const int IdClose = InventoryWindow.IdBase + 0x643;
 
+    // How far the ember and cold frame reach past the board edge.
+    private const float FrameInflateUnits = 2f;
+
+    // The longest item kind looked up in the catalog (the same bound as a ground item's name lookup).
+    private const int MaxKindLength = 64;
+
     private static readonly UiColor GoldColor = new(0xD8, 0xB4, 0x5A, 255);
-    private static readonly UiColor HoverFill = new(0xF5, 0xDD, 0xA5, 40);
-    private static readonly UiColor SelectFill = new(0x8A, 0x1E, 0x1E, 110);
+    private static readonly UiColor Unaffordable = new(0xB0, 0xB0, 0xB0, 255);
     private static readonly UiColor White = UiColor.White;
 
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s, IHudActions a)
     {
+        VendorFxState fx = VendorFxState.Current;
         if (!v.InventoryOpen || v.Vendor is not { IsOpen: true } vendor)
         {
+            fx.SetSellHover(InventoryWindow.DropVerdict.None, v.AnimationSeconds);
             return;
         }
 
+        InventoryUiState st = InventoryUiState.Current;
         UiRect win = l.Character;
-        bool live = !InventoryUiState.Current.ModalOpen;
+        bool live = !st.ModalOpen;
+        bool dragging = i.ActiveDragPayload >= 0;
+        long gold = v.Inventory?.Gold ?? 0;
         InventoryWindow.DrawFrame(c, s, l, win, inventoryKind: false);
 
-        // Pass one: the plates, hover and selection washes, and every click. Pass two: the text.
-        int stock = vendor.StockCount;
-        int buyRows = Math.Min(stock, BuyRows);
-        for (int n = 0; n < buyRows; n++)
+        Span<int> anchors = stackalloc int[VendorHudState.MaxStock];
+        Span<ItemFootprint> footprints = stackalloc ItemFootprint[VendorHudState.MaxStock];
+        Span<sbyte> owner = stackalloc sbyte[BagGrid.CellCount];
+        owner.Fill(-1);
+        VendorGrid.Place(v, vendor, anchors, footprints);
+        int stock = Math.Min(vendor.StockCount, anchors.Length);
+        for (int n = 0; n < stock; n++)
         {
-            UiRect r = l.FromUnits(win, RowX, BuyTop + (n * RowPitch), RowW, RowH);
-            DrawRowPlate(c, s, r);
-            if (live && i.Hovered(IdBuyRow + n, r))
+            if (anchors[n] >= 0 && BagGrid.TryMask(anchors[n], footprints[n], out ulong mask))
             {
-                c.Solid(r, HoverFill);
-            }
-
-            if (live && i.Button(IdBuyRow + n, r))
-            {
-                a.Vendor(new VendorHudAction(VendorHudActionKind.Buy, vendor.StockAt(n).ItemKind));
-            }
-        }
-
-        int sellCount = CountSellable(v);
-        int pages = Math.Max(1, (sellCount + SellRows - 1) / SellRows);
-        vendor.SellPage = Math.Clamp(vendor.SellPage, 0, pages - 1);
-        DropStaleSelection(v, vendor);
-
-        UiRect prev = l.FromUnits(win, RowX + RowW - (2 * PagerW) - 8f, SellHeadTop, PagerW, RowH);
-        UiRect next = l.FromUnits(win, RowX + RowW - PagerW, SellHeadTop, PagerW, RowH);
-        DrawRowPlate(c, s, prev);
-        DrawRowPlate(c, s, next);
-        if (live && vendor.SellPage > 0 && i.Button(IdPagePrev, prev))
-        {
-            vendor.SellPage--;
-        }
-
-        if (live && vendor.SellPage < pages - 1 && i.Button(IdPageNext, next))
-        {
-            vendor.SellPage++;
-        }
-
-        int first = vendor.SellPage * SellRows;
-        Span<int> anchors = stackalloc int[SellRows];
-        int shown = CollectPage(v, first, anchors);
-        for (int n = 0; n < shown; n++)
-        {
-            UiRect r = l.FromUnits(win, RowX, SellTop + (n * RowPitch), RowW, RowH);
-            long rowItemId = v.Backpack[anchors[n]].Item.ItemInstanceId;
-            // BH-INPUT-3: same shape as the trade bag row. CollectPage renumbers the sell rows when an
-            // item at a lower anchor leaves the bag mid-press (a quickbar potion, a loot push), so a
-            // position id would move the selection onto an item the player never clicked — and the
-            // Sell step would then carry that item's own instance id, so the server would accept it.
-            // The id carries the item, so a mid-press change drops the click instead.
-            int rowId = HudWidgetId.Of(IdSellRow, rowItemId);
-            DrawRowPlate(c, s, r);
-            if (anchors[n] == vendor.SelectedAnchor)
-            {
-                c.Solid(r, SelectFill);
-            }
-            else if (live && i.Hovered(rowId, r))
-            {
-                c.Solid(r, HoverFill);
-            }
-
-            if (live && i.Button(rowId, r))
-            {
-                vendor.Select(anchors[n], rowItemId);
+                for (int cell = 0; cell < BagGrid.CellCount; cell++)
+                {
+                    if ((mask & (1UL << cell)) != 0)
+                    {
+                        owner[cell] = (sbyte)n;
+                    }
+                }
             }
         }
 
-        UiRect sell = l.FromUnits(win, RowX, SellTop + (SellRows * RowPitch) + 6f, RowW, ButtonH);
-        bool canSell = vendor.SelectedAnchor >= 0;
-        DrawRowPlate(c, s, sell);
-        if (canSell && live && i.Hovered(IdSellButton, sell))
+        // What releasing the drag on the board would do: the rule InventoryWindow applies on the release.
+        // Build runs before InventoryWindow.Build, so st.DragCancelled is read one frame behind and a
+        // drag cancelled by a new snapshot glows for one extra frame; the release itself is never affected.
+        Vector2 pointer = i.Pointer.Position;
+        InventoryWindow.DropVerdict sell = InventoryWindow.DropVerdict.None;
+        if (dragging && st.DragActive && !st.DragCancelled)
         {
-            c.Solid(sell, HoverFill);
+            sell = VendorGrid.TryResolveSell(in l, v, st.DragSource, pointer, out _);
         }
 
-        if (canSell && live && i.Button(IdSellButton, sell))
+        fx.SetSellHover(sell, v.AnimationSeconds);
+
+        // The hovered stock line. No widget is registered while an item is being dragged or a menu is open.
+        int hovered = -1;
+        if (live && !dragging)
         {
-            int anchor = vendor.SelectedAnchor;
-            a.Vendor(new VendorHudAction(
-                VendorHudActionKind.Sell,
-                SlotIndex: anchor,
-                ItemInstanceId: vendor.SelectedItemId));
-            vendor.ClearSelection();
+            for (int n = 0; n < stock; n++)
+            {
+                if (anchors[n] >= 0 && i.Hovered(CellId(vendor, n), VendorGrid.ItemRect(in l, win, anchors[n], footprints[n])))
+                {
+                    hovered = n;
+                }
+            }
+        }
+
+        if (hovered >= 0 && TryWareSnapshot(vendor.StockAt(hovered).ItemKind, out InventoryItemSnapshot ware))
+        {
+            // The bag's own tooltip, fed the ware instead of a slot: same panel, same placement.
+            st.SetHover(-1, VendorGrid.ItemRect(in l, win, anchors[hovered], footprints[hovered]), in ware, vendor.StockAt(hovered).Price);
+        }
+
+        // Pass one: the board, its frame, and every click. Pass two: the icons. Pass three: the text.
+        DrawBoard(c, s, l, win, owner, hovered);
+        DrawSellCue(c, s, l, win, sell, fx, pointer);
+
+        if (live && !dragging)
+        {
+            for (int n = 0; n < stock; n++)
+            {
+                if (anchors[n] < 0)
+                {
+                    continue;
+                }
+
+                VendorStockLine line = vendor.StockAt(n);
+                UiRect r = VendorGrid.ItemRect(in l, win, anchors[n], footprints[n]);
+                bool affordable = line.Price <= gold;
+                if (!i.Button(CellId(vendor, n), r, affordable))
+                {
+                    continue;
+                }
+
+                if (!affordable)
+                {
+                    i.Emit(UiFeedback.Refuse);
+                    break;
+                }
+
+                // One click is one purchase: only one widget can be hot, but two stock lines of the same
+                // kind share an id and the router answers by id alone, so stop at the first buy.
+                a.Vendor(new VendorHudAction(VendorHudActionKind.Buy, line.ItemKind));
+                i.Emit(UiFeedback.Coin);
+                fx.NoteBuy(v);
+                break;
+            }
         }
 
         DrawClose(c, i, l, s, a, win, live);
 
-        // ---- text ----
-        // One size per kind of box, each capped by the box the art fixed; the pagers are 14 u wide,
-        // so their glyph is shrunk to that width and not only to the 12 u height.
-        float shadow = UiText.ShadowPx(in l);
-        var title = InventoryWindow.TitleTextFor(in l);
-        var row = UiText.For(in l, RowTextUnits, RowH);
-        var head = UiText.For(in l, HeadTextUnits, RowH);
-        var button = UiText.For(in l, ButtonTextUnits, ButtonH);
-        var pager = UiText.ForFitting(c, in l, "<", RowTextUnits, RowH, prev.W);
-        UiText.PutCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), TitleText(vendor.Title), in title, ItemTierStyle.Title, shadow);
-        DrawGoldStrip(c, l, win, v, in title, shadow);
-        UiText.PutLeft(c, HeadRect(l, win, BuyTop - 12f), 0f, "For sale", in head, ItemTierStyle.Dim, shadow);
-        if (stock == 0)
+        for (int n = 0; n < stock; n++)
         {
-            UiText.PutCentered(c, l.FromUnits(win, RowX, BuyTop, RowW, RowH), "Nothing for sale", in row, ItemTierStyle.Dim, shadow);
-        }
-
-        long gold = v.Inventory?.Gold ?? 0;
-        for (int n = 0; n < buyRows; n++)
-        {
-            VendorStockLine line = vendor.StockAt(n);
-            UiRect r = l.FromUnits(win, RowX, BuyTop + (n * RowPitch), RowW, RowH);
-            DrawPricedRow(c, r, line.DisplayName, line.Price, ItemTierStyle.Body, line.Price > gold ? ItemTierStyle.Danger : GoldColor, in row, shadow);
-        }
-
-        Span<char> mem = stackalloc char[24];
-        UiTextBuilder pageText = new(mem);
-        pageText.Append(vendor.SellPage + 1);
-        pageText.Append("/");
-        pageText.Append(pages);
-        UiRect headRect = HeadRect(l, win, SellHeadTop + 1f);
-        UiText.PutLeft(c, headRect, 0f, "Your goods", in head, ItemTierStyle.Dim, shadow);
-        UiText.PutCentered(c, prev, "<", in pager, vendor.SellPage > 0 ? ItemTierStyle.Body : ItemTierStyle.Dim, shadow);
-        UiText.PutCentered(c, next, ">", in pager, vendor.SellPage < pages - 1 ? ItemTierStyle.Body : ItemTierStyle.Dim, shadow);
-
-        // "1/2" between the heading and the pagers. The 8 u gap between the two pagers is narrower than
-        // the text at any size, so it goes in the room the heading leaves instead of on top of them.
-        float pageLeft = headRect.X + UiText.Measure(c, "Your goods", in head) + (4f * l.Scale);
-        UiRect pageBox = new(pageLeft, prev.Y, MathF.Max(0f, prev.X - pageLeft), prev.H);
-        var page = UiText.ForFitting(c, in l, pageText.Text, HeadTextUnits, RowH, MathF.Max(0f, pageBox.W - (2f * l.Scale)));
-        UiText.PutRight(c, pageBox, 2f * l.Scale, pageText.Text, in page, ItemTierStyle.Dim, shadow);
-
-        if (shown == 0)
-        {
-            UiText.PutCentered(c, l.FromUnits(win, RowX, SellTop, RowW, RowH), "Nothing to sell", in row, ItemTierStyle.Dim, shadow);
-        }
-
-        for (int n = 0; n < shown; n++)
-        {
-            HudItemView item = v.Backpack[anchors[n]];
-            UiRect r = l.FromUnits(win, RowX, SellTop + (n * RowPitch), RowW, RowH);
-            string name = item.Item.DisplayName ?? string.Empty;
-            ReadOnlySpan<char> shownName = name.AsSpan(0, Math.Min(name.Length, 40));
-            UiText.PutLeft(c, r, 2f * l.Scale, shownName, in row, ItemTierStyle.ColorOf(item.Tier), shadow);
-        }
-
-        UiText.PutCentered(c, sell, "Sell", in button, canSell ? ItemTierStyle.Title : ItemTierStyle.Dim, shadow);
-    }
-
-    // The bag items the sell list offers: every item with an anchor, in anchor order.
-    internal static int CountSellable(HudView v)
-    {
-        int count = 0;
-        for (int anchor = 0; anchor < HudView.BackpackSlots && anchor < v.Backpack.Length; anchor++)
-        {
-            if (IsSellRow(v, anchor))
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
-    // Fills anchors with the page's items (anchor order), returns how many.
-    internal static int CollectPage(HudView v, int first, Span<int> anchors)
-    {
-        int seen = 0;
-        int shown = 0;
-        for (int anchor = 0; anchor < HudView.BackpackSlots && anchor < v.Backpack.Length && shown < anchors.Length; anchor++)
-        {
-            if (!IsSellRow(v, anchor))
+            if (anchors[n] < 0 || !fx.TryIcon(n, vendor.StockAt(n).ItemKind, s, out UiSprite icon))
             {
                 continue;
             }
 
-            if (seen++ >= first)
+            UiRect box = VendorGrid.ItemRect(in l, win, anchors[n], footprints[n]);
+            UiSprite shown = ItemTierStyle.IconFor(icon, ItemTier.Common);
+            c.Sprite(shown, InventoryWindow.IconRect(icon, box, l.Scale), vendor.StockAt(n).Price > gold ? Unaffordable : White);
+        }
+
+        DrawText(c, s, l, win, v, vendor, fx, anchors, footprints, stock, hovered, gold);
+    }
+
+    // A ware is an item that has not been rolled: its base definition, Common. The id is the kind's stable
+    // hash made negative, so it never meets a real instance id and does not change between frames (the
+    // tooltip cache compares it). False for a kind the catalog does not know; never throws.
+    internal static bool TryWareSnapshot(string? kind, out InventoryItemSnapshot ware)
+    {
+        ware = default;
+        if (string.IsNullOrEmpty(kind) || kind.Length > MaxKindLength)
+        {
+            return false;
+        }
+
+        ItemDefinition? definition;
+        try
+        {
+            if (!ContentCatalog.Shipped.TryGetItem(kind, out definition) || definition is null)
             {
-                anchors[shown++] = anchor;
+                return false;
+            }
+        }
+        catch (ContentValidationException)
+        {
+            return false;
+        }
+
+        long id = -1 - (VendorGrid.KindIdentity(kind) & long.MaxValue);
+        ware = new InventoryItemSnapshot(
+            id,
+            kind,
+            definition.DisplayName,
+            definition.VisualId,
+            1,
+            definition.Description,
+            definition.DetailLines,
+            definition.Modifiers.Count == 0 ? null : definition.Modifiers,
+            definition.HeldLight,
+            definition.EquipSlotMask,
+            ItemRarity.Common,
+            false);
+        return true;
+    }
+
+    // The widget id of stock line n: it folds the item kind in, so a stock that renumbers between a press
+    // and its release drops the click instead of buying a different item.
+    private static int CellId(VendorHudState vendor, int line) =>
+        HudWidgetId.Of(IdShopCell, VendorGrid.KindIdentity(vendor.StockAt(line).ItemKind));
+
+    private static void DrawBoard(
+        IUiCanvas c, UiSpriteTable s, in UiLayout l, UiRect win, ReadOnlySpan<sbyte> owner, int hovered)
+    {
+        bool haveEmpty = s.TryGet(UiSpriteNames.ShopCellEmpty, out UiSprite empty)
+            || s.TryGet(UiSpriteNames.CellEmpty, out empty);
+        bool haveOccupied = s.TryGet(UiSpriteNames.ShopCellOccupied, out UiSprite occupied)
+            || s.TryGet(UiSpriteNames.CellOccupied, out occupied);
+        bool haveHover = s.TryGet(UiSpriteNames.CellHover, out UiSprite hover);
+        for (int cell = 0; cell < BagGrid.CellCount; cell++)
+        {
+            UiRect r = VendorGrid.CellRect(in l, win, cell);
+            int line = owner[cell];
+            if (line < 0)
+            {
+                if (haveEmpty)
+                {
+                    c.Sprite(empty, r, White);
+                }
+            }
+            else if (line == hovered)
+            {
+                if (haveHover)
+                {
+                    c.Tile(hover, r, White);
+                }
+            }
+            else if (haveOccupied)
+            {
+                c.Tile(occupied, r, White);
+            }
+        }
+    }
+
+    // A drag over the board: Valid ignites the frame (eased by EmberLevel) and washes the cell under the
+    // pointer; Invalid goes cold. Once the drag ends the ember keeps drawing while it fades.
+    private static void DrawSellCue(
+        IUiCanvas c, UiSpriteTable s, in UiLayout l, UiRect win, InventoryWindow.DropVerdict sell, VendorFxState fx, Vector2 pointer)
+    {
+        UiRect board = VendorGrid.BoardRect(in l, win);
+        float pad = FrameInflateUnits * l.Scale;
+        UiRect frame = new(board.X - pad, board.Y - pad, board.W + (2f * pad), board.H + (2f * pad));
+        if (sell != InventoryWindow.DropVerdict.None)
+        {
+            string name = sell == InventoryWindow.DropVerdict.Valid ? UiSpriteNames.CellOverlayHover : UiSpriteNames.CellOverlayInvalid;
+            if (board.Contains(pointer) && s.TryGet(name, out UiSprite overlay))
+            {
+                c.Tile(overlay, VendorGrid.CellRect(in l, win, VendorGrid.CellAt(in l, win, pointer)), White);
             }
         }
 
-        return shown;
-    }
-
-    private static bool IsSellRow(HudView v, int anchor) =>
-        v.Backpack[anchor].Item.ItemInstanceId != 0
-        && !v.Backpack[anchor].Equipped
-        && v.BagAnchorAt(anchor) == anchor;
-
-    private static void DropStaleSelection(HudView v, VendorHudState vendor)
-    {
-        int anchor = vendor.SelectedAnchor;
-        if (anchor >= 0 && (anchor >= HudView.BackpackSlots || anchor >= v.Backpack.Length || !IsSellRow(v, anchor)
-            || v.Backpack[anchor].Item.ItemInstanceId != vendor.SelectedItemId))
+        if (sell == InventoryWindow.DropVerdict.Invalid)
         {
-            vendor.ClearSelection();
+            if (s.TryGet(UiSpriteNames.ShopFrameCold, out UiSprite cold))
+            {
+                c.NineSlice(cold, frame, White);
+            }
         }
-    }
-
-    private static void DrawRowPlate(IUiCanvas c, UiSpriteTable s, UiRect r)
-    {
-        if (s.TryGet(UiSpriteNames.WinLineBox, out UiSprite box))
+        else if (fx.EmberLevel > 0.001f && s.TryGet(UiSpriteNames.ShopFrameEmber, out UiSprite ember))
         {
-            c.NineSlice(box, r, White);
+            c.NineSlice(ember, frame, new UiColor(255, 255, 255, (byte)Math.Clamp((int)MathF.Round(255f * fx.EmberLevel), 0, 255)));
         }
     }
 
@@ -276,6 +294,90 @@ public static class VendorWindow
         }
     }
 
+    private static void DrawText(
+        IUiCanvas c, UiSpriteTable s, in UiLayout l, UiRect win, HudView v, VendorHudState vendor, VendorFxState fx,
+        ReadOnlySpan<int> anchors, ReadOnlySpan<ItemFootprint> footprints, int stock, int hovered, long gold)
+    {
+        float shadow = UiText.ShadowPx(in l);
+        var title = InventoryWindow.TitleTextFor(in l);
+        var row = UiText.For(in l, RowTextUnits, TextH);
+        var head = UiText.For(in l, HeadTextUnits, TextH);
+        UiText.PutCentered(c, l.FromUnits(win, 35f, 8f, 120f, 8f), TitleText(vendor.Title), in title, ItemTierStyle.Title, shadow);
+        DrawGoldStrip(c, l, win, v, in title, shadow);
+        UiText.PutLeft(c, l.FromUnits(win, TextX, HeadTop, TextW, TextH), 0f, "For sale", in head, ItemTierStyle.Dim, shadow);
+
+        UiRect nameBox = l.FromUnits(win, TextX, InfoTop, TextW, TextH);
+        UiRect priceBox = l.FromUnits(win, TextX, InfoTop + InfoPitch, TextW, TextH);
+        if (hovered >= 0)
+        {
+            VendorStockLine line = vendor.StockAt(hovered);
+            string name = line.DisplayName ?? string.Empty;
+            ReadOnlySpan<char> shownName = name.AsSpan(0, Math.Min(name.Length, 40));
+            shownName = shownName[..UiText.FitLength(c, shownName, in row, MathF.Max(0f, nameBox.W))];
+            UiText.PutLeft(c, nameBox, 0f, shownName, in row, ItemTierStyle.Body, shadow);
+
+            Span<char> mem = stackalloc char[24];
+            UiTextBuilder b = new(mem);
+            b.Append("Price ");
+            b.Append(ClampToInt(line.Price));
+            UiText.PutLeft(c, priceBox, 0f, b.Text, in row, line.Price > gold ? ItemTierStyle.Danger : GoldColor, shadow);
+        }
+        else if (stock == 0)
+        {
+            UiText.PutLeft(c, nameBox, 0f, "Nothing for sale", in row, ItemTierStyle.Dim, shadow);
+        }
+        else
+        {
+            UiText.PutLeft(c, nameBox, 0f, "Click an item to buy it.", in row, ItemTierStyle.Dim, shadow);
+            UiText.PutLeft(c, priceBox, 0f, "Drag a bag item here to sell.", in row, ItemTierStyle.Dim, shadow);
+        }
+
+        for (int n = 0; n < stock; n++)
+        {
+            if (anchors[n] < 0)
+            {
+                continue;
+            }
+
+            VendorStockLine line = vendor.StockAt(n);
+            UiRect r = VendorGrid.ItemRect(in l, win, anchors[n], footprints[n]);
+            if (!fx.TryIcon(n, line.ItemKind, s, out _))
+            {
+                DrawFallbackLabel(c, l, r, line.DisplayName);
+            }
+
+            DrawPrice(c, l, r, line.Price, line.Price > gold ? ItemTierStyle.Danger : GoldColor);
+        }
+    }
+
+    // The price small in the item's bottom-right, like a stack count: shrunk to the cell's WIDTH as well
+    // as its height, since a five digit price is wider than a 20 u cell at the 13 px bake.
+    private static void DrawPrice(IUiCanvas c, in UiLayout l, UiRect r, long price, UiColor color)
+    {
+        Span<char> mem = stackalloc char[12];
+        UiTextBuilder b = new(mem);
+        b.Append(ClampToInt(price));
+        ReadOnlySpan<char> text = b.Text;
+        float pad = 2f * l.Scale;
+        var t = UiText.ForFitting(c, in l, text, CellTextUnits, VendorGrid.CellUnits, MathF.Max(0f, r.W - (2f * pad)));
+        float width = UiText.Measure(c, text, in t);
+        UiText.Put(c, text, new Vector2(r.Right - width - pad, r.Bottom - t.Px - l.Scale), in t, color, UiText.ShadowPx(in l));
+    }
+
+    // An item with no sprite shows the start of its name, so it is never invisible. Cut by WIDTH.
+    private static void DrawFallbackLabel(IUiCanvas c, in UiLayout l, UiRect r, string? name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return;
+        }
+
+        ReadOnlySpan<char> text = name.AsSpan(0, Math.Min(name.Length, 24));
+        var t = UiText.For(in l, CellTextUnits, VendorGrid.CellUnits);
+        float room = MathF.Max(0f, r.W - (2f * l.Scale));
+        UiText.PutCentered(c, r, text[..UiText.FitLength(c, text, in t, room)], in t, ItemTierStyle.Body, UiText.ShadowPx(in l));
+    }
+
     private static ReadOnlySpan<char> TitleText(string? title)
     {
         if (string.IsNullOrEmpty(title))
@@ -294,27 +396,6 @@ public static class VendorWindow
         b.Append(ClampToInt(v.Inventory?.Gold ?? 0));
         UiText.PutCentered(c, l.FromUnits(win, 35f, 20f, 119f, 8f), b.Text, in t, GoldColor, shadow);
     }
-
-    // Name on the left, price on the right; the name gives way to the price. Measured at the size it
-    // draws with: PanelText.FitLength reads the canvas's current scale, which is not this one.
-    private static void DrawPricedRow(
-        IUiCanvas c, UiRect r, string name, long price, UiColor nameColor, UiColor priceColor,
-        in UiSizedText t, float shadow)
-    {
-        Span<char> mem = stackalloc char[16];
-        UiTextBuilder b = new(mem);
-        b.Append(ClampToInt(price));
-        float inset = MathF.Max(2f, r.H * 0.15f);
-        float priceW = UiText.Measure(c, b.Text, in t);
-        float y = UiText.TextY(r, in t);
-        UiText.Put(c, b.Text, new Vector2(r.Right - inset - priceW, y), in t, priceColor, shadow);
-        ReadOnlySpan<char> shown = (name ?? string.Empty).AsSpan(0, Math.Min((name ?? string.Empty).Length, 40));
-        shown = shown[..UiText.FitLength(c, shown, in t, MathF.Max(0f, r.W - (3f * inset) - priceW))];
-        UiText.Put(c, shown, new Vector2(r.X + inset, y), in t, nameColor, shadow);
-    }
-
-    private static UiRect HeadRect(in UiLayout l, UiRect win, float topUnits) =>
-        l.FromUnits(win, RowX, topUnits, RowW, RowH);
 
     private static int ClampToInt(long value) => (int)Math.Clamp(value, 0L, int.MaxValue);
 }
