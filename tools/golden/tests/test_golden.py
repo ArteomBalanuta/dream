@@ -1,4 +1,5 @@
 """Golden compare tests. Run: python -I tools/golden/tests/test_golden.py"""
+import re
 import sys
 import tempfile
 import unittest
@@ -289,12 +290,29 @@ class RealBaselineTests(unittest.TestCase):
             blocks = np.load(golden.BASELINES / name / "blocks.npz")
             self.assertEqual(sorted(blocks.files), steps)
 
-    def test_wolf_ignore_rect_leaves_the_gate_warden_in_the_compare(self):
-        # the rect masks the floating damage number only; the NPC column (x 733..750, y 115..185) must be compared
+    def test_wolf_ignore_rects_leave_the_world_and_the_player_in_the_compare(self):
+        # the scene clears the wolf before the snap, so no damage number is masked any more: only the chat log and
+        # the health orb are. The Gate Warden column (x 733..750, y 115..185), the damage-number zone and the
+        # player (712..774, 480..571) must all be compared.
         scene = golden.load_scene("wolf-staged")
         mask = golden.ignore_mask((512, 720), scene["ignore"])
-        self.assertTrue(mask[85:90, 330:340].all(), "damage number zone must stay masked")
         self.assertFalse(mask[60:90, 368:376].any(), "Gate Warden must not be masked")
+        self.assertFalse(mask[75:110, 325:366].any(), "damage-number zone must not be masked")
+        self.assertFalse(mask[235:290, 350:395].any(), "the player must not be masked")
+        self.assertTrue(mask[440:460, 10:150].all(), "chat log must stay masked")
+
+    def test_wolf_removing_the_player_fails_with_at_least_twice_the_limit(self):
+        _, results = self.doctored("wolf-staged", self.remove_figure())
+        m = re.search(r"block ([\d.]+) ([\d.]+)", results[-1][1])
+        self.assertIsNotNone(m, results[-1])
+        self.assertGreaterEqual(float(m[1]), 2.0 * float(m[2]), results[-1])
+
+    def test_wolf_scene_clears_the_wolf_before_the_snap(self):
+        # a live wolf bites at a jittery real-time phase: its damage number (12 or 18) floats from the player's head
+        # to the Gate Warden at a different height in every run; the frame must be taken after the wolf is gone
+        script = golden.load_scene("wolf-staged")["script"].split(",")
+        self.assertIn("dev:clear", script[script.index("status") + 1:], script)
+        self.assertGreaterEqual(int(script[-2].split(":")[1]), 90, script)
 
 
 if __name__ == "__main__":
