@@ -250,9 +250,10 @@ public class GpuFrameTimerTests
     }
 
     [Fact]
-    public void The_Timer_Has_One_Query_Per_Section_And_Shadows_Is_The_Fifth()
+    public void The_Timer_Has_One_Query_Per_Section_And_Shadows_Is_The_Fifth_And_Post_The_Sixth()
     {
-        Assert.Equal(5, GpuFrameTimer.SectionCount);
+        Assert.Equal(6, GpuFrameTimer.SectionCount);
+        Assert.Equal(5, (int)GpuTimerSection.Post);
         Assert.Equal(4, (int)GpuTimerSection.Shadows);
         Assert.Equal(GpuFrameTimer.SectionCount, Enum.GetValues<GpuTimerSection>().Length);
     }

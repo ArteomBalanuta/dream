@@ -246,6 +246,7 @@ public partial class PlayScene
             GpuActorsMilliseconds = gpuTimer.Latest.ActorsMilliseconds,
             GpuEffectsMilliseconds = gpuTimer.Latest.EffectsMilliseconds,
             GpuShadowMilliseconds = gpuTimer.Latest.ShadowMilliseconds,
+            GpuPostMilliseconds = gpuTimer.Latest.PostMilliseconds,
             GpuHudMilliseconds = gpuTimer.Latest.HudMilliseconds,
             GpuPrimitives = gpuTimer.Latest.PrimitivesGenerated,
             DrawCalls = _lastFrameCounters.DrawCalls,
@@ -280,10 +281,10 @@ public partial class PlayScene
         // pass, the blur and the highlight shoulder. It runs AFTER the collision debug draw and the
         // view model, because both of those are world geometry that needs the scene's depth buffer,
         // and BEFORE the HUD, because the HUD is authored in display values and must not be rolled
-        // off. The draws fall inside the still-open Effects GPU section; a section cannot reopen
-        // within a frame, so they are not timed separately.
+        // off. Its draws run in their own Post GPU section (opening it closes the Effects one).
         if (sceneTarget != null && _postChain != null)
         {
+            gpuTimer.BeginSection(GpuTimerSection.Post);
             sceneTarget.Resolve();
             _postChain.Run(sceneTarget.ResolvedTexture, sceneTarget.Width, sceneTarget.Height);
         }

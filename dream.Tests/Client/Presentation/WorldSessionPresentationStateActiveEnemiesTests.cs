@@ -102,6 +102,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
         // the same state allocation (776 B -> 784 B).
         // The shadow-map wave added GpuShadowMilliseconds (one double) to FramePerformanceSnapshot: +8 B in
         // the same state allocation (824 B -> 832 B, which is the ceiling below, with no slack left).
+        // The post-chain wave added GpuPostMilliseconds (one double): 832 B -> 840 B.
         // No additional per-frame allocation was introduced.
         using ClientWorldSession session = new(
             floorSize: 10,
@@ -109,7 +110,7 @@ public class WorldSessionPresentationStateActiveEnemiesTests
             new SceneEventHub());
 
         AllocationAssert.AtMost(
-            832, // HudStatusSnapshot gained the character sheet fields (824 B)
+            840, // Post timing (+8 B); HudStatusSnapshot gained the character sheet fields (824 B)
             () => session.CapturePresentationState(WorldVisibility.MaxRenderDistance));
     }
 

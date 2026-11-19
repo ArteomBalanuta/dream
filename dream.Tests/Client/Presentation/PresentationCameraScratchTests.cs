@@ -135,7 +135,9 @@ public class PresentationCameraScratchTests(ITestOutputHelper output)
         const int StatsSheetHudGrowthBytes = 40;
         // Shadow maps: GpuShadowMilliseconds (one double) in the FramePerformanceSnapshot, +8 B.
         const int ShadowTimingGrowthBytes = 8;
-        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes + WaveH3HudSnapshotGrowthBytes + WaveI3HudDeathGrowthBytes + FxWaveEffectsTimingGrowthBytes + StatsSheetHudGrowthBytes + ShadowTimingGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
+        // Post chain: GpuPostMilliseconds (one double) in the FramePerformanceSnapshot, +8 B.
+        const int PostTimingGrowthBytes = 8;
+        long budget = 776 + Gpu5SnapshotGrowthBytes + StaticCellsExportGrowthBytes + WaveH3HudSnapshotGrowthBytes + WaveI3HudDeathGrowthBytes + FxWaveEffectsTimingGrowthBytes + StatsSheetHudGrowthBytes + ShadowTimingGrowthBytes + PostTimingGrowthBytes - (oldCameraPathBytes - newCameraPathBytes);
         Assert.True(
             captureBytes <= budget,
             $"CapturePresentationState allocated {captureBytes} B; expected at most {budget} B.");
