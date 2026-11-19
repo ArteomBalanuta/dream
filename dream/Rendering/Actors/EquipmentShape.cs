@@ -52,9 +52,23 @@ public enum EquipmentShape
     // bevelled cutting edge down each side, a slight distal taper and a clipped point near +Y.
     Blade,
 
-    // A curved shell: a cylindrical arc of about 150 degrees about the Y axis, open at the back, with
-    // a real wall thickness and a rolled lip. The workhorse of plate armour - pauldrons, cuirass
-    // halves, greaves, bracers, helm skirts - because it wraps a limb instead of boxing it.
+    // A curved shell: a cylindrical arc of about 230 degrees about the Y axis, open at the back, with
+    // a real wall thickness and a rolled lip. The workhorse of plate armour - cuirass halves,
+    // greaves, bracers, helm skirts - because it wraps a limb instead of boxing it.
+    //
+    // WHICH WAY IT OPENS MATTERS, and getting that wrong is the one mistake this shape invites. The
+    // shell's axis is +Y and its opening faces -Z, so unrotated it wraps something that runs
+    // vertically and leaves the BACK bare. That is right for a cuirass or a greave, where the baked
+    // body fills the gap, and wrong for anything that caps a limb: used unrotated as a shoulder cap
+    // it presents its hollow back to a camera that looks down and forward, and reads as a detached
+    // horseshoe floating beside the figure instead of as armour on a shoulder. That is exactly what
+    // the first cut of the big pauldrons looked like in the engine.
+    //
+    // To CAP something - a shoulder, a knee, a hip - either use Dome, which is closed and cannot
+    // show a hollow, or turn the opening downward with `pitch: -90f`, which puts the axis
+    // front-to-back and the opening at -Y so the gap faces the body. Rotations apply as pitch, then
+    // roll, then yaw (ArmourPart.ToMatrix and WeaponPart.ToMatrix), so a later roll cannot undo a
+    // pitch: work the orientation out in that order.
     Plate,
 
     // A hemi-ogive capping +Y on a short cylindrical skirt: helm skulls, shield bosses, pommels,
