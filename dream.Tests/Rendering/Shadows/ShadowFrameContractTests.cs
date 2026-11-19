@@ -111,9 +111,13 @@ public class ShadowFrameContractTests
             string text = Regex.Replace(File.ReadAllText(file), @"//[^
 ]*", string.Empty);
             int calls = Regex.Matches(text, @"dreamSunVisibility\s*\(").Count;
-            if (Path.GetFileName(file) is "lighting.glsl" or "clouds.glsl")
+            // The sculpted-equipment wave added the third and last caller: enemyFragment.glsl gates
+            // the equipment SPECULAR on the same visibility, so a pauldron does not glint while the
+            // figure stands in a doorway's shadow. Still exactly one call per file, still only on
+            // the sun term, and still nothing else in the tree calls it.
+            if (Path.GetFileName(file) is "lighting.glsl" or "clouds.glsl" or "enemyFragment.glsl")
             {
-                Assert.Equal(1, calls);   // lighting.glsl: its own definition; clouds.glsl: dreamDirectShaded
+                Assert.Equal(1, calls);
             }
             else
             {

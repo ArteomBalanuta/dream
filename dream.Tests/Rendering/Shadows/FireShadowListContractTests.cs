@@ -217,8 +217,15 @@ public class FireShadowListContractTests
 
         Assert.Contains("vec3 dreamPointLights(vec3 n, vec3 fragPos) {", source);
         Assert.Contains("float dreamFireVisibility(int light, vec3 fragPos, vec3 n)", fire);
-        Assert.Single(Regex.Matches(source, @"dreamFireVisibility\(i, fragPos, n\)"));
+        // Two loops now, and EACH multiplies its own contribution by the same visibility through the
+        // same signature: the original diffuse loop, and dreamPointSpecular, added by the sculpted-
+        // equipment wave so a torch's highlight on armour dies in a fire's shadow exactly as its
+        // diffuse pool does. The point of this assertion is that no contribution escapes the
+        // visibility, so both multiplies are pinned by text below.
+        Assert.Equal(2, Regex.Matches(source, @"dreamFireVisibility\(i, fragPos, n\)").Count);
+        Assert.Contains("vec3 dreamPointSpecular(vec3 n, vec3 fragPos, vec3 viewDir, float shininess, vec3 f0) {", source);
         Assert.Contains("sum += uPointLightColor[i].rgb * (f * (0.25 + 0.75 * lambert)) * visibility;", source);
+        Assert.Contains("sum += uPointLightColor[i].rgb * fresnel * (f * ndl * spec) * dreamFireVisibility(i, fragPos, n);", source);
     }
 
     [Fact]

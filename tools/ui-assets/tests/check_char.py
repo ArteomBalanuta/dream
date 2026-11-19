@@ -296,11 +296,25 @@ def envelope_rows(asset: dict) -> list:
 # SHAPES ARE APPROXIMATED BY THEIR BOUNDING BOX here, which is what these gates need. Every
 # EquipmentShape is inscribed in the unit cube the part's Centre/Size describe (the contract at the
 # top of EquipmentShape.cs), so rasterising the box draws the largest, flattest, most light-facing
-# surface the real mesh could ever present. For a clipping gate that errs in the safe direction (a
-# sculpt can only take LESS light than its box), and for the spread and envelope gates the box is
-# precisely the silhouette bound the worn-model contract is written in. Modelling the real meshes
-# here would mean re-implementing EquipmentShapeLibrary in Python, which would make the gate agree
-# with itself rather than with the engine.
+# surface the real mesh could ever present, so a sculpt can only take LESS DIFFUSE light than its
+# box; and for the spread and envelope gates the box is precisely the silhouette bound the
+# worn-model contract is written in. Modelling the real meshes here would mean re-implementing
+# EquipmentShapeLibrary in Python, which would make the gate agree with itself rather than with the
+# engine.
+#
+# WHAT THIS GATE NO LONGER COVERS, stated plainly rather than left implied. Since the sculpted
+# equipment wave, enemyFragment.glsl adds a normalised Blinn-Phong lobe, a fresnel edge sheen and a
+# grain term to equipment fragments (uEquipSurface; zero, and therefore absent, for every other
+# draw). This rasteriser models the DIFFUSE engine only, so the clipping gate's guarantee is now
+# "no equipment albedo clips under diffuse light", not "nothing on an equipped figure ever reaches
+# white". A specular highlight on polished steel is DESIGNED to reach white - it is a highlight -
+# and it is bounded instead by EquipSpecularStrength in the shader, judged from engine captures.
+# What still holds, and is what the gate is for, is the albedo bound: nothing is allowed to be so
+# bright before any specular that the figure reads as a flat lit patch.
+#
+# It also means the armour COVER checks are box checks: a Plate is a 230-degree shell, open at the
+# back, so a piece can satisfy a cover row while its mesh leaves a gap behind the limb. That is
+# intended (the baked body is the underlayer), but it is a box claim, not a mesh claim.
 _KW = r"(?:,\s*(?:pitch|roll|yaw):\s*[-\d.]+f|,\s*shape:\s*(?:EquipmentShape\.)?\w+)*"
 _KW_VALUE = re.compile(r"(pitch|roll|yaw):\s*([-\d.]+)f")
 _BOX = re.compile(r"Box\(\s*((?:[-\d.]+f,\s*){5}[-\d.]+f),\s*(?:ArmourMaterial\.)?(\w+)(" + _KW + r")\)")
