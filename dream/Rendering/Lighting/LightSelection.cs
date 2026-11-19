@@ -23,20 +23,22 @@ public static class LightSelection
     //
     // carriers, when given, receives each kept light's CarrierActorId at the same list index (a held light's carrier
     // is the actor holding it, 0 for every other light; the fire shadow pass reads it to keep the carrier out of its
-    // own light's shadow).
+    // own light's shadow). flicker, when given, receives each kept light's Flicker the same way (the fire shadow pass ranks by
+    // the steady colour, Color / Flicker).
     public static void SelectNearest(
         ReadOnlySpan<PointLight> first,
         ReadOnlySpan<PointLight> second,
         Vector3 camera,
         in ViewFrustum frustum,
         ref LightList list,
-        Span<int> carriers = default)
+        Span<int> carriers = default,
+        Span<float> flicker = default)
     {
         Span<float> distances = stackalloc float[LightList.MaxLights];
         int count = 0;
         float cutoffSquared = float.PositiveInfinity;
-        Insert(first, camera, in frustum, ref list, distances, ref count, carriers, ref cutoffSquared);
-        Insert(second, camera, in frustum, ref list, distances, ref count, carriers, ref cutoffSquared);
+        Insert(first, camera, in frustum, ref list, distances, ref count, carriers, flicker, ref cutoffSquared);
+        Insert(second, camera, in frustum, ref list, distances, ref count, carriers, flicker, ref cutoffSquared);
         list.Count = count;
     }
 
@@ -71,13 +73,14 @@ public static class LightSelection
         Vector3 camera,
         in ViewFrustum frustum,
         ref LightList list,
-        Span<int> carriers = default)
+        Span<int> carriers = default,
+        Span<float> flicker = default)
     {
         Span<float> distances = stackalloc float[LightList.MaxLights];
         int count = 0;
         float cutoffSquared = float.PositiveInfinity;
-        Insert(first, camera, in frustum, ref list, distances, ref count, carriers, ref cutoffSquared);
-        Insert(second, camera, in frustum, ref list, distances, ref count, carriers, ref cutoffSquared);
+        Insert(first, camera, in frustum, ref list, distances, ref count, carriers, flicker, ref cutoffSquared);
+        Insert(second, camera, in frustum, ref list, distances, ref count, carriers, flicker, ref cutoffSquared);
         list.Count = count;
 
         if (float.IsPositiveInfinity(cutoffSquared))
@@ -119,9 +122,11 @@ public static class LightSelection
         Span<float> distances,
         ref int count,
         Span<int> carriers,
+        Span<float> flicker,
         ref float cutoffSquared)
     {
         bool carryCarriers = carriers.Length >= LightList.MaxLights;
+        bool carryFlicker = flicker.Length >= LightList.MaxLights;
         for (int i = 0; i < lights.Length; i++)
         {
             ref readonly PointLight light = ref lights[i];
@@ -166,6 +171,11 @@ public static class LightSelection
                 {
                     carriers[j] = carriers[j - 1];
                 }
+
+                if (carryFlicker)
+                {
+                    flicker[j] = flicker[j - 1];
+                }
             }
 
             distances[slot] = distance;
@@ -174,6 +184,11 @@ public static class LightSelection
             if (carryCarriers)
             {
                 carriers[slot] = light.CarrierActorId;
+            }
+
+            if (carryFlicker)
+            {
+                flicker[slot] = light.Flicker;
             }
 
             if (count < LightList.MaxLights)

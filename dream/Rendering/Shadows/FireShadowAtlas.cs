@@ -95,7 +95,7 @@ public static class FireShadowAtlas
     /// A light with no score still takes a free slot (the score is a ranking, not a threshold): it is a visible light the
     /// camera selected, and over-lighting an unshadowed pool is the failure the design wants to avoid.
     /// </summary>
-    public static int SelectSlots(in LightList list, Vector3 focus, int maxSlots, Span<int> slots)
+    public static int SelectSlots(in LightList list, Vector3 focus, int maxSlots, Span<int> slots, ReadOnlySpan<float> flicker = default)
     {
         int capacity = Math.Min(Math.Min(maxSlots, slots.Length), ShadowSettings.MaxCastingFireCount);
         int available = Math.Clamp(list.Count, 0, LightList.MaxLights);
@@ -109,7 +109,9 @@ public static class FireShadowAtlas
         for (int i = 0; i < available; i++)
         {
             Vector4 positionRadius = list.PositionRadius[i];
-            float score = Score(list.Color[i].Xyz, positionRadius.Xyz, positionRadius.W, focus);
+            // Rank by the steady colour: the producer's flicker multiplier is divided back out so flickering fires do not swap slots.
+            float steady = i < flicker.Length && float.IsFinite(flicker[i]) && flicker[i] > 0f ? 1f / flicker[i] : 1f;
+            float score = Score(list.Color[i].Xyz * steady, positionRadius.Xyz, positionRadius.W, focus);
             if (!float.IsFinite(score))
             {
                 continue;
@@ -153,10 +155,11 @@ public static class FireShadowAtlas
         int maxSlots,
         float strength,
         ref ShadowFrame frame,
-        ReadOnlySpan<int> carriers = default)
+        ReadOnlySpan<int> carriers = default,
+        ReadOnlySpan<float> flicker = default)
     {
         Span<int> chosen = stackalloc int[ShadowSettings.MaxCastingFireCount];
-        int count = SelectSlots(in list, focus, maxSlots, chosen);
+        int count = SelectSlots(in list, focus, maxSlots, chosen, flicker);
         Span<FireShadowSlot> fires = frame.Fires;
         for (int s = 0; s < count; s++)
         {
