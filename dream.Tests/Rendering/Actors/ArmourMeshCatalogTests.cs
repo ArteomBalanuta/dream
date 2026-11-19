@@ -13,25 +13,34 @@ public class ArmourMeshCatalogTests
     private const float Eps = 1e-4f;
 
     public static readonly string[] Head =
-        ["worn.head.leather-cap", "worn.head.iron-helm", "worn.head.greathelm"];
+        ["worn.head.leather-cap", "worn.head.iron-helm", "worn.head.greathelm", "worn.head.sorcerer-crown"];
 
     public static readonly string[] Body =
-        ["worn.body.leather-vest", "worn.body.chain-hauberk", "worn.body.plate-cuirass"];
+        ["worn.body.leather-vest", "worn.body.chain-hauberk", "worn.body.plate-cuirass", "worn.body.sorcerer-regalia"];
 
     public static readonly string[] Hands =
-        ["worn.hands.leather-gloves", "worn.hands.iron-gauntlets", "worn.hands.plate-gauntlets"];
+    [
+        "worn.hands.leather-gloves", "worn.hands.iron-gauntlets", "worn.hands.plate-gauntlets",
+        "worn.hands.sorcerer-gauntlets"
+    ];
 
     public static readonly string[] Feet =
-        ["worn.feet.leather-boots", "worn.feet.iron-boots", "worn.feet.plate-sabatons"];
+    [
+        "worn.feet.leather-boots", "worn.feet.iron-boots", "worn.feet.plate-sabatons",
+        "worn.feet.sorcerer-sabatons"
+    ];
 
     public static readonly string[] Legs =
     [
         "worn.legs.leather-leggings", "worn.legs.plated-leggings", "worn.legs.chain-chausses",
-        "worn.legs.plate-greaves"
+        "worn.legs.plate-greaves", "worn.legs.sorcerer-greaves"
     ];
 
     public static readonly string[] Cloaks =
-        ["worn.back.travel-cloak", "worn.back.hooded-cloak", "worn.back.grave-mantle"];
+    [
+        "worn.back.travel-cloak", "worn.back.hooded-cloak", "worn.back.grave-mantle",
+        "worn.back.sorcerer-mantle"
+    ];
 
     public static readonly string[] Back = [.. Cloaks, "worn.back.gossamer-wings"];
 
@@ -419,10 +428,11 @@ public class ArmourMeshCatalogTests
     }
 
     [Fact]
-    public void TheCatalogHoldsExactlyTheTwentyOneDrawnModels()
+    public void TheCatalogHoldsExactlyTheTwentySevenDrawnModels()
     {
-        Assert.Equal(21, All.Length);
-        Assert.Equal(21, All.Distinct().Count());
+        // 21 before the royal sorcerer regalia; its six pieces are one per slot except the companion.
+        Assert.Equal(27, All.Length);
+        Assert.Equal(27, All.Distinct().Count());
         Assert.Equal(All.OrderBy(s => s, StringComparer.Ordinal), ArmourMeshCatalog.KnownVisualIds.OrderBy(s => s, StringComparer.Ordinal));
     }
 
@@ -903,6 +913,7 @@ public class ArmourMeshCatalogTests
     [InlineData("worn.back.travel-cloak", -0.06f)]
     [InlineData("worn.back.hooded-cloak", -0.38f)]
     [InlineData("worn.back.grave-mantle", -0.09f)]
+    [InlineData("worn.back.sorcerer-mantle", -0.30f)]
     public void EveryCloak_HangsToItsContractLength_AndStopsAtTheKnee(string id, float hemAtMost)
     {
         // An absolute length, stated as a contract and not read off the baked geometry: every relative check
@@ -1057,6 +1068,172 @@ public class ArmourMeshCatalogTests
         Assert.InRange(max.X, 0.40f, 0.60f);
         Assert.True(min.Y > 0.7f);
         Assert.Contains(wisp.Parts, p => ArmourMeshCatalog.Emissive(p.Material) != Vector3.Zero);
+    }
+
+    // ---- The royal sorcerer regalia: indigo enamelled plate with gold trim, one piece per slot but the
+    // companion. These gates pin what makes it a SET - a shared field material and a shared trim material -
+    // and the three ornaments the design is named for, so a later tuning pass cannot quietly turn it back
+    // into another dark-iron suit with a different outline.
+
+    public static readonly string[] SorcererSet =
+    [
+        "worn.head.sorcerer-crown", "worn.body.sorcerer-regalia", "worn.hands.sorcerer-gauntlets",
+        "worn.legs.sorcerer-greaves", "worn.feet.sorcerer-sabatons", "worn.back.sorcerer-mantle"
+    ];
+
+    [Fact]
+    public void TheSorcererSet_IsTheOnlyIndigoFieldInTheCatalog_AndItIsDrawnWhereTheClipGateLooks()
+    {
+        // Indigo exists for this set and for nothing else: it is the one material in the palette that is a
+        // deep violet-blue rather than a grey, so if another piece picks it up the set stops being a set.
+        foreach (string id in SorcererSet)
+        {
+            Assert.Contains(Model(id).Parts, p => p.Material == ArmourMaterial.Indigo);
+        }
+
+        foreach (string id in All.Except(SorcererSet))
+        {
+            Assert.DoesNotContain(Model(id).Parts, p => p.Material == ArmourMaterial.Indigo);
+        }
+
+        // And the half of it a C# test cannot see from here: tools/ui-assets/tests/check_char.py rasterises
+        // only the Head, Torso, Back and Companion models through its clip gate and fails on any palette
+        // material no model it draws uses. Indigo was declared by the contract commit and used by nothing,
+        // which is exactly what that gate reported. Keeping it on a mount the gate draws is what keeps it green.
+        ArmourMount[] drawnByTheClipGate = [ArmourMount.Head, ArmourMount.Torso, ArmourMount.Back, ArmourMount.Companion];
+        Assert.Contains(SorcererSet, id => drawnByTheClipGate.Contains(Model(id).Mount)
+            && Model(id).Parts.Any(p => p.Material == ArmourMaterial.Indigo));
+    }
+
+    [Fact]
+    public void TheSorcererSet_TrimsInGold_AndSpendsSteelOnlyOnEdges()
+    {
+        foreach (string id in SorcererSet)
+        {
+            ArmourModel model = Model(id);
+            Assert.Contains(model.Parts, p => p.Material == ArmourMaterial.Gilt);
+
+            // Gilt's luma is 0.24, under the light threshold, so the gold is NOT this set's bright facet and
+            // Steel still has to do that job - as a line, never as a surface. Every Steel part in the set is
+            // under 0.06 on an axis and under the 0.02 top area a leg band is measured by.
+            foreach (ArmourPart steel in model.Parts.Where(p => p.Material == ArmourMaterial.Steel))
+            {
+                Assert.True(MathF.Min(steel.Size.X, MathF.Min(steel.Size.Y, steel.Size.Z)) <= 0.06f,
+                    $"{id} spends Steel on a mass at {steel.Center} ({steel.Size})");
+                Assert.True(TopFootprint(steel) < 0.02f, $"{id} Steel at {steel.Center} is a band, not an edge");
+            }
+        }
+    }
+
+    [Fact]
+    public void TheSorcererCrown_CarriesFiveSweptGoldPointsAboveTheBrowBand()
+    {
+        ArmourPart[] points =
+        [
+            .. Model("worn.head.sorcerer-crown").Parts
+                .Where(p => p.Shape == EquipmentShape.Horn && p.Material == ArmourMaterial.Gilt)
+        ];
+        Assert.Equal(5, points.Length);
+        Assert.All(points, p => Assert.True(p.Center.Y >= HeadCrestBandY, $"a crown point sits at y {p.Center.Y}, below the crest band"));
+
+        // A tall centre point with two shorter mirrored pairs fanning out: the centre is on the midline and is
+        // the tallest, and the four others cancel in x.
+        ArmourPart centre = points.OrderByDescending(p => PartBounds(p).Max.Y).First();
+        Assert.True(MathF.Abs(centre.Center.X) < Eps, "the tallest crown point is off the midline");
+        Assert.All(points.Where(p => p != centre), p =>
+            Assert.True(PartBounds(p).Max.Y < PartBounds(centre).Max.Y, "a side point is as tall as the centre"));
+        Assert.Equal(0f, points.Sum(p => p.Center.X), 3);
+        Assert.Equal(2, points.Where(p => p != centre).Select(p => MathF.Round(p.Size.Y, 3)).Distinct().Count());
+    }
+
+    [Fact]
+    public void TheSorcererRegalia_LeadsWithItsShoulders_AndGlowsOnlyAtTheSternum()
+    {
+        ArmourModel model = Model("worn.body.sorcerer-regalia");
+
+        // The oversized caps are turned so their opening goes DOWN onto the shoulder, each ends in a gold
+        // Horn barb, and each is edged on its outer border - the pauldron rules the rest of the set supports.
+        ArmourPart[] caps = [.. model.Parts.Where(p => p.Shape == EquipmentShape.Plate && MathF.Abs(p.Center.X) > 0.15f)];
+        Assert.Equal(2, caps.Length);
+        Assert.All(caps, c => Assert.Equal(-90f, c.PitchDegrees));
+        Assert.Equal(2, model.Parts.Count(p => p.Shape == EquipmentShape.Horn && p.Material == ArmourMaterial.Gilt));
+
+        // One gem, and a small one: Arcane's emissive is added after the gain, so a large one is a lamp.
+        ArmourPart gem = Assert.Single(model.Parts, p => p.Material == ArmourMaterial.Arcane);
+        Assert.Equal(EquipmentShape.Gem, gem.Shape);
+        Assert.True(TopFootprint(gem) < 0.02f, $"the sternum gem is {TopFootprint(gem)} across the top");
+        Assert.True(gem.Center.Z > 0.1f && gem.Center.Y > 0.6f, "the gem is not at the sternum");
+
+        // The tabard is a DIAMOND: a Panel turned on the roll, hanging on the midline toward the knee.
+        ArmourPart tabard = Assert.Single(model.Parts, p => p.Shape == EquipmentShape.Panel);
+        Assert.Equal(45f, tabard.RollDegrees);
+        Assert.True(MathF.Abs(tabard.Center.X) < 0.05f && PartBounds(tabard).Min.Y < -0.25f);
+    }
+
+    [Fact]
+    public void TheSorcererGauntlets_CarryThreeMirroredForearmSpikesOfDifferentLengths()
+    {
+        ArmourModel model = Model("worn.hands.sorcerer-gauntlets");
+        ArmourPart[] spikes = [.. model.Parts.Where(p => p.Shape == EquipmentShape.Horn)];
+
+        // Three lengths, each as a mirrored PAIR: an arm model is drawn once per side, so a one-sided sculpt
+        // would lean the piece off the arm's axis (Pieces_AreSymmetricAboutTheirOwnAxis).
+        Assert.Equal(6, spikes.Length);
+        Assert.Equal(3, spikes.Select(p => MathF.Round(p.Size.Y, 3)).Distinct().Count());
+        Assert.Equal(0f, spikes.Sum(p => p.Center.X), 3);
+        Assert.All(spikes, p => Assert.Equal(180f, p.YawDegrees));
+
+        // Swept up and BACK: a yaw of 180 flips the roll, so the +X side carries the positive roll.
+        Assert.All(spikes, p => Assert.True(p.RollDegrees * p.Center.X > 0f, $"the spike at {p.Center} leans inward over the arm"));
+
+        // Both cuffs flare, and both are gold.
+        ArmourPart[] cuffs = [.. model.Parts.Where(p => p.Shape == EquipmentShape.Flare)];
+        Assert.Equal(2, cuffs.Length);
+        Assert.All(cuffs, c => Assert.Equal(ArmourMaterial.Gilt, c.Material));
+    }
+
+    [Fact]
+    public void TheSorcererLegAndFoot_EndInAGoldPoint()
+    {
+        // The knee cop is a Dome that bulges forward with a point standing proud of it, and the sabaton's toe
+        // cap is the furthest-forward part of the whole set: both are the Gilt the rest of the leg is denied.
+        ArmourModel greave = Model("worn.legs.sorcerer-greaves");
+        ArmourPart cop = Assert.Single(greave.Parts, p => p.Shape == EquipmentShape.Dome);
+        ArmourPart point = Assert.Single(greave.Parts, p => p.Shape == EquipmentShape.Spike);
+        Assert.Equal(ArmourMaterial.Gilt, cop.Material);
+        Assert.Equal(ArmourMaterial.Gilt, point.Material);
+        Assert.Equal(90f, cop.PitchDegrees);
+        Assert.Equal(90f, point.PitchDegrees);
+        Assert.True(PartBounds(point).Max.Z > PartBounds(cop).Max.Z, "the knee point does not stand proud of the cop");
+
+        ArmourModel sabaton = Model("worn.feet.sorcerer-sabatons");
+        ArmourPart toe = Assert.Single(sabaton.Parts, p => p.Shape == EquipmentShape.Taper);
+        Assert.Equal(ArmourMaterial.Gilt, toe.Material);
+        Assert.Equal(90f, toe.PitchDegrees);
+        Assert.Equal(PartBounds(toe).Max.Z, sabaton.Parts.Max(p => PartBounds(p).Max.Z), 4);
+        Assert.True(PartBounds(toe).Max.Z > 0.38f, "the toe cap is not long");
+    }
+
+    [Fact]
+    public void TheSorcererMantle_IsTheStraightCutOne_WithAGoldBorderAtItsHem()
+    {
+        ArmourModel mantle = Model("worn.back.sorcerer-mantle");
+        (Vector3 min, Vector3 max) = Union(mantle);
+
+        // Straight-cut: it still tapers enough to clear EveryCloak_TapersFromNarrowShouldersToAWiderHem, but
+        // it is the NARROWEST of the four back items at the shoulders and it does not flare like the others.
+        Assert.True(ShoulderHalfWidth(mantle) < ShoulderHalfWidth(Model("worn.back.grave-mantle")));
+        Assert.True(max.X - min.X < 0.56f, $"the court mantle is {max.X - min.X} across");
+
+        // The gold border runs across the BOTTOM of the falls, on the midline, and is a line, not a tier.
+        ArmourPart border = Assert.Single(mantle.Parts, p => p.Material == ArmourMaterial.Gilt && p.Shape == EquipmentShape.Panel);
+        Assert.True(border.Size.Y <= 0.06f, $"the hem border is {border.Size.Y} deep: a border, not a tier");
+        Assert.True(border.Center.Y < min.Y + 0.15f, "the gold border is not at the hem");
+
+        // Long - the second longest back item - and still above the knee, per the back-slot contract.
+        Assert.True(min.Y < Union(Model("worn.back.travel-cloak")).Min.Y - 0.20f);
+        Assert.True(min.Y > Union(Model("worn.back.hooded-cloak")).Min.Y);
+        Assert.True(min.Y > KneeY - 0.02f);
     }
 
     [Fact]
