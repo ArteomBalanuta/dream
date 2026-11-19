@@ -870,18 +870,28 @@ public static class EquipmentShapeLibrary
         AppendTube(writer, rings, hardRing, hardPoint, TubeCap.Strip, TubeCap.Strip);
     }
 
-    // A ribbed membrane: a wing, a tattered banner, a fin. Panel is a cloth sheet with a gentle
-    // bulge, and at this zoom a bulge of a tenth of a unit over a part twenty pixels wide is one
-    // value - which is why the gossamer wings read FLAT. This is the fix, and it is a frequency fix
-    // rather than an amplitude one: four RIBS run the length of the sheet, each a narrow ridge
-    // standing proud of the membrane between them, with the normal split at every ridge line. Four
-    // ribs across twenty pixels is a rib every five pixels, which survives MSAA; a dozen would not.
+    // A ribbed, SCALLOPED membrane: a wing, a fin, a tattered banner.
+    //
+    // The first version of this shape was ribs alone, and in the engine it changed nothing: the
+    // gossamer wings still read as one flat violet chevron. The arithmetic says why. A sheet's ribs
+    // stand out along the sheet's THIN axis, and that axis is scaled by the part's Size.Z, which for
+    // a wing is 0.05 - and the catalogue test pins it at or under 0.06, correctly, because a thick
+    // wing is a plank. A rib 0.055 deep in the unit frame is then 0.0028 engine units, and at about
+    // 56 pixels to the unit that is a third of a pixel. No amplitude inside the thin axis can ever
+    // reach the screen.
+    //
+    // So the form is moved into the SILHOUETTE, which is the one thing that always reads at this
+    // size: the bottom edge is scalloped, arcing up between the ribs and coming back down to -0.5 at
+    // each one. That is a notch about 0.22 of the part's height, in an axis that fills its box -
+    // four pixels on a wing twenty pixels tall - and it is what makes a bat wing a bat wing. The
+    // ribs stay, with their normals split, because they cost nothing and they do show once a light
+    // rakes across the sheet.
     //
     // Like Panel this is a sheet, so Z is thickness plus camber and is left unfitted.
     private static void AppendMembrane(MeshWriter writer)
     {
-        const int ribs = 4;
-        const int columns = ribs * 3;
+        const int bays = 3;
+        const int columns = bays * 4;
         const int rows = 5;
         const float halfThickness = 0.045f;
 
@@ -892,14 +902,12 @@ public static class EquipmentShapeLibrary
             float u0 = (float)i / columns;
             float u1 = (float)(i + 1) / columns;
 
-            // A ridge line every third column: split the normal there so the rib has an edge.
-            bool ridgeLeft = i % 3 == 0;
-            bool ridgeRight = (i + 1) % 3 == 0;
+            // A rib line wherever a bay begins: split the normal there so the rib has an edge.
+            bool ribLeft = i % 4 == 0;
+            bool ribRight = (i + 1) % 4 == 0;
 
             for (int j = 0; j < rows; j++)
             {
-                float y0 = -0.5f + ((float)j / rows);
-                float y1 = -0.5f + ((float)(j + 1) / rows);
                 float v0 = (float)j / rows;
                 float v1 = (float)(j + 1) / rows;
 
@@ -908,41 +916,42 @@ public static class EquipmentShapeLibrary
                     bool front = side == 0;
                     SmoothQuad(
                         writer,
-                        MembraneVertex(x0, y0, front, u0, v0, ridgeLeft),
-                        MembraneVertex(x1, y0, front, u1, v0, ridgeRight),
-                        MembraneVertex(x1, y1, front, u1, v1, ridgeRight),
-                        MembraneVertex(x0, y1, front, u0, v1, ridgeLeft));
+                        MembraneVertex(x0, v0, front, u0, 1f - v0, ribLeft),
+                        MembraneVertex(x1, v0, front, u1, 1f - v0, ribRight),
+                        MembraneVertex(x1, v1, front, u1, 1f - v1, ribRight),
+                        MembraneVertex(x0, v1, front, u0, 1f - v1, ribLeft));
                 }
             }
         }
 
-        // The rim, closed all the way round so the membrane is a solid sheet with an edge.
+        // The rim. The bottom one follows the scallop, so the notches have an edge of their own.
         for (int i = 0; i < columns; i++)
         {
             float x0 = -0.5f + ((float)i / columns);
             float x1 = -0.5f + ((float)(i + 1) / columns);
             for (int edge = 0; edge < 2; edge++)
             {
-                float y = edge == 0 ? -0.5f : 0.5f;
-                Vector3 outward = new(0f, y * 2f, 0f);
+                float y0 = edge == 0 ? MembraneBottom(x0) : 0.5f;
+                float y1 = edge == 0 ? MembraneBottom(x1) : 0.5f;
+                Vector3 outward = new(0f, edge == 0 ? -1f : 1f, 0f);
                 FlatQuad(
                     writer,
-                    new Vector3(x0, y, MembraneSurface(x0) - halfThickness),
-                    new Vector3(x1, y, MembraneSurface(x1) - halfThickness),
-                    new Vector3(x1, y, MembraneSurface(x1) + halfThickness),
-                    new Vector3(x0, y, MembraneSurface(x0) + halfThickness),
+                    new Vector3(x0, y0, MembraneSurface(x0) - halfThickness),
+                    new Vector3(x1, y1, MembraneSurface(x1) - halfThickness),
+                    new Vector3(x1, y1, MembraneSurface(x1) + halfThickness),
+                    new Vector3(x0, y0, MembraneSurface(x0) + halfThickness),
                     outward);
             }
         }
 
         for (int j = 0; j < rows; j++)
         {
-            float y0 = -0.5f + ((float)j / rows);
-            float y1 = -0.5f + ((float)(j + 1) / rows);
             for (int edge = 0; edge < 2; edge++)
             {
                 float x = edge == 0 ? -0.5f : 0.5f;
                 float z = MembraneSurface(x);
+                float y0 = MembraneY(x, (float)j / rows);
+                float y1 = MembraneY(x, (float)(j + 1) / rows);
                 Vector3 outward = new(x * 2f, 0f, 0f);
                 FlatQuad(
                     writer,
@@ -955,35 +964,43 @@ public static class EquipmentShapeLibrary
         }
     }
 
-    // The membrane's mid-surface: a strong camber toward -Z plus a rib ripple. The ripple is a
-    // cosine of four periods across the width, so the ridges land on the columns the normals are
-    // split at.
+    // The scalloped trailing edge: -0.5 at every rib, arcing up to -0.28 in the middle of a bay.
+    private static float MembraneBottom(float x)
+    {
+        float t = ((x + 0.5f) * 3f) % 1f;
+        return -0.5f + (0.22f * MathF.Sin(MathF.PI * t));
+    }
+
+    // v runs 0 at the scalloped bottom to 1 at the straight top.
+    private static float MembraneY(float x, float v) => MembraneBottom(x) + (v * (0.5f - MembraneBottom(x)));
+
+    // The membrane's mid-surface: a camber toward -Z plus a rib ripple whose period matches the bays.
     private static float MembraneSurface(float x)
     {
         float camber = -0.16f * (1f - (4f * x * x));
-        float ripple = 0.055f * MathF.Cos(MathF.Tau * 4f * (x + 0.5f));
+        float ripple = 0.055f * MathF.Cos(MathF.Tau * 3f * (x + 0.5f));
         return camber + ripple;
     }
 
     private static float MembraneSlope(float x) =>
-        (1.28f * x) - (0.055f * MathF.Tau * 4f * MathF.Sin(MathF.Tau * 4f * (x + 0.5f)));
+        (1.28f * x) - (0.055f * MathF.Tau * 3f * MathF.Sin(MathF.Tau * 3f * (x + 0.5f)));
 
-    // ridge flattens the slope used for the normal at a ridge line, so the two facets that meet
-    // there get normals that differ instead of averaging into one smooth hump.
+    // rib flattens the slope used for the normal at a rib line, so the two facets that meet there
+    // get normals that differ instead of averaging into one smooth hump.
     private static (Vector3 Position, Vector3 Normal, Vector2 Uv) MembraneVertex(
         float x,
-        float y,
+        float v,
         bool front,
         float u,
-        float v,
-        bool ridge)
+        float texV,
+        bool rib)
     {
         const float halfThickness = 0.045f;
-        float slope = ridge ? MembraneSlope(x) * 0.25f : MembraneSlope(x);
+        float slope = rib ? MembraneSlope(x) * 0.25f : MembraneSlope(x);
         float side = front ? -1f : 1f;
-        Vector3 position = new(x, y, MembraneSurface(x) + (side * halfThickness));
+        Vector3 position = new(x, MembraneY(x, v), MembraneSurface(x) + (side * halfThickness));
         Vector3 normal = Vector3.Normalize(new Vector3(-slope * side, 0f, side));
-        return (position, normal, Uv(u, v));
+        return (position, normal, Uv(u, texV));
     }
 
     // ---- shared geometry helpers ----------------------------------------

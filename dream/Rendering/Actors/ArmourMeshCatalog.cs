@@ -193,9 +193,16 @@ public static class ArmourMeshCatalog
     };
 
     // Added after lighting: only the glowing materials are not zero.
+    //
+    // Arcane was (0.30, 0.12, 0.55) and that number is why the gossamer wings read as a flat violet
+    // chevron however the mesh was sculpted. Emissive is added AFTER the gain, so it is a constant
+    // the shading cannot modulate: at 0.55 of blue on an albedo whose lit blue reaches about 0.37,
+    // three fifths of every wing texel was a value no light could change, and the whole piece sat at
+    // its ceiling. It is now about a third of that, which leaves the lit range in charge of the form
+    // and still glows clearly at midnight, where an emissive is actually for.
     public static Vector3 Emissive(ArmourMaterial material) => material switch
     {
-        ArmourMaterial.Arcane => new Vector3(0.30f, 0.12f, 0.55f),
+        ArmourMaterial.Arcane => new Vector3(0.09f, 0.035f, 0.17f),
         ArmourMaterial.Ember => new Vector3(0.9f, 0.4f, 0.08f),
         _ => Vector3.Zero
     };
