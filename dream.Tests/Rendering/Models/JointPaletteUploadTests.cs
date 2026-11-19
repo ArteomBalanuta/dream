@@ -50,18 +50,26 @@ public class JointPaletteUploadTests
         Assert.Equal(4, uploads);
     }
 
-    // Synthetic negative: without the record every primitive uploads, so the count above can fail.
+    // Synthetic negative: the same counting path with a fresh record per primitive (the old
+    // per-primitive behaviour) uploads once per primitive, so the guarded count can fail.
     [Fact]
-    public void An_Unguarded_Upload_Counts_Every_Primitive()
+    public void A_Fresh_Record_Per_Primitive_Uploads_Once_Per_Primitive()
     {
-        int uploads = 0;
+        object baseProgram = new();
+        object maskProgram = new();
+        int unguarded = 0;
+        int guarded = 0;
+        AnimatedModel.JointPaletteUploads shared = default;
         for (int i = 0; i < 9; i++)
         {
-            uploads++;
+            object program = i % 3 == 2 ? maskProgram : baseProgram;
+            AnimatedModel.JointPaletteUploads fresh = default;
+            Upload(ref fresh, program, ref unguarded);
+            Upload(ref shared, program, ref guarded);
         }
 
-        Assert.NotEqual(2, uploads);
-        Assert.Equal(9, uploads);
+        Assert.Equal(9, unguarded);
+        Assert.Equal(2, guarded);
     }
 
     [Fact]
