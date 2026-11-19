@@ -273,8 +273,8 @@ GEM_R_U, GEM_C_U = 24.0, 24.9   # the stone's radius and centre in its 50 u spri
 # keep the share of chroma that survives, knee where the highlight compression starts. The traced stone peaks at 1.00
 # with p99 0.99 and a ruby saturation near 1.0; what the grade leaves is measured in check_hud.
 GEM_GRADE = {
-    "hp": dict(cap=0.70, knee=0.30, keep=0.68, tint=(1.00, 0.88, 0.86), gain=1.45, core=(0.46, 0.50), glow=(0.23, 0.022, 0.013), hl=(0.40, 0.21, 0.17)),
-    "mp": dict(cap=0.60, knee=0.26, keep=0.48, tint=(0.86, 0.95, 1.00), gain=1.3, core=(0.54, 0.50), glow=(0.055, 0.12, 0.33), hl=(0.24, 0.31, 0.42)),
+    "hp": dict(cap=0.66, knee=0.28, keep=0.64, tint=(0.95, 0.58, 0.76), gain=1.9, core=(0.46, 0.50), glow=(0.24, 0.005, 0.032), hl=(0.36, 0.19, 0.18)),
+    "mp": dict(cap=0.60, knee=0.26, keep=0.48, tint=(0.86, 0.95, 1.00), gain=1.8, core=(0.54, 0.50), glow=(0.065, 0.14, 0.38), hl=(0.24, 0.31, 0.42)),
 }
 # glow is the candlelight that burns through the liquid (an sRGB add at the lit core, brighter where the fluid is thick
 # and along the thin lip of each clot); hl is the pale, wet, broken sheen on the upper-left glass. Neither may reach plastic:
@@ -348,33 +348,33 @@ def _cage_relief(kind: str) -> BarRelief:
     m = -1.0 if kind == "mp" else 1.0
     # the girdle: a heavy ring on the rim, so the cage reads as seated in the bar and not floating on the glass
     ring = [(cx + (R - 0.4) * math.cos(t), cy + (R - 0.4) * math.sin(t)) for t in np.linspace(0, math.tau, 96)]
-    r.sweep(ring, _swell(96, 1.35, 0.30, 0.6), z=1.0, mat="iron.warm", flatten=0.62, step_px=2.0)
+    r.sweep(ring, _swell(96, 1.95, 0.55, 0.6), z=1.0, mat="iron.warm", flatten=0.90, step_px=2.0)
     bands = []
-    for lat_deg, w, tag, ph in ((34, 1.25, "upper", 0.4), (-24, 1.1, "lower", 2.1)):
+    for lat_deg, w, tag, ph in ((34, 1.95, "upper", 0.4), (-24, 1.75, "lower", 2.1)):
         lat = math.radians(lat_deg)
         y0, rx = cy - R * math.sin(lat), R * math.cos(lat) * 0.985
         pts = [(cx + rx * math.cos(t), y0 + rx * 0.30 * math.sin(t)) for t in np.linspace(math.radians(8), math.radians(172), 44)]
-        r.sweep(pts, _swell(44, w, 0.32, ph, 0.25), z=1.3, mat="iron.warm", flatten=0.6, step_px=2.0)
+        r.sweep(pts, _swell(44, w, 0.55, ph, 0.25), z=1.3, mat="iron.warm", flatten=0.90, step_px=2.0)
         bands.append(pts)
     ribs = []
     for i, s in enumerate((-0.54, 0.54)):
         pts = [(cx + R * 0.97 * s * math.sin(t), cy - R * 0.97 * math.cos(t)) for t in np.linspace(math.radians(22), math.radians(158), 44)]
-        r.sweep(pts, _swell(44, 1.15, 0.30, 1.3 + i, 0.30), z=1.35, mat="iron", flatten=0.6, step_px=2.0)
+        r.sweep(pts, _swell(44, 1.75, 0.50, 1.3 + i, 0.30), z=1.35, mat="iron", flatten=0.90, step_px=2.0)
         ribs.append(pts)
     for i, rib in enumerate(ribs):
         for j, band in enumerate(bands):
             best = min(((ax - bx) ** 2 + (ay - by) ** 2, (ax + bx) / 2, (ay + by) / 2) for ax, ay in rib for bx, by in band)
-            r.dome(best[1], best[2], 1.55, z=float(r.h[int(best[2] * PPU), int(best[1] * PPU)]) + 0.15, mat="iron.rivet", seed=f"gem.cage.{kind}.rv{i}{j}", collar=True)
+            r.dome(best[1], best[2], 2.2, z=float(r.h[int(best[2] * PPU), int(best[1] * PPU)]) + 0.35, mat="iron.rivet", seed=f"gem.cage.{kind}.rv{i}{j}", collar=True)
     for i, tdeg in enumerate((-70, -20, 25, 70, 115, 160, 205, 250)):
         t = math.radians(tdeg)
         x, y = cx + (R - 0.4) * math.cos(t), cy + (R - 0.4) * math.sin(t)
-        r.dome(x, y, 1.0, z=float(r.h[int(y * PPU), int(x * PPU)]) + 0.1, mat="iron.rivet", seed=f"gem.cage.{kind}.gr{i}", collar=False)
+        r.dome(x, y, 1.4, z=float(r.h[int(y * PPU), int(x * PPU)]) + 0.3, mat="iron.rivet", seed=f"gem.cage.{kind}.gr{i}", collar=True)
     for i, ang in enumerate((-132, -48, 138, 44)):
         a = math.radians(ang)
         ux, uy = math.cos(a), math.sin(a)
         base = (cx + (R + 0.8) * ux, cy + (R + 0.8) * uy)
         pts = [(base[0] - ux * t * 13.0 - math.sin(t * 2.4) * uy * 2.0 * m, base[1] - uy * t * 13.0 + math.sin(t * 2.4) * ux * 2.0 * m) for t in np.linspace(0, 1, 20)]
-        r.sweep(pts, [3.0 - 2.85 * (k / 19) ** 0.75 for k in range(20)], z=1.5, mat="iron.warm", flatten=0.55, step_px=2.0)
+        r.sweep(pts, [3.5 - 3.35 * (k / 19) ** 0.75 for k in range(20)], z=1.5, mat="iron.warm", flatten=0.55, step_px=2.0)
     return r
 
 
@@ -411,7 +411,7 @@ def _grade_glass(kind: str, state: str, px: np.ndarray, cage: np.ndarray) -> np.
         rgb = rgb * body[..., None]
         yy, xx = np.mgrid[0:GEM_PX, 0:GEM_PX].astype(np.float32)
         rpx = GEM_R_U * U.SCALE
-        d2 = ((xx - GEM_PX * g["core"][0]) ** 2 + (yy - GEM_PX * g["core"][1]) ** 2) / (0.52 * rpx) ** 2
+        d2 = ((xx - GEM_PX * g["core"][0]) ** 2 + (yy - GEM_PX * g["core"][1]) ** 2) / (0.78 * rpx) ** 2
         core = np.exp(-d2) * (0.55 + 0.80 * run)
         lip = clots * (1 - _smoothstep(0.74, 0.80, clot))
         glow = np.array(g["glow"], np.float32)
@@ -422,10 +422,11 @@ def _grade_glass(kind: str, state: str, px: np.ndarray, cage: np.ndarray) -> np.
         arc = _smoothstep(math.radians(46), math.radians(14), dang) * _smoothstep(0.50, 0.62, rad) * (1 - _smoothstep(0.80, 0.90, rad))
         broken = _smoothstep(0.50, 0.64, _noise_px(seed + ".wet", 1.1, octaves=2))
         rgb = rgb + (arc * broken * 0.85)[..., None] * np.array(g["hl"], np.float32)
+        rgb = rgb * (1 - 0.34 * _smoothstep(0.55, 1.0, rad))[..., None]   # the outer glass falls away: the lit part is a core, not the whole stone
     rim = 1 - _smoothstep(0.50, 0.97, forge.blur(a, 4.5 * U.SCALE))
     pit = _noise_px(seed + ".soot", 0.9, octaves=2)
     smudge = _noise_px(seed + ".smudge", 4.0)
-    soot = np.clip(0.55 * rim * (0.4 + 0.8 * smudge) + 0.5 * _smoothstep(0.66, 0.78, pit) * (0.35 + 0.65 * rim)
+    soot = np.clip(0.80 * rim * (0.4 + 0.8 * smudge) + 0.5 * _smoothstep(0.66, 0.78, pit) * (0.35 + 0.65 * rim)
                    + 0.35 * _smoothstep(0.55, 0.85, forge.blur(cage[..., 3], 2.2 * U.SCALE)), 0, 0.85)
     rgb = rgb * (1 - soot[..., None] * 0.80) + soot[..., None] * np.array((0.012, 0.011, 0.010), np.float32)
     crack = _cracks(seed, kind)

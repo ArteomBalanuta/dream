@@ -1146,36 +1146,40 @@ def icon_wings_gossamer(s):
 
 
 def icon_cape_navy(s):
+    """A traveller's cloak: heavy wool hung from the left shoulder in an asymmetric fall, deep diagonal fold shadows, a
+    leather collar with a brass clasp, and a frayed, uneven hem. Rained on and slept in, not a drum of new cloth."""
     s.place(0, 1.0, (30, 20))
-    navy = M(CLOTH, c="#0A233F", metal=0.25, gloss=30, spec=0.3, mott=0.2)
-    half = [(30, 2), (43, 3.4), (46, 12), (47.2, 24), (47.6, 36), (44, 39.4), (40, 37.4), (35.4, 40), (30, 37.6)]
-    half = cr(half, 3)
-    outline = sym(half, 30)
+    wool = M(CLOTH, c="#142A46", metal=0.05, gloss=18, spec=0.18, mott=0.38)
+    body = [(13, 5), (22, 1.6), (36, 2.2), (47, 6), (54, 15), (57.5, 26), (56.5, 33.5), (52.2, 37.4), (49.4, 35), (45, 39.6), (40.6, 36.4),
+            (36.4, 39.2), (32, 35.8), (27.4, 38.6), (22.6, 35), (18, 36.4), (14.6, 30.4), (10.6, 29.4), (8.4, 22), (10.2, 13)]
+    outline = cr(body, 2, True)
 
     def fold(x, y):
-        v = 0.5 + 0.5 * np.sin((x - 30) * 0.92 + np.sin(y * 0.14) * 1.2)
-        v = (v ** 1.8)[..., None]
-        return col("#0A1F52") * (1 - v) + col("#2860B0") * v
+        # diagonal hanging folds that fan out from the collar, with a slow wander so no two are parallel
+        d = (x - 18) * 0.62 + (y - 3) * 0.32 + np.sin(y * 0.21 + x * 0.05) * 2.2
+        v = 0.5 + 0.5 * np.sin(d * 0.78)
+        v = (v ** 1.6)[..., None]
+        return col("#0A1626") * (1 - v) + col("#2B4568") * v
 
-    s.poly(outline, navy, bevel=4.5, prof="pillow", slope=0.8, paint=fold, thick=(0.6, 0.8))
-    for x, y0 in ((21.4, 12), (26, 10), (34, 10), (38.6, 12)):
-        s.groove(cr([(x, y0), (x + 0.8, 24), (x - 0.8, 37)], 5), w=1.8, depth=0.6, dark=0.72)
-    trim = M(GOLD, c="#D9A638", mott=0.14)
-    s.stroke(half[6:], 1.5, trim, cast=0.4)
-    s.stroke(mirror(half[6:], 30), 1.5, trim, cast=0.4)
-    # yoke, clasp, crest
-    yoke = cr([(14.4, 3.6), (20, 0.6), (30, -0.6), (40, 0.6), (45.6, 3.6), (43, 8.6), (30, 11.4), (17, 8.6)], 5, True)
-    s.poly(yoke, M(CLOTH, c="#14365C", metal=0.3, gloss=40, spec=0.4), bevel=4, slope=0.55, thick=(0.3, 0.6), cast=0.8)
-    s.stroke(cr([(16.2, 8.2), (30, 11.6), (43.8, 8.2)], 6), 1.3, trim, cast=0.5)
-    s.stroke(cr([(14.8, 3.4), (20, 0.8), (30, -0.4), (40, 0.8), (45.2, 3.4)], 6), 1.1, trim, cast=0.3)
-    for x in (18, 42):
-        s.ellipse(x, 4.2, 2.3, 2.3, GOLD, bevel=2, thick=(0.3, 0.4))
-        s.cut(x, 4.2, 1.2, 1.2, gemstone("#B41818", 0.2), n=6)
-    s.poly([(30, 13.6), (35, 17), (33.8, 23), (30, 27), (26.2, 23), (25, 17)], GOLD, bevel=2.8, prof="chamfer", slope=0.7, thick=(0.3, 0.5))
-    s.poly([(30, 16.4), (32.2, 18.2), (31.6, 21.8), (30, 23.6), (28.4, 21.8), (27.8, 18.2)], M(BLACK, c="#0A233F"), prof="flat", cast=0.4)
-    # small gold feet at the hem
-    for x, y in ((13.4, 38.4), (20.4, 37.2), (39.6, 37.2), (46.6, 38.4)):
-        s.poly([(x - 1.5, y - 1.2), (x + 1.5, y - 1.2), (x, y + 1.8)], GOLD, bevel=1, prof="chamfer", slope=0.8, cast=0.2)
+    s.poly(outline, wool, bevel=3.6, prof="pillow", slope=0.9, paint=fold, thick=(0.7, 0.9), bump=(0.9, 0.35))
+    for pts in (
+        [(17, 8), (21, 20), (18.5, 34)],
+        [(25, 7), (30, 20), (28.6, 36)],
+        [(33, 7), (39.6, 21), (38.2, 37)],
+        [(41, 9), (48, 22), (47.4, 34)],
+        [(11.6, 14), (14, 26), (13, 31)],
+    ):
+        s.groove(cr(pts, 5), w=2.0, depth=1.1, dark=0.52)
+    s.groove(cr([(10.5, 31), (22, 33.4), (34, 34), (47, 33), (55, 31)], 5), w=0.5, depth=0.5, dark=0.7, dash=(1.6, 1.0))   # hem stitching, half unpicked
+    # a leather collar rolled over the neck and a brass clasp and ring on the left shoulder
+    collar = cr([(13.6, 5.4), (20, 1.8), (30, 0.2), (39, 1.6), (44, 4.6), (38, 8.2), (29, 9.6), (19, 8.8)], 4, True)
+    s.poly(collar, M(DARK_LEATHER, c="#2B1B10", mott=0.4), bevel=3.2, prof="pillow", slope=0.8, thick=(0.4, 0.6), cast=0.8)
+    s.groove(cr([(16, 6.6), (29, 8.2), (42, 5.4)], 4), w=0.6, depth=0.5, dark=0.7, dash=(1.4, 0.9))
+    s.ellipse(20.4, 7.4, 2.3, 2.3, M(BRASS, c="#8A6A2A"), bevel=1.8, thick=(0.3, 0.4))
+    s.ring(20.4, 7.4, 3.3, 3.3, 0.8, M(DARK_STEEL, c="#4C4F55"), bevel=0.8)
+    # frayed threads hanging off the hem
+    for x, y, dx, dy in ((14, 36.6, -0.5, 3.0), (23.4, 36.2, 0.3, 3.4), (33.8, 38.4, -0.4, 2.6), (41.8, 38.0, 0.5, 3.0), (50, 36.8, 0.6, 2.8)):
+        s.stroke([(x, y), (x + dx, y + dy)], 0.5, M(CORD, c="#4A4034"), cast=0.1)
 
 
 icon_cape_navy.top = 3.0
@@ -1801,8 +1805,8 @@ ICON_TUNE = {
     "item.gear.wooden-buckler": dict(chroma=0.40, patina=1.4),
     "item.gear.kite-shield": dict(chroma=0.34, patina=1.6),
     "item.gear.tower-shield": dict(chroma=0.40, patina=1.4),
-    "item.gear.travel-cloak": dict(chroma=0.44, patina=1.3),
-    "item.bow.verdant": dict(chroma=0.30, patina=1.3),
+    "item.gear.travel-cloak": dict(chroma=0.80, patina=1.1),
+    "item.bow.verdant": dict(chroma=0.20, patina=1.3),
 }
 TOP_LIGHT = 0.34       # extra light on up-facing faces, so a silhouette has a bright top edge against the dark cell
 SHADOW_OPACITY, SHADOW_SIGMA_U, SHADOW_DX_U, SHADOW_DY_U = 0.62, 0.55, 0.45, 0.85   # contact shadow cast on the cell behind
