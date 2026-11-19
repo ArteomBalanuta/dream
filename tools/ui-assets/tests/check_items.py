@@ -41,10 +41,11 @@ NEW_KINDS = {
     (1, 3): "gear.short-sword",
     (1, 4): "gear.long-sword gear.ash-staff gear.bone-staff",
     (2, 2): "gear.hand-axe gear.wooden-buckler gear.iron-helm gear.greathelm gear.chain-hauberk gear.plate-cuirass gear.leather-gloves "
-            "gear.plate-gauntlets gear.leather-boots gear.plate-sabatons gear.leather-leggings gear.chain-chausses gear.plate-greaves",
+            "gear.plate-gauntlets gear.leather-boots gear.plate-sabatons gear.leather-leggings gear.chain-chausses gear.plate-greaves "
+            "gear.sorcerer-crown gear.sorcerer-regalia gear.sorcerer-gauntlets gear.sorcerer-greaves gear.sorcerer-sabatons",
     (2, 3): "gear.battle-axe gear.flanged-mace gear.war-hammer gear.short-bow gear.kite-shield",
     (2, 4): "gear.greatsword gear.long-bow gear.tower-shield",
-    (3, 2): "gear.hooded-cloak gear.grave-mantle",
+    (3, 2): "gear.hooded-cloak gear.grave-mantle gear.sorcerer-mantle",
 }
 for _fp, _names in NEW_KINDS.items():
     for _n in _names.split():
