@@ -2,7 +2,7 @@
 """Golden-image compare over DREAM_HUD_CAPTURE PNGs (numpy + PIL only).
 
   golden.py compare <actualDir> <scene>            compare a capture folder with the recorded baseline
-  golden.py record <actualDirA> <actualDirB> <scene>   store A (downscaled x2) + noise.json from A-vs-B
+  golden.py record <scene> <dir> <dir> <dir> [...]  store the per-pixel median (downscaled x2) + noise.json
   golden.py selftest                               synthetic positives and negatives; exit 0 when all hold
 
 <scene> is a name under tools/golden/scenes/ (or a path to a scene .json). Scene format and the
@@ -26,11 +26,15 @@ BASELINES = HERE / "baselines"
 OUT_ROOT = REPO / "artifacts" / "golden"
 
 # The effective limit is a multiple of the baseline's own run-to-run noise, never below the scene's floor.
-NOISE_MULTIPLIER = 3.0
+#
+# k is derived from measurement (README, "Choosing k"): with 5 recorded runs, a held-out run against the median
+# of the other 4 reached up to 3.96x the leave-one-out selfDiffFraction of those 4 (quietest scene, wolf-staged),
+# at most 1.7x on the others. k = 4 covers the worst observed ratio; the per-scene floor covers a near-zero self.
+NOISE_MULTIPLIER = 4.0
 
 
 def effective_limit(max_fraction: float, self_diff_fraction: float) -> float:
-    """max(maxFraction, 3 * selfDiffFraction): the scene floor, widened by measured noise."""
+    """max(maxFraction, k * selfDiffFraction): the scene floor, widened by measured noise."""
     return max(max_fraction, NOISE_MULTIPLIER * self_diff_fraction)
 
 
@@ -127,25 +131,52 @@ def compare(actual_dir: Path, scene: dict, baselines: Path = BASELINES, out_root
     return results
 
 
-def record(dir_a: Path, dir_b: Path, scene: dict, baselines: Path = BASELINES) -> float:
-    a, b = list_pngs(dir_a), list_pngs(dir_b)
-    if not a:
-        raise SystemExit(f"no PNGs in {dir_a}")
-    if [p.name for p in a] != [p.name for p in b]:
-        raise SystemExit(f"the two runs wrote different steps: {[p.name for p in a]} vs {[p.name for p in b]}")
+MIN_RECORD_RUNS = 3
+
+
+def median_frame(frames: list[np.ndarray]) -> np.ndarray:
+    """Per-pixel median of the runs: a flickering pixel settles on its usual value, not on one run's."""
+    return np.median(np.stack(frames), axis=0).astype(np.float32)
+
+
+def record(dirs: list[Path], scene: dict, baselines: Path = BASELINES) -> float:
+    """Store the per-pixel median of >= 3 runs (downscaled x2) and noise.json.
+
+    selfDiffFraction is the worst leave-one-out difference: each run against the median of the OTHER runs,
+    over every step. That is what a later compare sees (a new run against a recorded median it did not
+    take part in), so it is not flattered by the run being its own baseline.
+    """
+    if len(dirs) < MIN_RECORD_RUNS:
+        raise SystemExit(f"record needs at least {MIN_RECORD_RUNS} runs, got {len(dirs)}")
+    listings = [list_pngs(d) for d in dirs]
+    if not listings[0]:
+        raise SystemExit(f"no PNGs in {dirs[0]}")
+    names = [p.name for p in listings[0]]
+    for d, l in zip(dirs, listings):
+        if [p.name for p in l] != names:
+            raise SystemExit(f"{d} wrote different steps: {[p.name for p in l]} vs {names}")
     target = baselines / scene["name"]
     target.mkdir(parents=True, exist_ok=True)
     for old in target.glob("*.png"):
         old.unlink()
+    threshold = float(scene["pixelThreshold"])
     worst = 0.0
-    for a_path, b_path in zip(a, b):
-        a_img, b_img = downscale2(read_rgb(a_path)), downscale2(read_rgb(b_path))
-        if a_img.shape != b_img.shape:
-            raise SystemExit(f"{a_path.name}: the two runs differ in size")
-        ignore = ignore_mask(a_img.shape[:2], scene["ignore"])
-        worst = max(worst, diff_fraction(a_img, b_img, float(scene["pixelThreshold"]), ignore))
-        Image.fromarray((a_img * 255.0 + 0.5).astype(np.uint8)).save(target / a_path.name)
-    (target / "noise.json").write_text(json.dumps({"selfDiffFraction": worst}) + "\n", encoding="utf-8")
+    per_step: dict[str, float] = {}
+    for i, name in enumerate(names):
+        frames = [downscale2(read_rgb(l[i])) for l in listings]
+        if any(f.shape != frames[0].shape for f in frames):
+            raise SystemExit(f"{name}: the runs differ in size")
+        ignore = ignore_mask(frames[0].shape[:2], scene["ignore"])
+        step_worst = 0.0
+        for k, frame in enumerate(frames):
+            others = median_frame(frames[:k] + frames[k + 1:])
+            step_worst = max(step_worst, diff_fraction(frame, others, threshold, ignore))
+        per_step[name] = step_worst
+        worst = max(worst, step_worst)
+        base = median_frame(frames)
+        Image.fromarray((base * 255.0 + 0.5).astype(np.uint8)).save(target / name)
+    noise = {"selfDiffFraction": worst, "runs": len(dirs), "perStep": per_step}
+    (target / "noise.json").write_text(json.dumps(noise, indent=1) + "\n", encoding="utf-8")
     return worst
 
 
@@ -178,10 +209,11 @@ def selftest() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         scene = {"name": "t", "pixelThreshold": 0.08, "maxFraction": 0.002, "ignore": []}
-        run_a, run_b = root / "a", root / "b"
-        _save(run_a / "s1.png", synthetic_frame())
-        _save(run_b / "s1.png", synthetic_frame())
-        record(run_a, run_b, scene, root / "base")
+        runs = [root / f"r{i}" for i in range(MIN_RECORD_RUNS)]
+        for run in runs:
+            _save(run / "s1.png", synthetic_frame())
+        run_a = runs[0]
+        record(runs, scene, root / "base")
         out = root / "out"
 
         def verdict(actual: Path, sc: dict = scene) -> bool:
@@ -206,9 +238,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--baselines", type=Path, default=BASELINES)
     p.add_argument("--out", type=Path, default=OUT_ROOT)
     p = sub.add_parser("record")
-    p.add_argument("actual_dir_a", type=Path)
-    p.add_argument("actual_dir_b", type=Path)
     p.add_argument("scene")
+    p.add_argument("run_dirs", type=Path, nargs="+")
     p.add_argument("--baselines", type=Path, default=BASELINES)
     sub.add_parser("selftest")
     args = parser.parse_args(argv)
@@ -217,7 +248,7 @@ def main(argv: list[str]) -> int:
         return selftest()
     scene = load_scene(args.scene)
     if args.command == "record":
-        noise = record(args.actual_dir_a, args.actual_dir_b, scene, args.baselines)
+        noise = record(args.run_dirs, scene, args.baselines)
         print(f"recorded {scene['name']} selfDiffFraction={noise:.6f}")
         return 0
     results = compare(args.actual_dir, scene, args.baselines, args.out)

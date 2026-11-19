@@ -6,10 +6,12 @@
 .PARAMETER Scene
   A scene name under tools/golden/scenes (without .json), or 'all'.
 .PARAMETER Record
-  Capture every scene twice (runs "a" and "b"), store run a downscaled as the baseline and the a-vs-b
-  difference as noise.json. Commit tools/golden/baselines/ afterwards.
+  Capture every scene -Runs times, store the per-pixel median of the runs (downscaled) as the baseline and the
+  largest run-vs-baseline difference as noise.json. Commit tools/golden/baselines/ afterwards.
+.PARAMETER Runs
+  Number of record captures per scene (default 4, at least 3).
 .PARAMETER Parallel
-  Run the captures of all selected scenes (and both record runs) at once. Each has its own data dir.
+  Run the captures of all selected scenes (and all record runs) at once. Each has its own data dir.
 .PARAMETER FromSource
   Passed to capture.ps1: shaders, ui and config/content come from the source tree.
 .PARAMETER Bin
@@ -22,6 +24,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Scene,
     [switch]$Record,
+    [int]$Runs = 4,
     [switch]$Parallel,
     [switch]$FromSource,
     [string]$Bin = '',
@@ -61,10 +64,10 @@ function Get-CaptureArguments($def, [string]$name) {
 }
 
 # Starts every run, waits for all of them (one at a time unless -Parallel) and returns name -> exit code.
-function Invoke-Captures([object[]]$runs) {
+function Invoke-Captures([object[]]$jobs) {
     $codes = @{}
     $started = @()
-    foreach ($run in $runs) {
+    foreach ($run in $jobs) {
         $log = Join-Path $outRoot ("{0}.run.log" -f $run.Name)
         New-Item -ItemType Directory -Force $outRoot | Out-Null
         $p = Start-Process -FilePath $psExe -ArgumentList $run.Arguments -PassThru -NoNewWindow `
@@ -81,18 +84,19 @@ $names = Get-SceneNames $Scene $sceneDir
 $defs = @{}
 foreach ($n in $names) { $defs[$n] = Get-Content (Join-Path $sceneDir "$n.json") -Raw | ConvertFrom-Json }
 
-$suffixes = if ($Record) { @('-a', '-b') } else { @('') }
-$runs = @()
+if ($Record -and $Runs -lt 3) { throw "-Runs must be at least 3 (got $Runs): too few samples under-estimate the noise" }
+$suffixes = if ($Record) { @(1..$Runs | ForEach-Object { "-r$_" }) } else { @('') }
+$jobs = @()
 foreach ($n in $names) {
     foreach ($suffix in $suffixes) {
         $runName = "golden-$n$suffix"
-        $runs += [pscustomobject]@{ Scene = $n; Name = $runName; Arguments = (Get-CaptureArguments $defs[$n] $runName) }
+        $jobs += [pscustomobject]@{ Scene = $n; Name = $runName; Arguments = (Get-CaptureArguments $defs[$n] $runName) }
     }
 }
 
-$codes = Invoke-Captures $runs
+$codes = Invoke-Captures $jobs
 $failed = $false
-foreach ($run in $runs) {
+foreach ($run in $jobs) {
     if ($codes[$run.Name] -ne 0) {
         Write-Host ("FAIL {0}: capture.ps1 exit code {1} (see {2}.run.log)" -f $run.Name, $codes[$run.Name], (Join-Path $outRoot $run.Name))
         $errLog = Join-Path $outRoot ("{0}.run.log.err" -f $run.Name)
@@ -104,7 +108,8 @@ if ($failed) { exit 1 }
 
 foreach ($n in $names) {
     if ($Record) {
-        & python -I $golden record (Join-Path $outRoot "golden-$n-a") (Join-Path $outRoot "golden-$n-b") $n
+        $dirs = @(1..$Runs | ForEach-Object { Join-Path $outRoot "golden-$n-r$_" })
+        & python -I $golden record $n @dirs
     }
     else {
         & python -I $golden compare (Join-Path $outRoot "golden-$n") $n
