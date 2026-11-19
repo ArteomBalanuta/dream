@@ -202,8 +202,8 @@ public static class ArmourMeshCatalog
         // tapering nasal bar and a mail aventail.
         Add("worn.head.iron-helm", ArmourMount.Head,
             Box(0f, 0.22f, 0f, 0.32f, 0.44f, 0.32f, Iron, shape: Dome),
-            Box(0f, 0.46f, 0f, 0.06f, 0.10f, 0.30f, Steel, shape: BevelBox),
-            Box(0f, 0.38f, 0f, 0.34f, 0.04f, 0.36f, Steel, shape: Ring),
+            Box(0f, 0.46f, 0f, 0.06f, 0.10f, 0.30f, Iron, shape: BevelBox),
+            Box(0f, 0.38f, 0f, 0.33f, 0.035f, 0.345f, Steel, shape: Ring),
             Box(0f, 0.22f, 0.17f, 0.05f, 0.26f, 0.04f, Steel, pitch: 180f, shape: Taper),
             Box(0.148f, 0.15f, 0.02f, 0.26f, 0.26f, 0.06f, Iron, yaw: 90f, shape: Plate),
             Box(-0.148f, 0.15f, 0.02f, 0.26f, 0.26f, 0.06f, Iron, yaw: -90f, shape: Plate),
@@ -211,13 +211,14 @@ public static class ArmourMeshCatalog
             Box(0.155f, 0.30f, 0.05f, 0.03f, 0.03f, 0.03f, Steel, roll: -90f, shape: Spike),
             Box(-0.155f, 0.30f, 0.05f, 0.03f, 0.03f, 0.03f, Steel, roll: 90f, shape: Spike));
 
-        // A closed great helm: a tall shell, a visor slit and breath plate, a crown ring under a crest
-        // spike, gilt brow barbs, a red plume laid along the comb and a gorget ring at the neck.
+        // A closed great helm: a tall BLACKENED shell (the skull is the largest up-facing surface on the
+        // figure, so it carries the dark material and the steel is only its crown rim), a visor slit and
+        // breath plate, a crest spike, gilt brow barbs, a red plume and a gorget ring at the neck.
         Add("worn.head.greathelm", ArmourMount.Head,
-            Box(0f, 0.23f, 0f, 0.34f, 0.48f, 0.34f, Steel, shape: Dome),
-            Box(0f, 0.34f, 0.18f, 0.28f, 0.05f, 0.03f, Iron, shape: BevelBox),
+            Box(0f, 0.23f, 0f, 0.34f, 0.48f, 0.34f, Iron, shape: Dome),
+            Box(0f, 0.355f, 0.175f, 0.30f, 0.07f, 0.03f, Steel, shape: BevelBox),
             Box(0f, 0.14f, 0.18f, 0.14f, 0.16f, 0.03f, Iron, shape: BevelBox),
-            Box(0f, 0.49f, 0f, 0.32f, 0.04f, 0.32f, Steel, shape: Ring),
+            Box(0f, 0.49f, 0f, 0.30f, 0.04f, 0.30f, Steel, shape: Ring),
             Box(0f, 0.58f, -0.02f, 0.32f, 0.14f, 0.06f, Red, yaw: 90f, shape: Panel),
             Box(0f, 0.02f, 0f, 0.34f, 0.06f, 0.34f, Iron, shape: Ring),
             Box(0f, 0.60f, 0f, 0.05f, 0.14f, 0.05f, Steel, shape: Spike),
@@ -227,43 +228,48 @@ public static class ArmourMeshCatalog
         // ---- Body: sits on the tunic. Chest y 0..0.86 to |x| <= 0.19, hip skirt to |x| <= 0.26 (y 0..0.30),
         // z -0.14..+0.14. Main mass 0.42..0.46 wide, pauldrons at |x| 0.26..0.32, nothing past 0.416.
 
-        // A boiled-leather vest: a wrapped body shell, a belted skirt, a chest panel, a bone collar and a
-        // shoulder yoke with studs that carries the outline past the body (a piece that does not widen the
-        // figure fails the fit floor).
+        // A boiled-leather vest: a wrapped body shell, a belted skirt, a chest panel, a small bone gorget and a
+        // shoulder yoke CAPPED by a rounded leather pauldron over each shoulder. The camera is pitched 50
+        // degrees down, so what the eye reads on a torso is whatever caps the shoulders, not the chest: the
+        // yoke plus the caps widen the outline at the shoulders while the belt pulls it in at the waist.
         Add("worn.body.leather-vest", ArmourMount.Torso,
             Box(0f, 0.46f, 0f, 0.46f, 0.80f, 0.34f, Leather, shape: Plate),
             Box(0f, 0.15f, 0f, 0.52f, 0.30f, 0.34f, Ash, shape: Plate),
             Box(0f, 0.50f, 0.165f, 0.16f, 0.50f, 0.03f, Cold, shape: Panel),
-            Box(0f, 0.88f, 0f, 0.30f, 0.05f, 0.30f, Bone, shape: Ring),
+            Box(0f, 0.88f, 0f, 0.22f, 0.05f, 0.22f, Bone, shape: Ring),
             Box(0f, 0.79f, 0f, 0.62f, 0.10f, 0.30f, Leather, shape: Plate),
             Box(0f, 0.30f, 0f, 0.54f, 0.07f, 0.36f, Leather, shape: BevelBox),
             Box(0f, 0.30f, 0.19f, 0.08f, 0.08f, 0.04f, Gilt, shape: BevelBox),
-            Box(0.27f, 0.79f, 0.13f, 0.05f, 0.06f, 0.05f, Leather, pitch: 90f, shape: Spike),
-            Box(-0.27f, 0.79f, 0.13f, 0.05f, 0.06f, 0.05f, Leather, pitch: 90f, shape: Spike));
+            Box(0.27f, 0.82f, 0f, 0.22f, 0.10f, 0.26f, Leather, shape: Dome),
+            Box(-0.27f, 0.82f, 0f, 0.22f, 0.10f, 0.26f, Leather, shape: Dome));
 
-        // A mail shirt: a dense even mass of rings, a steel mantle over the shoulders, a long skirt,
-        // sleeve shells and repeating ring rows that read as mail rather than as a textured box.
+        // A mail shirt: a dense even mass of rings in blackened iron, a DOMED cap over each shoulder above the
+        // sleeve shells (the mantle used to be one wide near-level steel slab, which is the brightest thing
+        // a down-pitched camera can be given), a long skirt, and a small steel gorget as the only bright rim.
         Add("worn.body.chain-hauberk", ArmourMount.Torso,
             Box(0f, 0.46f, 0f, 0.44f, 0.80f, 0.34f, Iron, shape: Plate),
-            Box(0f, 0.82f, 0f, 0.54f, 0.07f, 0.36f, Steel, shape: Plate),
-            Box(0f, 0.15f, 0f, 0.52f, 0.30f, 0.34f, Steel, shape: Plate),
+            Box(0.28f, 0.80f, 0f, 0.26f, 0.14f, 0.30f, Iron, shape: Dome),
+            Box(-0.28f, 0.80f, 0f, 0.26f, 0.14f, 0.30f, Iron, shape: Dome),
+            Box(0f, 0.15f, 0f, 0.52f, 0.30f, 0.34f, Iron, shape: Plate),
             Box(0f, 0.31f, 0f, 0.46f, 0.05f, 0.36f, Cold, shape: Ring),
             Box(0.30f, 0.72f, 0f, 0.26f, 0.22f, 0.14f, Iron, yaw: 90f, shape: Plate),
             Box(-0.30f, 0.72f, 0f, 0.26f, 0.22f, 0.14f, Iron, yaw: -90f, shape: Plate),
-            Box(0f, 0.60f, 0f, 0.45f, 0.04f, 0.35f, Steel, shape: Ring),
-            Box(0f, 0.86f, 0f, 0.30f, 0.05f, 0.30f, Steel, shape: Ring),
+            Box(0f, 0.60f, 0f, 0.45f, 0.04f, 0.35f, Iron, shape: Ring),
+            Box(0f, 0.86f, 0f, 0.24f, 0.045f, 0.24f, Steel, shape: Ring),
             Box(0f, 0.02f, 0f, 0.50f, 0.05f, 0.34f, Iron, shape: BevelBox));
 
-        // A plate cuirass: a wrapped breastplate with a keel ridge, upturned pauldron shells with barbs,
-        // a dark fauld, a gorget ring and a red sash.
+        // A plate cuirass: a wrapped breastplate (a vertical arc, so the camera sees its glancing front and
+        // only the edge of its top rim - that is why the cuirass may stay steel while the shoulders may not)
+        // with a RAISED STEEL KEEL RIDGE down the chest, blackened domed pauldron caps with barbs, a dark
+        // fauld stepped off the chest by a ring, a small gorget and a red sash.
         Add("worn.body.plate-cuirass", ArmourMount.Torso,
             Box(0f, 0.46f, 0f, 0.46f, 0.80f, 0.34f, Steel, shape: Plate),
-            Box(0f, 0.50f, 0.17f, 0.06f, 0.56f, 0.03f, Iron, shape: BevelBox),
-            Box(0.30f, 0.80f, 0f, 0.30f, 0.16f, 0.22f, Steel, yaw: 90f, shape: Plate),
-            Box(-0.30f, 0.80f, 0f, 0.30f, 0.16f, 0.22f, Steel, yaw: -90f, shape: Plate),
+            Box(0f, 0.50f, 0.17f, 0.06f, 0.56f, 0.03f, Steel, shape: BevelBox),
+            Box(0.30f, 0.80f, 0f, 0.22f, 0.18f, 0.26f, Iron, shape: Dome),
+            Box(-0.30f, 0.80f, 0f, 0.22f, 0.18f, 0.26f, Iron, shape: Dome),
             Box(0f, 0.15f, 0f, 0.52f, 0.30f, 0.34f, Iron, shape: Plate),
             Box(0f, 0.33f, 0.17f, 0.46f, 0.06f, 0.03f, Red, shape: Panel),
-            Box(0f, 0.88f, 0f, 0.32f, 0.06f, 0.32f, Steel, shape: Ring),
+            Box(0f, 0.88f, 0f, 0.24f, 0.05f, 0.24f, Steel, shape: Ring),
             Box(0.33f, 0.86f, 0f, 0.05f, 0.10f, 0.05f, Steel, roll: -30f, shape: Spike),
             Box(-0.33f, 0.86f, 0f, 0.05f, 0.10f, 0.05f, Steel, roll: 30f, shape: Spike),
             Box(0f, 0.31f, 0f, 0.48f, 0.04f, 0.36f, Iron, shape: Ring));
@@ -281,8 +287,8 @@ public static class ArmourMeshCatalog
 
         Add("worn.hands.iron-gauntlets", ArmourMount.Arms,
             Box(0f, -0.76f, 0f, 0.26f, 0.44f, 0.26f, Iron, shape: Plate),
-            Box(0f, -0.58f, 0f, 0.34f, 0.12f, 0.34f, Steel, shape: Plate),
-            Box(0f, -0.51f, 0f, 0.32f, 0.04f, 0.32f, Steel, shape: Ring),
+            Box(0f, -0.58f, 0f, 0.34f, 0.12f, 0.34f, Iron, shape: Plate),
+            Box(0f, -0.51f, 0f, 0.26f, 0.035f, 0.26f, Steel, shape: Ring),
             Box(0f, -0.92f, 0.08f, 0.24f, 0.10f, 0.14f, Steel, shape: BevelBox),
             Box(0f, -0.66f, 0f, 0.28f, 0.05f, 0.28f, Iron, shape: BevelBox),
             Box(0f, -0.74f, 0f, 0.27f, 0.05f, 0.27f, Iron, shape: BevelBox),
@@ -292,57 +298,67 @@ public static class ArmourMeshCatalog
         Add("worn.hands.plate-gauntlets", ArmourMount.Arms,
             Box(0f, -0.74f, 0f, 0.28f, 0.48f, 0.28f, Steel, shape: Plate),
             Box(0f, -0.80f, 0f, 0.32f, 0.06f, 0.32f, Iron, shape: BevelBox),
-            Box(0f, -0.54f, 0f, 0.40f, 0.14f, 0.40f, Steel, shape: Plate),
+            Box(0f, -0.54f, 0f, 0.40f, 0.14f, 0.40f, Iron, shape: Plate),
             Box(0f, -0.46f, 0f, 0.38f, 0.05f, 0.38f, Iron, shape: Ring),
-            Box(0f, -0.60f, 0f, 0.36f, 0.05f, 0.36f, Steel, shape: Ring),
+            Box(0f, -0.60f, 0f, 0.28f, 0.04f, 0.28f, Steel, shape: Ring),
             Box(0f, -0.95f, 0.06f, 0.22f, 0.08f, 0.20f, Iron, shape: BevelBox),
             Box(0f, -0.88f, 0.08f, 0.20f, 0.05f, 0.18f, Steel, shape: BevelBox),
             Box(0.08f, -0.98f, 0.08f, 0.04f, 0.08f, 0.04f, Steel, pitch: 90f, shape: Spike),
             Box(-0.08f, -0.98f, 0.08f, 0.04f, 0.08f, 0.04f, Steel, pitch: 90f, shape: Spike));
 
         // ---- Legs (one leg): cover y -0.75..-0.10, |x| <= 0.11, |z| <= 0.11.
+        //
+        // A Ring lies in the XZ plane, so under a camera pitched 50 degrees down it presents its WHOLE TOP
+        // FACE as a bright ellipse. Several light Rings down a leg stacked into what read as bandages, and
+        // the legs are the lowest, nearest part of the figure, so they got the most of it. The rule now:
+        // at most ONE light rim per leg piece (a knee or ankle accent, in Steel, kept narrow), every other
+        // band is DarkIron or stops being a Ring and becomes a Taper lame that shows its SIDE instead.
 
         Add("worn.legs.leather-leggings", ArmourMount.Legs,
             Box(0f, -0.43f, 0f, 0.30f, 0.68f, 0.30f, Leather, shape: Plate),
             Box(0f, -0.20f, 0f, 0.32f, 0.10f, 0.32f, Cold, shape: Ring),
-            Box(0f, -0.45f, 0.14f, 0.16f, 0.08f, 0.16f, Bone, pitch: 90f, shape: Dome),
-            Box(0f, -0.62f, 0f, 0.33f, 0.04f, 0.33f, Bone, shape: Ring),
+            Box(0f, -0.45f, 0.14f, 0.16f, 0.08f, 0.16f, Iron, pitch: 90f, shape: Dome),
+            Box(0f, -0.62f, 0f, 0.31f, 0.10f, 0.31f, Iron, pitch: 180f, shape: Taper),
             Box(0f, -0.50f, 0.15f, 0.04f, 0.30f, 0.03f, Leather, shape: Panel),
-            Box(0f, -0.70f, 0f, 0.31f, 0.05f, 0.31f, Leather, shape: Ring));
+            Box(0f, -0.70f, 0f, 0.31f, 0.05f, 0.31f, Leather, shape: Ring),
+            Box(0f, -0.555f, 0.16f, 0.07f, 0.05f, 0.05f, Steel, shape: BevelBox));
 
         Add("worn.legs.plated-leggings", ArmourMount.Legs,
             Box(0f, -0.43f, 0f, 0.30f, 0.68f, 0.30f, Cold, shape: Plate),
-            Box(0f, -0.26f, 0f, 0.34f, 0.30f, 0.34f, Steel, shape: Plate),
-            Box(0f, -0.60f, 0.06f, 0.30f, 0.14f, 0.28f, Steel, shape: Plate),
+            Box(0f, -0.26f, 0f, 0.34f, 0.30f, 0.34f, Iron, shape: Plate),
+            Box(0f, -0.60f, 0.06f, 0.30f, 0.14f, 0.28f, Iron, shape: Plate),
             Box(0f, -0.70f, 0.04f, 0.28f, 0.12f, 0.30f, Iron, pitch: 180f, shape: Taper),
             Box(0f, -0.45f, 0.15f, 0.18f, 0.08f, 0.18f, Steel, pitch: 90f, shape: Dome),
             Box(0f, -0.52f, 0f, 0.33f, 0.04f, 0.33f, Iron, shape: Ring),
-            Box(0f, -0.40f, 0.17f, 0.05f, 0.07f, 0.05f, Steel, pitch: 90f, shape: Spike));
+            Box(0f, -0.40f, 0.17f, 0.05f, 0.07f, 0.05f, Steel, pitch: 90f, shape: Spike),
+            Box(0f, -0.345f, 0.13f, 0.18f, 0.03f, 0.14f, Steel, shape: Ring));
 
         Add("worn.legs.chain-chausses", ArmourMount.Legs,
             Box(0f, -0.43f, 0f, 0.32f, 0.68f, 0.32f, Iron, shape: Plate),
-            Box(0f, -0.14f, 0f, 0.36f, 0.08f, 0.36f, Steel, shape: Ring),
-            Box(0f, -0.73f, 0f, 0.34f, 0.05f, 0.34f, Steel, shape: Ring),
+            Box(0f, -0.14f, 0f, 0.36f, 0.08f, 0.36f, Iron, shape: Ring),
+            Box(0f, -0.73f, 0f, 0.26f, 0.04f, 0.26f, Steel, shape: Ring),
             Box(0f, -0.43f, 0.17f, 0.12f, 0.50f, 0.03f, Ash, shape: Panel),
             Box(0f, -0.30f, 0f, 0.34f, 0.04f, 0.34f, Iron, shape: Ring),
-            Box(0f, -0.56f, 0f, 0.34f, 0.04f, 0.34f, Iron, shape: Ring),
+            Box(0f, -0.56f, 0f, 0.33f, 0.10f, 0.33f, Iron, pitch: 180f, shape: Taper),
             Box(0f, -0.45f, 0.15f, 0.16f, 0.06f, 0.16f, Steel, pitch: 90f, shape: Dome));
 
         Add("worn.legs.plate-greaves", ArmourMount.Legs,
-            Box(0f, -0.50f, 0.03f, 0.36f, 0.50f, 0.36f, Steel, shape: Plate),
+            Box(0f, -0.50f, 0.03f, 0.36f, 0.50f, 0.36f, Iron, shape: Plate),
             Box(0f, -0.20f, 0f, 0.30f, 0.28f, 0.30f, Iron, shape: Plate),
             Box(0f, -0.42f, 0.16f, 0.20f, 0.10f, 0.20f, Steel, pitch: 90f, shape: Dome),
-            Box(0f, -0.58f, 0.18f, 0.05f, 0.26f, 0.04f, Iron, shape: BevelBox),
-            Box(0f, -0.70f, 0f, 0.34f, 0.05f, 0.34f, Steel, shape: Ring),
+            Box(0f, -0.58f, 0.18f, 0.05f, 0.26f, 0.04f, Steel, shape: BevelBox),
+            Box(0f, -0.70f, 0f, 0.26f, 0.04f, 0.26f, Steel, shape: Ring),
             Box(0f, -0.36f, 0.18f, 0.05f, 0.08f, 0.05f, Steel, pitch: 90f, shape: Spike),
             Box(0f, -0.74f, 0.08f, 0.30f, 0.05f, 0.26f, Iron, shape: BevelBox));
 
         // ---- Feet (one leg): cover y -1.30..-0.88, |x| <= 0.132, z -0.05..+0.15.
+        // The same rule as the legs: the boot's own bands used to stack on top of the leg bands into one
+        // pale column, so a boot gets a single small light fitting (a buckle, a toe cap) and dark bands.
 
         Add("worn.feet.leather-boots", ArmourMount.Feet,
             Box(0f, -1.09f, 0.07f, 0.28f, 0.44f, 0.34f, Leather, shape: Plate),
             Box(0f, -0.88f, 0f, 0.32f, 0.06f, 0.30f, Ash, shape: Ring),
-            Box(0f, -0.85f, 0f, 0.32f, 0.04f, 0.30f, Bone, shape: Ring),
+            Box(0f, -0.855f, 0.17f, 0.08f, 0.05f, 0.06f, Steel, shape: BevelBox),
             Box(0f, -1.26f, 0.22f, 0.24f, 0.10f, 0.18f, Leather, pitch: 90f, shape: Dome),
             Box(0f, -1.30f, 0.08f, 0.28f, 0.05f, 0.40f, Ash, shape: BevelBox),
             Box(0f, -1.00f, 0.04f, 0.30f, 0.05f, 0.32f, Leather, shape: Ring));
@@ -350,20 +366,20 @@ public static class ArmourMeshCatalog
         Add("worn.feet.iron-boots", ArmourMount.Feet,
             Box(0f, -1.09f, 0.07f, 0.30f, 0.44f, 0.34f, Iron, shape: Plate),
             Box(0f, -1.24f, 0.20f, 0.28f, 0.14f, 0.18f, Steel, pitch: 90f, shape: Dome),
-            Box(0f, -0.88f, 0.03f, 0.34f, 0.08f, 0.34f, Steel, shape: Plate),
+            Box(0f, -0.88f, 0.03f, 0.34f, 0.08f, 0.34f, Iron, shape: Plate),
             Box(0f, -1.32f, 0.08f, 0.30f, 0.40f, 0.04f, Leather, pitch: 90f, shape: Panel),
-            Box(0f, -0.96f, 0.05f, 0.32f, 0.06f, 0.32f, Steel, shape: BevelBox),
+            Box(0f, -0.96f, 0.19f, 0.09f, 0.06f, 0.07f, Steel, shape: BevelBox),
             Box(0f, -1.16f, -0.09f, 0.05f, 0.10f, 0.05f, Iron, pitch: -90f, shape: Spike),
             Box(0f, -1.04f, 0.05f, 0.31f, 0.05f, 0.31f, Iron, shape: Ring));
 
         Add("worn.feet.plate-sabatons", ArmourMount.Feet,
-            Box(0f, -1.08f, 0.07f, 0.30f, 0.42f, 0.36f, Steel, shape: Plate),
+            Box(0f, -1.08f, 0.07f, 0.30f, 0.42f, 0.36f, Iron, shape: Plate),
             Box(0f, -1.31f, 0.12f, 0.30f, 0.05f, 0.46f, Iron, shape: BevelBox),
             Box(0f, -1.22f, 0.30f, 0.20f, 0.20f, 0.10f, Steel, pitch: 90f, shape: Taper),
             Box(0f, -0.98f, 0.03f, 0.34f, 0.06f, 0.36f, Iron, shape: BevelBox),
-            Box(0f, -0.88f, 0.04f, 0.38f, 0.08f, 0.30f, Steel, shape: Plate),
+            Box(0f, -0.88f, 0.04f, 0.38f, 0.08f, 0.30f, Iron, shape: Plate),
             Box(0f, -1.16f, 0.05f, 0.32f, 0.05f, 0.38f, Iron, shape: BevelBox),
-            Box(0f, -0.84f, 0.02f, 0.36f, 0.04f, 0.32f, Steel, shape: Ring),
+            Box(0f, -0.84f, 0.02f, 0.24f, 0.04f, 0.22f, Steel, shape: Ring),
             Box(0f, -1.20f, 0.38f, 0.05f, 0.07f, 0.05f, Steel, pitch: 90f, shape: Spike));
 
         // ---- Back (torso frame): the torso back surface is at z >= -0.14 and the panels hang off it at
@@ -376,31 +392,37 @@ public static class ArmourMeshCatalog
         // inset or split into tabs so the bottom outline is not a square line. A Panel is itself curved and
         // wavy, which is where cloth now gets its run of light; the clasps and collars are hard shapes against it.
 
-        // Short and ragged: a leather yoke with a clasp ring, a stepped body and three tabs of different lengths.
+        // Short and ragged: a leather yoke with a clasp, a narrow upper back and FOUR falls hung in pairs,
+        // each yawed away from the next so no two take the same light. A single wide tier (this one was
+        // 0.70 across) reads as a plank nailed to the figure however well it is pitched: the cure is to
+        // split it, turn the halves, and let daylight between them.
         Add("worn.back.travel-cloak", ArmourMount.Back,
             Box(0f, 0.84f, -0.19f, 0.38f, 0.10f, 0.06f, Leather, shape: Panel),
             Box(0f, 0.74f, -0.19f, 0.30f, 0.05f, 0.06f, Leather, shape: BevelBox),
-            Box(0f, 0.50f, -0.22f, 0.40f, 0.50f, 0.06f, Ash, pitch: 2f, shape: Panel),
-            Box(0f, 0.02f, -0.25f, 0.70f, 0.50f, 0.06f, Ash, pitch: 5f, shape: Panel),
-            Box(0f, -0.30f, -0.28f, 0.24f, 0.36f, 0.06f, Ash, pitch: 9f, shape: Panel),
-            Box(0.29f, -0.33f, -0.28f, 0.22f, 0.44f, 0.06f, Ash, pitch: 8f, shape: Panel),
-            Box(-0.29f, -0.27f, -0.28f, 0.22f, 0.32f, 0.06f, Ash, pitch: 8f, shape: Panel),
+            Box(0f, 0.52f, -0.22f, 0.34f, 0.44f, 0.06f, Ash, pitch: 3f, shape: Panel),
+            Box(0.19f, 0.10f, -0.25f, 0.26f, 0.44f, 0.06f, Ash, pitch: 6f, yaw: 18f, shape: Panel),
+            Box(-0.19f, 0.10f, -0.25f, 0.26f, 0.44f, 0.06f, Cold, pitch: 6f, yaw: -18f, shape: Panel),
+            Box(0.145f, -0.30f, -0.28f, 0.22f, 0.34f, 0.06f, Ash, pitch: 10f, yaw: 12f, shape: Panel),
+            Box(-0.145f, -0.26f, -0.28f, 0.22f, 0.26f, 0.06f, Cold, pitch: 10f, yaw: -12f, shape: Panel),
             Box(0f, 0.90f, -0.17f, 0.10f, 0.04f, 0.08f, Steel, shape: BevelBox),
             Box(0f, 0.90f, -0.14f, 0.07f, 0.07f, 0.07f, Gilt, pitch: 90f, shape: Ring));
 
-        // Long, to the calf: a stepped trapezoid, a hem of three folds of unequal length, a raised standing
-        // collar (not a hood) with a bone rim, and a clasp bar with a gilt stone at the throat.
+        // Long, to the ankle, but hung as SIX narrow lengths in mirrored pairs rather than as three broad
+        // tiers: the wide tiers (0.56 and 0.70 across) buried the legs in one flat dark slab that had no
+        // curvature to show. Each pair is yawed apart, each length of a pair is cut to a different height,
+        // so the hem steps instead of running straight across and the legs show between the falls.
+        // Above it all a raised standing collar (not a hood) with a bone rim, and a clasp bar at the throat.
         Add("worn.back.hooded-cloak", ArmourMount.Back,
-            Box(0f, 0.60f, -0.19f, 0.40f, 0.72f, 0.06f, Ash, pitch: 2f, shape: Panel),
-            Box(0f, -0.06f, -0.22f, 0.56f, 0.56f, 0.06f, Cold, pitch: 5f, shape: Panel),
-            Box(0f, -0.62f, -0.25f, 0.70f, 0.56f, 0.06f, Ash, pitch: 7f, shape: Panel),
-            Box(-0.26f, -0.96f, -0.28f, 0.26f, 0.44f, 0.06f, Cold, pitch: 10f, shape: Panel),
-            Box(0f, -1.02f, -0.28f, 0.24f, 0.44f, 0.06f, Ash, pitch: 12f, shape: Panel),
-            Box(0.26f, -0.92f, -0.28f, 0.26f, 0.40f, 0.06f, Cold, pitch: 9f, shape: Panel),
+            Box(0f, 0.60f, -0.19f, 0.34f, 0.68f, 0.06f, Ash, pitch: 2f, shape: Panel),
+            Box(0.17f, -0.02f, -0.22f, 0.30f, 0.52f, 0.06f, Cold, pitch: 5f, yaw: 16f, shape: Panel),
+            Box(-0.17f, -0.02f, -0.22f, 0.30f, 0.52f, 0.06f, Ash, pitch: 5f, yaw: -16f, shape: Panel),
+            Box(0.135f, -0.56f, -0.25f, 0.24f, 0.52f, 0.06f, Ash, pitch: 8f, yaw: 12f, shape: Panel),
+            Box(-0.135f, -0.68f, -0.25f, 0.24f, 0.44f, 0.06f, Cold, pitch: 8f, yaw: -12f, shape: Panel),
+            Box(0.10f, -0.94f, -0.28f, 0.20f, 0.40f, 0.06f, Ash, pitch: 12f, yaw: 8f, shape: Panel),
+            Box(-0.10f, -0.90f, -0.28f, 0.20f, 0.34f, 0.06f, Cold, pitch: 12f, yaw: -8f, shape: Panel),
             Box(0f, 1.00f, -0.19f, 0.34f, 0.30f, 0.06f, Ash, pitch: -10f, shape: Panel),
-            Box(0f, 1.175f, -0.19f, 0.32f, 0.03f, 0.06f, Bone, shape: Ring),
-            Box(0f, 0.86f, -0.17f, 0.26f, 0.05f, 0.07f, Iron, shape: BevelBox),
-            Box(0f, 0.92f, -0.15f, 0.08f, 0.08f, 0.05f, Gilt, shape: Gem));
+            Box(0f, 1.175f, -0.19f, 0.24f, 0.03f, 0.06f, Bone, shape: Ring),
+            Box(0f, 0.86f, -0.17f, 0.26f, 0.05f, 0.07f, Iron, shape: BevelBox));
 
         // A broad shoulder mantle, layered and drooping at the points with iron barbs, over a short tapered
         // back panel.
@@ -409,23 +431,28 @@ public static class ArmourMeshCatalog
             Box(0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: -18f, shape: Panel),
             Box(-0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: 18f, shape: Panel),
             Box(0f, 0.66f, -0.10f, 0.66f, 0.10f, 0.36f, Ash, shape: Panel),
-            Box(0f, 0.905f, -0.08f, 0.40f, 0.03f, 0.30f, Bone, shape: Ring),
-            Box(0f, 0.30f, -0.19f, 0.40f, 0.56f, 0.06f, Cold, pitch: 3f, shape: Panel),
-            Box(-0.17f, -0.29f, -0.22f, 0.30f, 0.62f, 0.06f, Ash, pitch: 6f, shape: Panel),
-            Box(0.18f, -0.24f, -0.25f, 0.32f, 0.52f, 0.06f, Cold, pitch: 8f, shape: Panel),
+            Box(0f, 0.905f, -0.08f, 0.26f, 0.03f, 0.22f, Bone, shape: Ring),
+            Box(0f, 0.30f, -0.19f, 0.36f, 0.56f, 0.06f, Cold, pitch: 3f, shape: Panel),
+            Box(-0.17f, -0.29f, -0.22f, 0.30f, 0.62f, 0.06f, Ash, pitch: 6f, yaw: -14f, shape: Panel),
+            Box(0.18f, -0.24f, -0.25f, 0.32f, 0.52f, 0.06f, Cold, pitch: 8f, yaw: 14f, shape: Panel),
             Box(0.34f, 0.74f, -0.06f, 0.07f, 0.07f, 0.07f, Iron, roll: -40f, shape: Spike),
             Box(-0.34f, 0.74f, -0.06f, 0.07f, 0.07f, 0.07f, Iron, roll: 40f, shape: Spike));
 
-        // Not cloth: two thin glowing panes splayed from the shoulder blades, bone spars, barbed tips and a
-        // dark shell at the root.
+        // Not cloth, and not two flat violet quads either: a DARK IRON SPAR FRAME - a long leading spar laid
+        // along the top of each wing and a shorter rib under it - carrying a smaller arcane membrane inside.
+        // The membrane is the smaller area, the frame is what gives the wing an outline, and the two wings
+        // are yawed apart (not merely rolled) so they face different ways and take visibly different light
+        // instead of reading as one saturated tone. Bone is kept for the barbed tips only.
         Add("worn.back.gossamer-wings", ArmourMount.Back,
-            Box(0.36f, 0.72f, -0.28f, 0.32f, 0.50f, 0.02f, ArmourMaterial.Arcane, roll: -12f, shape: Panel),
-            Box(-0.36f, 0.72f, -0.28f, 0.32f, 0.50f, 0.02f, ArmourMaterial.Arcane, roll: 12f, shape: Panel),
-            Box(0.22f, 0.70f, -0.26f, 0.04f, 0.50f, 0.04f, Bone, shape: Shaft),
-            Box(-0.22f, 0.70f, -0.26f, 0.04f, 0.50f, 0.04f, Bone, shape: Shaft),
+            Box(0.345f, 0.705f, -0.26f, 0.26f, 0.42f, 0.02f, ArmourMaterial.Arcane, roll: -14f, yaw: 20f, shape: Panel),
+            Box(-0.345f, 0.705f, -0.26f, 0.26f, 0.42f, 0.02f, ArmourMaterial.Arcane, roll: 14f, yaw: -20f, shape: Panel),
+            Box(0.33f, 0.88f, -0.27f, 0.05f, 0.46f, 0.04f, Iron, roll: -70f, shape: Shaft),
+            Box(-0.33f, 0.88f, -0.27f, 0.05f, 0.46f, 0.04f, Iron, roll: 70f, shape: Shaft),
+            Box(0.30f, 0.62f, -0.26f, 0.04f, 0.40f, 0.04f, Iron, roll: -40f, shape: Shaft),
+            Box(-0.30f, 0.62f, -0.26f, 0.04f, 0.40f, 0.04f, Iron, roll: 40f, shape: Shaft),
             Box(0f, 0.62f, -0.24f, 0.20f, 0.20f, 0.06f, Cold, shape: Plate),
-            Box(0.30f, 0.98f, -0.27f, 0.05f, 0.08f, 0.05f, Bone, roll: -20f, shape: Spike),
-            Box(-0.30f, 0.98f, -0.27f, 0.05f, 0.08f, 0.05f, Bone, roll: 20f, shape: Spike));
+            Box(0.46f, 0.94f, -0.27f, 0.05f, 0.08f, 0.05f, Bone, roll: -20f, shape: Spike),
+            Box(-0.46f, 0.94f, -0.27f, 0.05f, 0.08f, 0.05f, Bone, roll: 20f, shape: Spike));
 
         // ---- Companion (torso frame): a free-floating wisp, no envelope.
         Add("worn.companion.ember-wisp", ArmourMount.Companion,

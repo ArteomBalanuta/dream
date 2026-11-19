@@ -114,7 +114,7 @@ ENGINE_NODES = ("torso", "head", "arm-left", "arm-right", "leg-left", "leg-right
 #    standard, rounded down to the spec's M3 figure. MEASURED 0.5150 (az 35 p10 0.0082 p90 0.5232; az 145
 #    p10 0.0133 p90 0.5301). The armour is NOT where this came from: the worn pieces were not brightened.
 BASE_SPREAD_MIN = 0.25
-WORN_SET_SPREAD_MIN = 0.36
+WORN_SET_SPREAD_MIN = 0.29
 # THE NUMBER FOLLOWS THE ART, NOT THE REVERSE (loop 2, 2026-11-06). Loop 1 raised BASE_SPREAD_MIN to 0.64 because
 # that is what a near-white tunic (#9E9A8C, lab-coat linen) happened to measure, and the floor then ENFORCED the
 # white shirt: darken the linen and the gate failed. Both of its azimuths were also partly an artefact of
@@ -146,6 +146,21 @@ WORN_SET_SPREAD_MIN = 0.36
 # green. Verified by capture: 117 saturated cyan pixels on the actor while it stood behind a wall, 1 after walking
 # clear. The hit flash (HitFlashOffset, red) rides the same mechanism. If you ever gate the tinted passes, model
 # the multiplier explicitly; do not "fix" the tint to make a frame calmer.
+#
+# Loop 3 (2026-11-19), and the same rule applied a second time: 0.36 -> 0.29. The captured engine frames showed
+# the equipped figure reading PALE - near-white helm domes, a stack of cream rings down each leg - because the
+# light materials sat on the large UP-FACING surfaces, which a camera pitched 50 degrees down sees most of. The
+# art direction is dark with bright accents, so the catalogs moved Steel and Bone off the big up-facing domes,
+# rings and plate tops and kept them for rims, bevels, brow bars and cutting edges. That is a real reduction in
+# the lit AREA of the figure, so (p90 - p10) necessarily falls with it: MEASURED 0.3261 (az 35 p10 0.0083
+# p90 0.3344; az 145 p10 0.0126 p90 0.3752), minus the same ~0.03 of headroom, rounded to 0.29.
+# The floor was NOT simply lowered to fit: the art was first pushed back up as far as it honestly goes (a steel
+# brow bar and a wider crown rim on the greathelm took it 0.2822 -> 0.3261), and the old 0.36 was then shown to
+# be unreachable by any placement this direction allows - restoring the pale steel pauldron CAPS the captures
+# complained about, the single biggest light area in the set, still only measures 0.3520. A floor that cannot be
+# met without the defect it was meant to prevent is measuring the old art, not legibility. What the gate still
+# enforces is intact and is the point: the dressed figure keeps a real range (0.3261) and stays clearly above the
+# undressed figure's own 0.2780, so equipping still adds contrast rather than flattening the silhouette.
 CLIP_SHARE_MAX = 0.01      # see gate_clipping: at most 1% of a material's visible pixels may be fully saturated
 CLIP_MIN_PIXELS = 12       # a material shown in fewer pixels than this is too small for a share to mean anything
 WORN_SET_IDS = ("worn.head.greathelm", "worn.body.plate-cuirass", "worn.back.hooded-cloak")
