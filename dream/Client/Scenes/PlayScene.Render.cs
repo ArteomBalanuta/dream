@@ -35,6 +35,33 @@ public partial class PlayScene
     // frame this renderer drew before the pass existed. _contextSamples is read once, from the
     // default framebuffer, because GLFW_SAMPLES is a window-creation hint and cannot change.
     private SceneTarget? _sceneTarget;
+
+    // True from BindForScene until the resolve has returned drawing to the window. The guard in
+    // Render reads it when the method exits, so a throw in between cannot leave the scene target bound.
+    private bool _sceneFramebufferBound;
+
+    // Rebinds the window on every exit path of Render that left the scene target bound. A using
+    // declaration, so it covers the rest of the method without re-indenting it, and a readonly
+    // struct, so it costs no allocation per frame.
+    private readonly struct SceneFramebufferGuard(PlayScene scene) : IDisposable
+    {
+        public void Dispose() => scene.RestoreWindowIfSceneBound();
+    }
+
+    // The next scene (menu, connect screen) clears and draws straight to the default framebuffer, so a
+    // scene target left bound would swallow its output and show a black window. The viewport goes back
+    // too: the scene target set it to its own size.
+    private void RestoreWindowIfSceneBound()
+    {
+        if (!_sceneFramebufferBound)
+        {
+            return;
+        }
+
+        _sceneFramebufferBound = false;
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        GL.Viewport(0, 0, Math.Max(_settings.WindowWidth, 1), Math.Max(_settings.WindowHeight, 1));
+    }
     private PostChain? _postChain;
     private int _contextSamples = -1;
 
@@ -83,7 +110,13 @@ public partial class PlayScene
         // Bind the offscreen scene buffer before the clear, so the clear colour, the depth buffer
         // and every world pass land in the float target rather than on the window.
         SceneTarget? sceneTarget = _postChain == null ? null : EnsureSceneTarget();
-        sceneTarget?.BindForScene();
+        using SceneFramebufferGuard sceneFramebufferGuard = new(this);
+        if (sceneTarget != null)
+        {
+            _sceneFramebufferBound = true;
+            sceneTarget.BindForScene();
+        }
+
         long clearStart = Stopwatch.GetTimestamp();
         // Isometric shows the map edge, so the void is a dim horizon colour rather than the sky.
         float clearScale = isometric ? 0.25f : 1f;
@@ -287,6 +320,7 @@ public partial class PlayScene
             gpuTimer.BeginSection(GpuTimerSection.Post);
             sceneTarget.Resolve();
             _postChain.Run(sceneTarget.ResolvedTexture, sceneTarget.Width, sceneTarget.Height);
+            _sceneFramebufferBound = false;
         }
 
         long hudDrawStart = Stopwatch.GetTimestamp();
