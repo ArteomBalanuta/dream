@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Dream.Assets;
 using Dream.Simulation.Combat;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
@@ -201,7 +202,7 @@ public sealed partial class ContentCatalog
     // The wolf template, which Load guarantees exists.
     public EnemyTemplate Wolf => _enemies[WolfKey];
 
-    public static string ShippedDirectory => Path.Combine(AppContext.BaseDirectory, "config", "content");
+    public static string ShippedDirectory => AssetPaths.Config("content");
 
     public static ContentCatalog LoadFromDirectory(string directory)
     {

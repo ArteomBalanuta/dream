@@ -56,7 +56,7 @@ public static class ServerBootstrap
     public const string WorldEnvironmentVariable = "DREAM_WORLD";
 
     // The dedicated server's database and its initial schema script, next to the executable.
-    public static string DefaultDatabasePath => AssetPaths.Config("player-profiles.db");
+    public static string DefaultDatabasePath => DataPaths.Database;
 
     public static string DefaultSchemaScriptPath => AssetPaths.Config("player-profiles.init.sql");
 

@@ -91,7 +91,7 @@ public class Game : GameWindow
 
     private static DesktopClientConfig LoadStartupConfig()
     {
-        _startupConfigPath ??= AssetPaths.Config("desktop-client.txt");
+        _startupConfigPath ??= DataPaths.DesktopClientConfig;
         return _startupConfig ??= DesktopClientTextConfig.LoadOrCreate(_startupConfigPath);
     }
 

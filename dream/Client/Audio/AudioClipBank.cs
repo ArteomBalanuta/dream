@@ -1,3 +1,5 @@
+using Dream.Assets;
+
 namespace Dream.Client.Audio;
 
 // The decoded clips, loaded once from the audio folder next to the executable:
@@ -9,7 +11,7 @@ public sealed class AudioClipBank
     private readonly WavClip[]?[] _oneShots = new WavClip[SoundIds.Count][];
     private readonly Dictionary<AudioLoopId, WavClip> _loops = new();
 
-    public static string DefaultDirectory => Path.Combine(AppContext.BaseDirectory, "audio");
+    public static string DefaultDirectory => AssetPaths.AudioDirectory;
 
     public int OneShotCount
     {
