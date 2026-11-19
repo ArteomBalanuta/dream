@@ -18,7 +18,7 @@ With no flags it changes nothing. Per worktree it prints the size of `dream/bin`
 
 The `recent` guard stats every tracked file until it finds a fresh one, so an idle worktree costs a second or two.
 
-A full report over a few hundred worktrees takes about a minute.
+A full report over a few hundred worktrees takes a few minutes (it checks every idle worktree's tracked files for recent changes).
 
 ## test.ps1
 
