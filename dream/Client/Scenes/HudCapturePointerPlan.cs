@@ -44,7 +44,11 @@ internal enum HudCaptureVerb : byte
     WaitIdle,
     Aim,
     HoldLeft,
-    AimEnemy
+    AimEnemy,
+    // dev:<sub>[;<sub>...] stages the world through the /dev chat command; A = replies to wait for.
+    Dev,
+    // tod:<hours>|off sets the client-only visual time of day; A = minutes 0..1439, -1 = off.
+    TimeOfDay
 }
 
 // Keys a capture script can hold, by name (keys:w+space:30).
@@ -269,9 +273,34 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
             case "confirm" when parts.Length == 2 && parts[1] is "destroy" or "cancel":
                 spec = new(HudCaptureVerb.Confirm, parts[1] == "destroy" ? ConfirmDestroy : ConfirmCancel, 0);
                 return true;
+            case "dev" when parts.Length >= 2 && HudCaptureDevStep.TryBuildChatLine(token, out _, out int devReplies):
+                spec = new(HudCaptureVerb.Dev, devReplies, 0);
+                return true;
+            case "tod" when parts.Length == 2 && TryParseTimeOfDay(parts[1], out int minutes):
+                spec = new(HudCaptureVerb.TimeOfDay, minutes, 0);
+                return true;
             default:
                 return false;
         }
+    }
+
+    // "off" is -1; otherwise decimal hours in [0,24) (invariant culture) as whole minutes 0..1439.
+    private static bool TryParseTimeOfDay(string text, out int minutes)
+    {
+        minutes = -1;
+        if (text.Equals("off", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double hours)
+            || double.IsNaN(hours) || hours < 0.0 || hours >= 24.0)
+        {
+            return false;
+        }
+
+        minutes = Math.Min((int)Math.Floor(hours * 60.0), 1439);
+        return true;
     }
 }
 

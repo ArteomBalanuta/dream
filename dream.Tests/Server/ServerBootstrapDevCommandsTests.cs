@@ -8,6 +8,27 @@ namespace Dream.Tests.Server;
 public sealed class ServerBootstrapDevCommandsTests
 {
     [Theory]
+    [InlineData("0.0.0.0", true, true)]
+    [InlineData("::", true, true)]
+    [InlineData("192.168.1.5", true, true)]
+    [InlineData("127.0.0.1", true, true)]
+    [InlineData("::1", true, true)]
+    [InlineData("127.0.0.1", false, false)]
+    [InlineData("0.0.0.0", false, false)]
+    public void DevCommandsExposureWarning_FiresWheneverDevCommandsAreOn_BecauseATunnelForwardsToLoopback(string bind, bool devOn, bool expectWarning)
+    {
+        string? warning = ServerBootstrap.DevCommandsExposureWarning(devOn, System.Net.IPAddress.Parse(bind));
+
+        Assert.Equal(expectWarning, warning != null);
+        if (warning != null)
+        {
+            Assert.StartsWith("WARNING", warning, StringComparison.Ordinal);
+            Assert.Contains("tunnel", warning, StringComparison.Ordinal);
+            Assert.Equal(!System.Net.IPAddress.IsLoopback(System.Net.IPAddress.Parse(bind)), warning.Contains("not loopback", StringComparison.Ordinal));
+        }
+    }
+
+    [Theory]
     [InlineData(null, false)]
     [InlineData("", false)]
     [InlineData("0", false)]

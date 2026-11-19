@@ -113,6 +113,35 @@ public sealed class HeldWeaponRenderer : IDisposable
         }
     }
 
+    // The flame of the held light in the model's own space (before the model matrix): the off hand's lit item
+    // first, then the main hand's, the same priority as EquipmentSlots.ResolveHeldLight. False when neither hand
+    // carries a lit item or the arm's matrix is unavailable.
+    public static bool TryGetFlameModelPoint(
+        AnimatedModelInstance instance,
+        PlayerPoseLayers layers,
+        in PlayerEquipmentVisuals equipment,
+        out Vector3 modelPoint)
+    {
+        return TryGetHandFlame(instance, layers, equipment.OffHand, offHand: true, out modelPoint) ||
+            TryGetHandFlame(instance, layers, equipment.MainHand, offHand: false, out modelPoint);
+    }
+
+    private static bool TryGetHandFlame(
+        AnimatedModelInstance instance, PlayerPoseLayers layers, string? visualId, bool offHand, out Vector3 modelPoint)
+    {
+        modelPoint = Vector3.Zero;
+        if (!WeaponMeshCatalog.TryGetFlamePoint(visualId, out Vector3 itemPoint) ||
+            !layers.TryGetArmMatrix(instance, offHand, out Matrix4 arm))
+        {
+            return false;
+        }
+
+        WeaponModel model = WeaponMeshCatalog.Resolve(visualId!);
+        Matrix4 attach = Matrix4.CreateScale(HeldItemScale.Resolve(visualId!)) * CreateGrip(model.Grip, offHand) * arm;
+        modelPoint = Vector3.TransformPosition(itemPoint, attach);
+        return true;
+    }
+
     private static void AppendHeld(
         AnimatedModelInstance instance, PlayerPoseLayers layers, string visualId, bool offHand,
         Matrix4 modelMatrix, List<Vector3> corners)

@@ -1,7 +1,12 @@
 <#
 .SYNOPSIS
-  One serial DREAM_HUD_CAPTURE run: waits until no dream.exe runs, launches one auto-connecting capture client,
-  waits for it to exit by itself, and prints the PNGs it wrote plus the stderr tail.
+  One DREAM_HUD_CAPTURE run: launches one auto-connecting capture client with its own fresh data dir and a fixed
+  simulation seed, waits for it to exit by itself, and prints the PNGs it wrote plus the stderr tail and every
+  "[hud-capture] dev" line. Runs with distinct -Name (so distinct data dirs) may run in parallel; -Serial restores
+  the old wait for any running dream.exe.
+
+  Exit codes: 0 ok; 1 timeout or no PNG; 2 idle-wait aborted (-Serial only); 3 a dev step errored or got no reply
+  (suppress with -AllowDevErrors).
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\skills\capturing-dream-screenshots\scripts\capture.ps1 `
@@ -19,15 +24,31 @@ param(
     [string]$OutRoot = '',
     [string]$IdentityFile = '',
     [int]$TimeoutSeconds = 300,
-    [int]$WaitForIdleSeconds = 900
+    [int]$WaitForIdleSeconds = 900,
+    [string]$DataDir = '',
+    [uint64]$Seed = 1,
+    [switch]$KeepData,
+    [switch]$FromSource,
+    [switch]$Serial,
+    [switch]$AllowDevErrors
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 if (-not $Bin) { $Bin = Join-Path $repo 'artifacts\capture-bin\Release\net10.0' }
 if (-not $OutRoot) { $OutRoot = Join-Path $repo 'artifacts\captures' }
-$Bin = [System.IO.Path]::GetFullPath($Bin)
-if (-not $IdentityFile) { $IdentityFile = Join-Path $Bin 'capture-identity.json' }
+# Resolve against $PWD (the shell's location), not the .NET process CWD that GetFullPath would use.
+function Resolve-FullPath([string]$path) {
+    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path)
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ($full.TrimEnd('\', '/') -ieq $root.TrimEnd('\', '/')) { return $root }
+    return $full.TrimEnd('\', '/')
+}
+$Bin = Resolve-FullPath $Bin
+$OutRoot = Resolve-FullPath $OutRoot
+if (-not $DataDir) { $DataDir = Join-Path (Join-Path $OutRoot $Name) 'data' }
+$DataDir = Resolve-FullPath $DataDir
+$DataMarker = '.dream-capture-data'
 
 function Test-NoColon([string]$path, [string]$what) {
     # A drive qualifier ("G:") is the only colon allowed; anywhere else it is an illegal Windows file name that shows up
@@ -38,8 +59,9 @@ function Test-NoColon([string]$path, [string]$what) {
 
 Test-NoColon $Name 'Name'
 if ($Name -match '[\\/*?"<>|]') { throw "Name must be a plain folder name: $Name" }
-Test-NoColon $IdentityFile 'IdentityFile'
+if ($IdentityFile) { Test-NoColon $IdentityFile 'IdentityFile' }
 Test-NoColon $OutRoot 'OutRoot'
+Test-NoColon $DataDir 'DataDir'
 
 $exe = Join-Path $Bin 'dream.exe'
 if (-not (Test-Path $exe)) {
@@ -49,11 +71,15 @@ if (-not (Test-Path $exe)) {
 $vars = [ordered]@{
     DREAM_AUDIO               = '0'
     DREAM_AUTO_CONNECT        = '1'
-    DREAM_IDENTITY_FILE       = $IdentityFile
+    DREAM_DATA_DIR            = $DataDir
+    DREAM_SIMULATION_SEED     = [string]$Seed
     DREAM_TIME_OF_DAY         = $TimeOfDay
     DREAM_HUD_CAPTURE         = ''
     DREAM_HUD_CAPTURE_SCRIPT  = $Script
 }
+# The default identity lives in the data dir; an explicit file shares one identity across runs.
+if ($IdentityFile) { $vars['DREAM_IDENTITY_FILE'] = $IdentityFile }
+if ($FromSource) { $vars['DREAM_ASSET_ROOT'] = Join-Path $repo 'dream' }
 # "-File" passes "A=1,B=2" as one string, so split on commas here (values cannot contain commas).
 foreach ($pair in @($Env | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     $i = $pair.IndexOf('=')
@@ -68,10 +94,39 @@ $vars['DREAM_HUD_CAPTURE'] = $cap
 $outLog = Join-Path $cap 'out.log'
 $errLog = Join-Path $cap 'err.log'
 
-# Strictly one dream.exe at a time: wait for every other one to finish. Never stop a process this script did not start.
+# A fresh world per run unless -KeepData. The wipe is recursive, so it only touches a folder this script owns: one
+# under $OutRoot, or one holding the marker file this script wrote when it created it. Anything else is refused.
+function Test-SamePath([string]$a, [string]$b) { return ($a.TrimEnd('\', '/') -ieq $b.TrimEnd('\', '/')) }
+function Test-UnderPath([string]$child, [string]$parent) {
+    $p = $parent.TrimEnd('\', '/') + '\'
+    return $child.StartsWith($p, [System.StringComparison]::OrdinalIgnoreCase)
+}
+function Get-WipeRefusal([string]$dir) {
+    $protected = @($repo, $Bin, $OutRoot, $HOME, [Environment]::GetFolderPath('UserProfile'), $env:SystemRoot, $env:ProgramFiles) | Where-Object { $_ }
+    if (Test-SamePath $dir ([System.IO.Path]::GetPathRoot($dir))) { return 'it is a drive root' }
+    foreach ($q in $protected) {
+        if (Test-SamePath $dir $q) { return "it is $q" }
+        if (Test-UnderPath $q $dir) { return "it contains $q" }
+    }
+    if (Test-UnderPath $dir $Bin) { return 'it is inside the build output folder' }
+    if (Test-UnderPath $dir $OutRoot) { return $null }
+    if (Test-Path -LiteralPath (Join-Path $dir $DataMarker) -PathType Leaf) { return $null }
+    return "it is neither under OutRoot ($OutRoot) nor a folder this script created earlier (no $DataMarker marker)"
+}
+$dataExisted = Test-Path -LiteralPath $DataDir
+if (-not $KeepData -and $dataExisted) {
+    $why = Get-WipeRefusal $DataDir
+    if ($why) { throw "Refusing to delete DataDir $DataDir : $why. Pass -KeepData to reuse it, or pick a folder under OutRoot." }
+    Remove-Item -LiteralPath $DataDir -Recurse -Force
+    $dataExisted = $false
+}
+New-Item -ItemType Directory -Force $DataDir | Out-Null
+if (-not $dataExisted) { Set-Content -LiteralPath (Join-Path $DataDir $DataMarker) -Value 'created by capture.ps1; safe to wipe' -Encoding ascii }
+
+# With -Serial: strictly one dream.exe at a time, wait for every other one to finish. Never stop a process this script did not start.
 $deadline = (Get-Date).AddSeconds($WaitForIdleSeconds)
 $announced = $false
-while (Get-Process dream -ErrorAction SilentlyContinue) {
+while ($Serial -and (Get-Process dream -ErrorAction SilentlyContinue)) {
     if (-not $announced) {
         $ids = (Get-Process dream | ForEach-Object { $_.Id }) -join ', '
         Write-Host "waiting: dream.exe already running (pid $ids); not touching it"
@@ -116,5 +171,15 @@ if (Test-Path $outLog) {
         Select-Object -Last 25 | ForEach-Object { Write-Host $_.Line }
 }
 
+$devLines = @()
+if (Test-Path $outLog) { $devLines = @(Select-String -Path $outLog -Pattern '^\[hud-capture\] dev ' | ForEach-Object { $_.Line }) }
+Write-Host '--- dev steps ---'
+$devLines | ForEach-Object { Write-Host $_ }
+$devFailed = @($devLines | Where-Object { $_ -match '^\[hud-capture\] dev .* -> (\[dev\] error:|no reply)' })
+
 if ($timedOut -or $pngs.Count -eq 0) { exit 1 }
+if ($devFailed.Count -gt 0 -and -not $AllowDevErrors) {
+    Write-Host ("FAIL: {0} dev step line(s) errored or got no reply (use -AllowDevErrors to ignore)" -f $devFailed.Count)
+    exit 3
+}
 exit 0

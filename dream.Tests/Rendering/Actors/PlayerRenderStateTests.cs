@@ -27,6 +27,19 @@ public class PlayerRenderStateTests
         Assert.Equal(7f, state.ModelMatrix.M43, 3);
     }
 
+    [Theory]
+    [InlineData(4f, 1.5f, 7f, 0f, 0f, -1f)]
+    [InlineData(-2f, 0f, 3f, 1f, 0f, 1f)]
+    [InlineData(0f, 0f, 0f, 0f, 0f, 0f)]
+    public void CreateModelMatrix_IsTheMatrixOfTheRenderState(float px, float py, float pz, float fx, float fy, float fz)
+    {
+        Vector3 position = new(px, py, pz);
+        Vector3 facing = new(fx, fy, fz);
+
+        Assert.Equal(PlayerRenderState.CreateLocal(position, facing, false).ModelMatrix, PlayerRenderState.CreateModelMatrix(position, facing));
+        Assert.Equal(PlayerRenderState.CreateLocal(position, facing, true, 0.5f).ModelMatrix, PlayerRenderState.CreateModelMatrix(position, facing, 0.5f));
+    }
+
     [Fact]
     public void CreateRemote_UsesWalkClipWhenMoving()
     {

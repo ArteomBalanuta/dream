@@ -7,13 +7,53 @@ namespace Dream.Assets;
 
 public static class AssetPaths
 {
-    public static string RuntimeRoot => AppContext.BaseDirectory;
+    public const string RootEnvironmentVariable = "DREAM_ASSET_ROOT";
+
+    private static readonly Lazy<string> CachedRoot = new(
+        () => ResolveRoot(Environment.GetEnvironmentVariable, AppContext.BaseDirectory, Console.Error.WriteLine));
+
+    // Read-only asset folders live here; DREAM_ASSET_ROOT moves them (intended: the source tree "dream" folder),
+    // except the schema script and migrations (BundledConfig).
+    // Writable state (database, desktop-client.txt) never follows it; see DataPaths.
+    public static string RuntimeRoot => CachedRoot.Value;
+
+    // A missing directory or one without a "shaders" folder is reported once and the exe directory is used.
+    internal static string ResolveRoot(Func<string, string?> env, string baseDirectory, Action<string>? log)
+    {
+        string? value = env(RootEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return baseDirectory;
+        }
+
+        string root;
+        try
+        {
+            root = Path.GetFullPath(value.Trim());
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            log?.Invoke($"[startup] {RootEnvironmentVariable} ignored ({value}): invalid path; using {baseDirectory}");
+            return baseDirectory;
+        }
+
+        if (!Directory.Exists(root) || !Directory.Exists(Path.Combine(root, "shaders")))
+        {
+            log?.Invoke($"[startup] {RootEnvironmentVariable} ignored ({root}): directory or its shaders folder is missing; using {baseDirectory}");
+            return baseDirectory;
+        }
+
+        log?.Invoke($"[startup] asset root: {root}");
+        return root;
+    }
 
     public static string ShadersDirectory => Path.Combine(RuntimeRoot, "shaders");
 
     public static string AnimationsDirectory => Path.Combine(RuntimeRoot, "animations");
 
     public static string FontsDirectory => Path.Combine(RuntimeRoot, "fonts");
+
+    public static string AudioDirectory => Path.Combine(RuntimeRoot, "audio");
 
     public static string ConfigDirectory => Path.Combine(RuntimeRoot, "config");
 
@@ -26,6 +66,14 @@ public static class AssetPaths
     public static string Font(string fileName) => Path.Combine(FontsDirectory, fileName);
 
     public static string Config(string fileName) => Path.Combine(ConfigDirectory, fileName);
+
+    // Files tied to the compiled code (the schema script and the migrations next to it) always come from
+    // the executable's own config folder: DREAM_ASSET_ROOT must not let an older exe apply a work-in-progress
+    // migration from a source tree to the real database.
+    public static string BundledConfig(string fileName) => BundledConfig(AppContext.BaseDirectory, fileName);
+
+    internal static string BundledConfig(string baseDirectory, string fileName) =>
+        Path.Combine(baseDirectory, "config", fileName);
 
     // relativePath is under the ui directory, e.g. "hud/hud.json".
     public static string Ui(string relativePath) => Path.Combine(UiDirectory, relativePath);

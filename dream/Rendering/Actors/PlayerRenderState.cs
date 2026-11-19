@@ -33,22 +33,26 @@ public readonly record struct PlayerRenderState(
 
     private static PlayerRenderState Create(Vector3 position, Vector3 facing, bool isMoving, float? scale)
     {
+        return new PlayerRenderState(
+            PlayerModelPath,
+            "enemy",
+            isMoving ? PlayerModelAssetDefinition.WalkClip : PlayerModelAssetDefinition.IdleClip,
+            CreateModelMatrix(position, facing, scale),
+            DefaultNodeOverrides);
+    }
+
+    // The model matrix of a player at a pose: the same one Create puts in every render state.
+    public static Matrix4 CreateModelMatrix(Vector3 position, Vector3 facing, float? scale = null)
+    {
         Vector3 resolvedFacing = facing.LengthSquared > 0.0001f
             ? facing.Normalized()
             : PlayerModelAssetDefinition.AuthoredForwardAxis;
         float yawRadians = ResolveYawRadians(PlayerModelAssetDefinition.AuthoredForwardAxis, resolvedFacing);
         float resolvedScale = scale ?? PlayerModelAssetDefinition.VisualScale;
-        Matrix4 modelMatrix =
+        return
             Matrix4.CreateScale(resolvedScale) *
             Matrix4.CreateRotationY(yawRadians) *
             Matrix4.CreateTranslation(position + PlayerModelAssetDefinition.BodyCenterToFootOffset);
-
-        return new PlayerRenderState(
-            PlayerModelPath,
-            "enemy",
-            isMoving ? PlayerModelAssetDefinition.WalkClip : PlayerModelAssetDefinition.IdleClip,
-            modelMatrix,
-            DefaultNodeOverrides);
     }
 
     // ModelPath combines paths on every read; the runtime root does not change, so resolve it once.

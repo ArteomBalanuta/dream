@@ -248,6 +248,8 @@ public class SkyPassContractTests
         Assert.Equal(
             new[]
             {
+                // The capture harness's tod: step: a client-only visual override, never sent to the server.
+                "Client/Scenes/PlayScene.Capture.cs",
                 "Client/Scenes/PlayScene.Render.cs",
                 "Rendering/Core/Render.HudPanels.cs",
                 "Rendering/Core/Render.Sky.cs",

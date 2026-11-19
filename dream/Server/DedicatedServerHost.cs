@@ -506,7 +506,17 @@ public sealed partial class DedicatedServerHost : IDisposable, IServerSessionCla
             // M8: slash commands are decided by the server alone, and a muted account is not heard.
             if (lines[i].Channel == ChatChannel.Command)
             {
-                HandleAdminCommand(context, found, lines[i], replies);
+                // "/dev" is the staging line (gated on dev commands AND a loopback connection, never on the
+                // admin role); every other command line is an admin command.
+                if (DevCommandText.IsDevLine(lines[i].Text))
+                {
+                    HandleDevCommand(context, found, lines[i], replies);
+                }
+                else
+                {
+                    HandleAdminCommand(context, found, lines[i], replies);
+                }
+
                 continue;
             }
 

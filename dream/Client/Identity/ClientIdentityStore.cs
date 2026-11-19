@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Dream.Assets;
 using Dream.Simulation.Characters;
 
 namespace Dream.Client.Identity;
@@ -32,14 +33,33 @@ public sealed class ClientIdentityStore : IClientIdentityStore
 
     public static ClientIdentityStore ForCurrentUser()
     {
-        string? overridePath = Environment.GetEnvironmentVariable(PathEnvironmentVariable);
+        return new ClientIdentityStore(ResolvePathLazy(
+            Environment.GetEnvironmentVariable,
+            static () => DataPaths.IdentityFile,
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)));
+    }
+
+    // Precedence: DREAM_IDENTITY_FILE, then the run data directory's file, then the per-user default.
+    internal static string ResolvePath(Func<string, string?> env, string? dataDirIdentityFile, string localAppData)
+        => ResolvePathLazy(env, () => dataDirIdentityFile, localAppData);
+
+    // The data directory's file is resolved lazily: DataPaths throws for a bad DREAM_DATA_DIR, which must
+    // not matter when DREAM_IDENTITY_FILE already decides the path.
+    internal static string ResolvePathLazy(Func<string, string?> env, Func<string?> dataDirIdentityFile, string localAppData)
+    {
+        string? overridePath = env(PathEnvironmentVariable);
         if (!string.IsNullOrWhiteSpace(overridePath))
         {
-            return new ClientIdentityStore(overridePath);
+            return overridePath;
         }
 
-        string root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return new ClientIdentityStore(Path.Combine(root, "Dream", "account-tokens.json"));
+        string? fromDataDir = dataDirIdentityFile();
+        if (!string.IsNullOrWhiteSpace(fromDataDir))
+        {
+            return fromDataDir;
+        }
+
+        return Path.Combine(localAppData, "Dream", "account-tokens.json");
     }
 
     // Lowercase host:port, or the literal "local" for a loopback server. The host is canonical: brackets

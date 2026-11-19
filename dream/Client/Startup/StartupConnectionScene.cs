@@ -2,6 +2,8 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using Dream.Assets;
+using Dream.Client.Menu;
 using Dream.Client.Networking;
 using Dream.Rendering.Core;
 
@@ -204,7 +206,7 @@ public sealed class StartupConnectionScene : IDisposable
 
     private void TryAutoConnect()
     {
-        if (_autoConnectAttempted || !IsAutoConnectEnabled())
+        if (_autoConnectAttempted || !IsAutoConnectEnabled(Environment.GetEnvironmentVariable, localServerPath: !_autoConnectUsesInitialOptions))
         {
             return;
         }
@@ -234,9 +236,16 @@ public sealed class StartupConnectionScene : IDisposable
         _persistConnectionOptions?.Invoke(localDefaults);
     }
 
-    private static bool IsAutoConnectEnabled()
+    // A capture run has no one to press Connect, so DREAM_HUD_CAPTURE implies auto-connect, but only on
+    // the local/integrated path: a leftover capture variable must never join a remote server unasked.
+    internal static bool IsAutoConnectEnabled(Func<string, string?> env, bool localServerPath = true)
     {
-        string? value = Environment.GetEnvironmentVariable(AutoConnectEnvironmentVariable);
+        if (localServerPath && !string.IsNullOrWhiteSpace(env(MenuLaunchPolicy.HudCaptureEnvironmentVariable)))
+        {
+            return true;
+        }
+
+        string? value = env(AutoConnectEnvironmentVariable);
         return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
