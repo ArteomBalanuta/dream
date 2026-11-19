@@ -111,6 +111,9 @@ public sealed class ArmourModel(string visualId, ArmourMount mount, ArmourPart[]
 // goes on a large up-facing surface, because the camera is pitched 50 degrees down and an up-facing
 // normal takes the sky ambient before any light reaches it.
 //
+// PASS 5 (profiled shells): a shoulder cap is a Pauldron, a torso a Cuirass, a limb or boot shaft a Greave, a layered
+// fauld / cuisse a Lame, and the gossamer wings a Membrane; Plate stays only on the side plates that wrap the body.
+// All five open toward -Z like Plate, so a Pauldron is turned with pitch: -90f exactly as the Plate cap was.
 // Every part names an EquipmentShape, and none of them is a plain Box: a helm skull or a knee cop is a
 // Dome, a pauldron / cuirass / greave / bracer / sleeve is a Plate (a 150 degree shell that WRAPS the
 // limb instead of boxing it), a collar or mail row is a Ring, a cloak or tabard or aventail is a Panel,
@@ -236,6 +239,11 @@ public static class ArmourMeshCatalog
         const EquipmentShape Panel = EquipmentShape.Panel;
         const EquipmentShape Horn = EquipmentShape.Horn;
         const EquipmentShape Flare = EquipmentShape.Flare;
+        const EquipmentShape Pauldron = EquipmentShape.Pauldron;
+        const EquipmentShape Cuirass = EquipmentShape.Cuirass;
+        const EquipmentShape Greave = EquipmentShape.Greave;
+        const EquipmentShape Lame = EquipmentShape.Lame;
+        const EquipmentShape Membrane = EquipmentShape.Membrane;
 
         // ---- Head: sits on a bare head, y 0..0.42, |x| <= 0.12, |z| <= 0.13. A helm's shell is the head plus
         // a wall (0.04) plus a hand of clearance and its brim: main mass 0.32..0.355 wide (half-width 0.16..0.1775,
@@ -272,8 +280,8 @@ public static class ArmourMeshCatalog
             Box(0f, 0.10f, -0.16f, 0.32f, 0.24f, 0.06f, Cold, shape: Panel),
             Box(0f, 0.085f, 0f, 0.345f, 0.13f, 0.345f, Iron, pitch: 180f, shape: Flare),
             Box(0f, 0.155f, 0f, 0.33f, 0.03f, 0.33f, Steel, shape: Ring),
-            Box(0.148f, 0.15f, 0.02f, 0.26f, 0.26f, 0.06f, Iron, yaw: 90f, shape: Plate),
-            Box(-0.148f, 0.15f, 0.02f, 0.26f, 0.26f, 0.06f, Iron, yaw: -90f, shape: Plate),
+            Box(0.148f, 0.15f, 0.02f, 0.26f, 0.26f, 0.06f, Iron, yaw: 90f, shape: Greave),
+            Box(-0.148f, 0.15f, 0.02f, 0.26f, 0.26f, 0.06f, Iron, yaw: -90f, shape: Greave),
             Box(0f, 0.22f, 0.17f, 0.05f, 0.26f, 0.04f, Steel, pitch: 180f, shape: Taper),
             Box(0f, 0.40f, 0f, 0.06f, 0.10f, 0.30f, Iron, shape: BevelBox),
             Box(0f, 0.455f, 0f, 0.22f, 0.035f, 0.26f, Gilt, shape: Ring),
@@ -322,8 +330,8 @@ public static class ArmourMeshCatalog
             Box(0f, 0.22f, 0f, 0.34f, 0.46f, 0.34f, Indigo, shape: Dome),
             Box(0f, 0.13f, 0.155f, 0.22f, 0.26f, 0.06f, Leather, shape: BevelBox),
             Box(0f, 0.075f, 0f, 0.35f, 0.13f, 0.35f, Indigo, pitch: 180f, shape: Flare),
-            Box(0.15f, 0.14f, 0.02f, 0.24f, 0.24f, 0.05f, Indigo, yaw: 90f, shape: Plate),
-            Box(-0.15f, 0.14f, 0.02f, 0.24f, 0.24f, 0.05f, Indigo, yaw: -90f, shape: Plate),
+            Box(0.15f, 0.14f, 0.02f, 0.24f, 0.24f, 0.05f, Indigo, yaw: 90f, shape: Greave),
+            Box(-0.15f, 0.14f, 0.02f, 0.24f, 0.24f, 0.05f, Indigo, yaw: -90f, shape: Greave),
             Box(0f, 0.33f, 0f, 0.345f, 0.04f, 0.345f, Gilt, shape: Ring),
             Box(0f, 0.19f, 0.165f, 0.05f, 0.24f, 0.045f, Gilt, pitch: 180f, shape: Taper),
             Box(0f, 0.295f, 0.16f, 0.20f, 0.035f, 0.035f, Steel, shape: BevelBox),
@@ -371,16 +379,16 @@ public static class ArmourMeshCatalog
         // rounded leather pauldron over each shoulder ending in a short horn. Leather's reading of the
         // direction is soft: the pauldrons are domed and lumpy rather than plated, and the horns are small.
         Add("worn.body.leather-vest", ArmourMount.Torso,
-            Box(0f, 0.69f, 0f, 0.48f, 0.40f, 0.34f, Leather, shape: Plate),
-            Box(0f, 0.41f, 0f, 0.40f, 0.24f, 0.32f, Leather, shape: Plate),
+            Box(0f, 0.69f, 0f, 0.48f, 0.40f, 0.34f, Leather, shape: Cuirass),
+            Box(0f, 0.41f, 0f, 0.40f, 0.24f, 0.32f, Leather, shape: Lame),
             Box(0f, 0.16f, 0f, 0.56f, 0.33f, 0.34f, Ash, pitch: 180f, shape: Flare),
             Box(0f, 0.60f, 0.165f, 0.16f, 0.36f, 0.03f, Cold, shape: Panel),
             Box(0f, 0.875f, 0f, 0.34f, 0.05f, 0.26f, Bone, shape: Ring),
             Box(0f, 0.33f, 0f, 0.42f, 0.06f, 0.34f, Leather, shape: BevelBox),
             Box(0f, 0.33f, 0.18f, 0.08f, 0.08f, 0.04f, Gilt, shape: BevelBox),
             Box(0f, 0.63f, 0f, 0.49f, 0.05f, 0.345f, Leather, shape: BevelBox),
-            Box(0.33f, 0.82f, 0f, 0.42f, 0.22f, 0.32f, Leather, shape: Dome),
-            Box(-0.33f, 0.82f, 0f, 0.42f, 0.22f, 0.32f, Leather, shape: Dome),
+            Box(0.33f, 0.82f, 0f, 0.42f, 0.32f, 0.22f, Leather, pitch: -90f, shape: Pauldron),
+            Box(-0.33f, 0.82f, 0f, 0.42f, 0.32f, 0.22f, Leather, pitch: -90f, shape: Pauldron),
             Box(0.42f, 0.88f, -0.06f, 0.09f, 0.24f, 0.18f, Leather, roll: 30f, yaw: 180f, shape: Horn),
             Box(-0.42f, 0.88f, -0.06f, 0.09f, 0.24f, 0.18f, Leather, roll: -30f, yaw: 180f, shape: Horn),
             Box(0f, -0.02f, 0.165f, 0.15f, 0.54f, 0.035f, Ash, shape: Panel),
@@ -391,12 +399,12 @@ public static class ArmourMeshCatalog
         // domed shoulder mass carrying one short barb each side, a cold-cloth lappet, and a small steel gorget
         // as the only bright rim on the piece.
         Add("worn.body.chain-hauberk", ArmourMount.Torso,
-            Box(0f, 0.69f, 0f, 0.46f, 0.40f, 0.34f, Iron, shape: Plate),
-            Box(0f, 0.41f, 0f, 0.40f, 0.24f, 0.32f, Iron, shape: Plate),
+            Box(0f, 0.69f, 0f, 0.46f, 0.40f, 0.34f, Iron, shape: Cuirass),
+            Box(0f, 0.41f, 0f, 0.40f, 0.24f, 0.32f, Iron, shape: Lame),
             Box(0f, 0.16f, 0f, 0.54f, 0.33f, 0.34f, Iron, pitch: 180f, shape: Flare),
             Box(0f, 0.86f, 0f, 0.24f, 0.045f, 0.24f, Steel, shape: Ring),
-            Box(0.28f, 0.79f, 0f, 0.36f, 0.20f, 0.32f, Iron, shape: Dome),
-            Box(-0.28f, 0.79f, 0f, 0.36f, 0.20f, 0.32f, Iron, shape: Dome),
+            Box(0.28f, 0.79f, 0f, 0.36f, 0.32f, 0.20f, Iron, pitch: -90f, shape: Pauldron),
+            Box(-0.28f, 0.79f, 0f, 0.36f, 0.32f, 0.20f, Iron, pitch: -90f, shape: Pauldron),
             Box(0.26f, 0.66f, 0f, 0.26f, 0.24f, 0.18f, Iron, yaw: 90f, shape: Plate),
             Box(-0.26f, 0.66f, 0f, 0.26f, 0.24f, 0.18f, Iron, yaw: -90f, shape: Plate),
             Box(0.40f, 0.86f, -0.05f, 0.08f, 0.22f, 0.16f, Iron, roll: 34f, yaw: 180f, shape: Horn),
@@ -419,14 +427,14 @@ public static class ArmourMeshCatalog
         // through the floor - because a dark mass that size has nothing for the key light to catch. The plate
         // stays dark; only its border is bright. Do not blacken the edge to "unify" the piece.
         Add("worn.body.plate-cuirass", ArmourMount.Torso,
-            Box(0f, 0.67f, 0f, 0.44f, 0.46f, 0.34f, Steel, shape: Plate),
+            Box(0f, 0.67f, 0f, 0.44f, 0.46f, 0.34f, Steel, shape: Cuirass),
             Box(0f, 0.68f, 0.17f, 0.09f, 0.46f, 0.04f, Steel, shape: BevelBox),
-            Box(0f, 0.40f, 0f, 0.40f, 0.26f, 0.32f, Iron, shape: Plate),
+            Box(0f, 0.40f, 0f, 0.40f, 0.26f, 0.32f, Iron, shape: Lame),
             Box(0f, 0.16f, 0f, 0.56f, 0.33f, 0.34f, Iron, pitch: 180f, shape: Flare),
             Box(0f, 0.33f, 0.17f, 0.44f, 0.05f, 0.03f, Red, shape: Panel),
             Box(0f, 0.90f, 0f, 0.34f, 0.05f, 0.26f, Steel, shape: Ring),
-            Box(0.35f, 0.84f, 0f, 0.46f, 0.30f, 0.26f, Iron, pitch: -90f, shape: Plate),
-            Box(-0.35f, 0.84f, 0f, 0.46f, 0.30f, 0.26f, Iron, pitch: -90f, shape: Plate),
+            Box(0.35f, 0.84f, 0f, 0.46f, 0.30f, 0.26f, Iron, pitch: -90f, shape: Pauldron),
+            Box(-0.35f, 0.84f, 0f, 0.46f, 0.30f, 0.26f, Iron, pitch: -90f, shape: Pauldron),
             Box(0.46f, 0.88f, -0.06f, 0.09f, 0.30f, 0.20f, Iron, roll: 30f, yaw: 180f, shape: Horn),
             Box(-0.46f, 0.88f, -0.06f, 0.09f, 0.30f, 0.20f, Iron, roll: -30f, yaw: 180f, shape: Horn),
             Box(0.55f, 0.84f, 0f, 0.06f, 0.26f, 0.34f, Steel, shape: BevelBox),
@@ -445,14 +453,14 @@ public static class ArmourMeshCatalog
         // The gold is Gilt everywhere and never Steel: this set's bright edge is warm, and Gilt sits under the
         // light threshold, so the gem is the piece's only light facet by design.
         Add("worn.body.sorcerer-regalia", ArmourMount.Torso,
-            Box(0f, 0.67f, 0f, 0.44f, 0.46f, 0.34f, Indigo, shape: Plate),
+            Box(0f, 0.67f, 0f, 0.44f, 0.46f, 0.34f, Indigo, shape: Cuirass),
             Box(0f, 0.92f, 0f, 0.34f, 0.18f, 0.30f, Indigo, shape: Flare),
-            Box(0f, 0.40f, 0f, 0.40f, 0.26f, 0.32f, Indigo, shape: Plate),
+            Box(0f, 0.40f, 0f, 0.40f, 0.26f, 0.32f, Indigo, shape: Lame),
             Box(0f, 0.16f, 0f, 0.57f, 0.33f, 0.34f, Indigo, pitch: 180f, shape: Flare),
             Box(0f, 0.33f, 0f, 0.44f, 0.05f, 0.345f, Gilt, shape: Ring),
             Box(0f, 0.72f, 0.17f, 0.11f, 0.13f, 0.08f, ArmourMaterial.Arcane, shape: Gem),
-            Box(0.35f, 0.84f, 0f, 0.48f, 0.32f, 0.28f, Indigo, pitch: -90f, shape: Plate),
-            Box(-0.35f, 0.84f, 0f, 0.48f, 0.32f, 0.28f, Indigo, pitch: -90f, shape: Plate),
+            Box(0.35f, 0.84f, 0f, 0.48f, 0.32f, 0.28f, Indigo, pitch: -90f, shape: Pauldron),
+            Box(-0.35f, 0.84f, 0f, 0.48f, 0.32f, 0.28f, Indigo, pitch: -90f, shape: Pauldron),
             Box(0.46f, 0.88f, -0.06f, 0.09f, 0.30f, 0.20f, Gilt, roll: 30f, yaw: 180f, shape: Horn),
             Box(-0.46f, 0.88f, -0.06f, 0.09f, 0.30f, 0.20f, Gilt, roll: -30f, yaw: 180f, shape: Horn),
             Box(0.555f, 0.84f, 0f, 0.055f, 0.26f, 0.34f, Gilt, shape: BevelBox),
@@ -465,7 +473,7 @@ public static class ArmourMeshCatalog
         // narrow rim along its lip and a short horn each side, over a wrapped shell and a stepped lame or two.
 
         Add("worn.hands.leather-gloves", ArmourMount.Arms,
-            Box(0f, -0.76f, 0f, 0.24f, 0.44f, 0.24f, Leather, shape: Plate),
+            Box(0f, -0.76f, 0f, 0.24f, 0.44f, 0.24f, Leather, shape: Greave),
             Box(0f, -0.56f, 0f, 0.32f, 0.16f, 0.32f, Ash, shape: Flare),
             Box(0f, -0.47f, 0f, 0.22f, 0.03f, 0.22f, Bone, shape: Ring),
             Box(0f, -0.94f, 0f, 0.22f, 0.08f, 0.26f, Cold, shape: BevelBox),
@@ -477,7 +485,7 @@ public static class ArmourMeshCatalog
             Box(0f, -0.84f, 0f, 0.26f, 0.04f, 0.26f, Leather, shape: Ring));
 
         Add("worn.hands.iron-gauntlets", ArmourMount.Arms,
-            Box(0f, -0.76f, 0f, 0.26f, 0.44f, 0.26f, Iron, shape: Plate),
+            Box(0f, -0.76f, 0f, 0.26f, 0.44f, 0.26f, Iron, shape: Greave),
             Box(0f, -0.555f, 0f, 0.38f, 0.18f, 0.38f, Iron, shape: Flare),
             Box(0f, -0.455f, 0f, 0.26f, 0.035f, 0.26f, Steel, shape: Ring),
             Box(0f, -0.92f, 0.08f, 0.24f, 0.10f, 0.14f, Steel, shape: BevelBox),
@@ -490,7 +498,7 @@ public static class ArmourMeshCatalog
             Box(0f, -0.83f, 0f, 0.28f, 0.04f, 0.28f, Gilt, shape: Ring));
 
         Add("worn.hands.plate-gauntlets", ArmourMount.Arms,
-            Box(0f, -0.74f, 0f, 0.28f, 0.48f, 0.28f, Steel, shape: Plate),
+            Box(0f, -0.74f, 0f, 0.28f, 0.48f, 0.28f, Steel, shape: Greave),
             Box(0f, -0.80f, 0f, 0.32f, 0.06f, 0.32f, Iron, shape: BevelBox),
             Box(0f, -0.53f, 0f, 0.40f, 0.20f, 0.40f, Iron, shape: Flare),
             Box(0f, -0.43f, 0f, 0.38f, 0.045f, 0.38f, Iron, shape: Ring),
@@ -510,7 +518,7 @@ public static class ArmourMeshCatalog
         // arm's own axis. Their rolls are positive on +X because the yaw of 180 flips the roll's direction
         // (see the Horn note in the header).
         Add("worn.hands.sorcerer-gauntlets", ArmourMount.Arms,
-            Box(0f, -0.75f, 0.01f, 0.26f, 0.46f, 0.28f, Indigo, shape: Plate),
+            Box(0f, -0.75f, 0.01f, 0.26f, 0.46f, 0.28f, Indigo, shape: Greave),
             Box(0f, -0.555f, 0f, 0.38f, 0.18f, 0.38f, Gilt, shape: Flare),
             Box(0f, -0.90f, 0.02f, 0.34f, 0.14f, 0.34f, Gilt, pitch: 180f, shape: Flare),
             Box(0f, -0.955f, 0.06f, 0.22f, 0.09f, 0.22f, Indigo, shape: BevelBox),
@@ -534,7 +542,7 @@ public static class ArmourMeshCatalog
         // limb is an hourglass too and not a tube, and carries a short horn each side at the thigh.
 
         Add("worn.legs.leather-leggings", ArmourMount.Legs,
-            Box(0f, -0.43f, 0f, 0.30f, 0.68f, 0.30f, Leather, shape: Plate),
+            Box(0f, -0.43f, 0f, 0.30f, 0.68f, 0.30f, Leather, shape: Greave),
             Box(0f, -0.16f, 0f, 0.34f, 0.14f, 0.34f, Leather, shape: Flare),
             Box(0f, -0.45f, 0.14f, 0.16f, 0.08f, 0.16f, Iron, pitch: 90f, shape: Dome),
             Box(0f, -0.62f, 0f, 0.31f, 0.10f, 0.31f, Iron, pitch: 180f, shape: Taper),
@@ -546,10 +554,10 @@ public static class ArmourMeshCatalog
             Box(-0.09f, -0.19f, -0.02f, 0.05f, 0.14f, 0.10f, Leather, roll: -20f, yaw: 180f, shape: Horn));
 
         Add("worn.legs.plated-leggings", ArmourMount.Legs,
-            Box(0f, -0.43f, 0f, 0.30f, 0.68f, 0.30f, Cold, shape: Plate),
+            Box(0f, -0.43f, 0f, 0.30f, 0.68f, 0.30f, Cold, shape: Greave),
             Box(0f, -0.17f, 0f, 0.36f, 0.18f, 0.36f, Iron, shape: Flare),
-            Box(0f, -0.32f, 0f, 0.34f, 0.22f, 0.34f, Iron, shape: Plate),
-            Box(0f, -0.60f, 0.06f, 0.30f, 0.14f, 0.28f, Iron, shape: Plate),
+            Box(0f, -0.32f, 0f, 0.34f, 0.22f, 0.34f, Iron, shape: Lame),
+            Box(0f, -0.60f, 0.06f, 0.30f, 0.14f, 0.28f, Iron, shape: Greave),
             Box(0f, -0.72f, 0.03f, 0.32f, 0.10f, 0.30f, Iron, pitch: 180f, shape: Flare),
             Box(0f, -0.45f, 0.15f, 0.18f, 0.08f, 0.18f, Steel, pitch: 90f, shape: Dome),
             Box(0f, -0.52f, 0f, 0.33f, 0.04f, 0.33f, Iron, shape: Ring),
@@ -560,7 +568,7 @@ public static class ArmourMeshCatalog
             Box(0f, -0.665f, 0f, 0.31f, 0.035f, 0.31f, Gilt, shape: Ring));
 
         Add("worn.legs.chain-chausses", ArmourMount.Legs,
-            Box(0f, -0.43f, 0f, 0.32f, 0.68f, 0.32f, Iron, shape: Plate),
+            Box(0f, -0.43f, 0f, 0.32f, 0.68f, 0.32f, Iron, shape: Greave),
             Box(0f, -0.14f, 0f, 0.36f, 0.08f, 0.36f, Iron, shape: Ring),
             Box(0f, -0.18f, 0f, 0.35f, 0.14f, 0.35f, Iron, shape: Flare),
             Box(0f, -0.73f, 0f, 0.26f, 0.04f, 0.26f, Steel, shape: Ring),
@@ -574,8 +582,8 @@ public static class ArmourMeshCatalog
             Box(0f, -0.62f, 0f, 0.33f, 0.03f, 0.33f, Gilt, shape: Ring));
 
         Add("worn.legs.plate-greaves", ArmourMount.Legs,
-            Box(0f, -0.50f, 0.03f, 0.36f, 0.50f, 0.36f, Iron, shape: Plate),
-            Box(0f, -0.22f, 0f, 0.34f, 0.26f, 0.34f, Iron, shape: Plate),
+            Box(0f, -0.50f, 0.03f, 0.36f, 0.50f, 0.36f, Iron, shape: Greave),
+            Box(0f, -0.22f, 0f, 0.34f, 0.26f, 0.34f, Iron, shape: Lame),
             Box(0f, -0.14f, 0f, 0.37f, 0.14f, 0.37f, Iron, shape: Flare),
             Box(0f, -0.42f, 0.16f, 0.20f, 0.10f, 0.20f, Steel, pitch: 90f, shape: Dome),
             Box(0f, -0.58f, 0.18f, 0.05f, 0.26f, 0.04f, Steel, shape: BevelBox),
@@ -593,9 +601,9 @@ public static class ArmourMeshCatalog
         // narrow Steel shin rib as its only bright fitting, because a leg is the lowest, nearest part of the
         // figure and anything light and level there stacks with the boot into a bandage.
         Add("worn.legs.sorcerer-greaves", ArmourMount.Legs,
-            Box(0f, -0.28f, 0f, 0.33f, 0.38f, 0.33f, Cold, shape: Plate),
+            Box(0f, -0.28f, 0f, 0.33f, 0.38f, 0.33f, Cold, shape: Greave),
             Box(0f, -0.14f, 0f, 0.36f, 0.14f, 0.36f, Indigo, shape: Flare),
-            Box(0f, -0.60f, 0.02f, 0.30f, 0.34f, 0.30f, Indigo, shape: Plate),
+            Box(0f, -0.60f, 0.02f, 0.30f, 0.34f, 0.30f, Indigo, shape: Greave),
             Box(0f, -0.74f, 0.01f, 0.31f, 0.10f, 0.31f, Indigo, pitch: 180f, shape: Flare),
             Box(0f, -0.45f, 0.15f, 0.19f, 0.10f, 0.19f, Gilt, pitch: 90f, shape: Dome),
             Box(0f, -0.42f, 0.17f, 0.05f, 0.09f, 0.05f, Gilt, pitch: 90f, shape: Spike),
@@ -609,7 +617,7 @@ public static class ArmourMeshCatalog
         // so the lower leg ends in a trumpet rather than in a pipe.
 
         Add("worn.feet.leather-boots", ArmourMount.Feet,
-            Box(0f, -1.09f, 0.07f, 0.28f, 0.44f, 0.34f, Leather, shape: Plate),
+            Box(0f, -1.09f, 0.07f, 0.28f, 0.44f, 0.34f, Leather, shape: Greave),
             Box(0f, -0.90f, 0.02f, 0.34f, 0.14f, 0.34f, Ash, shape: Flare),
             Box(0f, -0.83f, 0.02f, 0.30f, 0.04f, 0.30f, Steel, shape: Ring),
             Box(0f, -1.26f, 0.22f, 0.24f, 0.10f, 0.18f, Leather, pitch: 90f, shape: Dome),
@@ -621,7 +629,7 @@ public static class ArmourMeshCatalog
             Box(-0.085f, -0.95f, -0.02f, 0.05f, 0.14f, 0.10f, Leather, roll: -20f, yaw: 180f, shape: Horn));
 
         Add("worn.feet.iron-boots", ArmourMount.Feet,
-            Box(0f, -1.09f, 0.07f, 0.30f, 0.44f, 0.34f, Iron, shape: Plate),
+            Box(0f, -1.09f, 0.07f, 0.30f, 0.44f, 0.34f, Iron, shape: Greave),
             Box(0f, -1.24f, 0.20f, 0.28f, 0.14f, 0.18f, Steel, pitch: 90f, shape: Dome),
             Box(0f, -0.90f, 0.03f, 0.36f, 0.16f, 0.36f, Iron, shape: Flare),
             Box(0f, -1.32f, 0.08f, 0.30f, 0.40f, 0.04f, Leather, pitch: 90f, shape: Panel),
@@ -634,7 +642,7 @@ public static class ArmourMeshCatalog
             Box(0f, -1.04f, 0.05f, 0.32f, 0.05f, 0.32f, Iron, shape: Ring));
 
         Add("worn.feet.plate-sabatons", ArmourMount.Feet,
-            Box(0f, -1.08f, 0.07f, 0.30f, 0.46f, 0.36f, Iron, shape: Plate),
+            Box(0f, -1.08f, 0.07f, 0.30f, 0.46f, 0.36f, Iron, shape: Greave),
             Box(0f, -1.31f, 0.12f, 0.30f, 0.05f, 0.46f, Iron, shape: BevelBox),
             Box(0f, -1.22f, 0.30f, 0.20f, 0.20f, 0.10f, Steel, pitch: 90f, shape: Taper),
             Box(0f, -0.98f, 0.03f, 0.34f, 0.06f, 0.36f, Iron, shape: BevelBox),
@@ -653,7 +661,7 @@ public static class ArmourMeshCatalog
         // what gives the boot a pointed court silhouette instead of a square one. One small Steel buckle is its
         // only light fitting, for the same reason the greave has only a rib.
         Add("worn.feet.sorcerer-sabatons", ArmourMount.Feet,
-            Box(0f, -1.08f, 0.06f, 0.30f, 0.46f, 0.34f, Indigo, shape: Plate),
+            Box(0f, -1.08f, 0.06f, 0.30f, 0.46f, 0.34f, Indigo, shape: Greave),
             Box(0f, -0.90f, 0.055f, 0.38f, 0.18f, 0.37f, Indigo, shape: Flare),
             Box(0f, -1.14f, 0.04f, 0.34f, 0.12f, 0.35f, Indigo, pitch: 180f, shape: Flare),
             Box(0f, -1.23f, 0.26f, 0.20f, 0.26f, 0.11f, Gilt, pitch: 90f, shape: Taper),
@@ -723,7 +731,7 @@ public static class ArmourMeshCatalog
         // back panel. The mantle is the BROAD one, so its falls are the shortest of the three: the character
         // is all at the shoulders and the hem stops at the hip rather than competing with them.
         Add("worn.back.grave-mantle", ArmourMount.Back,
-            Box(0f, 0.84f, -0.08f, 0.50f, 0.10f, 0.40f, Cold, shape: Plate),
+            Box(0f, 0.84f, -0.08f, 0.50f, 0.40f, 0.10f, Cold, pitch: -90f, shape: Pauldron),
             Box(0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: -18f, shape: Panel),
             Box(-0.28f, 0.80f, -0.08f, 0.24f, 0.10f, 0.40f, Cold, roll: 18f, shape: Panel),
             Box(0f, 0.66f, -0.10f, 0.66f, 0.10f, 0.36f, Ash, shape: Panel),
@@ -743,7 +751,7 @@ public static class ArmourMeshCatalog
         // the reason pass 4 recorded - a fall that reaches the shin projects across the leg at this camera and
         // the cloak stops being cloth on a figure.
         Add("worn.back.sorcerer-mantle", ArmourMount.Back,
-            Box(0f, 0.86f, -0.12f, 0.40f, 0.09f, 0.34f, Indigo, shape: Plate),
+            Box(0f, 0.86f, -0.12f, 0.40f, 0.34f, 0.09f, Indigo, pitch: -90f, shape: Pauldron),
             Box(0f, 0.88f, -0.16f, 0.22f, 0.04f, 0.07f, Steel, shape: BevelBox),
             Box(0f, 0.72f, -0.22f, 0.30f, 0.44f, 0.06f, Cold, pitch: 2f, shape: Panel),
             Box(0.135f, 0.30f, -0.28f, 0.24f, 0.46f, 0.06f, Cold, pitch: 5f, yaw: 8f, shape: Panel),
@@ -759,13 +767,13 @@ public static class ArmourMeshCatalog
         // are yawed apart (not merely rolled) so they face different ways and take visibly different light
         // instead of reading as one saturated tone. Bone is kept for the barbed tips only.
         Add("worn.back.gossamer-wings", ArmourMount.Back,
-            Box(0.345f, 0.705f, -0.30f, 0.26f, 0.42f, 0.02f, ArmourMaterial.Arcane, roll: -14f, yaw: 20f, shape: Panel),
-            Box(-0.345f, 0.705f, -0.30f, 0.26f, 0.42f, 0.02f, ArmourMaterial.Arcane, roll: 14f, yaw: -20f, shape: Panel),
+            Box(0.345f, 0.705f, -0.30f, 0.26f, 0.42f, 0.05f, ArmourMaterial.Arcane, roll: -14f, yaw: 20f, shape: Membrane),
+            Box(-0.345f, 0.705f, -0.30f, 0.26f, 0.42f, 0.05f, ArmourMaterial.Arcane, roll: 14f, yaw: -20f, shape: Membrane),
             Box(0.33f, 0.88f, -0.31f, 0.05f, 0.46f, 0.04f, Iron, roll: -70f, shape: Shaft),
             Box(-0.33f, 0.88f, -0.31f, 0.05f, 0.46f, 0.04f, Iron, roll: 70f, shape: Shaft),
             Box(0.30f, 0.62f, -0.30f, 0.04f, 0.40f, 0.04f, Iron, roll: -40f, shape: Shaft),
             Box(-0.30f, 0.62f, -0.30f, 0.04f, 0.40f, 0.04f, Iron, roll: 40f, shape: Shaft),
-            Box(0f, 0.62f, -0.28f, 0.20f, 0.20f, 0.06f, Cold, shape: Plate),
+            Box(0f, 0.62f, -0.28f, 0.20f, 0.20f, 0.06f, Cold, shape: Lame),
             Box(0.46f, 0.94f, -0.31f, 0.05f, 0.08f, 0.05f, Bone, roll: -20f, shape: Spike),
             Box(-0.46f, 0.94f, -0.31f, 0.05f, 0.08f, 0.05f, Bone, roll: 20f, shape: Spike));
 
