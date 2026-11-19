@@ -5,7 +5,8 @@ public enum SkillKind { MeleeArc, RangedBolt, SelfHeal }
 // A skill as authored in skills.json (M4). Keys are looked up case-insensitively. Cooldowns are server
 // ticks. Range is in metres; ArcDegrees is the full width of a MeleeArc cone. DamagePercent scales the
 // caster's normal attack damage (100 = exactly one primary attack); HealAmount is health restored by a
-// SelfHeal. Fields a kind does not use are 0 (MaxTargets 1).
+// SelfHeal. Fields a kind does not use are 0 (MaxTargets 1). A MeleeArc that omits maxTargets hits every
+// target in its arc: MaxTargets is then AllTargets.
 public sealed record SkillDefinition(
     string Key,
     string DisplayName,
@@ -18,7 +19,11 @@ public sealed record SkillDefinition(
     float ArcDegrees,
     int MaxTargets,
     int DamagePercent,
-    int HealAmount);
+    int HealAmount)
+{
+    // MaxTargets of a skill with no cap on how many targets it hits.
+    public const int AllTargets = int.MaxValue;
+}
 
 // The "use" object of a consumable item (M4). Restores are applied through the player's vitals, capped
 // at their maximum; the cooldown is shared by a cooldown group, in server ticks. The group is the optional

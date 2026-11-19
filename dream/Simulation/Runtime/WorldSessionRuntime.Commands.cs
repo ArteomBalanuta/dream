@@ -133,6 +133,7 @@ public sealed partial class WorldSessionRuntime
             ResolvePlayerEnemySeparation(_tickPlayerTargets);
             // Do not keep a detached (disposed) secondary referenced until the next tick.
             _tickPlayerTargets.Clear();
+            AdvancePendingMeleeSwings(CurrentServerTick);
             AdvanceRespawns();
             AdvanceMana();
             StepMultiplayerSystems(CurrentServerTick);

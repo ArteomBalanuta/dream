@@ -79,13 +79,13 @@ public sealed class XferMeleeArcCapTests
         }
     }
 
-    // Control: the skill's own target count still caps what a clear arc hits. The collect cap is headroom
-    // for blocked candidates, not a licence to hit more than maxTargets.
+    // Shipped Cleave has no target cap: every reachable enemy of a crowd is hit.
     [Fact]
-    public void AClearCrowd_StillHitsOnlyTheSkillsTargetCount()
+    public void AClearCrowd_IsHitEntirely_ByTheUncappedShippedCleave()
     {
         Fixture fixture = new();
         SkillDefinition cleave = Cleave();
+        Assert.Equal(SkillDefinition.AllTargets, cleave.MaxTargets);
         for (int i = 0; i < 20; i++)
         {
             fixture.AddEnemy(new Vector3(4.6f + (i * 0.09f), 1.5f, 5.0f));
@@ -93,7 +93,26 @@ public sealed class XferMeleeArcCapTests
 
         AbilityUsedResult used = fixture.Cast(tick: 10UL);
 
-        Assert.Equal(cleave.MaxTargets, used.TargetsHit);
+        Assert.Equal(20, used.TargetsHit);
+    }
+
+    // Control: a MeleeArc that authors maxTargets still caps what a clear arc hits. The collect cap is
+    // headroom for blocked candidates, not a licence to hit more than maxTargets.
+    [Fact]
+    public void AClearCrowd_StillHitsOnlyACappedSkillsTargetCount()
+    {
+        Fixture fixture = new();
+        SkillDefinition capped = Cleave() with { MaxTargets = 4 };
+        for (int i = 0; i < 20; i++)
+        {
+            fixture.AddEnemy(new Vector3(4.6f + (i * 0.09f), 1.5f, 5.0f));
+        }
+
+        PlayerActionMessage message = new(SessionA, 1, new SkillUseIntent(capped.Key, null));
+        PlayerCombatant caster = new(() => Vector3.Zero, fixture.Events, actorId: 1);
+        int hits = fixture.Resolver.ResolveMeleeArcSweep(message, capped, Eye, -Vector3.UnitZ, caster, 10UL, [], out _);
+
+        Assert.Equal(4, hits);
     }
 
     private sealed class Fixture

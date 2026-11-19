@@ -101,6 +101,7 @@ public sealed class PvpFlagTests
         Assert.Equal(0, Assert.IsType<CombatResolutionResult>(strike.Payload).DamageApplied);
         Assert.Equal(0, M4BRig.AssertUsed(await rig.UseAsync(rig.A, new SkillUseIntent("skill.bolt"))).TargetsHit);
         Assert.Equal(0, M4BRig.AssertUsed(await rig.UseAsync(rig.A, new SkillUseIntent("skill.cleave"))).TargetsHit);
+        await rig.StepAsync(MeleeArcSwing.WindupTicks + MeleeArcSwing.ActiveTicks);
 
         Assert.Equal(full, victim.Health.CurrentHealth);
     }
@@ -139,7 +140,10 @@ public sealed class PvpFlagTests
         Assert.Equal(1, M4BRig.AssertUsed(await rig.UseAsync(rig.A, new SkillUseIntent("skill.bolt"))).TargetsHit);
         int afterBolt = victim.Health.CurrentHealth;
         Assert.True(afterBolt < afterStrike);
-        Assert.Equal(1, M4BRig.AssertUsed(await rig.UseAsync(rig.A, new SkillUseIntent("skill.cleave"))).TargetsHit);
+        // The swing reports no hits at the cast; it lands in its active window.
+        Assert.Equal(0, M4BRig.AssertUsed(await rig.UseAsync(rig.A, new SkillUseIntent("skill.cleave"))).TargetsHit);
+        Assert.Equal(afterBolt, victim.Health.CurrentHealth);
+        await rig.StepAsync(MeleeArcSwing.WindupTicks + MeleeArcSwing.ActiveTicks);
         Assert.True(victim.Health.CurrentHealth < afterBolt);
 
         Assert.Equal(gold, rig.Gold(rig.A));

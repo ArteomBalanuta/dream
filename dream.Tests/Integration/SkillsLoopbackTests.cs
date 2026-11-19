@@ -4,6 +4,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Server;
 using Dream.Server.Hosting;
+using Dream.Simulation.Combat;
 using Dream.Simulation.Content;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -231,17 +232,40 @@ public sealed class SkillsLoopbackTests
 
         AbilityUsedResult used = M4BRig.AssertUsed(await rig.ActAsync(rig.A, new SkillUseIntent(cleave.Key)));
 
-        Assert.Equal(1, used.TargetsHit);
-        Assert.True(used.DamageApplied > 0);
-        Assert.Equal(wolfBefore - used.DamageApplied, wolf.Combatant.Health.CurrentHealth);
+        // Accepted at once, but the swing has not landed: no hits are reported and the wolf is untouched.
+        Assert.Equal(0, used.TargetsHit);
+        Assert.Equal(0, used.DamageApplied);
+        Assert.Equal(wolfBefore, wolf.Combatant.Health.CurrentHealth);
         Assert.InRange(caster.CurrentMana, maxMana - cleave.ManaCost, maxMana - cleave.ManaCost + 2);
         Assert.False(rig.Player(rig.A).Cooldowns.IsReady(cleave.Key, rig.Runtime.CurrentServerTick));
+
+        await rig.StepAsync(MeleeArcSwing.WindupTicks + MeleeArcSwing.ActiveTicks);
+        Assert.True(wolf.Combatant.Health.CurrentHealth < wolfBefore, "the swing never landed");
 
         int manaAfter = caster.CurrentMana;
         int wolfAfter = wolf.Combatant.Health.CurrentHealth;
         M4BRig.AssertRejected(await rig.ActAsync(rig.A, new SkillUseIntent(cleave.Key)), "cooldown");
         Assert.True(caster.CurrentMana >= manaAfter, "a refused cast spent mana");
         Assert.Equal(wolfAfter, wolf.Combatant.Health.CurrentHealth);
+    }
+
+    [Fact]
+    public async Task Cleave_WithFourMana_IsRefusedUnspent_AndWithFiveIsAcceptedAndSpendsFive()
+    {
+        using MigrationTestDatabase db = new();
+        await using M4BRig rig = await M4BRig.StartAsync(db);
+        PlayerCombatant caster = rig.Combatant(rig.A);
+        Assert.Equal(5, ContentCatalog.Shipped.Skills.Single(s => s.Key == "skill.cleave").ManaCost);
+
+        caster.SetMana(4);
+        M4BRig.AssertRejected(await rig.UseAsync(rig.A, new SkillUseIntent("skill.cleave")), "mana");
+        Assert.InRange(caster.CurrentMana, 4, 4 + 2);
+        Assert.True(rig.Player(rig.A).Cooldowns.IsReady("skill.cleave", rig.Runtime.CurrentServerTick));
+
+        caster.SetMana(5);
+        M4BRig.AssertUsed(await rig.UseAsync(rig.A, new SkillUseIntent("skill.cleave")));
+        Assert.InRange(caster.CurrentMana, 0, 2);
+        Assert.False(rig.Player(rig.A).Cooldowns.IsReady("skill.cleave", rig.Runtime.CurrentServerTick));
     }
 
     [Fact]

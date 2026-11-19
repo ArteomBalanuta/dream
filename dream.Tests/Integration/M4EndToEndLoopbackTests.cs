@@ -469,6 +469,13 @@ public sealed class M4EndToEndLoopbackTests
 
         Assert.True(cast.Result.Accepted, cast.Result.Rejection?.Reason);
         Assert.IsType<AbilityUsedResult>(cast.Result.Payload);
+
+        // The swing lands in its active window, not at the cast.
+        for (int i = 0; i < MeleeArcSwing.WindupTicks + MeleeArcSwing.ActiveTicks; i++)
+        {
+            await StepAsync(server, both, enemy);
+        }
+
         Assert.True(enemy.Combatant.Health.CurrentHealth < healthBefore, "cleave did no damage");
         ContentCatalog.Shipped.TryGetSkill("skill.cleave", out SkillDefinition cleave);
         Assert.True(target.Combatant.CurrentMana <= manaBefore - cleave.ManaCost + PlayerManaRules.RegenAmount(1));

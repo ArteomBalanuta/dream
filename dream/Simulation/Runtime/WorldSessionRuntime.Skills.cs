@@ -76,13 +76,29 @@ public sealed partial class WorldSessionRuntime
             SpendSpawnProtection(player);
         }
 
-        AuthoritativeActionResult result = _combatResolver.ProcessSkillUse(
-            message,
-            skill,
-            context.CombatRayOrigin,
-            direction,
-            context.Combatant,
-            tick);
+        // A MeleeArc swings: its hits land in the active window of MeleeArcSwing, not now. The cast is
+        // accepted and reported with no hits yet; AdvancePendingMeleeSwings resolves the swing.
+        AuthoritativeActionResult result;
+        if (skill.Kind == SkillKind.MeleeArc)
+        {
+            QueueMeleeSwing(message, skill, direction, tick, context.Combatant);
+            result = new AuthoritativeActionResult(
+                message.SessionId.Value,
+                message.ActionSequence,
+                tick,
+                Accepted: true,
+                Payload: new AbilityUsedResult(skill.Key, 0, 0, 0));
+        }
+        else
+        {
+            result = _combatResolver.ProcessSkillUse(
+                message,
+                skill,
+                context.CombatRayOrigin,
+                direction,
+                context.Combatant,
+                tick);
+        }
 
         // Told to every peer so they can draw it; the caster already draws its own from this result.
         // Queued strictly on acceptance, after every refusal above has returned.

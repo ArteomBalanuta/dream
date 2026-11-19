@@ -1187,7 +1187,7 @@ public sealed partial class ContentCatalog
             : 0f;
         int maxTargets = skill.TryGetValue("maxTargets", out JsonElement targetsElement)
             ? ReadInt(SkillsFileName, $"{path}.maxTargets", targetsElement, 1, MaxSkillTargets)
-            : 1;
+            : kind == SkillKind.MeleeArc ? SkillDefinition.AllTargets : 1;
         int damagePercent = skill.TryGetValue("damagePercent", out JsonElement percentElement)
             ? ReadInt(SkillsFileName, $"{path}.damagePercent", percentElement, 0, MaxDamagePercent)
             : 0;

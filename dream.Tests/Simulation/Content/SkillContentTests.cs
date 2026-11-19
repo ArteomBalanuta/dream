@@ -34,12 +34,34 @@ public sealed class SkillContentTests
         Assert.True(catalog.TryGetSkill("SKILL.CLEAVE", out SkillDefinition cleave));
         Assert.Equal(new SkillDefinition(
             "skill.cleave", "Cleave", "A wide swing that hits everything in front of you.", "skill.cleave",
-            SkillKind.MeleeArc, 8, 96, 3.5f, 120f, 4, 80, 0), cleave);
+            SkillKind.MeleeArc, 5, 96, 3.5f, 120f, SkillDefinition.AllTargets, 80, 0), cleave);
         Assert.True(catalog.TryGetSkill("skill.bolt", out SkillDefinition bolt));
         Assert.Equal((SkillKind.RangedBolt, 10, 64, 18f, 1, 120), (bolt.Kind, bolt.ManaCost, bolt.CooldownTicks, bolt.Range, bolt.MaxTargets, bolt.DamagePercent));
         Assert.True(catalog.TryGetSkill("skill.mend", out SkillDefinition mend));
         Assert.Equal((SkillKind.SelfHeal, 15, 320, 35), (mend.Kind, mend.ManaCost, mend.CooldownTicks, mend.HealAmount));
         Assert.False(catalog.TryGetSkill("skill.nope", out _));
+    }
+
+    [Fact]
+    public void AMeleeArcWithoutMaxTargets_HitsEveryTarget_OtherKindsDefaultToOne_AndAnExplicitValueIsStillValidated()
+    {
+        string noCap = Cleave.Replace(",\"maxTargets\":4", string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("maxTargets", noCap, StringComparison.Ordinal);
+        Assert.Equal(SkillDefinition.AllTargets, LoadWith(Skills(noCap)).Skills.Single().MaxTargets);
+        Assert.Equal(4, LoadWith(Skills(Cleave)).Skills.Single().MaxTargets);
+        Assert.Throws<ContentValidationException>(() => LoadWith(Skills(Cleave.Replace("\"maxTargets\":4", "\"maxTargets\":17", StringComparison.Ordinal))));
+        Assert.Throws<ContentValidationException>(() => LoadWith(Skills(Cleave.Replace("\"maxTargets\":4", "\"maxTargets\":0", StringComparison.Ordinal))));
+
+        string bolt = noCap.Replace("\"kind\":\"MeleeArc\"", "\"kind\":\"RangedBolt\"", StringComparison.Ordinal);
+        Assert.Equal(1, LoadWith(Skills(bolt)).Skills.Single().MaxTargets);
+    }
+
+    [Fact]
+    public void TheShippedCleave_CostsFiveMana_AndHasNoTargetCap()
+    {
+        Assert.True(ContentCatalog.Shipped.TryGetSkill("skill.cleave", out SkillDefinition cleave));
+        Assert.Equal(5, cleave.ManaCost);
+        Assert.Equal(SkillDefinition.AllTargets, cleave.MaxTargets);
     }
 
     [Fact]

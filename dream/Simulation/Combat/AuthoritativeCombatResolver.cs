@@ -623,7 +623,9 @@ internal sealed class AuthoritativeCombatResolver
                 ResolveBolt(message, skill, rayOrigin, rayDirection, combatant, tick, ref targetsHit, ref damageApplied);
                 break;
             case SkillKind.MeleeArc:
-                ResolveArc(message, skill, rayOrigin, rayDirection, combatant, tick, ref targetsHit, ref damageApplied);
+                // Instant for direct callers: one sweep with a fresh hit set. The runtime's timed swing calls
+                // ResolveMeleeArcSweep once per tick of the active window instead.
+                targetsHit = ResolveMeleeArcSweep(message, skill, rayOrigin, rayDirection, combatant, tick, [], out damageApplied);
                 break;
         }
 
@@ -683,6 +685,30 @@ internal sealed class AuthoritativeCombatResolver
         }
     }
 
+    // One sweep of a MeleeArc cone. hitSet holds the targets this cast has already struck (kind and actor
+    // id, so an enemy and a player that share an id stay distinct); they are skipped, and each new hit is
+    // added. A skill's MaxTargets caps the cast as a whole, so the set's size counts against it. Returns
+    // the new hits of this sweep.
+    public int ResolveMeleeArcSweep(
+        PlayerActionMessage message,
+        SkillDefinition skill,
+        Vector3 origin,
+        Vector3 direction,
+        PlayerCombatant combatant,
+        ulong tick,
+        HashSet<long> hitSet,
+        out int damageApplied)
+    {
+        ArgumentNullException.ThrowIfNull(skill);
+        ArgumentNullException.ThrowIfNull(hitSet);
+        int targetsHit = 0;
+        damageApplied = 0;
+        ResolveArc(message, skill, origin, direction, combatant, tick, hitSet, ref targetsHit, ref damageApplied);
+        return targetsHit;
+    }
+
+    private static long HitKey(CreatureKind kind, int actorId) => ((long)kind << 32) | (uint)actorId;
+
     private void ResolveArc(
         PlayerActionMessage message,
         SkillDefinition skill,
@@ -690,6 +716,7 @@ internal sealed class AuthoritativeCombatResolver
         Vector3 direction,
         PlayerCombatant combatant,
         ulong tick,
+        HashSet<long> hitSet,
         ref int targetsHit,
         ref int damageApplied)
     {
@@ -718,21 +745,24 @@ internal sealed class AuthoritativeCombatResolver
             minDot,
             Math.Max(skill.MaxTargets, _enemies.ActiveActors.Count),
             _arcScratch);
-        for (int i = 0; i < _arcScratch.Count && targetsHit < skill.MaxTargets; i++)
+        for (int i = 0; i < _arcScratch.Count && hitSet.Count < skill.MaxTargets; i++)
         {
             EnemyActor enemy = _arcScratch[i];
-            if (!enemy.IsActive || IsBlockedByWall(map, origin, enemy.Combatant.GetCombatAnchorWorldPosition()))
+            if (!enemy.IsActive
+                || hitSet.Contains(HitKey(enemy.Combatant.Actor.Kind, enemy.Combatant.Actor.Id))
+                || IsBlockedByWall(map, origin, enemy.Combatant.GetCombatAnchorWorldPosition()))
             {
                 continue;
             }
 
+            hitSet.Add(HitKey(enemy.Combatant.Actor.Kind, enemy.Combatant.Actor.Id));
             DamageReceipt receipt = ApplyEnemyHit(message, combatant, tick, enemy, skill.DamagePercent);
             targetsHit++;
             damageApplied += receipt.AppliedAmount;
         }
 
         _arcScratch.Clear();
-        if (!_host.TargetPolicy.PlayerVsPlayerEnabled || targetsHit >= skill.MaxTargets)
+        if (!_host.TargetPolicy.PlayerVsPlayerEnabled || hitSet.Count >= skill.MaxTargets)
         {
             return;
         }
@@ -745,6 +775,7 @@ internal sealed class AuthoritativeCombatResolver
         {
             CombatTargetCandidate candidate = _pvpCandidates[i];
             if (!candidate.Actor.Damageable.Health.IsAlive
+                || hitSet.Contains(HitKey(candidate.Actor.Kind, candidate.Actor.Id))
                 || !EnemyRegistry.TryMeasureArc(origin, horizontal, skill.Range, minDot, candidate.Anchor, out float distanceSquared)
                 || IsBlockedByWall(map, origin, candidate.Anchor))
             {
@@ -760,8 +791,10 @@ internal sealed class AuthoritativeCombatResolver
             }
         }
 
-        for (int i = 0; i < _pvpArcScratch.Count && targetsHit < skill.MaxTargets; i++)
+        for (int i = 0; i < _pvpArcScratch.Count && hitSet.Count < skill.MaxTargets; i++)
         {
+            CombatActorHandle victim = _pvpArcScratch[i].Candidate.Actor;
+            hitSet.Add(HitKey(victim.Kind, victim.Id));
             DamageReceipt receipt = ApplyPlayerHit(message, combatant, tick, _pvpArcScratch[i].Candidate.Actor, skill.DamagePercent);
             targetsHit++;
             damageApplied += receipt.AppliedAmount;

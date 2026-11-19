@@ -118,11 +118,11 @@ public class SkillResolutionTests
     }
 
     [Fact]
-    public void Cleave_HitsAtMostMaxTargets_NearestFirst()
+    public void Cleave_HitsEveryTargetInTheArc_NearestFirst()
     {
         Rig rig = new();
         SkillDefinition cleave = Skill("skill.cleave");
-        Assert.Equal(4, cleave.MaxTargets);
+        Assert.Equal(SkillDefinition.AllTargets, cleave.MaxTargets);
         for (int i = 0; i < 6; i++)
         {
             rig.AddEnemy(100 + i, new Vector3(0f, 0f, -(0.8f + (i * 0.4f))));
@@ -130,10 +130,49 @@ public class SkillResolutionTests
 
         AbilityUsedResult result = rig.Cast(cleave.Key);
 
-        Assert.Equal(4, result.TargetsHit);
-        Assert.Equal(4, rig.Damage.Count);
-        Assert.Equal([100, 101, 102, 103], rig.Damage.Select(d => d.Actor.Id).ToArray());
+        Assert.Equal(6, result.TargetsHit);
+        Assert.Equal([100, 101, 102, 103, 104, 105], rig.Damage.Select(d => d.Actor.Id).ToArray());
         Assert.Equal(rig.Damage.Sum(d => d.Amount), result.DamageApplied);
+    }
+
+    // The cap path stays for any MeleeArc that authors maxTargets; shipped content no longer does.
+    [Fact]
+    public void ACappedMeleeArc_HitsAtMostMaxTargets_NearestFirst()
+    {
+        Rig rig = new();
+        SkillDefinition capped = Skill("skill.cleave") with { MaxTargets = 4 };
+        for (int i = 0; i < 6; i++)
+        {
+            rig.AddEnemy(100 + i, new Vector3(0f, 0f, -(0.8f + (i * 0.4f))));
+        }
+
+        HashSet<long> hitSet = [];
+        PlayerActionMessage message = new(Caster, 1, new SkillUseIntent(capped.Key, null));
+        int hits = rig.Resolver.ResolveMeleeArcSweep(message, capped, rig.Eye, -Vector3.UnitZ, rig.Attacker, 10, hitSet, out int damage);
+
+        Assert.Equal(4, hits);
+        Assert.Equal([100, 101, 102, 103], rig.Damage.Select(d => d.Actor.Id).ToArray());
+        Assert.Equal(rig.Damage.Sum(d => d.Amount), damage);
+
+        // The cap is for the whole cast: a later sweep with the same set hits nobody more.
+        Assert.Equal(0, rig.Resolver.ResolveMeleeArcSweep(message, capped, rig.Eye, -Vector3.UnitZ, rig.Attacker, 11, hitSet, out _));
+        Assert.Equal(4, rig.Damage.Count);
+    }
+
+    [Fact]
+    public void ASweepWithASharedHitSet_HitsEachTargetOnce_AndStillReachesANewcomer()
+    {
+        Rig rig = new();
+        SkillDefinition cleave = Skill("skill.cleave");
+        rig.AddEnemy(100, new Vector3(0f, 0f, -1f));
+        HashSet<long> hitSet = [];
+        PlayerActionMessage message = new(Caster, 1, new SkillUseIntent(cleave.Key, null));
+
+        Assert.Equal(1, rig.Resolver.ResolveMeleeArcSweep(message, cleave, rig.Eye, -Vector3.UnitZ, rig.Attacker, 10, hitSet, out _));
+        Assert.Equal(0, rig.Resolver.ResolveMeleeArcSweep(message, cleave, rig.Eye, -Vector3.UnitZ, rig.Attacker, 11, hitSet, out _));
+        rig.AddEnemy(101, new Vector3(0f, 0f, -2f));
+        Assert.Equal(1, rig.Resolver.ResolveMeleeArcSweep(message, cleave, rig.Eye, -Vector3.UnitZ, rig.Attacker, 12, hitSet, out _));
+        Assert.Equal([100, 101], rig.Damage.Select(d => d.Actor.Id).ToArray());
     }
 
     [Fact]

@@ -543,7 +543,7 @@ Optional: a content directory without the file has no skills. It is read at star
 | `cooldownTicks` | 0..64000, at 64 ticks a second. Required. |
 | `range` | 0..64. `MeleeArc` and `RangedBolt` need it above 0. |
 | `arcDegrees` | 0..360. `MeleeArc` needs it above 0. |
-| `maxTargets` | 1..16. |
+| `maxTargets` | 1..16; omitted on a `MeleeArc` means every target in the arc. |
 | `damagePercent` | 0..1000, a percentage of the player's attack damage. `MeleeArc` and `RangedBolt` need it above 0. |
 | `healAmount` | 0..10000. `SelfHeal` needs it above 0. |
 

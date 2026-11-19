@@ -1,7 +1,7 @@
 {
   "version": 1,
   "skills": [
-    { "key": "skill.cleave", "displayName": "Cleave", "description": "A wide swing that hits everything in front of you.", "iconKey": "skill.cleave", "kind": "MeleeArc", "manaCost": 8, "cooldownTicks": 96, "range": 3.5, "arcDegrees": 120, "maxTargets": 4, "damagePercent": 80 },
+    { "key": "skill.cleave", "displayName": "Cleave", "description": "A wide swing that hits everything in front of you.", "iconKey": "skill.cleave", "kind": "MeleeArc", "manaCost": 5, "cooldownTicks": 96, "range": 3.5, "arcDegrees": 120, "damagePercent": 80 },
     { "key": "skill.bolt", "displayName": "Bolt", "description": "A bolt along your aim that stops at walls.", "iconKey": "skill.bolt", "kind": "RangedBolt", "manaCost": 10, "cooldownTicks": 64, "range": 18, "maxTargets": 1, "damagePercent": 120 },
     { "key": "skill.mend", "displayName": "Mend", "description": "Knit your own wounds.", "iconKey": "skill.mend", "kind": "SelfHeal", "manaCost": 15, "cooldownTicks": 320, "healAmount": 35 }
   ],
