@@ -188,6 +188,62 @@ The current player model contract uses:
 
 For this first pass, replicated facing rotates the body/root model matrix. A head-node override seam is already present in `AnimatedModel.RenderPrepared(...)`, but because the protocol currently carries one look direction rather than separate body and head aim, the default head override remains identity to avoid double-rotating the head. Future aim/pitch replication can apply its local transform through that same node override map.
 
+## Equipment Rendering Path
+
+Everything a player holds or wears is drawn at render time as a short list of **parts** riding the posed skeleton, not as an asset. `WeaponMeshCatalog` and `ArmourMeshCatalog` hold the parts; `HeldWeaponRenderer` and `WornArmourRenderer` draw them with the same shader and model matrix as the figure, right after it. Nothing is loaded from disk, nothing is replicated beyond the item's visual id, and a new item costs no asset and no GL object.
+
+A part is a `Center`, a `Size`, a `Material`, three rotations (`PitchDegrees`, then `RollDegrees`, then `YawDegrees`) and a **shape**.
+
+### Shapes
+
+`EquipmentShape` names twelve sculpted primitives and `EquipmentShapeLibrary` builds one unit mesh for each, once, lazily, into an `EquipmentMeshCache`:
+
+| Shape | What it is for |
+| --- | --- |
+| `Box` | the legacy axis-aligned cube; kept so an unconverted part is unchanged |
+| `BevelBox` | a chamfered cube: lames, bands, planks, buckles, anything truly rectilinear |
+| `Shaft` | a barrelled 10-sided column: hafts, poles, cage bars, grips |
+| `Taper` | a truncated cone: ferrules, collars, quillon tips, tapering lames |
+| `Blade` | a lenticular blade with a ridge, a ground edge and a clipped point |
+| `Plate` | a 230-degree shell with a wall and a lip: pauldrons, cuirasses, greaves, bracers |
+| `Dome` | a hemi-ogive on a skirt: helm skulls, bosses, pommels |
+| `Spike` | a four-sided pyramid with a slight entasis: studs, barbs, flanges |
+| `Ring` | a torus in the XZ plane: crown bands, rims, gorget collars |
+| `Crescent` | a swept arc with a ground convex edge: axe bits, glaive edges |
+| `Gem` | a faceted bipyramid with a table: arcane stones, ember coals |
+| `Panel` | a curved, waved sheet: cloaks, tabards, mantles, wings |
+
+Every shape is built inside the same unit frame the old cube used, with outward winding, unit normals (split at a facet, averaged around a curve) and UVs in `[0, 1]`, and is then **fitted to that frame**, so a part's authored `Size` is its real extent and a shape is a drop-in for a `Box`. Two axes are deliberately left unfitted and are pinned by `EquipmentShapeLibraryTests`: `Ring`'s Y is a torus's minor diameter (0.30 of `Size.Y`), and `Panel`'s Z is a sheet's thickness plus its bulge. The fit is not cosmetic: `Plate` shipped for one iteration as a 150-degree arc whose Z ran 0.09 to 0.50, which drew every piece of plate armour in the front 41% of its box, and no gate could see it because the gates measure a part's box.
+
+### Material response (GLSL 330)
+
+`enemyFragment.glsl` carries one block, after the brightness floor and before the emissive, gated on `uEquipSurface.y > 0.0`. That uniform is **zero for every other draw** — the equipment renderers reset it when their pass ends and `AnimatedModel.BindProgram` zeroes it on every program switch — so an enemy, an NPC, the player body and every prop compute exactly what they computed before the block existed. `FrameLightingContractTests` pins that as one contiguous match, so a second post-floor block cannot slip in beside it.
+
+When it is on, the block adds:
+
+- **surface grain**: three octaves of value noise on the world position at about 4, 11 and 26 cycles per metre, chosen against the *pixel* rate rather than the metre (one pixel spans about 0.02 m on a worn piece at the shipped zoom, so a finer octave averages to flat grey). It only ever takes light away, never adds it, so it cannot lift a piece past the albedo ceiling;
+- **specular**: a normalised Blinn-Phong lobe, (shininess + 8) / (8 pi), against the sun (multiplied by `dreamSunVisibility`, so armour does not glint in shadow), the moon, and every point light (`dreamPointSpecular` in `pointLights.glsl`, multiplied by `dreamFireVisibility` exactly as the diffuse loop is). The normalisation is what makes the material table mean anything: without it a rough material resolves to a shininess near 2 and gets a lobe nearly as wide as the diffuse term at full amplitude, which washes the whole figure to cream;
+- **a fresnel edge sheen**, weighted toward metal, which is what separates a helm's rim from the head behind it at 28 pixels.
+
+The strength of each lives in one named constant at the top of the file (`EquipSpecularStrength`, `EquipFresnelStrength`). A specular highlight is allowed to reach white — a highlight is supposed to be the brightest thing in frame — and this is the one deliberate exception to the no-clipping rule; the albedo bound itself is unchanged and still gated.
+
+`EquipmentSurface.For(material)` is the per-material table of `Metallic`, `Roughness`, `Grain` and `AccentMix`, uploaded as `uEquipSurface` whenever the material or the item changes during a pass.
+
+### Adding an item
+
+1. Add the item to `dream/config/content/items.json` with a `visualId` carrying its slot's prefix (`held.` for the hands, `worn.<slot>.` for the rest). `PlayerEquipmentVisuals` drops anything else on the wire.
+2. Add the model to `WeaponMeshCatalog` (`Hand` or `Shield`) or `ArmourMeshCatalog` (`Add`, with its `ArmourMount`), as 3 to 10 parts for a worn piece or up to 14 for a held one. Give every structural part a shape: a haft is a `Shaft`, a blade a `Blade`, a helm skull a `Dome`, a pauldron or cuirass a `Plate`, a cloak a `Panel`. `Box` is not used anywhere any more and the catalog tests enforce that.
+3. Watch the values, not just the shapes. The world pass has no tonemap and the gain reaches about 2.2 beside a brazier, so an albedo channel over roughly 0.42 clips to a flat patch. The direction is dark with bright accents: `DarkIron` is the structural material, `Steel` is an edge, a rim or a bevel, and `Bone` is an ornament. The camera is pitched 50 degrees down, so an up-facing surface takes the sky ambient before any light reaches it and is the brightest thing on the figure — keep the light materials off large up-facing domes, rings and plate tops.
+4. Add it to `EquipmentTintCatalog`'s tier table (below), run the catalog tests and `python tools/ui-assets/tests/check_char.py`, then look at it in the engine with `skills/capturing-dream-screenshots` and `DREAM_LOOPBACK_REMOTE_PLAYERS=1`, which cycles the whole catalog through the gallery figures every three seconds.
+
+### Tinting an item
+
+`EquipmentTintCatalog.Resolve(visualId)` gives an `EquipmentTint`: a `Primary` multiplier over the whole piece and an `Accent` multiplier that only the trim materials take, weighted by each material's `AccentMix` (`Gilt`, `Arcane`, `Ember` and the cloths take it fully; structural steel and iron take none, so a tier reads as a trim rather than a wash). It is applied on the CPU to the part's `baseColorFactor`, **not** in the shader, for one reason: the albedo ceiling has to be enforceable by a test, and `EquipmentTint.Apply` clamps every channel to `EquipmentTint.MaxAlbedoChannel`.
+
+To re-tier an item, change its row in the tier table; to add a dye family, add a tier and its colour pair. Both are one edit. `EquipmentTintCatalogTests` asserts that every id in both catalogs resolves, that an unknown id falls back to `Neutral`, and — the load-bearing one — that no catalog colour times its tint ever *reaches* the ceiling before the clamp, so a tint can never be silently flattened into a uniform patch.
+
+A per-item dye chosen by the player would plug in at the same call: `Resolve` would take the dye from the item snapshot instead of the tier table, and the only wire work would be carrying it in the visual id or beside it.
+
 ## Local Third-Person Rendering Path
 
 The local client can now switch between first-person and third-person presentation through `GameSettings.CameraViewMode`. The settings menu exposes a `Third Person View` checkbox, and gameplay input also supports `C` as a quick toggle.
