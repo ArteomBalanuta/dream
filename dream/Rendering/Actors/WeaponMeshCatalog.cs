@@ -412,44 +412,46 @@ public static class WeaponMeshCatalog
             Box(-0.075f, -0.02f, -0.075f, 0.025f, 0.22f, 0.025f, WeaponMaterial.Gilt, shape: Shaft),
             Box(0f, -0.13f, 0f, 0.18f, 0.04f, 0.18f, WeaponMaterial.Gilt, shape: Ring));
 
-        // Small round board: a domed face inside an iron hoop, a boss and a spiked finial. The planking
-        // behind it keeps its 45 degree roll - that turn is what makes the drawn outline round, not square.
+        // Small round board: a bowed wooden disc inside an iron hoop, stepping up through a darker
+        // inner dome to a steel boss and a spiked finial - three concentric rises, so the face reads as
+        // a curve with a run of light instead of a flat plate.
         Shield("held.shield.buckler",
-            Box(0f, 0f, 0f, 0.40f, 0.05f, 0.40f, WeaponMaterial.Wood, pitch: 90f, shape: Dome),
+            Box(0f, 0f, 0f, 0.40f, 0.07f, 0.40f, WeaponMaterial.Wood, pitch: 90f, shape: Dome),
             Box(0f, 0.01f, 0f, 0.44f, 0.05f, 0.44f, WeaponMaterial.DarkIron, pitch: 90f, shape: Ring),
-            Box(0f, 0f, -0.01f, 0.32f, 0.32f, 0.05f, WeaponMaterial.Wood, roll: 45f, shape: BevelBox),
-            Box(0f, 0f, 0.06f, 0.14f, 0.06f, 0.14f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
-            Box(0f, 0f, 0.11f, 0.05f, 0.06f, 0.05f, WeaponMaterial.Gilt, pitch: 90f, shape: Spike),
-            Box(0f, 0.16f, 0.02f, 0.04f, 0.04f, 0.04f, WeaponMaterial.DarkIron, pitch: 90f, shape: Spike),
-            Box(0f, -0.16f, 0.02f, 0.04f, 0.04f, 0.04f, WeaponMaterial.DarkIron, pitch: 90f, shape: Spike),
+            Box(0f, 0f, 0.03f, 0.22f, 0.06f, 0.22f, WeaponMaterial.DarkIron, pitch: 90f, shape: Dome),
+            Box(0f, 0f, 0.07f, 0.14f, 0.06f, 0.14f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
+            Box(0f, 0f, 0.12f, 0.05f, 0.06f, 0.05f, WeaponMaterial.Gilt, pitch: 90f, shape: Spike),
+            Box(0f, 0.16f, 0.03f, 0.04f, 0.04f, 0.04f, WeaponMaterial.DarkIron, pitch: 90f, shape: Spike),
+            Box(0f, -0.16f, 0.03f, 0.04f, 0.04f, 0.04f, WeaponMaterial.DarkIron, pitch: 90f, shape: Spike),
             Box(0f, 0f, -0.05f, 0.06f, 0.18f, 0.04f, WeaponMaterial.Leather, shape: BevelBox));
 
-        // A heater: three curved plate tiers narrowing to a tapered point, a steel band and a red cross.
+        // A heater: ONE Greave is the whole field - wide across the top, tapering to the point, bowed
+        // away from the bearer - with a curved steel top band, a red cross that follows the bow, a boss
+        // in its own iron ring, and the point tipped in a short taper.
         Shield("held.shield.kite",
-            Box(0f, 0.18f, 0f, 0.52f, 0.34f, 0.12f, WeaponMaterial.Wood, shape: Plate),
-            Box(0f, -0.08f, 0f, 0.40f, 0.26f, 0.12f, WeaponMaterial.Wood, shape: Plate),
-            Box(0f, -0.30f, 0f, 0.24f, 0.22f, 0.10f, WeaponMaterial.Wood, shape: Plate),
-            Box(0f, -0.48f, 0f, 0.10f, 0.14f, 0.08f, WeaponMaterial.Wood, pitch: 180f, shape: Taper),
-            Box(0f, 0.36f, 0.02f, 0.56f, 0.05f, 0.07f, WeaponMaterial.Steel, shape: BevelBox),
-            Box(0f, 0.04f, 0.045f, 0.07f, 0.80f, 0.03f, WeaponMaterial.Cloth, shape: Panel),
-            Box(0f, 0.16f, 0.045f, 0.42f, 0.07f, 0.03f, WeaponMaterial.Cloth, shape: Panel),
-            Box(0f, 0.10f, 0.08f, 0.12f, 0.06f, 0.12f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
-            Box(0f, 0.10f, 0.13f, 0.05f, 0.05f, 0.05f, WeaponMaterial.Gilt, pitch: 90f, shape: Spike),
-            Box(0f, 0.36f, 0.06f, 0.10f, 0.04f, 0.10f, WeaponMaterial.DarkIron, pitch: 90f, shape: Ring));
+            Box(0f, 0.02f, 0f, 0.56f, 0.66f, 0.14f, WeaponMaterial.Wood, shape: EquipmentShape.Greave),
+            Box(0f, -0.43f, 0.03f, 0.33f, 0.26f, 0.08f, WeaponMaterial.Wood, pitch: 180f, shape: Taper),
+            Box(0f, 0.34f, 0.05f, 0.58f, 0.05f, 0.14f, WeaponMaterial.Steel, shape: Plate),
+            Box(0f, 0.04f, 0.075f, 0.07f, 0.74f, 0.03f, WeaponMaterial.Cloth, shape: Panel),
+            Box(0f, 0.16f, 0.05f, 0.46f, 0.07f, 0.14f, WeaponMaterial.Cloth, shape: Plate),
+            Box(0f, 0.10f, 0.09f, 0.12f, 0.06f, 0.12f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
+            Box(0f, 0.10f, 0.14f, 0.05f, 0.05f, 0.05f, WeaponMaterial.Gilt, pitch: 90f, shape: Spike),
+            Box(0f, 0.10f, 0.085f, 0.20f, 0.04f, 0.20f, WeaponMaterial.DarkIron, pitch: 90f, shape: Ring));
 
-        // A door of planks in an iron frame. The planks and bands are the one honestly rectilinear model
-        // in the catalog, so they are BevelBoxes: chamfered, but still a carpenter's rectangle.
+        // A door: the planks are a bowed Cuirass shell, so the whole face curves away from the bearer,
+        // and the iron over it stays rectilinear - stiles and rails as bevelled bars, the top and bottom
+        // rails stepping in a narrower cap, the cross bands bowed to follow the planks.
         Shield("held.shield.tower",
-            Box(0f, 0f, 0f, 0.64f, 1.04f, 0.06f, WeaponMaterial.Wood, shape: BevelBox),
-            Box(0f, 0.53f, 0.02f, 0.70f, 0.06f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
-            Box(0f, -0.53f, 0.02f, 0.70f, 0.06f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
-            Box(0.33f, 0f, 0.02f, 0.06f, 1.10f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
-            Box(-0.33f, 0f, 0.02f, 0.06f, 1.10f, 0.09f, WeaponMaterial.DarkIron, shape: BevelBox),
-            Box(0f, 0.20f, 0.04f, 0.64f, 0.06f, 0.07f, WeaponMaterial.DarkIron, shape: BevelBox),
-            Box(0f, -0.20f, 0.04f, 0.64f, 0.06f, 0.07f, WeaponMaterial.DarkIron, shape: BevelBox),
-            Box(0f, 0f, 0.08f, 0.18f, 0.07f, 0.18f, WeaponMaterial.Steel, pitch: 90f, shape: Dome),
-            Box(0f, 0f, 0.13f, 0.06f, 0.06f, 0.06f, WeaponMaterial.Gilt, pitch: 90f, shape: Spike),
-            Box(0f, 0f, 0.06f, 0.26f, 0.04f, 0.26f, WeaponMaterial.DarkIron, pitch: 90f, shape: Ring));
+            Box(0f, 0f, 0f, 0.66f, 1.04f, 0.15f, WeaponMaterial.Wood, shape: Plate),
+            Box(0f, 0.53f, 0.04f, 0.72f, 0.06f, 0.14f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.475f, 0.06f, 0.52f, 0.05f, 0.14f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, -0.53f, 0.04f, 0.72f, 0.06f, 0.14f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, -0.475f, 0.06f, 0.52f, 0.05f, 0.14f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0.33f, 0f, 0.0f, 0.06f, 1.10f, 0.11f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(-0.33f, 0f, 0.0f, 0.06f, 1.10f, 0.11f, WeaponMaterial.DarkIron, shape: BevelBox),
+            Box(0f, 0.20f, 0.04f, 0.68f, 0.06f, 0.16f, WeaponMaterial.DarkIron, shape: Plate),
+            Box(0f, -0.20f, 0.04f, 0.68f, 0.06f, 0.16f, WeaponMaterial.DarkIron, shape: Plate),
+            Box(0f, 0f, 0.11f, 0.20f, 0.08f, 0.20f, WeaponMaterial.Steel, pitch: 90f, shape: Dome));
 
         // The older tool visuals.
         Hand("held.tool.blade", false,
