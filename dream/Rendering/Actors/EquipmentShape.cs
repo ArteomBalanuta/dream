@@ -80,4 +80,23 @@ public enum EquipmentShape
     // A thin, gently curved and wavy slab in the XY plane: cloaks, tabards, mantles, banners, wings.
     // The waves and the curve give cloth a run of light instead of one flat value.
     Panel,
+
+    // A CURVED, tapering horn: a cone swept along an arc, thick at -Y, sweeping toward +Z as it
+    // rises and ending in a point at +Y. Spike is the straight version of this and reads as a stud;
+    // Horn reads as a horn, a claw, a crest point or the upswept barb of a pauldron, because the
+    // curve puts the silhouette's weight somewhere other than straight up. Yaw and roll aim it.
+    //
+    // This is the single most characteristic element of the dark-fantasy armour the project is aimed
+    // at: the shoulders carry two or three of them, the helm carries a crest of them, and they are
+    // what makes an outline read as armour from a distance rather than as a mass.
+    Horn,
+
+    // A bell: narrow at -Y, widening along a CONCAVE profile to a flared lip at +Y, hollow, with a
+    // wall and a rolled rim. The end of a gauntlet cuff, the top of a boot, the skirt of a fauld,
+    // the brim of a helm, the trumpet of a tasset.
+    //
+    // It exists because a limb piece that is a straight tube reads as a pipe. Every reference the
+    // direction comes from flares at the ends of things - cuffs, boot tops, hems - and that flare is
+    // most of what separates armour from clothing in a silhouette 28 pixels wide.
+    Flare,
 }

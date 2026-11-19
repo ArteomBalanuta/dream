@@ -25,6 +25,8 @@ public class EquipmentShapeLibraryTests
         [EquipmentShape.Taper] = 60,
         [EquipmentShape.Blade] = 160,
         [EquipmentShape.Plate] = 260,
+        [EquipmentShape.Horn] = 120,
+        [EquipmentShape.Flare] = 200,
         [EquipmentShape.Dome] = 180,
         [EquipmentShape.Spike] = 40,
         [EquipmentShape.Ring] = 230,
@@ -178,6 +180,8 @@ public class EquipmentShapeLibraryTests
     [InlineData(EquipmentShape.Spike, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
     [InlineData(EquipmentShape.Gem, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
     [InlineData(EquipmentShape.Crescent, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Horn, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
+    [InlineData(EquipmentShape.Flare, -0.50f, -0.50f, -0.50f, 0.50f, 0.50f, 0.50f)]
     public void AShapeThatFillsItsBoxReallyFillsIt(
         EquipmentShape shape, float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
     {

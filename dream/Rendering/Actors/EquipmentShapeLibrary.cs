@@ -65,6 +65,12 @@ public static class EquipmentShapeLibrary
             case EquipmentShape.Panel:
                 AppendPanel(writer);
                 break;
+            case EquipmentShape.Horn:
+                AppendHorn(writer);
+                break;
+            case EquipmentShape.Flare:
+                AppendFlare(writer);
+                break;
             default:
                 AppendBox(writer);
                 break;
@@ -94,6 +100,12 @@ public static class EquipmentShapeLibrary
 
         return writer.ToMesh();
     }
+
+    // TEMPORARY stand-ins, replaced by the real geometry in the same wave: a Horn draws as a Spike
+    // and a Flare as a Taper, so a part that names one is never invisible while the two are built.
+    private static void AppendHorn(MeshWriter writer) => AppendSpike(writer);
+
+    private static void AppendFlare(MeshWriter writer) => AppendTaper(writer);
 
     // The legacy unit cube: six flat-shaded quads, outward normals, each face UV 0..1.
     private static void AppendBox(MeshWriter writer)
