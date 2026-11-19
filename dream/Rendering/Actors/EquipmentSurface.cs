@@ -88,6 +88,10 @@ public readonly record struct EquipmentSurface(
         ArmourMaterial.Gilt => new EquipmentSurface(1.0f, 0.34f, 0.35f, 1.0f, EquipmentPattern.PolishedPlate, 0.70f),
         ArmourMaterial.Arcane => new EquipmentSurface(0.35f, 0.22f, 0.15f, 1.0f, EquipmentPattern.Rune, 0.80f),
         ArmourMaterial.Ember => new EquipmentSurface(0.2f, 0.55f, 0.60f, 1.0f, EquipmentPattern.Rune, 0.70f),
+        // Lacquered plate: metallic and fairly smooth, so a torch finds it, with the plate pattern
+        // and a low grain because enamel does not pit the way bare iron does. Takes the accent tint
+        // fully, so a tier reads on the field as well as on the trim.
+        ArmourMaterial.Indigo => new EquipmentSurface(0.85f, 0.40f, 0.30f, 1.0f, EquipmentPattern.PolishedPlate, 0.80f),
         _ => None,
     };
 }

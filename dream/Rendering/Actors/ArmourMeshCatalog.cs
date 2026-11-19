@@ -15,7 +15,14 @@ public enum ArmourMaterial
     Bone,
     Gilt,
     Arcane,
-    Ember
+    Ember,
+
+    // Enamelled indigo plate: a deep violet-blue lacquer over steel, the field colour of the royal
+    // sorcerer regalia. It exists because the palette had no indigo that was not nearly black -
+    // ClothCold is (0.07, 0.078, 0.10) and reads black at this zoom - and the set the design calls
+    // for is indigo plate with gold trim, not black plate with gold trim. Metallic like steel, so
+    // it answers a torch, but dark enough to stay far under the albedo ceiling.
+    Indigo
 }
 
 // The body node a worn model rides on. Arms, Legs and Feet are drawn once per side, mirrored in X.
@@ -175,6 +182,10 @@ public static class ArmourMeshCatalog
         ArmourMaterial.Gilt => new Vector4(0.32f, 0.23f, 0.09f, 1f),
         ArmourMaterial.Arcane => new Vector4(0.10f, 0.06f, 0.17f, 1f),
         ArmourMaterial.Ember => new Vector4(0.24f, 0.10f, 0.04f, 1f),
+        // Max channel 0.185: at the 2.17 peak gain this draws about (0.21, 0.17, 0.40), a clear
+        // deep indigo that never clips. The reference art it comes from is far brighter; that art
+        // was authored for a tonemapped renderer and this one has none (see the header).
+        ArmourMaterial.Indigo => new Vector4(0.095f, 0.080f, 0.185f, 1f),
         _ => new Vector4(0.3f, 0.3f, 0.3f, 1f)
     };
 
