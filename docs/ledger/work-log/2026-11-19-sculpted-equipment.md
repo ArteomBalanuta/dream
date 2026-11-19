@@ -130,6 +130,83 @@ Every one of these came from looking at a real frame, not from a diff.
   where the rig alignment was checked: helm, armour, cloak and weapons stay on their nodes through
   the walk cycle and the attack swing, and the gear changes live every three seconds).
 
+## Pass 2: the reference silhouette, and surface detail
+
+The user supplied reference images and two further notes: the shapes were the end result wanted, and
+"notice the textures and the details - ours are still cube like". Both were acted on.
+
+### What the references actually say, as shapes
+
+Not colour: the references are brighter and more golden than this project, and only their FORM was
+taken. Six points, in the order they matter: the shoulders ARE the silhouette (pauldrons rise above
+the shoulder line, flare past the body and end in upswept points); the torso is an hourglass (wide
+shoulders, cinched waist, flared fauld); the helm carries a tall vertical crest; a centre panel hangs
+between the legs; cuffs, boot tops and hems FLARE rather than ending as tubes; and a bright trim line
+follows the border of every dark plate.
+
+### What landed
+
+- **Two more shapes.** `Horn` is a cone swept along an arc - the curved `Spike`, which reads as a stud
+  where a horn reads as armour - and `Flare` is a hollow bell lathed from a CLOSED profile, so the lip
+  is a real edge with a thickness rather than a cut-off cone. A new `AppendLathe` helper revolves a
+  closed 2D profile about Y, which is what made the rim possible.
+- **A surface for every material.** `uEquipDetail` and `EquipmentPattern` select one of seven
+  procedural patterns per material, layered on top of the existing grain. Features that must read
+  bright lower local roughness and glint instead of raising albedo.
+- **The detail moved into model space.** A new `localPos` varying in `cubeVertex.glsl`, scaled to
+  metres by the part's own size. The old grain was keyed on `fragPos` - a WORLD position - so it
+  crawled across the piece as the figure walked, which the original comment claimed it did not.
+- **Banded fit ceilings.** The torso ceiling opens to 0.62 half-width in the shoulder band (y >= 0.70)
+  and the head to 0.26 and a reach of 1.05 above the skull, while the waist stays at 0.416 and the
+  skull at 0.18. A control test proves the same box passes at the shoulder and fails at the waist.
+- **Every worn model re-authored twice**: once for the six silhouette points, once for cohesion.
+
+### What the engine found, again, that no test could
+
+1. **The detail was sub-pixel, twice.** A part is about 20 px across at the shipped zoom, so the first
+   two tunings of the pattern block - both done by amplitude - showed nothing at all. The fix was
+   FREQUENCY: border bands to 0.10 of the UV, rivets to 0.09, noise octaves under 20 cycles per metre.
+   This is the same mistake the grain made one level down, and the rule is now written in the shader.
+2. **The big pauldrons read as detached hollow horseshoes floating beside the figure.** A `Plate`'s
+   shell axis is +Y and its opening faces -Z, so used unrotated as a shoulder cap it presents its
+   hollow back to a camera pitched 50 degrees down. A documentation gap, not an art mistake: the
+   shape now says which way it opens, what it looks like when that is wrong, and that `Dome` or
+   `pitch: -90f` is how a limb gets capped.
+3. **Yaw flips roll.** Rotations apply pitch, then roll, then yaw, so every horn authored with
+   `yaw: 180f` had its roll inverted: fourteen pairs of backswept horns were leaning INWARD over the
+   figure. Found by the art pass when the real `Horn` geometry replaced the stub it had authored
+   against.
+4. **Boldness without cohesion reads worse than restraint.** With a crest, pauldrons, a fauld, a
+   lappet and a cloak all at full size the figure read as a pile of parts; the cloaks crossed in front
+   of the legs and filled the waist back in, undoing the hourglass. The fix was hierarchy - shoulders
+   first, crest second, everything else supporting - plus overlap: every big outer piece was biased
+   inward until it buries its inner edge in the body.
+
+### The contrast floor, twice more
+
+`WORN_SET_SPREAD_MIN` stayed at 0.29 through both passes, and twice the art went under it and was
+pushed back up rather than the floor being lowered. The reference pass measured 0.1988 on its first
+cut (the new big masses were blackened iron edge to edge) and reached 0.3167 with steel lames on the
+pauldron borders and a crown rim at the crest root. The cohesion pass dropped to 0.2997 when the
+cuirass pauldron was rotated, and reached 0.3177 by enlarging the steel pauldron edge. Both
+experiments are recorded in the constant's comment block.
+
+Two C# contracts in `ArmourMeshCatalogTests` were deliberately re-aimed in the cohesion pass and are
+worth a second opinion: the cloak panel depth bound moved from -0.30 to -0.34 (that is the "push the
+cloaks further back" instruction), and the cloak length contract became a BAND (hip to above the knee)
+instead of a floor, so a cloak can no longer satisfy it by hanging over the legs.
+
+### Verification of pass 2
+
+- Full suite on the final branch: **Passed 9846 / Failed 0 / Skipped 47 / Total 9893**. The
+  `Wave8CommandStallCorrectionLoopbackTests` timing flake from pass 1 passed this time too.
+- `enginelook.py` PASS, `check_char.py` 0 problems. `check_sources.py` still has its two pre-existing
+  master failures.
+- Captures in `artifacts/captures/`: `equip-detail`, `equip-detail2`, `equip-detail3` (the three
+  tunings of the surface pattern), `equip-ref-noon` and `equip-ref-midnight` (the reference
+  silhouette, where the detached pauldrons were found), `equip-coh-noon`, `equip-coh-midnight` and
+  `equip-coh-motion` (the final state, including walking and attacking, where the rig alignment holds).
+
 ## Open items
 
 - `check_sources.py` has been red on master since before this wave; two `read_text` calls in

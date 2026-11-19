@@ -205,13 +205,15 @@ A part is a `Center`, a `Size`, a `Material`, three rotations (`PitchDegrees`, t
 | `Shaft` | a barrelled 10-sided column: hafts, poles, cage bars, grips |
 | `Taper` | a truncated cone: ferrules, collars, quillon tips, tapering lames |
 | `Blade` | a lenticular blade with a ridge, a ground edge and a clipped point |
-| `Plate` | a 230-degree shell with a wall and a lip: pauldrons, cuirasses, greaves, bracers |
+| `Plate` | a 230-degree shell with a wall and a lip: cuirasses, greaves, bracers. **It opens toward -Z**, so unrotated it leaves the back bare (right for a cuirass) and shows its hollow when used to cap a limb; cap with `Dome`, or with `pitch: -90f` |
 | `Dome` | a hemi-ogive on a skirt: helm skulls, bosses, pommels |
 | `Spike` | a four-sided pyramid with a slight entasis: studs, barbs, flanges |
 | `Ring` | a torus in the XZ plane: crown bands, rims, gorget collars |
 | `Crescent` | a swept arc with a ground convex edge: axe bits, glaive edges |
 | `Gem` | a faceted bipyramid with a table: arcane stones, ember coals |
 | `Panel` | a curved, waved sheet: cloaks, tabards, mantles, wings |
+| `Horn` | a cone swept along an arc, ending in a point: pauldron barbs, helm crests, claws, hooked quillons. The curved `Spike`, and the element the reference silhouette leans on hardest |
+| `Flare` | a hollow bell with a concave profile and a rolled rim: gauntlet cuffs, boot tops, fauld skirts, helm brims |
 
 Every shape is built inside the same unit frame the old cube used, with outward winding, unit normals (split at a facet, averaged around a curve) and UVs in `[0, 1]`, and is then **fitted to that frame**, so a part's authored `Size` is its real extent and a shape is a drop-in for a `Box`. Two axes are deliberately left unfitted and are pinned by `EquipmentShapeLibraryTests`: `Ring`'s Y is a torus's minor diameter (0.30 of `Size.Y`), and `Panel`'s Z is a sheet's thickness plus its bulge. The fit is not cosmetic: `Plate` shipped for one iteration as a 150-degree arc whose Z ran 0.09 to 0.50, which drew every piece of plate armour in the front 41% of its box, and no gate could see it because the gates measure a part's box.
 
@@ -229,10 +231,26 @@ The strength of each lives in one named constant at the top of the file (`EquipS
 
 `EquipmentSurface.For(material)` is the per-material table of `Metallic`, `Roughness`, `Grain` and `AccentMix`, uploaded as `uEquipSurface` whenever the material or the item changes during a pass.
 
+### Surface detail
+
+A sculpted part is still one flat colour without a surface, so each material also draws its own procedural pattern, selected by `uEquipDetail` (x pattern id, y the part's size in metres, z depth, w a per-item seed): panel seams and rivets on polished plate, pitting and long scratches on blackened iron, fibre and a stitch line on leather, weave and folds on cloth, striations on bone, long grain and knots on wood, banded filigree on the glowing materials.
+
+Two things about it are worth knowing before changing it.
+
+**It lives in model space, not world space.** The detail is keyed on `localPos`, an unskinned model-space varying added to `cubeVertex.glsl`, scaled to metres by the part's own authored size. The first version was keyed on `fragPos`, which is a *world* position, so the grain crawled across the piece as the figure walked; and without the per-part scale a buckle and a breastplate get the same number of cycles rather than the same grain size.
+
+**Every frequency is chosen against the pixel, not against the metre.** A worn part is about 20 px across at the shipped isometric zoom, so a feature narrower than about a twelfth of a face is sub-pixel and MSAA averages it into a flat tone. Three separate tunings of this block were lost to that: the first two were tuned by amplitude and showed nothing at all. The rule, which is also stated in the shader: a border band is at least 0.10 of the UV, a rivet at least 0.09, and a noise octave under about 20 cycles per metre. Fewer, bigger, higher-contrast features.
+
+Anything that must read *bright* — a rivet head, a polished boss — does it by lowering local roughness so it answers with a specular glint, never by raising albedo. That is both what it physically is and what keeps the albedo ceiling intact.
+
+### Fit ceilings
+
+A worn piece must sit on the baked body, and each section comment in `ArmourMeshCatalog` states the region it covers and how far past the body it may stand. Those ceilings are **banded**, not flat: at the torso the shoulder band (`Center.Y` at or above 0.70) allows a half-width of 0.62 while everything below it stays at 0.416, and at the head the crest band (above 0.42) allows 0.26 and a reach to 1.05 while the skull stays at 0.18. The band structure is the point — it is what lets a pauldron and a crest read like the reference direction while keeping the waist tight, so the figure is an hourglass rather than a block. `ArmourMeshCatalogTests` enforces the bands and has a control test that the same oversized box passes at the shoulder and fails at the waist.
+
 ### Adding an item
 
 1. Add the item to `dream/config/content/items.json` with a `visualId` carrying its slot's prefix (`held.` for the hands, `worn.<slot>.` for the rest). `PlayerEquipmentVisuals` drops anything else on the wire.
-2. Add the model to `WeaponMeshCatalog` (`Hand` or `Shield`) or `ArmourMeshCatalog` (`Add`, with its `ArmourMount`), as 3 to 10 parts for a worn piece or up to 14 for a held one. Give every structural part a shape: a haft is a `Shaft`, a blade a `Blade`, a helm skull a `Dome`, a pauldron or cuirass a `Plate`, a cloak a `Panel`. `Box` is not used anywhere any more and the catalog tests enforce that.
+2. Add the model to `WeaponMeshCatalog` (`Hand` or `Shield`) or `ArmourMeshCatalog` (`Add`, with its `ArmourMount`), as up to 14 parts. Give every structural part a shape: a haft is a `Shaft`, a blade a `Blade`, a helm skull a `Dome`, a pauldron or cuirass a `Plate`, a cloak a `Panel`. `Box` is not used anywhere any more and the catalog tests enforce that.
 3. Watch the values, not just the shapes. The world pass has no tonemap and the gain reaches about 2.2 beside a brazier, so an albedo channel over roughly 0.42 clips to a flat patch. The direction is dark with bright accents: `DarkIron` is the structural material, `Steel` is an edge, a rim or a bevel, and `Bone` is an ornament. The camera is pitched 50 degrees down, so an up-facing surface takes the sky ambient before any light reaches it and is the brightest thing on the figure — keep the light materials off large up-facing domes, rings and plate tops.
 4. Add it to `EquipmentTintCatalog`'s tier table (below), run the catalog tests and `python tools/ui-assets/tests/check_char.py`, then look at it in the engine with `skills/capturing-dream-screenshots` and `DREAM_LOOPBACK_REMOTE_PLAYERS=1`, which cycles the whole catalog through the gallery figures every three seconds.
 
