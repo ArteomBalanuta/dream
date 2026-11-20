@@ -164,10 +164,15 @@ public static class WeaponMeshCatalog
         _ => new Vector4(0.3f, 0.3f, 0.3f, 1f)
     };
 
-    // Added after lighting: only the glowing materials are not zero.
+    // Added after the lighting gain, and nothing shades it: an emissive at or above the lit value pins that
+    // fraction of the surface flat. That cost is acceptable on the Gem parts (0.09-0.20 world units on a
+    // 1.2-unit figure, a handful of pixels at the isometric zoom, already emissive-dominated) and is not
+    // acceptable over a large area, which is why ArmourMeshCatalog's Membrane entry is a third of this.
+    // The Arcane peak sits above PostSettings.Knee so the overflow feeds the bloom and the gem glows.
+    // Only the glowing materials are not zero.
     public static Vector3 Emissive(WeaponMaterial material) => material switch
     {
-        WeaponMaterial.Arcane => new Vector3(0.30f, 0.12f, 0.55f),
+        WeaponMaterial.Arcane => new Vector3(0.55f, 0.22f, 1.00f),
         WeaponMaterial.Ember => new Vector3(0.9f, 0.4f, 0.08f),
         _ => Vector3.Zero
     };
