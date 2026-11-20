@@ -182,7 +182,36 @@ public sealed class ContentCatalogTests
         Assert.Equal(1.0f, wolf.PatrolSpeed);
         Assert.Equal(1.0f, wolf.AuthoredPatrolSpeed);
         Assert.Same(wolf, ContentCatalog.Shipped.Wolf);
-        Assert.Equal(["Wolf", "DireWolf", "AshenProwler", "GraveHowler"], ContentCatalog.Shipped.Enemies.Select(template => template.Key).ToArray());
+        Assert.Equal(["Wolf", "DireWolf", "AshenProwler", "GraveHowler", "RisenSkeleton"], ContentCatalog.Shipped.Enemies.Select(template => template.Key).ToArray());
+    }
+
+    // FindTemplate returns the first template of a role in file order, so a kind appended after the
+    // existing ones never changes which template the population step picks. Pin the order that makes it so.
+    [Fact]
+    public void TheRisenSkeleton_IsLast_SoTheFirstOfEachRoleIsStillTheWolfAndTheDireWolf()
+    {
+        IReadOnlyList<EnemyTemplate> enemies = ContentCatalog.Shipped.Enemies;
+        Assert.Equal("RisenSkeleton", enemies[^1].Key);
+        Assert.Equal("Wolf", enemies.First(template => template.SpawnRole == EnemySpawnRole.Primary).Key);
+        Assert.Equal("DireWolf", enemies.First(template => template.SpawnRole == EnemySpawnRole.NightExtra).Key);
+
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("RisenSkeleton", out EnemyTemplate? skeleton));
+        Assert.Equal("enemy.skeleton", skeleton.VisualKey);
+        Assert.Equal("risen-skeleton", skeleton.LootTable);
+        Assert.Equal(EnemySpawnRole.NightExtra, skeleton.SpawnRole);
+        Assert.Equal(3.6f, skeleton.MoveSpeed);
+        Assert.Equal(1.25f, skeleton.PatrolSpeed);
+        Assert.Equal(1.45f, skeleton.AttackIntervalSeconds);
+        Assert.Equal(1.5f, skeleton.AttackRange);
+        Assert.Equal(520, skeleton.MaxHealth);
+        // Tier 6 sits between the Ashen Prowler (5) and the Grave Howler (8).
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("AshenProwler", out EnemyTemplate? prowler));
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("GraveHowler", out EnemyTemplate? howler));
+        Assert.InRange(skeleton.MoveSpeed, prowler.MoveSpeed, howler.MoveSpeed);
+        Assert.InRange(skeleton.PatrolSpeed, prowler.PatrolSpeed, howler.PatrolSpeed);
+        Assert.InRange(skeleton.AttackIntervalSeconds!.Value, howler.AttackIntervalSeconds!.Value, prowler.AttackIntervalSeconds!.Value);
+        Assert.InRange(skeleton.AggroRange, prowler.AggroRange, howler.AggroRange);
+        Assert.InRange(skeleton.MaxHealth!.Value, prowler.MaxHealth!.Value, howler.MaxHealth!.Value);
     }
 
     [Fact]
@@ -320,7 +349,8 @@ public sealed class ContentCatalogTests
     [InlineData("3")]
     public void Load_AcceptsAnAttackRangeAboveTheSeparationOverTheStandOffFraction(string range)
     {
-        string enemies = ShippedEnemiesJson.Replace("\"attackRange\": 1.35", "\"attackRange\": " + range);
+        string enemies = ShippedEnemiesJson.Replace("\"attackRange\": 1.35", "\"attackRange\": " + range)
+            .Replace("\"attackRange\": 1.5,", "\"attackRange\": " + range + ",");
         ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson);
         Assert.All(catalog.Enemies, template => Assert.Equal(float.Parse(range, System.Globalization.CultureInfo.InvariantCulture), template.AttackRange));
     }
@@ -423,7 +453,7 @@ public sealed class ContentCatalogTests
         ContentCatalog catalog = ContentCatalog.Shipped;
 
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "loot.json")));
-        Assert.Equal(4, catalog.LootTables.Count);
+        Assert.Equal(5, catalog.LootTables.Count);
         Assert.True(catalog.TryGetLootTable("wolf", out LootTable wolf));
         Assert.Equal(1, wolf.Drops);
         Assert.Equal(75, wolf.NothingWeight);
@@ -452,7 +482,7 @@ public sealed class ContentCatalogTests
     [Fact]
     public void TheTwoArgumentLoad_HasNoLootTables()
     {
-        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-wolf|wolf|ashen-prowler|grave-howler)\"", string.Empty);
+        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-wolf|wolf|ashen-prowler|grave-howler|risen-skeleton)\"", string.Empty);
         Assert.DoesNotContain("lootTable", noLootReference);
 
         ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, noLootReference);
@@ -574,6 +604,8 @@ public sealed class ContentCatalogTests
         Assert.Equal(1.2f, prowler.PatrolSpeed);
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("GraveHowler", out EnemyTemplate? howler));
         Assert.Equal(1.3f, howler.PatrolSpeed);
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("RisenSkeleton", out EnemyTemplate? skeleton));
+        Assert.Equal(1.25f, skeleton.PatrolSpeed);
         // Every shipped enemy chases faster than it patrols: see the table in EnemyTemplate.cs.
         Assert.All(ContentCatalog.Shipped.Enemies, enemy => Assert.True(enemy.PatrolSpeed < enemy.MoveSpeed));
         Assert.Equal(3.8f, howler.MoveSpeed);

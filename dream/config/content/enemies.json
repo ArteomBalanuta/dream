@@ -74,6 +74,25 @@
       "goldMin": 40,
       "goldMax": 90,
       "maxHealth": 700
+    },
+    {
+      "key": "RisenSkeleton",
+      "displayName": "Risen Skeleton",
+      "level": 6,
+      "strength": 30,
+      "vitality": 48,
+      "attackSpeed": 0.689655,
+      "aggroRange": 13,
+      "attackRange": 1.5,
+      "moveSpeed": 3.6,
+      "patrolSpeed": 1.25,
+      "attackIntervalSeconds": 1.45,
+      "visualKey": "enemy.skeleton",
+      "spawnRole": "NightExtra",
+      "lootTable": "risen-skeleton",
+      "goldMin": 25,
+      "goldMax": 60,
+      "maxHealth": 520
     }
   ]
 }

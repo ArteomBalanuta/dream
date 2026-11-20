@@ -104,7 +104,7 @@ public sealed class SpawnCampTests
         float maxAggro = ContentCatalog.Shipped.Enemies.Max(template => template.AggroRange);
         List<SpawnCamp> frontier = [.. ContentCatalog.Shipped.Camps.Where(camp => camp.IsAbsolute)];
 
-        Assert.Equal(10, frontier.Count);
+        Assert.Equal(12, frontier.Count);
         Assert.All(frontier, camp => Assert.True(camp.ExistsOn(Size) && !camp.ExistsOn(Size - 1), camp.Key));
         Assert.All(ContentCatalog.Shipped.Camps.Where(camp => !camp.IsAbsolute), camp => Assert.False(camp.ExistsOn(Size), camp.Key));
         foreach (SpawnCamp camp in frontier)
@@ -575,8 +575,8 @@ public sealed class SpawnCampTests
             AssertPlacedSanely(runtime, $"size {size} hour {hour}");
             if (size >= 100)
             {
-                // The frontier camps (M9): 24 members by day, and the night hunt's 3 more in the dark.
-                Assert.Equal(hour == 12 ? 24 : 27, Active(runtime));
+                // The frontier camps (M9): 24 members by day; the night adds the hunt (3) and the two risen skeleton camps (6) in the dark.
+                Assert.Equal(hour == 12 ? 24 : 33, Active(runtime));
             }
             else if (size >= 56)
             {

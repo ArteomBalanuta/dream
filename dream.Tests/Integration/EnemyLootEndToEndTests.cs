@@ -46,7 +46,7 @@ public sealed class EnemyLootEndToEndTests(ITestOutputHelper output)
         return ContentCatalog.Load(
             File.ReadAllText(Path.Combine(dir, ContentCatalog.ItemsFileName)),
             File.ReadAllText(Path.Combine(dir, ContentCatalog.EnemiesFileName)),
-            "{\"version\":1,\"tables\":[{\"key\":\"wolf" + Table + ",{\"key\":\"dire-wolf" + Table + ",{\"key\":\"ashen-prowler" + Table + ",{\"key\":\"grave-howler" + Table + "]}");
+            "{\"version\":1,\"tables\":[{\"key\":\"wolf" + Table + ",{\"key\":\"dire-wolf" + Table + ",{\"key\":\"ashen-prowler" + Table + ",{\"key\":\"grave-howler" + Table + ",{\"key\":\"risen-skeleton" + Table + "]}");
     }
 
     private static async Task<WireLoopbackServer> StartAsync(MigrationTestDatabase db, string? world = null, ServerConnectionOptions? options = null)
