@@ -151,9 +151,18 @@ public partial class PlayScene
 
         _disposed = true;
 
+        // First: a clipped OS cursor must never outlive the play scene. Not a dispose step: letting the cursor go is
+        // best effort and must never change which teardown failures are reported (Game also releases it, guarded).
+        try
+        {
+            ReleaseCameraResources();
+        }
+        catch (Exception exception)
+        {
+            RenderFaultLog.Shared.Report("camera-release", exception);
+        }
+
         List<Exception>? failures = null;
-        // First: a clipped OS cursor must never outlive the play scene.
-        RunDisposeStep(ReleaseCameraResources, ref failures);
         RunDisposeStep(_render.Dispose, ref failures);
         RunDisposeStep(DisposeGpuTimer, ref failures);
         RunDisposeStep(DisposeSky, ref failures);

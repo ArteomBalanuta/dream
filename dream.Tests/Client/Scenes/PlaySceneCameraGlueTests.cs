@@ -152,7 +152,14 @@ public class PlaySceneCameraGlueTests
         Assert.Contains("minimised", apply);
         Assert.Contains("_cameraWindowFocused = focused;", Method(source, "public void SyncCameraWindowState("));
         Assert.Contains("_cameraConfiner?.Release();", Method(source, "public void ReleaseCameraResources("));
-        Assert.Contains("_cameraConfine.Reset();", Method(source, "public void ReleaseCameraResources("));
+        Assert.Contains("_cameraConfine?.Reset();", Method(source, "public void ReleaseCameraResources("));
+
+        // The scene's Dispose lets the cursor go first, outside the counted teardown steps.
+        string lifetime = PartialClassSource.Read(Path.Combine(RepoRoot(), "dream", "Client", "Scenes", "PlayScene.Lifetime.cs"));
+        string dispose = Method(lifetime, "public void Dispose(");
+        Assert.True(dispose.IndexOf("ReleaseCameraResources();", StringComparison.Ordinal)
+            < dispose.IndexOf("RunDisposeStep(_render.Dispose", StringComparison.Ordinal));
+        Assert.DoesNotContain("RunDisposeStep(ReleaseCameraResources", dispose);
     }
 
     [Fact]

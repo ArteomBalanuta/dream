@@ -247,7 +247,7 @@ public partial class PlayScene
     public void ReleaseCameraResources()
     {
         _cameraConfiner?.Release();
-        _cameraConfine.Reset();
+        _cameraConfine?.Reset();
     }
 
     private void EnsureCamera()
