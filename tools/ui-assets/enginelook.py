@@ -4,8 +4,13 @@
 
 Spec: docs/superpowers/specs/2026-11-04-models-and-rigs/00-acceptance.md, contract C4 and criterion M3.
 
+Post pass, stated so the sentence below is not misread: the engine's post resolve (postResolveFragment.glsl)
+preserves the MAX CHANNEL of every pixel exactly (bit for bit; see postTone.glsl dreamToneNeutraliseShadows), so the
+A3/M3 value measurements are unaffected by it. What it does change is chroma below 0.08, which it neutralises in
+post; that moves saturation and nothing this module measures.
+
 Why this exists. A3 (and M3) measure the SPREAD of the actor's rendered value, and the engine's actor path is
-strictly linear in albedo with no tonemap and no gamma encode, so what moves the spread is the distribution of
+strictly linear in albedo with no tonemap and no gamma encode (the byte IS this value, in the max channel), so what moves the spread is the distribution of
 N.L over the figure's surface, not the texels. That distribution is a property of the geometry, so it can be
 measured here, in the generator, without starting the game. This module is the measuring instrument; it is
 deliberately a pure function of its inputs.
