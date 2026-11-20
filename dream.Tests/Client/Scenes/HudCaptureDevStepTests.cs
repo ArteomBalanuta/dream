@@ -76,6 +76,35 @@ public sealed class HudCaptureDevStepTests
     }
 
     [Fact]
+    public void ReplyLog_FlattensANewlineInTheReplyToOneLine()
+    {
+        string log = HudCaptureDevStep.FormatReplyLog("/help", "a\nb\nc");
+
+        Assert.Equal("[hud-capture] dev /help -> a | b | c", log);
+        Assert.DoesNotContain('\n', log);
+    }
+
+    [Theory]
+    [InlineData("chat:open", 1)]
+    [InlineData("chat:close", 0)]
+    public void Chat_Parses(string step, int a)
+    {
+        Assert.True(HudCaptureStepSpec.TryParse(step, out HudCaptureStepSpec spec));
+        Assert.Equal(HudCaptureVerb.Chat, spec.Verb);
+        Assert.Equal(a, spec.A);
+    }
+
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("chat:")]
+    [InlineData("chat:toggle")]
+    [InlineData("chat:open:1")]
+    public void Chat_RejectsAnythingElse(string step)
+    {
+        Assert.False(HudCaptureStepSpec.TryParse(step, out _));
+    }
+
+    [Fact]
     public void LogFormats_AreExact()
     {
         Assert.Equal("[hud-capture] dev /dev heal -> [dev] ok", HudCaptureDevStep.FormatReplyLog("/dev heal", "[dev] ok"));
