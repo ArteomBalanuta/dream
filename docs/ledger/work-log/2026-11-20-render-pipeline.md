@@ -1,7 +1,7 @@
 # Work log: the render pipeline wave
 
 - Purpose: stronger gothic dark-fantasy visuals, clearer depth and material lighting, no regressions.
-- Status: on `feat/render-pipeline` from master `79ed90a3`. Not pushed, not merged.
+- Status: merged into master at `ac91799d`.
 - Plan: `docs/ledger/plans/2026-11-20-render-pipeline-plan.md`.
 - Method: the swarm workflow in `CLAUDE.md` with `parallel-agent-delivery` — the spine built and
   committed first, then three implementers on disjoint files, then integration and measurement here.
