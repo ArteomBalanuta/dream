@@ -61,9 +61,20 @@ public static class WindowModeController
             && (modifiers & KeyModifiers.Control) == 0;
     }
 
+    // Alt-tab out of exclusive fullscreen can leave WindowState reading Minimized/Normal while GLFW still holds the
+    // window on a monitor; either signal means the monitor must be released before resizing.
+    public static bool IsExclusive(bool glfwHasMonitor, WindowMode current) =>
+        glfwHasMonitor || current == WindowMode.Fullscreen;
+
+    // Iconifying exclusive fullscreen reports a 0x0 client; that is never a size to build targets for.
+    public static bool IsUsableSize(Vector2i size) => size.X > 0 && size.Y > 0;
+
+    // Resolution presets set the client size directly, which only makes sense for a windowed window.
+    public static bool CanSetResolution(WindowMode current) => current == WindowMode.Windowed;
+
     // Capture runs need the fixed client size, so they never change the window mode.
     public static bool ShouldApply(Func<string, string?> getEnvironmentVariable, string menuCaptureVariable) =>
-        string.IsNullOrWhiteSpace(getEnvironmentVariable("DREAM_HUD_CAPTURE"))
+        string.IsNullOrWhiteSpace(getEnvironmentVariable(Dream.Client.Menu.MenuLaunchPolicy.HudCaptureEnvironmentVariable))
         && string.IsNullOrWhiteSpace(getEnvironmentVariable(menuCaptureVariable));
 }
 

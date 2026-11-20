@@ -403,8 +403,11 @@ public class Game : GameWindow
 
         try
         {
-            // A maximised or minimised window has no meaningful normal placement to remember.
-            if (WindowState != WindowState.Normal && WindowState != WindowState.Fullscreen)
+            bool exclusive = WindowModeController.IsExclusive(
+                HasGlfwMonitor(), _windowModeState?.Current ?? WindowMode.Windowed);
+            // A maximised or minimised window has no meaningful normal placement to remember. Leaving exclusive
+            // fullscreen always goes through Normal, which releases the monitor.
+            if (exclusive || (WindowState != WindowState.Normal && WindowState != WindowState.Fullscreen))
             {
                 WindowState = WindowState.Normal;
             }
@@ -421,11 +424,6 @@ public class Game : GameWindow
             }
 
             WindowPlacement target = _windowModeState.Enter(mode, live, monitorPosition, monitorResolution);
-            if (WindowState == WindowState.Fullscreen && target.State != WindowState.Fullscreen)
-            {
-                WindowState = WindowState.Normal;
-            }
-
             WindowBorder = target.Border;
             if (target.State == WindowState.Fullscreen)
             {
@@ -445,9 +443,16 @@ public class Game : GameWindow
         }
     }
 
+    private unsafe bool HasGlfwMonitor() => GLFW.GetWindowMonitor(WindowPtr) != null;
+
     // F11 / Alt+Enter: flips between Windowed and the last fullscreen mode, applies it and saves the choice.
     private void ToggleWindowMode()
     {
+        if (!WindowModeController.ShouldApply(Environment.GetEnvironmentVariable, MenuCapture.EnvironmentVariable))
+        {
+            return;
+        }
+
         _windowModeState ??= new WindowModeState(new WindowPlacement(
             WindowBorder.Resizable, WindowState.Normal, ClientLocation, ClientSize));
         WindowMode next = WindowModeController.Toggle(_desktopClientConfig.WindowMode, _windowModeState.LastFullscreen);
@@ -601,7 +606,11 @@ public class Game : GameWindow
         // menu's text fields use, so there is one seam rather than two.
         _playScene.Clipboard = SystemClipboard;
         // The viewport and settings resolution follow a window that was resized while a menu was up.
-        _playScene.Resize(ClientSize);
+        if (WindowModeController.IsUsableSize(ClientSize))
+        {
+            _playScene.Resize(ClientSize);
+        }
+
         // One small real draw per program into offscreen targets, so the driver's draw-time shader specialisation
         // is paid here, behind the loading screen, and not on the first world frame. Never throws; DREAM_SHADER_WARMUP=0 skips.
         _playScene.WarmUpShaders();
@@ -688,7 +697,15 @@ public class Game : GameWindow
         if (_playScene != null)
         {
             SyncPlayCameraWindow(_playScene);
-            _playScene.Render(args, IsFocused, MouseState, size => ClientSize = size);
+            _playScene.Render(args, IsFocused, MouseState, size =>
+            {
+                // A resolution preset only applies to a windowed window.
+                if (WindowModeController.CanSetResolution(_windowModeState?.Current ?? WindowMode.Windowed)
+                    && WindowModeController.IsUsableSize(size))
+                {
+                    ClientSize = size;
+                }
+            });
             RenderLoadingOverlay();
             RenderPauseMenu();
         }
@@ -980,6 +997,11 @@ public class Game : GameWindow
     {
         base.OnResize(e);
         Vector2i size = new(e.Width, e.Height);
+        if (!WindowModeController.IsUsableSize(size))
+        {
+            return;
+        }
+
         _startupScene?.Resize(size);
         _playScene?.Resize(size);
     }

@@ -115,4 +115,28 @@ public class WindowModeControllerTests
     [InlineData(Keys.Enter, KeyModifiers.Control | KeyModifiers.Alt, false, false)]
     public void Toggle_key_detection(Keys key, KeyModifiers modifiers, bool isRepeat, bool expected) =>
         Assert.Equal(expected, WindowModeController.IsWindowModeToggle(key, modifiers, isRepeat));
+
+    [Theory]
+    [InlineData(false, WindowMode.Windowed, false)]
+    [InlineData(true, WindowMode.Windowed, true)]
+    [InlineData(false, WindowMode.Fullscreen, true)]
+    [InlineData(false, WindowMode.Borderless, false)]
+    public void Exclusive_follows_glfw_monitor_or_mode(bool hasMonitor, WindowMode mode, bool expected) =>
+        Assert.Equal(expected, WindowModeController.IsExclusive(hasMonitor, mode));
+
+    [Theory]
+    [InlineData(0, 0, false)]
+    [InlineData(0, 720, false)]
+    [InlineData(1280, 0, false)]
+    [InlineData(1280, 720, true)]
+    public void Zero_sized_client_is_not_usable(int x, int y, bool expected) =>
+        Assert.Equal(expected, WindowModeController.IsUsableSize(new Vector2i(x, y)));
+
+    [Fact]
+    public void Resolution_presets_only_apply_windowed()
+    {
+        Assert.True(WindowModeController.CanSetResolution(WindowMode.Windowed));
+        Assert.False(WindowModeController.CanSetResolution(WindowMode.Borderless));
+        Assert.False(WindowModeController.CanSetResolution(WindowMode.Fullscreen));
+    }
 }
