@@ -267,6 +267,44 @@ public sealed class EnemyVisualCatalogTests
         Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, clips.MoveReferenceSpeed), 4);
     }
 
+    // A reference speed is the speed the CLIP was authored for, never the enemy's simulated chase
+    // speed. Setting it from the template put two different references on one clip and halved the
+    // stride at the gait latch, so this pins the distinction rather than the number: the skeleton's
+    // reference must be its own measured walk, and must NOT be any speed enemies.json authors.
+    [Fact]
+    public void TheSkeletonsReferenceSpeed_IsItsAuthoredWalk_NotAnySimulatedSpeed()
+    {
+        EnemyClipSet clips = EnemyVisualCatalog.SkeletonClips;
+
+        Assert.Equal(SkeletonAssetDefinition.WalkAuthoredGroundSpeed, clips.MoveReferenceSpeed);
+        Assert.Equal(SkeletonAssetDefinition.WalkAuthoredGroundSpeed, clips.SprintReferenceSpeed);
+
+        Assert.True(ContentCatalog.Shipped.TryGetEnemy("RisenSkeleton", out EnemyTemplate? skeleton));
+        Assert.NotEqual(skeleton!.MoveSpeed, clips.MoveReferenceSpeed);
+        Assert.NotEqual(skeleton.PatrolSpeed, clips.MoveReferenceSpeed);
+        // Nor the wolf's inherited default, which is what it falls back to when nobody measures.
+        Assert.NotEqual(EnemyVisualCatalog.WolfClips.MoveReferenceSpeed, clips.MoveReferenceSpeed);
+
+        // What measuring BUYS, stated as something that can be false. `reference * rate == speed` is
+        // NOT it: ResolvePlaybackSpeed divides by the reference, so that product is an identity for
+        // any reference at all whenever the rate is unclamped. (It was written that way first and
+        // the liveness check below caught it.) The real property is that the patrol speed lands
+        // INSIDE the clamp band, because only an unclamped rate can put the feet on the ground:
+        // outside it the stride is pinned at a bound and skates no matter what the reference is.
+        float rate = clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, skeleton.PatrolSpeed);
+        Assert.True(
+            rate > EnemyClipSet.MinPlaybackSpeed && rate < EnemyClipSet.MaxPlaybackSpeed,
+            $"patrol {skeleton.PatrolSpeed} against reference {clips.MoveReferenceSpeed} resolves to " +
+            $"{rate}, which is clamped, so the stride cannot match the ground at a walk");
+
+        // Liveness: a reference far from the authored walk pushes that same rate onto a bound.
+        var tooSlow = new EnemyClipSet(
+            clips.Idle, clips.Move, clips.Attack, clips.Die, clips.Sprint,
+            MoveReferenceSpeed: 0.3f, SprintReferenceSpeed: 0.3f);
+        float clamped = tooSlow.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, skeleton.PatrolSpeed);
+        Assert.Equal(EnemyClipSet.MaxPlaybackSpeed, clamped, 4);
+    }
+
     // EnemyVisualState snaps the speed it forwards to min(speed, threshold - hysteresis) on the walk
     // gait and max(speed, threshold) on the sprint gait, so a chase that accelerates steps from
     // 1.6 to 2.0 at the latch. With Sprint == Move there is no clip rename to hide a rate drop there,

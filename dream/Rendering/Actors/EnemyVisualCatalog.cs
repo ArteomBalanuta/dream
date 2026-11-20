@@ -141,16 +141,17 @@ public static class EnemyVisualCatalog
     // speed a clip was authored for, not the enemy's simulated chase speed. Two different numbers on
     // one clip would make the playback rate drop when the gait latch flips at the start of a chase
     // (EnemyVisualState snaps the forwarded speed from 1.6 up to 2.0 there), halving the stride
-    // mid-cycle with no clip rename to hide it. The value is PatrolReferenceSpeed, inherited from the
-    // wolf rather than measured from the skeleton's walk stride.
+    // mid-cycle with no clip rename to hide it. The value is the skeleton's OWN walk, measured from
+    // the stride the forge authored, not the wolf's PatrolReferenceSpeed inherited by default: at the
+    // shipped patrol speed of 1.25 it puts the feet exactly on the ground, where 1.4 skated by 40%.
     public static readonly EnemyClipSet SkeletonClips = new(
         SkeletonAssetDefinition.IdleClip,
         SkeletonAssetDefinition.MoveClip,
         SkeletonAssetDefinition.AttackClip,
         SkeletonAssetDefinition.DieClip,
         SkeletonAssetDefinition.MoveClip,
-        PatrolReferenceSpeed,
-        PatrolReferenceSpeed,
+        SkeletonAssetDefinition.WalkAuthoredGroundSpeed,
+        SkeletonAssetDefinition.WalkAuthoredGroundSpeed,
         GaitThresholdSpeed,
         GaitHysteresisSpeed);
 
