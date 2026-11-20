@@ -38,6 +38,28 @@ public class SceneTeardownTests
     }
 
     [Fact]
+    public void PlayScene_Render_Rebinds_The_Window_Framebuffer_And_Viewport_On_Every_Exit_Path()
+    {
+        string source = ReadSource("dream", "Client", "Scenes", "PlayScene.Render.cs").Replace("\r\n", "\n");
+        string render = ExtractMethodBody(source, "public void Render(FrameEventArgs args");
+        string restore = ExtractMethodBody(source, "private void RestoreWindowIfSceneBound()");
+
+        // The guard is a using declaration taken before the bind, so it disposes on a throw as well as
+        // on the normal return; the flag keeps it a no-op once the resolve has returned to the window.
+        int guardAt = IndexOf(render, "using SceneFramebufferGuard sceneFramebufferGuard = new(this);");
+        int flagAt = IndexOf(render, "_sceneFramebufferBound = true;");
+        int bindAt = IndexOf(render, "sceneTarget.BindForScene();");
+        int resolveAt = IndexOf(render, "sceneTarget.Resolve();");
+        int clearedAt = IndexOf(render, "_sceneFramebufferBound = false;");
+        Assert.True(guardAt < flagAt && flagAt < bindAt && bindAt < resolveAt && resolveAt < clearedAt);
+
+        int unbindAt = IndexOf(restore, "GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);");
+        int viewportAt = IndexOf(restore, "GL.Viewport(0, 0, Math.Max(_settings.WindowWidth, 1), Math.Max(_settings.WindowHeight, 1));");
+        Assert.True(unbindAt < viewportAt);
+        Assert.Contains("scene.RestoreWindowIfSceneBound()", source);
+    }
+
+    [Fact]
     public void PlayScene_Dispose_Collects_Step_Failures_And_Rethrows_At_The_End()
     {
         string source = ReadSource("dream", "Client", "Scenes", "PlayScene.cs");

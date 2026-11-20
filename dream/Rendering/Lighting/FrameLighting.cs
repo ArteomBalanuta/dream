@@ -3,11 +3,11 @@ using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Lighting;
 
-// Mirrors the std140 FrameLighting uniform block in shaders/lighting.glsl member for member (16 x vec4 = 256 bytes).
+// Mirrors the std140 FrameLighting uniform block in shaders/lighting.glsl member for member (17 x vec4 = 272 bytes).
 [StructLayout(LayoutKind.Explicit, Size = SizeInBytes)]
 public struct FrameLighting
 {
-    public const int SizeInBytes = 256;
+    public const int SizeInBytes = 272;
     public const int BindingPoint = 0;
     public const string BlockName = "FrameLighting";
 
@@ -36,6 +36,11 @@ public struct FrameLighting
     [FieldOffset(208)] public Vector4 SunShadowMatrix2; // row 2
     [FieldOffset(224)] public Vector4 SunShadowMatrix3; // row 3
     [FieldOffset(240)] public Vector4 SunShadowParams;  // x 1 / resolution, y constant bias / depth range, z normal offset in world units, w strength (0 = off)
+
+    // Height fog, appended at the END so every earlier offset is unchanged. All zero = off: dreamFogTransmittance is then exactly the
+    // distance-only fog. x amount 0..0.9 (the density multiplier runs 1 - x .. 1 + 1.32 x about the focus plane), y falloff per world
+    // unit (1 / scale height), z reference height offset added to the fog origin's Y, w 0.
+    [FieldOffset(256)] public Vector4 FogHeight;
 
     // The four members as the C# Matrix4 they were packed from.
     public Matrix4 SunShadowMatrix
@@ -73,5 +78,6 @@ public struct FrameLighting
         SunShadowMatrix2 = Vector4.Zero,
         SunShadowMatrix3 = Vector4.Zero,
         SunShadowParams = Vector4.Zero,
+        FogHeight = Vector4.Zero,
     };
 }

@@ -10,6 +10,7 @@ using Dream.Configuration;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Core;
+using Dream.Rendering.Post;
 using Dream.Rendering.Effects;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Mist;
@@ -95,6 +96,7 @@ public partial class PlayScene
         }
 
         CreateBoundaryMist();
+        CreatePostChain();
         PreloadModels();
         if (_fxSimulation != null && _fxFlashes != null)
         {
@@ -153,6 +155,7 @@ public partial class PlayScene
         RunDisposeStep(DisposeGpuTimer, ref failures);
         RunDisposeStep(DisposeSky, ref failures);
         RunDisposeStep(DisposeBoundaryMist, ref failures);
+        RunDisposeStep(DisposePostChain, ref failures);
         RunDisposeStep(DisposeEffects, ref failures);
         RunDisposeStep(ModelAssets.DisposeAll, ref failures);
         RunDisposeStep(DisposeAudio, ref failures);
@@ -207,6 +210,37 @@ public partial class PlayScene
     {
         _boundaryMist?.Dispose();
         _boundaryMist = null;
+    }
+
+    // The post chain's three programs and its VAO. A failure here costs the highlight shoulder and
+    // the bloom, not the session: _postChain stays null, Render keeps drawing to the default
+    // framebuffer exactly as it did before the chain existed, and the fault is logged once. The
+    // scene target itself is created lazily in Render, because it has to match the window size.
+    private void CreatePostChain()
+    {
+        if (!PostSettings.ResolveEnabledFromEnvironment())
+        {
+            Console.WriteLine($"[post] disabled by {PostSettings.EnabledVariable}=0");
+            return;
+        }
+
+        try
+        {
+            _postChain = new PostChain(PostSettings.ResolveBloomStrengthFromEnvironment());
+        }
+        catch (Exception exception)
+        {
+            _postChain = null;
+            RenderFaultLog.Shared.Report("post-chain", exception);
+        }
+    }
+
+    private void DisposePostChain()
+    {
+        _postChain?.Dispose();
+        _postChain = null;
+        _sceneTarget?.Dispose();
+        _sceneTarget = null;
     }
 
     private static void RunDisposeStep(Action step, ref List<Exception>? failures)

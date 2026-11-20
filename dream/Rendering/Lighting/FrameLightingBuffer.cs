@@ -11,7 +11,7 @@ namespace Dream.Rendering.Lighting;
 // The GL uniform buffer behind the FrameLighting block (shaders/lighting.glsl). One buffer holds
 // two ranges of FrameLighting.SizeInBytes each:
 // - the world range at offset 0: world-space directions, CameraPosition.xyz = the camera;
-// - the view-model range at ViewModelOffset (FrameLighting.SizeInBytes, 256, rounded up to GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT):
+// - the view-model range at ViewModelOffset (FrameLighting.SizeInBytes, 272, rounded up to GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT):
 //   the view model draws with view = identity, so its fragPos is in eye space. Its sun and moon
 //   directions are rotated into eye space, its camera sits at the origin, and its ambient never
 //   drops below ViewModelAmbientFloor so the hands stay visible at night.
@@ -101,6 +101,8 @@ public sealed class FrameLightingBuffer : IDisposable
         // would read an arbitrary texel. Strength 0 makes dreamSunVisibility return 1 (no shadow), and the matrix goes too.
         viewModel.SunShadowMatrix = Matrix4.Zero;
         viewModel.SunShadowParams = Vector4.Zero;
+        // Height fog is a function of WORLD height above the fog origin; the view model's fragPos is in eye space.
+        viewModel.FogHeight = Vector4.Zero;
         viewModel.AmbientSky = FloorAmbient(lighting.AmbientSky);
         viewModel.AmbientGround = FloorAmbient(lighting.AmbientGround);
         return viewModel;

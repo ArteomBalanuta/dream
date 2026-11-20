@@ -56,6 +56,9 @@ uniform vec3 uEquipEye;
 // The boundary mist wall: the final colour is mixed toward smoke at and near the map edge.
 #include "boundaryMist.glsl"
 #include "clouds.glsl"
+// The shared specular / fresnel / rim response (surface.glsl): the lobe, the roughness-to-shininess map,
+// the reflectance and the rim, so the material maths lives in one place.
+#include "surface.glsl"
 
 // Actors read brighter than terrain by day: the frame ambient is scaled by FrameLighting.Params.z
 // (uLightingParams.z, set per time of day by SkyModel), the direct light down, and the result never
@@ -67,26 +70,11 @@ const float ActorDirectScale = 0.75;
 // ---- Equipment surface helpers. Nothing below is reachable unless uEquipSurface.y > 0.0. ----
 
 // How hard a highlight is allowed to be, in one place. The sum is added before dreamExpose, so a
-// real highlight is exposed with everything else and is allowed to clip to white - a highlight is
-// supposed to be the brightest thing in frame - while a grazing one stays a value, not a flare.
+// real highlight is exposed with everything else. The world target is HDR (postTone.glsl), so a
+// glint is no longer clipped to flat white: above the 0.80 knee it rolls off and its overflow
+// blooms, which is what a polished edge catching a torch should do - while a grazing highlight
+// stays under the knee and is unchanged.
 const float EquipSpecularStrength = 0.30;
-// The RIM: the sky caught on a plate edge, the cue that most separates armour from a flat render.
-// Its strength is per material and derived from the two numbers that already describe one:
-//   rimK = EquipRimBase + EquipRimMetal * metallic * (1 - roughness)
-// so polished steel (1.0, 0.26) rims at 0.06 + 0.70 * 0.74 = 0.58, blackened iron (0.85, 0.54) at
-// 0.34, leather (0.05, 0.66) at 0.07 and cloth (0, 0.96) at 0.06: plate outlines, hide barely does.
-// It is added in exposed units straight into `lit` (not through EquipSpecularStrength) and is then
-// capped to the headroom left under 1.0 / exposure, so it can brighten an edge but never clip one.
-// Worst case before the cap: sky (0.26 by day) * rim (<= 1) * 0.58 = 0.15 against a 0.92 lit peak
-// (albedo 0.42 * gain 2.2) - the cap, not the constant, is what guarantees no flat patch.
-const float EquipRimBase = 0.06;
-const float EquipRimMetal = 0.70;
-// A fresnel exponent of 3, not 5: pow 5 is under 1/10 of its peak until the last 25 percent of the
-// silhouette, a band under 1 px wide at 28 px across, which MSAA erases. Cubed it is about 3 px.
-const float EquipRimPower = 3.0;
-// Mirrors EquipmentSurface.MinRoughness. A narrower lobe than this aliases at the shipped zoom.
-const float EquipMinRoughness = 0.18;
-const float EquipMaxShininess = 512.0;
 
 // A cheap 3D value hash, in [0, 1). Deterministic per world position, so the grain is nailed to the
 // surface and does not crawl when the figure walks.
@@ -284,31 +272,6 @@ float dreamEquipPattern(vec3 lp, vec2 uv, int pattern, float depth, float seed, 
     return clamp(albedo, 0.58, 1.0);
 }
 
-// The NORMALISED Blinn-Phong lobe: (shininess + 8) / (8 pi) keeps the energy under the lobe constant
-// as it widens. Without it a rough material (leather at roughness 0.8 resolves to a shininess of
-// about 2.5) gets a lobe nearly as wide as the diffuse term AT FULL AMPLITUDE, which is not a
-// highlight at all - it is a second diffuse light, and it washed the whole figure to cream on the
-// first in-engine pass of this wave. Normalised, a rough surface gets a dim broad sheen and a
-// polished one a tight bright glint, which is the distinction the material table is for.
-const float EquipLobeNormalisation = 1.0 / (8.0 * 3.14159265);
-
-// One lobe against a directional light. toLight points TOWARD the light, viewDir TOWARD the eye;
-// the result still has to be multiplied by the light's colour and intensity.
-vec3 dreamEquipLobe(vec3 n, vec3 viewDir, vec3 toLight, float shininess, vec3 f0) {
-    float ndl = max(dot(n, toLight), 0.0);
-    if (ndl <= 0.0) { return vec3(0.0); }
-    // The world pass draws with culling off, so a back face arrives with the FRONT face's normal.
-    // Exactly antiparallel light and view would then make toLight + viewDir the zero vector and
-    // normalize() a NaN, which spreads to the whole fragment. Fall out before that.
-    // (`half` is a reserved word in GLSL, hence `hv`.)
-    vec3 hv = toLight + viewDir;
-    if (dot(hv, hv) < 1e-8) { return vec3(0.0); }
-    vec3 h = normalize(hv);
-    float spec = pow(max(dot(n, h), 0.0), shininess) * ((shininess + 8.0) * EquipLobeNormalisation);
-    vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - max(dot(h, viewDir), 0.0), 5.0);
-    return fresnel * (ndl * spec);
-}
-
 void main()
 {
     vec4 baseColor = material.baseColorFactor;
@@ -365,11 +328,8 @@ void main()
         rough = clamp(rough + patternRough, EquipMinRoughness, 1.0);
 
         vec3 v = normalize(uEquipEye - fragPos);
-        float a = max(rough, EquipMinRoughness);
-        float shin = clamp(2.0 / (a * a * a * a) - 2.0, 2.0, EquipMaxShininess);
-        // Metal reflects its own colour (the albedo is bound to 0.42 a channel, so it is scaled back
-        // up toward a real metal reflectance); a dielectric reflects a neutral 4%.
-        vec3 f0 = mix(vec3(0.04), baseColor.rgb * 2.2, metallic);
+        float shin = dreamSurfaceShininess(rough);
+        vec3 f0 = dreamSurfaceF0(baseColor.rgb, metallic);
 
         // Sun, moon and every point light. The dominant light's lobe (the one the map was rendered
         // from: the sun by day, the moon by night) takes the shadow map, so plate inside a doorway does
@@ -395,15 +355,16 @@ void main()
         // dot(n, v) is negative there and the term is zero instead of a full sheen. Metal rims in
         // its own colour. Capped to the headroom under the clip point: 1 / exposure is the largest
         // lit value that still shows as a value, and the rim may only fill what is left of it.
-        float ndv = dot(n, v);
-        float rim = ndv <= 0.0 ? 0.0 : pow(1.0 - ndv, EquipRimPower);
-        float rimK = EquipRimBase + (EquipRimMetal * metallic * (1.0 - rough));
-        vec3 rimLight = uAmbientSky.rgb * mix(vec3(1.0), baseColor.rgb * 2.4, metallic) * (rim * rimK);
+        vec3 rimLight = dreamSurfaceRim(n, v, baseColor.rgb, metallic, rough);
         float rimRoom = max((1.0 / max(uLightingParams.x, 0.01)) - max(lit.r, max(lit.g, lit.b)), 0.0);
         float rimPeak = max(rimLight.r, max(rimLight.g, rimLight.b));
         lit += rimLight * (rimPeak > rimRoom ? rimRoom / rimPeak : 1.0);
     }
 
+    // The emissive is added after exposure, before fog, into the HDR target. It is NOT clipped at 1.0
+    // any more: only the part of it above the 0.80 knee (postTone.glsl) blooms, so an emitter that
+    // should glow has to authorise a channel above 0.80 in its catalog Emissive(); one under it reads
+    // exactly as it did.
     vec3 emissive = material.emissiveFactor;
     if (material.hasEmissiveTexture) {
         emissive *= texture(material.emissiveTexture, texCoord0 + material.emissiveUvScroll * uTime).rgb;

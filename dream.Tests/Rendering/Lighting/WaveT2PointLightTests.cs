@@ -318,11 +318,11 @@ public class WaveT2PointLightTests
     [Fact]
     public void The_Falloff_Is_One_At_The_Light_And_Zero_At_The_Radius()
     {
-        Assert.Equal(1f, Falloff(0f, 8f));
+        Assert.Equal(1.27f, Falloff(0f, 8f)); // PointPeak: the core is brighter than 1, the HDR target holds it
         Assert.Equal(0f, Falloff(8f, 8f));
         Assert.Equal(0f, Falloff(12f, 8f));
         float half = Falloff(4f, 8f);
-        Assert.Equal(0.5625f / 1.375f, half, 6); // (1 - 0.25)^2 / (1 + 1.5 * 0.25)
+        Assert.Equal(1.27f * 0.9375f * 0.9375f / 3f, half, 6); // 1.27 * (1 - 0.25^2)^2 / (1 + 8 * 0.25)
     }
 
     [Fact]
@@ -333,9 +333,9 @@ public class WaveT2PointLightTests
         list.PositionRadius[0] = new Vector4(0f, 2f, 0f, 8f);
         list.Color[0] = new Vector4(1.6f, 0.99f, 0.51f, 0f);
 
-        // Up-facing floor right under the light: full lambert, falloff (1 - 4/64)^2 / (1 + 1.5 * 4/64).
+        // Up-facing floor right under the light: full lambert, falloff 1.27 * (1 - (4/64)^2)^2 / (1 + 8 * 4/64).
         Vector3 under = PointLights(in list, Vector3.UnitY, Vector3.Zero);
-        float f = MathF.Pow(1f - 4f / 64f, 2f) / (1f + 1.5f * 4f / 64f);
+        float f = 1.27f * MathF.Pow(1f - (4f / 64f * 4f / 64f), 2f) / (1f + 8f * 4f / 64f);
         AssertClose(list.Color[0].Xyz * f, under, 1e-5f);
 
         // A face turned away still gets the 0.25 wrap term.
@@ -454,8 +454,8 @@ public class WaveT2PointLightTests
     private static float Falloff(float distance, float radius)
     {
         float s = distance * distance / (radius * radius);
-        float f = Math.Clamp(1f - s, 0f, 1f);
-        return f * f / (1f + 1.5f * s);
+        float w = Math.Clamp(1f - (s * s), 0f, 1f);
+        return 1.27f * w * w / (1f + (8f * s));
     }
 
     // CPU mirror of dreamPointLights in pointLights.glsl.
@@ -468,8 +468,8 @@ public class WaveT2PointLightTests
             float r = list.PositionRadius[i].W;
             float d2 = Vector3.Dot(toLight, toLight);
             float s = d2 / (r * r);
-            float f = Math.Clamp(1f - s, 0f, 1f);
-            f = f * f / (1f + 1.5f * s);
+            float w = Math.Clamp(1f - (s * s), 0f, 1f);
+            float f = 1.27f * w * w / (1f + (8f * s));
             float lambert = MathF.Max(Vector3.Dot(n, toLight / MathF.Sqrt(MathF.Max(d2, 1e-4f))), 0f);
             sum += list.Color[i].Xyz * (f * (0.25f + 0.75f * lambert));
         }

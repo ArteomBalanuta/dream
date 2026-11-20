@@ -37,6 +37,14 @@ public partial class Render
 
     private BoundaryMistInput _boundaryMist;
 
+    // Height fog defaults, applied at upload when the sky left FogHeight at zero (SkyModel does not fill it). DREAM_FOG_HEIGHT=0 turns it
+    // off (exactly the distance-only fog). Amount 0.5: the density multiplier is 1.0 level with the focus, 0.89 on a 3 unit rise,
+    // 0.96 on a 1 unit rise and 1.66 at 9 units below (the clamp, 1.5 scale heights). Scale height 6 world units, so it is a
+    // terrain-scale effect: a hill reads clearer than the hollow beside it, and nothing changes across a figure's own height.
+    public const float FogHeightAmount = 0.5f;
+    public const float FogHeightScale = 6f;
+    private static readonly bool FogHeightEnabled = Environment.GetEnvironmentVariable("DREAM_FOG_HEIGHT") != "0";
+
     // Lighting the next world pass uploads. The scene sets it each frame before DrawWorld.
     public void SetFrameLighting(in FrameLighting lighting) => _frameLighting = lighting;
 
@@ -51,7 +59,13 @@ public partial class Render
         ArgumentNullException.ThrowIfNull(camera);
         Vector3 cameraPosition = FogOrigin ?? camera.Position;
         Matrix4 view = camera.GetViewMatrix();
-        _frameLightingBuffer?.Upload(in _frameLighting, cameraPosition, in view, FxClockSeconds());
+        FrameLighting lighting = _frameLighting;
+        if (FogHeightEnabled && lighting.FogHeight == Vector4.Zero)
+        {
+            lighting.FogHeight = new Vector4(FogHeightAmount, 1f / FogHeightScale, 0f, 0f);
+        }
+
+        _frameLightingBuffer?.Upload(in lighting, cameraPosition, in view, FxClockSeconds());
         SelectPointLights(cameraPosition, in view);
         _lightListBuffer?.Upload(in _selectedLights, in view);
         _boundaryMistBuffer?.Upload(BoundaryMist, camera.Position);

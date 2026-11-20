@@ -129,7 +129,13 @@ public class FxPassContractTests
         string fragment = StripComments(ReadShader(FxRenderer.FragmentShaderFile));
 
         Assert.Single(Regex.Matches(fragment, @"^\s*#include ""lighting\.glsl""\s*$", RegexOptions.Multiline));
-        Assert.Matches(@"FragColor = texture\(uAtlas, vUv\) \* vColor \* dreamFogTransmittance\(vWorldPos\) \* \(1\.0 - dreamBoundaryOpacity\(vWorldPos\)\);", fragment);
+        Assert.Matches(@"vec4 emitted = texture\(uAtlas, vUv\) \* vColor;\s*emitted\.rgb \*= dreamFxHdrGain\(emitted\);\s*FragColor = emitted \* dreamFogTransmittance\(vWorldPos\) \* \(1\.0 - dreamBoundaryOpacity\(vWorldPos\)\);", fragment);
+        // HDR intensity: a scalar gain on the light that is exactly 1.0 below the floor (dim particles
+        // are untouched), reaches the peak only on the bright core, and never scales alpha.
+        Assert.Contains("const float FxHdrPeak = 2.5;", fragment);
+        Assert.Contains("const float FxHdrFloor = 0.55;", fragment);
+        Assert.Contains("smoothstep(FxHdrFloor, FxHdrFull, m) * (1.0 - clamp(premultiplied.a, 0.0, 1.0))", fragment);
+        Assert.DoesNotContain("emitted.a *=", fragment);
         Assert.DoesNotContain("discard", fragment);
         Assert.DoesNotContain("dreamExpose", fragment);
         Assert.DoesNotContain("dreamApplyFog", fragment);
