@@ -40,6 +40,7 @@ already have an answer here. Each `skills/<name>/SKILL.md` is the procedure; rea
 | Check that shaders compile | `ShaderCompileTests` (hidden GL context; `DREAM_GL_TESTS=0` skips) | `docs/configuration.md` (Test And Load Harness Variables) |
 | Browse all generated art and recent captures | `python -I tools/dev/gallery.py` -> `artifacts/gallery/index.html` | `tools/dev/README.md` |
 | Report worktrees and their build output | `tools/dev/worktrees.ps1` (read-only without flags) | `tools/dev/README.md` |
+| Run a common workflow by name (build, run, test tier, gates, captures, DB reset/backup, clean) | `just` (lists recipes); guarded helpers `tools/dev/db.ps1`, `clean.ps1`, `pygates.ps1`, `doctor.ps1` | `justfile`, `tools/dev/README.md` |
 | Write a new repo skill | conventions and validation | `creating-dream-skills` skill |
 
 Deliberately not built yet: live hot reload of content, a scripted bot client, `/dev time`, `/dev god`.

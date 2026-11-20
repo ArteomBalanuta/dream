@@ -36,3 +36,26 @@ python -I tools\dev\gallery.py --selftest
 ```
 
 Standard library only. One page with relative links, grouped: `tools/ui-assets/previews`, `dream/ui/**/*.png`, `tools/ui-assets/iso` and `terrain`, and the newest 40 `artifacts/captures/*/*.png`, each with a thumbnail, its path and its modification time. Open the page from `artifacts/gallery/`, since the links are relative.
+
+## justfile and its helpers
+
+`just` at the repo root lists every workflow recipe (needs just >= 1.42; `winget install --id Casey.Just -e`).
+Recipes only name the tools in this folder and the documented repo tools; `DREAM_CONFIG=Release` switches the
+configuration. Script exit codes pass through (`test.ps1` 3 = refused beside a testhost, 124 = timeout).
+
+- `doctor.ps1`: read-only check of the SDK against `global.json`, just, `.venv`, running `dream.exe`/`testhost`, free disk.
+- `guard.ps1`: shared checks (processes using a path, held lease files, path strictly inside the repo); with
+  `-BinUnlocked` it refuses a build while a `dream.exe` runs from `dream\bin\<config>`. Never kills anything.
+- `db.ps1 -Action path|backup|restore|reset`: the world database is `DREAM_DATA_DIR\player-profiles.db` when that is
+  set, else `dream\bin\<config>\net10.0\config\player-profiles.db`. `backup`/`restore` call `dream --db`. `reset` refuses
+  while any `.world-N.lock` or the maintenance lock is held (exit 7) or for a database outside the repo, always copies
+  the database (+ `-wal`/`-shm`, hash-checked) to `artifacts\db-backups\<stamp>-reset\` first, and asks for a typed
+  `reset` unless `-Yes`; `-DryRun` prints the plan.
+- `clean.ps1 -Target build|bins|artifacts|all [-DryRun] [-Yes]`: `build` deletes bin/obj of both projects but keeps
+  `player-profiles.db*` and `desktop-client.txt`; `bins` deletes only the side build outputs under `artifacts\`
+  (`*-bin*`, `obj-*`, ...); `artifacts` deletes everything there except `db-backups\` and `test-durations.csv`. Refuses
+  while a dream/testhost/dotnet/MSBuild/python process names a target; prints sizes and asks.
+- `pygates.ps1 -Group quick|all|golden|gallery|audio|ui`: runs the read-only Python gates as parallel processes, logs to
+  `artifacts\py-gates\`. `quick` (golden, gallery, audio) takes about 2 minutes; `all` adds every
+  `tools\ui-assets\tests\check_*.py` but `check_look.py` and took 19 minutes wall clock (98 minutes serial) on
+  2026-11-20, because several checks regenerate whole atlases with their own process pools.
