@@ -845,7 +845,7 @@ public partial class PlayScene
             : PlayerController.Project(_tickCameraAxes, front);
         Console.WriteLine(
             $"[hud-capture] status {tag}: pos {at.X:0.00},{at.Y:0.00},{at.Z:0.00} facing {front.X:0.00},{front.Z:0.00} (yaw {MathHelper.RadiansToDegrees(MathF.Atan2(front.Z, front.X)):0}) " +
-            $"axes fwd {forwardAxis:0.00} strafe {strafeAxis:0.00} keys {_captureKeys} pointer {_captureLast.Position.X:0},{_captureLast.Position.Y:0} left {_captureLast.LeftDown} aimOwnsFacing {_cursorAim.OwnsFacing}");
+            $"axes fwd {forwardAxis:0.00} strafe {strafeAxis:0.00} keys {_captureKeys} pointer {_captureLast.Position.X:0},{_captureLast.Position.Y:0} left {_captureLast.LeftDown} aimOwnsFacing {_cursorAim.OwnsFacing} aimedAtTarget {_cursorAim.AimedAtTarget}");
         Console.WriteLine(
             $"[hud-capture] status {tag}: goal {_clickMove.Goal} cell {_clickMove.GoalCell.X},{_clickMove.GoalCell.Level},{_clickMove.GoalCell.Z} " +
             $"goalCellSolid {_runtime.Map.TryGetGeometryCellAtCell(_clickMove.GoalCell.X, _clickMove.GoalCell.Level, _clickMove.GoalCell.Z) is not null} walking {_clickMove.IsWalking} pathCells {_clickMove.LastPathCells} mode {_runtime.InteractionMode} noclip {_runtime.Player.IsNoclipEnabled} " +

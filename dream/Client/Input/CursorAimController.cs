@@ -16,9 +16,24 @@ public interface ICursorAimHost
     bool TryBuildRay(Vector2 screenPosition, out Vector3 origin, out Vector3 direction);
 }
 
-// Turns the cursor into a facing (yaw only, towards the cursor's ground point) and the left button
+// Turns the cursor into a facing (yaw only, towards the point under the cursor) and the left button
 // into a held attack. OnFrame runs once per Update, TryGetFacing once per prediction tick (the body
-// moves between frames, the cursor does not). No world pick: a ray/plane cut is all a facing needs.
+// moves between frames, the cursor does not).
+//
+// The aim point is the enemy's own anchor when the cursor is on one, and otherwise a cut of the cursor
+// ray with the horizontal plane through the player's body. The plane cut is exact only for a target
+// standing at the player's own height. Under the isometric camera (50 degrees of pitch) a target raised
+// by h metres draws h / tan(50) = 0.84h metres further along the camera's ground direction, so the ray
+// through its sprite meets the player's plane that far past it and the facing points beside the enemy
+// rather than at it. The server's melee swing forgives 0.9 m of lateral miss, and what eats into that is
+// the part of the 0.84h displacement lying ACROSS the line of attack, foreshortened by range. How much
+// of it lies across depends on where the enemy stands relative to the camera: facing along the camera's
+// ground direction no rise misses at all, and at the worst angle, square across it, the 0.9 m is crossed
+// by a rise of 1.34 m at the skeleton's 1.5 m stand-off, or 1.09 m further out. A cleave's 120-degree arc
+// swallows the same error, which is why skills kept landing on an enemy a normal attack could not touch.
+//
+// An enemy the cursor is ON needs no plane: the pick that found it is a ray/actor intersection, so its
+// anchor is where the enemy actually is and the facing is exact at any height.
 public sealed class CursorAimController
 {
     // Closer than this to the body the direction is noise, and the facing is left as it was.
@@ -32,7 +47,8 @@ public sealed class CursorAimController
     private bool _wasFocused = true;
     private bool _leftArmed;
     private bool _hasPoint;
-    private Vector3 _groundPoint;
+    private bool _aimedAtTarget;
+    private Vector3 _aimPoint;
 
     public CursorAimController(ICursorAimHost host)
     {
@@ -45,7 +61,13 @@ public sealed class CursorAimController
     // The left button is held, was pressed over no HUD, and the mode attacks: the raw frame's primary use.
     public bool AttackHeld { get; private set; }
 
-    public Vector3 GroundPoint => _groundPoint;
+    // Where the cursor is taken to point: an enemy's combat anchor, or the plane cut. Its height is
+    // not the player's in the first case, which is why nothing but the flat facing may read it.
+    public Vector3 AimPoint => _aimPoint;
+
+    // True while the aim point is an enemy's own anchor rather than the plane cut. Reported in the
+    // capture log; the two cases differ only in accuracy, so nothing else should branch on it.
+    public bool AimedAtTarget => _aimedAtTarget;
 
     public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput, bool suppressed) =>
         OnFrame(pointer, allowGameplayInput, suppressed, windowFocused: true);
@@ -57,7 +79,17 @@ public sealed class CursorAimController
     // from the pointer on the first focused frame skips exactly that one edge, the way
     // UiInputRouter.BeginFrame already does when the UI becomes interactive again. A window that
     // already had the focus is untouched, so an ordinary first click still arms and still attacks.
-    public void OnFrame(in WorldPointerState pointer, bool allowGameplayInput, bool suppressed, bool windowFocused)
+    //
+    // aimPoint is the exact world point the cursor is on when that is known - the combat anchor of the
+    // live enemy under it, which the caller has already picked for the hover. Passing it in rather than
+    // pulling it from the host is deliberate: it cannot then be a frame out of date, and the fact that
+    // the pick happens before the aim is something the compiler enforces.
+    public void OnFrame(
+        in WorldPointerState pointer,
+        bool allowGameplayInput,
+        bool suppressed,
+        bool windowFocused,
+        Vector3? aimPoint = null)
     {
         if (!_wasFocused)
         {
@@ -92,18 +124,46 @@ public sealed class CursorAimController
         AttackHeld = pointer.LeftDown && _leftArmed && _host.Mode == PlayerInteractionMode.Combat;
 
         _hasPoint = false;
+        _aimedAtTarget = false;
+        // Combat only, so Building keeps the facing it always had: there the left button places a block
+        // rather than swinging, nothing is gained by bending the facing onto an enemy, and the plane cut
+        // is the behaviour every building test and the player's own habit are built on.
+        //
+        // An anchor nearer than MinAimMetres falls THROUGH to the plane cut rather than being taken and
+        // then rejected by TryGetFacing: the cut always lands further out than the enemy, so an enemy
+        // standing almost on top of the player would otherwise freeze the facing while still claiming
+        // to own it, which stops the character turning at all. The gate is measured here, once per
+        // frame, and TryGetFacing runs per tick against a body that has moved, so a body closing the
+        // last centimetres can still reach that state for a frame - as it always could with the plane
+        // cut, which is a fixed point the body walks into. This makes it rare, not impossible.
+        if (_host.Mode == PlayerInteractionMode.Combat
+            && aimPoint is { } target
+            && FlatDistanceToBody(target) >= MinAimMetres)
+        {
+            _aimPoint = target;
+            _hasPoint = true;
+            _aimedAtTarget = true;
+            return;
+        }
+
         if (_host.TryBuildRay(pointer.Position, out Vector3 origin, out Vector3 direction) && direction.Y < -0.0001f)
         {
             float t = (_host.BodyCentre.Y - origin.Y) / direction.Y;
             if (t > 0f)
             {
-                _groundPoint = origin + (direction * t);
+                _aimPoint = origin + (direction * t);
                 _hasPoint = true;
             }
         }
     }
 
-    // The flat unit direction from the body to the cursor's ground point, or false to leave facing alone.
+    private float FlatDistanceToBody(Vector3 point)
+    {
+        Vector3 body = _host.BodyCentre;
+        return new Vector3(point.X - body.X, 0f, point.Z - body.Z).Length;
+    }
+
+    // The flat unit direction from the body to the aim point, or false to leave facing alone.
     public bool TryGetFacing(out Vector3 facing)
     {
         facing = default;
@@ -113,7 +173,7 @@ public sealed class CursorAimController
         }
 
         Vector3 body = _host.BodyCentre;
-        Vector3 flat = new(_groundPoint.X - body.X, 0f, _groundPoint.Z - body.Z);
+        Vector3 flat = new(_aimPoint.X - body.X, 0f, _aimPoint.Z - body.Z);
         if (flat.Length < MinAimMetres)
         {
             return false;

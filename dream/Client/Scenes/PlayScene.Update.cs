@@ -88,9 +88,21 @@ public partial class PlayScene
             // The capture script drives the pointer itself and never gives the window the focus, so it
             // counts as focused here, exactly as the consumable hotkeys already treat it.
             bool pointerFocused = _windowFocused || _hudCapture is not null;
-            _cursorAim.OnFrame(pointer, allowGameplayInput, SuppressCursorAim, pointerFocused);
+            // The hover pick comes first and its anchor is handed to the aim: aiming at the enemy's own
+            // position instead of a cut through the player's ground plane is what lets a swing land on
+            // an enemy standing on higher ground (see CursorAimController).
+            _render.PointerOverEnemy = _enemyHover.Evaluate(
+                pointer,
+                allowGameplayInput,
+                pointerFocused,
+                out Vector3 hoveredEnemyAnchor);
+            _cursorAim.OnFrame(
+                pointer,
+                allowGameplayInput,
+                SuppressCursorAim,
+                pointerFocused,
+                _render.PointerOverEnemy ? hoveredEnemyAnchor : null);
             _clickMove.OnFrame(pointer, allowGameplayInput, pointerFocused);
-            _render.PointerOverEnemy = _enemyHover.Evaluate(pointer, allowGameplayInput, pointerFocused);
         }
         else
         {

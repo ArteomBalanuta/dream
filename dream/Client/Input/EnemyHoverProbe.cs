@@ -1,3 +1,4 @@
+using OpenTK.Mathematics;
 using Dream.Rendering.Core;
 
 namespace Dream.Client.Input;
@@ -13,8 +14,18 @@ public sealed class EnemyHoverProbe
         _host = host ?? throw new ArgumentNullException(nameof(host));
     }
 
-    public bool Evaluate(in WorldPointerState pointer, bool allowGameplayInput, bool windowFocused)
+    public bool Evaluate(in WorldPointerState pointer, bool allowGameplayInput, bool windowFocused) =>
+        Evaluate(pointer, allowGameplayInput, windowFocused, out _);
+
+    // The overload with the anchor exists so the one pick this probe makes per frame can serve the
+    // cursor aim as well (PlayScene passes it on); picking twice would march the ray twice.
+    public bool Evaluate(
+        in WorldPointerState pointer,
+        bool allowGameplayInput,
+        bool windowFocused,
+        out Vector3 anchor)
     {
+        anchor = default;
         if (!allowGameplayInput || !windowFocused || pointer.OverHud)
         {
             return false;
@@ -25,6 +36,6 @@ public sealed class EnemyHoverProbe
             return false;
         }
 
-        return _host.IsEnemyAt(pointer.Position);
+        return _host.TryGetEnemyAnchorAt(pointer.Position, out anchor);
     }
 }

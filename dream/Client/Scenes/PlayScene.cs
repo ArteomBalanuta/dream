@@ -173,8 +173,12 @@ public partial class PlayScene : IDisposable
 
         public PlayerInteractionMode Mode => _scene._runtime.InteractionMode;
 
-        public bool IsEnemyAt(OpenTK.Mathematics.Vector2 screenPosition)
+        // The hover probe runs this every frame, so it takes the allocation-free pick (no closure, no
+        // delegate, no target object) rather than the interface default's full TryPick. The anchor is
+        // the same one EnemyClickTarget reports, which is what keeps it in step with a real click.
+        public bool TryGetEnemyAnchorAt(OpenTK.Mathematics.Vector2 screenPosition, out Vector3 anchor)
         {
+            anchor = default;
             Dream.Simulation.Players.Camera? camera = _scene._render.LastWorldCamera;
             INavWorld? world = World;
             if (camera is null || world is null)
@@ -182,14 +186,25 @@ public partial class PlayScene : IDisposable
                 return false;
             }
 
-            return WorldCursorPicker.TryBuildRay(
+            if (!WorldCursorPicker.TryBuildRay(
                     camera.GetViewMatrix(),
                     _scene._render.ProjectionMatrix,
                     screenPosition,
                     _scene._render.ViewportSize,
                     out Vector3 origin,
-                    out Vector3 direction)
-                && WorldCursorPicker.PickHoveredEnemy(world, _scene._runtime.Enemies, origin, direction) is not null;
+                    out Vector3 direction))
+            {
+                return false;
+            }
+
+            Dream.Simulation.Enemies.EnemyActor? hovered = WorldCursorPicker.PickHoveredEnemy(world, _scene._runtime.Enemies, origin, direction);
+            if (hovered is null)
+            {
+                return false;
+            }
+
+            anchor = hovered.Combatant.GetCombatAnchorWorldPosition();
+            return true;
         }
 
         public bool TryPick(OpenTK.Mathematics.Vector2 screenPosition, out ClickPick pick)

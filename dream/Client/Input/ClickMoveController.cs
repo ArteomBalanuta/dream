@@ -50,12 +50,24 @@ public interface IClickMoveHost
     // False without a camera of last frame, or when the cursor points at nothing.
     bool TryPick(Vector2 screenPosition, out ClickPick pick);
 
-    // Whether a click at this position would target a live enemy. The default asks the full pick; a host
-    // that runs it every frame overrides it with an allocation-free path that must agree with TryPick.
-    bool IsEnemyAt(Vector2 screenPosition) =>
-        TryPick(screenPosition, out ClickPick pick)
-        && pick.Kind == ClickPickKind.Enemy
-        && pick.Target is { IsAlive: true };
+    // The combat anchor of the live enemy a click at this position would target, or false. The pick is a
+    // ray/actor intersection, so the anchor it returns carries no assumed ground height - which is the
+    // reason the cursor aim wants it rather than a ground point (see CursorAimController.OnFrame).
+    // The default asks the full pick; this is the one the hover probe runs EVERY FRAME, so the play
+    // scene overrides it with an allocation-free path that must agree with TryPick.
+    bool TryGetEnemyAnchorAt(Vector2 screenPosition, out Vector3 anchor)
+    {
+        anchor = default;
+        if (!TryPick(screenPosition, out ClickPick pick)
+            || pick.Kind != ClickPickKind.Enemy
+            || pick.Target is not { IsAlive: true } target)
+        {
+            return false;
+        }
+
+        anchor = target.Anchor;
+        return true;
+    }
 
     void SetFacing(Vector3 direction);
 
