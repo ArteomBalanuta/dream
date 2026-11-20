@@ -383,7 +383,10 @@ public sealed class StartupMenuRenderer : IDisposable
         AddKey(io, ImGuiKey.DownArrow, keyboardState.IsKeyDown(Keys.Down));
         AddKey(io, ImGuiKey.Home, keyboardState.IsKeyDown(Keys.Home));
         AddKey(io, ImGuiKey.End, keyboardState.IsKeyDown(Keys.End));
-        AddKey(io, ImGuiKey.Enter, keyboardState.IsKeyDown(Keys.Enter));
+        // Alt+Enter toggles fullscreen, so it never presses Enter in the ImGui screen.
+        AddKey(io, ImGuiKey.Enter, Dream.Client.Input.ChatInput.IsChatEnter(
+            keyboardState.IsKeyDown(Keys.Enter),
+            keyboardState.IsKeyDown(Keys.LeftAlt) || keyboardState.IsKeyDown(Keys.RightAlt)));
         AddKey(io, ImGuiKey.Tab, keyboardState.IsKeyDown(Keys.Tab));
         AddKey(io, ImGuiKey.Escape, keyboardState.IsKeyDown(Keys.Escape));
     }
