@@ -147,7 +147,7 @@ def main() -> int:
     }
     expected["cursors"] = cursors
     # sanity on the parser itself: counts the plan implies
-    for key, n in (("window", 54), ("hud", 95), ("items", 75), ("cursors", 5)):
+    for key, n in (("window", 54), ("hud", 95), ("items", 75), ("cursors", 8)):
         if len(expected[key]) != n:
             errs.append(f"parser produced {len(expected[key])} {key} sprites, hand count is {n}")
     for key, exp in expected.items():
