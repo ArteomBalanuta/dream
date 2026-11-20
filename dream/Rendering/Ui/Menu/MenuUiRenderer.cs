@@ -8,7 +8,7 @@ namespace Dream.Rendering.Ui.Menu;
 // Loads only the pages the front end needs (the window plates and the menu art).
 public sealed class MenuAtlasLoader(string uiDirectory) : IUiAtlasLoader
 {
-    public static readonly UiPage[] Pages = [UiPage.Window, UiPage.Menu];
+    public static readonly UiPage[] Pages = [UiPage.Window, UiPage.Menu, UiPage.Cursors];
 
     public UiSpriteTable LoadTable()
     {
@@ -56,6 +56,9 @@ public sealed class MenuUiRenderer : IDisposable
     public UiAtlasState State => _atlas.State;
 
     public string FailureReason => _atlas.FailureReason;
+
+    // True when the last Draw put a sprite cursor on screen (the OS cursor is then hidden).
+    public bool CursorDrawn { get; private set; }
 
     public bool IsReady => !_disposed && _atlas.State == UiAtlasState.Ready;
 
@@ -115,6 +118,7 @@ public sealed class MenuUiRenderer : IDisposable
     public bool Draw(int width, int height, float uiScaleSetting, UiPointer pointer, Action<MenuWidgets> build)
     {
         ArgumentNullException.ThrowIfNull(build);
+        CursorDrawn = false;
         if (_disposed)
         {
             return false;
@@ -147,6 +151,7 @@ public sealed class MenuUiRenderer : IDisposable
             _router.EndFrame();
         }
 
+        CursorDrawn = UiCursor.Draw(_batch, table, in pointer, layout.Scale, UiCursor.Select(_router.Dragging, pointer.LeftDown, false));
         _gl.Submit(_batch, _atlas, _fontTexture);
         return true;
     }

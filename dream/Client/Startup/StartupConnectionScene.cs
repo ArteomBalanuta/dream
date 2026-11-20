@@ -72,7 +72,10 @@ public sealed class StartupConnectionScene : IDisposable
         }
     }
 
-    public CursorState DesiredCursorState => CursorState.Normal;
+    // The sprite cursor replaces the OS one while it is drawn and the window is focused.
+    public CursorState DesiredCursorState => _renderer.SpriteCursorActive && _windowFocused ? CursorState.Hidden : CursorState.Normal;
+
+    private bool _windowFocused = true;
 
     public void Update()
     {
@@ -86,6 +89,7 @@ public sealed class StartupConnectionScene : IDisposable
         MouseState mouseState,
         KeyboardState keyboardState)
     {
+        _windowFocused = windowFocused;
         string previousHost = _host;
         string previousPort = _portText;
         string previousPlayerName = _playerName;

@@ -9,6 +9,7 @@ using Dream.Assets;
 using Dream.Client.Input;
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Core;
+using Dream.Rendering.Ui;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
@@ -28,11 +29,83 @@ public sealed class StartupMenuRenderer : IDisposable
     private int _indexBuffer;
     private Vector2i _currentSize;
     private bool _wasFocused = true;
+    private int _cursorTexture;
+    private UiSpriteTable? _cursorSprites;
+    private int _cursorPageW;
+    private int _cursorPageH;
+    private bool _cursorActive;
 
     public StartupMenuRenderer(Vector2i initialSize)
     {
         _currentSize = initialSize;
         InitializeImGui();
+        TryLoadCursor();
+    }
+
+    // True when the last frame drew the sprite cursor, so the OS cursor should be hidden.
+    public bool SpriteCursorActive => _cursorActive;
+
+    // The cursors page as its own texture; on any failure the ImGui cursor stays as the fallback.
+    private void TryLoadCursor()
+    {
+        try
+        {
+            if (!UiSpriteTable.TryLoadPages(AssetPaths.UiDirectory, [UiPage.Cursors], out UiSpriteTable? table, out _)
+                || table is null
+                || !table.TryGetPageSize(UiPage.Cursors, out int w, out int h))
+            {
+                return;
+            }
+
+            DecodedTexture png = TextureDecoder.DecodeRgba(Path.Combine(AssetPaths.UiDirectory, UiSpriteTable.PagePngPath(UiPage.Cursors)!));
+            int texture = GL.GenTexture();
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, texture);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, png.Width, png.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, png.Rgba);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            _cursorTexture = texture;
+            _cursorSprites = table;
+            _cursorPageW = w;
+            _cursorPageH = h;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[startup] the sprite cursor is unavailable: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    // Drawn last over everything; false (nothing drawn) when the texture is missing or the pointer is not usable.
+    private bool DrawSpriteCursor(bool windowFocused, MouseState mouseState)
+    {
+        if (_cursorTexture == 0 || _cursorSprites is null || !windowFocused)
+        {
+            return false;
+        }
+
+        UiCursorKind kind = UiCursor.Select(false, mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left), false);
+        if (!_cursorSprites.TryGet(UiCursor.SpriteName(kind), out UiSprite sprite))
+        {
+            return false;
+        }
+
+        Vector2 position = new(mouseState.Position.X, mouseState.Position.Y);
+        if (!float.IsFinite(position.X) || !float.IsFinite(position.Y))
+        {
+            return false;
+        }
+
+        // Layout scale 4 puts one art texel on one screen pixel at the cursor's art density.
+        UiRect r = UiCursor.Rect(in sprite, position, 4f);
+        System.Numerics.Vector2 uv0 = new(sprite.X / (float)_cursorPageW, sprite.Y / (float)_cursorPageH);
+        System.Numerics.Vector2 uv1 = new((sprite.X + sprite.W) / (float)_cursorPageW, (sprite.Y + sprite.H) / (float)_cursorPageH);
+        ImGui.GetForegroundDrawList().AddImage(
+            (IntPtr)_cursorTexture,
+            new System.Numerics.Vector2(r.X, r.Y),
+            new System.Numerics.Vector2(r.X + r.W, r.Y + r.H),
+            uv0,
+            uv1);
+        return true;
     }
 
     public void Resize(Vector2i size)
@@ -148,6 +221,7 @@ public sealed class StartupMenuRenderer : IDisposable
 
         ImGui.End();
 
+        _cursorActive = DrawSpriteCursor(windowFocused, mouseState);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
 
@@ -171,6 +245,11 @@ public sealed class StartupMenuRenderer : IDisposable
 
         _disposed = true;
         GL.DeleteTexture(_fontTexture);
+        if (_cursorTexture != 0)
+        {
+            GL.DeleteTexture(_cursorTexture);
+        }
+
         _shaderObj.Dispose();
         GL.DeleteBuffer(_vertexBuffer);
         GL.DeleteBuffer(_indexBuffer);
@@ -252,7 +331,7 @@ public sealed class StartupMenuRenderer : IDisposable
         Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
         io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
         io.DeltaTime = (float)args.Time;
-        io.MouseDrawCursor = true;
+        io.MouseDrawCursor = _cursorTexture == 0;
         io.MousePos = new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y);
         io.MouseDown[0] = mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
         io.MouseDown[1] = mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);
