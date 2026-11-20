@@ -84,11 +84,20 @@ public class TacticalCameraLimitsTests
         Assert.True(TacticalCameraSettings.Default.LeashMetres <= TacticalCameraLimits.LeashMetres);
     }
 
-    [Fact(Skip = "Contract default MaxDistance 26 exceeds the derived 23.85 (21:9 footprint vs the 47.7 m receiver square); the integration owner lowers the default, then removes this Skip.")]
+    [Fact]
     public void DefaultSettings_MaxDistanceIsInsideTheDerivedMaximum()
     {
         Assert.True(
             TacticalCameraSettings.Default.MaxDistance <= TacticalCameraLimits.MaxDistance,
             $"default {TacticalCameraSettings.Default.MaxDistance} derived {TacticalCameraLimits.MaxDistance}");
+    }
+
+    [Fact]
+    public void SanitisingCapsZoomAndLeashAtTheDerivedLimits()
+    {
+        TacticalCameraSettings wide = TacticalCameraSettings.Default with { MaxDistance = 40f, LeashMetres = 40f };
+        TacticalCameraSettings fixedUp = wide.Sanitized();
+        Assert.Equal(TacticalCameraLimits.MaxDistance, fixedUp.MaxDistance);
+        Assert.Equal(TacticalCameraLimits.LeashMetres, fixedUp.LeashMetres);
     }
 }
