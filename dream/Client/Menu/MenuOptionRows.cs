@@ -29,11 +29,14 @@ public static class MenuOptionRows
         [CameraConfineMode.Off, CameraConfineMode.FullscreenOnly, CameraConfineMode.Always];
 
     // onFrameCapChanged re-applies the frame cap to the window; persist saves the client config.
+    // onWindowModeChanged applies config.WindowMode to the window after the Display Mode row changes it (null: no row
+    // effect beyond the config, as in tests).
     public static List<MenuOptionRow> CreateStandard(
         GameSettings settings,
         DesktopClientConfig config,
         Action onFrameCapChanged,
-        Action persist)
+        Action persist,
+        Action? onWindowModeChanged = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(config);

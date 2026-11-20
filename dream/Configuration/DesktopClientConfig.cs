@@ -26,6 +26,9 @@ public sealed class DesktopClientConfig
 
     public CameraViewMode CameraViewMode { get; set; } = CameraViewMode.FirstPerson;
 
+    // Config key window_mode (windowed | borderless | fullscreen). Capture runs ignore it.
+    public WindowMode WindowMode { get; set; } = WindowMode.Windowed;
+
     public FloatingCombatTextTuning FloatingCombatText { get; set; } = FloatingCombatTextTuning.Default;
 
     // Render frame cap in FPS; 0 means uncapped.
