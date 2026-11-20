@@ -81,4 +81,19 @@ public class TacticalCameraPoseTests
         Assert.Equal(CameraConfineMode.FullscreenOnly, fixedUp.ConfineMode);
         Assert.Equal(IsometricView.Distance, fixedUp.MaxDistance);
     }
+
+    [Fact]
+    public void DefaultGroundForward_IsBitIdenticalToTheShadowVolumesAndThePlayerControllers()
+    {
+        Vector3 forward = TacticalCameraPose.Default(Vector3.Zero).GroundForward;
+        Assert.Equal(Dream.Rendering.Shadows.SunShadowVolume.ViewForwardGround, forward);
+        Assert.Equal(Dream.Client.Input.PlayerController.DefaultGroundForward, forward);
+    }
+
+    [Fact]
+    public void GroundForward_WithZeroDistance_FallsBackToTheDirection()
+    {
+        TacticalCameraPose pose = TacticalCameraPose.Default(Vector3.Zero) with { Distance = 0f };
+        Assert.Equal(1f, pose.GroundForward.Length, 4);
+    }
 }

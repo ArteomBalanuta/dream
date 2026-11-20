@@ -255,4 +255,36 @@ public class CameraInputSamplerTests
         CameraInputSampler s = new(TacticalCameraSettings.Default with { EdgeMarginPixels = 9999f });
         Assert.Equal(48f, s.Settings.EdgeMarginPixels);
     }
+
+    [Fact]
+    public void Gate_closing_mid_drag_and_reopening_while_still_held_starts_no_new_drag()
+    {
+        CameraInputSampler s = Ready();
+        Step(s, Raw(x: 100, middle: true), At(Centre), Open, 10.0);
+        Assert.True(s.RotateDragHeld);
+        Step(s, Raw(x: 110, middle: true), At(Centre), CameraGate.Closed, 10.1);
+        Assert.False(s.RotateDragHeld);
+        s.Take();
+        Step(s, Raw(x: 130, middle: true), At(Centre), Open, 10.2);
+        Assert.False(s.RotateDragHeld);
+        Assert.Equal(0f, s.Take().RotateDragPixels);
+
+        Step(s, Raw(x: 130), At(Centre), Open, 10.3);
+        Step(s, Raw(x: 130, middle: true), At(Centre), Open, 10.4);
+        Assert.True(s.RotateDragHeld);
+    }
+
+    [Fact]
+    public void A_press_made_while_unfocused_never_latches()
+    {
+        CameraInputSampler s = new(TacticalCameraSettings.Default);
+        s.OnFocusChanged(false, 0);
+        s.OnCursorEnterLeave(true, 0);
+        Step(s, Raw(x: 100, middle: true), At(Centre), Open, 10.0);
+        Assert.False(s.RotateDragHeld);
+        s.OnFocusChanged(true, 10.1);
+        Step(s, Raw(x: 120, middle: true), At(Centre), Open, 10.2);
+        Assert.False(s.RotateDragHeld);
+        Assert.Equal(0f, s.Take().RotateDragPixels);
+    }
 }

@@ -20,7 +20,7 @@ public static class TacticalCameraLimits
     public const float MinLeashMetres = 8f;
 
     // Largest distance (<= MaxDistanceCap) whose ground footprint at the reference aspect fits inside the shadow
-    // receiver square. A static: it depends only on constants.
+    // receiver circle. A static: it depends only on constants.
     public static float MaxDistance { get; } = ComputeMaxDistance();
 
     // How far the view target may stray from the player: the export, centred on the target, still covers the
@@ -84,14 +84,16 @@ public static class TacticalCameraLimits
         return corners;
     }
 
-    // True when every footprint corner lies inside the shadow receiver square (side OrthoSide, centred
-    // ReceiverCentreOffset ahead of the target along the view's ground forward).
+    // True when every footprint corner lies within OrthoSide / 2 of the shadow receiver's centre (ReceiverCentreOffset
+    // ahead of the target along the view's ground forward). A circle, not a square: the sun ortho is aligned with the
+    // sun's azimuth, which moves, so only the radius is orientation-free.
     public static bool FootprintFitsReceiver(float distance, float aspect)
     {
-        float half = ShadowSettings.OrthoSide * 0.5f;
+        float radius = ShadowSettings.OrthoSide * 0.5f;
+        Vector2 centre = new(0f, ShadowSettings.ReceiverCentreOffset);
         foreach (Vector2 corner in FootprintCorners(distance, aspect))
         {
-            if (MathF.Abs(corner.X) > half || MathF.Abs(corner.Y - ShadowSettings.ReceiverCentreOffset) > half)
+            if ((corner - centre).Length > radius)
             {
                 return false;
             }

@@ -29,7 +29,7 @@ public sealed record TacticalCameraSettings
     public float MinDistance { get; init; } = 10f;
     // The farthest zoom whose view still fits the sun shadow volume (derived, not restated).
     public float MaxDistance { get; init; } = TacticalCameraLimits.MaxDistance;
-    public float LeashMetres { get; init; } = 16f;               // sanitised to at most TacticalCameraLimits.LeashMetres
+    public float LeashMetres { get; init; } = TacticalCameraLimits.LeashMetres;
 
     public float DefaultYawDegrees => IsometricView.YawDegrees;
     public float PitchDegrees => IsometricView.PitchDegrees;
@@ -40,23 +40,23 @@ public sealed record TacticalCameraSettings
     {
         return this with
         {
-            EdgeMarginPixels = Clamp(EdgeMarginPixels, 2f, 48f, 10f),
-            PanSpeed = Clamp(PanSpeed, 4f, 40f, 14f),
-            PanAccelSeconds = Clamp(PanAccelSeconds, 0f, 0.5f, 0.08f),
-            PanDecelSeconds = Clamp(PanDecelSeconds, 0f, 0.5f, 0.14f),
-            EdgeDwellSeconds = Clamp(EdgeDwellSeconds, 0f, 1f, 0.12f),
-            EdgeFocusGraceSeconds = Clamp(EdgeFocusGraceSeconds, 0f, 1f, 0.25f),
-            ConfineMode = Enum.IsDefined(ConfineMode) ? ConfineMode : CameraConfineMode.FullscreenOnly,
-            AnchorMode = Enum.IsDefined(AnchorMode) ? AnchorMode : CameraAnchorMode.Follow,
-            ReturnToPlayerSeconds = Clamp(ReturnToPlayerSeconds, 0f, 10f, 0f),
-            RotateDegreesPerPixel = Clamp(RotateDegreesPerPixel, 0.05f, 1.5f, 0.3f),
+            EdgeMarginPixels = Clamp(EdgeMarginPixels, 2f, 48f, Default.EdgeMarginPixels),
+            PanSpeed = Clamp(PanSpeed, 4f, 40f, Default.PanSpeed),
+            PanAccelSeconds = Clamp(PanAccelSeconds, 0f, 0.5f, Default.PanAccelSeconds),
+            PanDecelSeconds = Clamp(PanDecelSeconds, 0f, 0.5f, Default.PanDecelSeconds),
+            EdgeDwellSeconds = Clamp(EdgeDwellSeconds, 0f, 1f, Default.EdgeDwellSeconds),
+            EdgeFocusGraceSeconds = Clamp(EdgeFocusGraceSeconds, 0f, 1f, Default.EdgeFocusGraceSeconds),
+            ConfineMode = Enum.IsDefined(ConfineMode) ? ConfineMode : Default.ConfineMode,
+            AnchorMode = Enum.IsDefined(AnchorMode) ? AnchorMode : Default.AnchorMode,
+            ReturnToPlayerSeconds = Clamp(ReturnToPlayerSeconds, 0f, 10f, Default.ReturnToPlayerSeconds),
+            RotateDegreesPerPixel = Clamp(RotateDegreesPerPixel, 0.05f, 1.5f, Default.RotateDegreesPerPixel),
             RotateSnapStepDegrees = NearestSnapStep(RotateSnapStepDegrees),
-            RotateSmoothingSeconds = Clamp(RotateSmoothingSeconds, 0f, 0.5f, 0.12f),
-            ZoomStepRatio = Clamp(ZoomStepRatio, 1.02f, 1.5f, 1.15f),
-            ZoomSmoothingSeconds = Clamp(ZoomSmoothingSeconds, 0f, 0.5f, 0.10f),
-            MinDistance = Clamp(MinDistance, 4f, IsometricView.Distance, 10f),
+            RotateSmoothingSeconds = Clamp(RotateSmoothingSeconds, 0f, 0.5f, Default.RotateSmoothingSeconds),
+            ZoomStepRatio = Clamp(ZoomStepRatio, 1.02f, 1.5f, Default.ZoomStepRatio),
+            ZoomSmoothingSeconds = Clamp(ZoomSmoothingSeconds, 0f, 0.5f, Default.ZoomSmoothingSeconds),
+            MinDistance = Clamp(MinDistance, 4f, IsometricView.Distance, Default.MinDistance),
             MaxDistance = Clamp(MaxDistance, IsometricView.Distance, TacticalCameraLimits.MaxDistance, TacticalCameraLimits.MaxDistance),
-            LeashMetres = Clamp(LeashMetres, 0f, TacticalCameraLimits.LeashMetres, MathF.Min(16f, TacticalCameraLimits.LeashMetres)),
+            LeashMetres = Clamp(LeashMetres, 0f, TacticalCameraLimits.LeashMetres, Default.LeashMetres),
         };
     }
 
@@ -67,7 +67,7 @@ public sealed record TacticalCameraSettings
     {
         if (!float.IsFinite(value))
         {
-            return 90f;
+            return Default.RotateSnapStepDegrees;
         }
 
         int best = AllowedSnapSteps[0];

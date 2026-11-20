@@ -18,9 +18,19 @@ public readonly record struct TacticalCameraPose(Vector3 Target, float YawDegree
     {
         get
         {
-            Vector3 away = -IsometricView.FocusToCameraFor(YawDegrees, PitchDegrees, 1f);
+            // The same expression the fixed view always used, on this pose's own distance, so the default pose is
+            // bit-identical to SunShadowVolume.ViewForwardGround and PlayerController.DefaultGroundForward.
+            Vector3 away = -FocusToCamera;
             Vector3 flat = new(away.X, 0f, away.Z);
-            return flat.LengthSquared > 1e-12f ? flat.Normalized() : -Vector3.UnitZ;
+            if (flat.LengthSquared > 1e-12f)
+            {
+                return Vector3.Normalize(flat);
+            }
+
+            // Distance 0 (or tiny): the direction alone.
+            away = -IsometricView.FocusToCameraFor(YawDegrees, PitchDegrees, 1f);
+            flat = new Vector3(away.X, 0f, away.Z);
+            return flat.LengthSquared > 1e-12f ? Vector3.Normalize(flat) : -Vector3.UnitZ;
         }
     }
 

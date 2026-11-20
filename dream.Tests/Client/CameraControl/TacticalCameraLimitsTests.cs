@@ -100,4 +100,40 @@ public class TacticalCameraLimitsTests
         Assert.Equal(TacticalCameraLimits.MaxDistance, fixedUp.MaxDistance);
         Assert.Equal(TacticalCameraLimits.LeashMetres, fixedUp.LeashMetres);
     }
+
+    [Fact]
+    public void FootprintFits_IsACircleAroundTheReceiverCentre()
+    {
+        float max = TacticalCameraLimits.MaxDistance;
+        float radius = Dream.Rendering.Shadows.ShadowSettings.OrthoSide * 0.5f;
+        Vector2 centre = new(0f, Dream.Rendering.Shadows.ShadowSettings.ReceiverCentreOffset);
+        float worst = 0f;
+        foreach (Vector2 corner in TacticalCameraLimits.FootprintCorners(max, TacticalCameraLimits.ReferenceAspect))
+        {
+            worst = MathF.Max(worst, (corner - centre).Length);
+        }
+
+        Assert.True(worst <= radius);
+        if (max < TacticalCameraLimits.MaxDistanceCap)
+        {
+            Assert.InRange(worst, radius - 0.05f, radius);
+        }
+    }
+
+    [Fact]
+    public void Leash_IsNotFlooredAndFootprintPlusLeashFitsTheExportOutright()
+    {
+        float footprint = TacticalCameraLimits.FootprintRadius(TacticalCameraLimits.MaxDistance, TacticalCameraLimits.ReferenceAspect);
+        Assert.True(
+            WorldVisibility.MaxRenderDistance - footprint >= TacticalCameraLimits.MinLeashMetres,
+            "the derivation floors at MinLeashMetres");
+        Assert.True(footprint + TacticalCameraLimits.LeashMetres <= WorldVisibility.MaxRenderDistance);
+    }
+
+    [Fact]
+    public void DefaultSettings_LeashIsTheDerivedLeash()
+    {
+        Assert.Equal(TacticalCameraLimits.LeashMetres, TacticalCameraSettings.Default.LeashMetres);
+        Assert.Equal(TacticalCameraLimits.LeashMetres, (TacticalCameraSettings.Default with { LeashMetres = float.NaN }).Sanitized().LeashMetres);
+    }
 }

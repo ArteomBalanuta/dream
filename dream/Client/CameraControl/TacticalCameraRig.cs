@@ -25,12 +25,14 @@ public sealed class TacticalCameraRig
     private CameraAnchorMode _mode;
     private bool _started;
     private bool _recentring;
-    private float _clock;
-    private float _lastRecentreAt = -100f;
-    private float _lastNotchAt = -100f;
+    // Doubles: a float clock stops resolving a frame after a few hours of play.
+    private double _clock;
+    private double _lastRecentreAt = -100.0;
+    private double _lastNotchAt = -100.0;
     private float _idleSeconds;
     private bool _gestureActive;
     private Vector3? _zoomAnchor;
+    private Vector3 _anchorFocus;   // the player focus when the anchor was latched
     private Vector3 _lastFocus;
     private TacticalCameraPose _pose;
 
@@ -50,10 +52,20 @@ public sealed class TacticalCameraRig
         set
         {
             ArgumentNullException.ThrowIfNull(value);
-            _settings = value.Sanitized();
+            TacticalCameraSettings next = value.Sanitized();
+            bool anchorChanged = next.AnchorMode != _settings.AnchorMode;
+            _settings = next;
             _goalDistance = Math.Clamp(_goalDistance, _settings.MinDistance, _settings.MaxDistance);
             _currentDistance = Math.Clamp(_currentDistance, _settings.MinDistance, _settings.MaxDistance);
             ApplyLeash();
+
+            // The target stays where it is; only what it is relative to changes. A mode the rig is already in
+            // (the Y key flips it without touching the settings) is left alone.
+            if (anchorChanged)
+            {
+                _mode = next.AnchorMode;
+            }
+
             if (_mode == CameraAnchorMode.Free)
             {
                 _worldTarget = new Vector2(_lastFocus.X, _lastFocus.Z) + _offset;
@@ -79,6 +91,7 @@ public sealed class TacticalCameraRig
     public void LatchZoomAnchor(Vector3? worldAnchor)
     {
         _zoomAnchor = worldAnchor;
+        _anchorFocus = _lastFocus;
     }
 
     public TacticalCameraPose Advance(Vector3 playerFocus, in CameraInputFrame input, float realDeltaSeconds)
@@ -86,6 +99,7 @@ public sealed class TacticalCameraRig
         float dt = float.IsFinite(realDeltaSeconds) ? Math.Clamp(realDeltaSeconds, 0f, MaxDeltaSeconds) : 0f;
         _clock += dt;
         Vector2 focusXz = new(playerFocus.X, playerFocus.Z);
+        Vector3 focusStep = _started ? playerFocus - _lastFocus : Vector3.Zero;
         if (!_started)
         {
             _started = true;
@@ -195,12 +209,16 @@ public sealed class TacticalCameraRig
             }
         }
 
-        // Zoom-to-cursor.
+        // Zoom-to-cursor. Following, the solve runs in the player's frame (the anchor and the previous camera move
+        // with the player) so walking is not absorbed into the pan offset. Free keeps world space.
+        bool following = _mode == CameraAnchorMode.Follow;
+        Vector3 cameraShift = following ? focusStep : Vector3.Zero;
+        Vector3 anchorShift = following ? playerFocus - _anchorFocus : Vector3.Zero;
         if (_zoomAnchor is Vector3 anchor
             && _currentDistance != previousDistance
             && MathF.Abs(WrapDegrees(_currentYaw - _goalYaw)) <= AnchorYawToleranceDegrees
             && ZoomAnchorSolver.TrySolveTarget(
-                anchor, previousCamera, _currentYaw, _settings.PitchDegrees, _currentDistance, playerFocus.Y, out Vector3 solved))
+                anchor + anchorShift, previousCamera + cameraShift, _currentYaw, _settings.PitchDegrees, _currentDistance, playerFocus.Y, out Vector3 solved))
         {
             _offset = new Vector2(solved.X, solved.Z) - focusXz;
         }
