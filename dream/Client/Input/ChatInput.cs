@@ -156,13 +156,18 @@ public sealed class ChatInput
         return State.Input.Length - before;
     }
 
+    // Alt+Enter toggles fullscreen (Game.OnKeyDown), so with Alt held Enter neither opens nor sends a chat line.
+    internal static bool IsChatEnter(bool enterPressed, bool altDown) => enterPressed && !altDown;
+
     // One frame of keys. canOpen is false while Settings is open or no server is connected.
     // Returns true when chat used this frame's keys (the line was open, or just closed), so the
     // caller skips the global keys.
     public bool Update(KeyboardState keyboard, bool canOpen, Action<ClientChatMessage> send)
     {
         State.OnlineVisible = canOpen && keyboard.IsKeyDown(Keys.Tab);
-        bool enter = keyboard.IsKeyPressed(Keys.Enter) || keyboard.IsKeyPressed(Keys.KeyPadEnter);
+        bool enter = IsChatEnter(
+            keyboard.IsKeyPressed(Keys.Enter) || keyboard.IsKeyPressed(Keys.KeyPadEnter),
+            keyboard.IsKeyDown(Keys.LeftAlt) || keyboard.IsKeyDown(Keys.RightAlt));
         if (!State.Typing)
         {
             _characters.Drain();

@@ -171,7 +171,7 @@ public sealed class MenuTypographyTests
     {
         List<MenuOptionRow> rows = OptionRows();
         List<Line> lines = Draw(width, height, w => OptionsPanel.Build(w, rows, backdrop: true), out UiLayout layout);
-        float heightUnits = 50f + rows.Count * OptionsPanel.RowHeightUnits + 8f + 2f * MenuWidgets.ButtonPitchUnits + 8f;
+        float heightUnits = OptionsPanel.HeightUnits(rows.Count, 3);
         float top = MathF.Max(6f, (MenuWidgets.DesignHeightUnits - heightUnits) * 0.5f);
         UiRect panel = _widgets.Centered(top, OptionsPanel.PanelWidthUnits, heightUnits);
         float labelWidth = OptionsPanel.LabelWidthUnits * layout.Scale;
@@ -208,8 +208,13 @@ public sealed class MenuTypographyTests
             0.92f,
             OptionsPanel.KeyBindingsLabel);
         AssertInBox(
-            Find(lines, OptionsPanel.BackLabel),
+            Find(lines, OptionsPanel.CameraLabel),
             _widgets.Inside(panel, x, buttonsTop + MenuWidgets.ButtonPitchUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits),
+            0.92f,
+            OptionsPanel.CameraLabel);
+        AssertInBox(
+            Find(lines, OptionsPanel.BackLabel),
+            _widgets.Inside(panel, x, buttonsTop + 2f * MenuWidgets.ButtonPitchUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits),
             0.92f,
             OptionsPanel.BackLabel);
     }

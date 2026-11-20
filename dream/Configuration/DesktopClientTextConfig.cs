@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using Dream.Application;
+using Dream.Client.CameraControl;
 using Dream.Simulation.World;
 
 namespace Dream.Configuration;
@@ -97,9 +98,21 @@ public static class DesktopClientTextConfig
             $"damage_text_crit_depth={Format(config.FloatingCombatText.CriticalDepthMultiplier)}",
             $"max_fps={config.MaxFramesPerSecond}",
             $"vsync={VSyncSettings.Describe(config.VSync)}",
+            $"window_mode={SerializeWindowMode(config.WindowMode)}",
             $"msaa={config.MsaaSamples}",
             $"admin_hud={(config.AdminHud ? 1 : 0)}",
             $"ui_scale={Format(config.UiScale)}",
+            $"camera_edge_pan={(config.TacticalCamera.EdgePanEnabled ? 1 : 0)}",
+            $"camera_edge_margin={Format(config.TacticalCamera.EdgeMarginPixels)}",
+            $"camera_pan_speed={Format(config.TacticalCamera.PanSpeed)}",
+            $"camera_confine={SerializeConfineMode(config.TacticalCamera.ConfineMode)}",
+            $"camera_anchor={(config.TacticalCamera.AnchorMode == CameraAnchorMode.Free ? "free" : "follow")}",
+            $"camera_return_seconds={Format(config.TacticalCamera.ReturnToPlayerSeconds)}",
+            $"camera_rotate_sensitivity={Format(config.TacticalCamera.RotateDegreesPerPixel)}",
+            $"camera_snap_step={Format(config.TacticalCamera.RotateSnapStepDegrees)}",
+            $"camera_snap_on_release={(config.TacticalCamera.SnapOnDragRelease ? 1 : 0)}",
+            $"camera_zoom_step={Format(config.TacticalCamera.ZoomStepRatio)}",
+            $"camera_invert_zoom={(config.TacticalCamera.InvertZoom ? 1 : 0)}",
             $"audio_enabled={(config.AudioEnabled ? 1 : 0)}",
             $"volume_master={Format(config.VolumeMaster)}",
             $"volume_sfx={Format(config.VolumeSfx)}",
@@ -154,9 +167,20 @@ public static class DesktopClientTextConfig
             return;
         }
 
+        if (key == "window_mode")
+        {
+            config.WindowMode = ParseWindowMode(value);
+            return;
+        }
+
         if (key == "vsync")
         {
             config.VSync = VSyncSettings.Parse(value) ?? VSyncSettings.Default;
+            return;
+        }
+
+        if (ApplyCameraKey(config, key, value))
+        {
             return;
         }
 
@@ -227,6 +251,91 @@ public static class DesktopClientTextConfig
                 break;
         }
     }
+
+    // The camera_* keys of the tactical camera. Returns true when the key belongs to it (even if the value was
+    // unusable: the setting then keeps its default, and Sanitize pulls the rest into range).
+    private static bool ApplyCameraKey(DesktopClientConfig config, string key, string value)
+    {
+        TacticalCameraSettings camera = config.TacticalCamera;
+        bool Number(out float parsed) =>
+            float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed);
+
+        switch (key)
+        {
+            case "camera_edge_pan":
+                config.TacticalCamera = camera with { EdgePanEnabled = HudOptions.ParseFlag(value) ?? true };
+                return true;
+            case "camera_snap_on_release":
+                config.TacticalCamera = camera with { SnapOnDragRelease = HudOptions.ParseFlag(value) ?? false };
+                return true;
+            case "camera_invert_zoom":
+                config.TacticalCamera = camera with { InvertZoom = HudOptions.ParseFlag(value) ?? false };
+                return true;
+            case "camera_confine":
+                config.TacticalCamera = camera with { ConfineMode = ParseConfineMode(value) };
+                return true;
+            case "camera_anchor":
+                config.TacticalCamera = camera with
+                {
+                    AnchorMode = value.Trim().Equals("free", StringComparison.OrdinalIgnoreCase)
+                        ? CameraAnchorMode.Free
+                        : CameraAnchorMode.Follow
+                };
+                return true;
+            case "camera_edge_margin":
+                if (Number(out float margin)) { config.TacticalCamera = camera with { EdgeMarginPixels = margin }; }
+                return true;
+            case "camera_pan_speed":
+                if (Number(out float speed)) { config.TacticalCamera = camera with { PanSpeed = speed }; }
+                return true;
+            case "camera_return_seconds":
+                if (Number(out float seconds)) { config.TacticalCamera = camera with { ReturnToPlayerSeconds = seconds }; }
+                return true;
+            case "camera_rotate_sensitivity":
+                if (Number(out float sensitivity)) { config.TacticalCamera = camera with { RotateDegreesPerPixel = sensitivity }; }
+                return true;
+            case "camera_snap_step":
+                if (Number(out float step)) { config.TacticalCamera = camera with { RotateSnapStepDegrees = step }; }
+                return true;
+            case "camera_zoom_step":
+                if (Number(out float zoom)) { config.TacticalCamera = camera with { ZoomStepRatio = zoom }; }
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Unknown or missing values mean a normal window; never throws.
+    public static WindowMode ParseWindowMode(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "borderless" => WindowMode.Borderless,
+        "fullscreen" => WindowMode.Fullscreen,
+        _ => WindowMode.Windowed
+    };
+
+    public static string SerializeWindowMode(WindowMode mode) => mode switch
+    {
+        WindowMode.Borderless => "borderless",
+        WindowMode.Fullscreen => "fullscreen",
+        _ => "windowed"
+    };
+
+    private static CameraConfineMode ParseConfineMode(string value)
+    {
+        return value.Trim().Replace("-", "_", StringComparison.OrdinalIgnoreCase).ToLowerInvariant() switch
+        {
+            "off" or "none" => CameraConfineMode.Off,
+            "always" or "on" => CameraConfineMode.Always,
+            _ => CameraConfineMode.FullscreenOnly
+        };
+    }
+
+    private static string SerializeConfineMode(CameraConfineMode mode) => mode switch
+    {
+        CameraConfineMode.Off => "off",
+        CameraConfineMode.Always => "always",
+        _ => "fullscreen"
+    };
 
     private static CameraViewMode ParseCameraViewMode(string value)
     {

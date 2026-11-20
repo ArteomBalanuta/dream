@@ -143,16 +143,22 @@ public partial class PlayScene
             _settings.CameraViewMode,
             _deathTracker.IsDead,
             _deathTracker.SecondsRemaining(_serverTickClock.EstimatedTick),
-            (float)args.Time);
+            (float)args.Time,
+            isometric ? CameraPoseForFocus((float)args.Time) : null);
         if (isometric)
         {
-            _render.FogOrigin = _runtime.LastCameraFocus;
+            // Fog, the shadow volume, light and prop selection centre on what the camera looks at; the war mist
+            // stays on the player (LastCameraFocus), so panning cannot scout through it.
+            _render.FogOrigin = _runtime.LastViewTarget;
             _render.LastWorldCamera = presentation.Camera;
+            _render.SetIsometricDistance(_runtime.LastCameraPose.Distance);
+            _render.ShadowViewForwardGround = _runtime.CurrentGroundForward;
         }
         else
         {
             _render.FogOrigin = null;
             _render.LastWorldCamera = null;
+            _render.ShadowViewForwardGround = null;
         }
 
         _render.LootFeed = _lootFeedback;

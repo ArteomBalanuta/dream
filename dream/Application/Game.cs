@@ -59,6 +59,7 @@ public class Game : GameWindow
     private bool _menuRendererFailed;
     private readonly bool _menuEnabled;
     private readonly List<MenuOptionRow> _optionRows;
+    private readonly List<MenuOptionRow> _cameraRows;
     private readonly MenuScreenState _pauseScreen = new();
     private bool _pauseWasVisible;
     private bool _exitToMainMenuPending;
@@ -143,6 +144,7 @@ public class Game : GameWindow
         GameAudio.EnsureStarted(AudioVolumes.FromConfig(_desktopClientConfig));
         _localServer = CreateLocalServerHandle();
         _optionRows = BuildOptionRows();
+        _cameraRows = MenuOptionRows.CreateCameraRows(_settings, _desktopClientConfig, PersistDesktopClientConfig);
         bool remoteClient = RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions);
         _menuEnabled = MenuLaunchPolicy.ShouldShowMainMenu(Environment.GetEnvironmentVariable, remoteClient);
         // A client that only joins a remote server never passes ServerBootstrap's content check, so
@@ -190,7 +192,8 @@ public class Game : GameWindow
             _settings,
             _desktopClientConfig,
             ApplyFrameCap,
-            PersistDesktopClientConfig);
+            PersistDesktopClientConfig,
+            onWindowModeChanged: () => ApplyWindowMode(_desktopClientConfig.WindowMode));
         AddExtraOptionRows(rows);
         return rows;
     }
@@ -310,7 +313,8 @@ public class Game : GameWindow
                 _desktopClientConfig.HostPort,
                 _desktopClientConfig.PlayerName),
             PersistMultiplayer,
-            SystemClipboard);
+            SystemClipboard,
+            _cameraRows);
         CursorState = WithMenuCursor(_mainMenu.DesiredCursorState);
         // After any ended play scene's teardown (which set None), so the title screen keeps its music.
         GameAudio.Current.SetMusic(MusicTrack.Menu);
@@ -384,6 +388,77 @@ public class Game : GameWindow
             ? "[startup] GL debug output: high and medium severity"
             : "[startup] GL debug output: unavailable (no KHR_debug)");
 #endif
+        ApplyWindowMode(_desktopClientConfig.WindowMode);
+    }
+
+    private WindowModeState? _windowModeState;
+
+    // Moves the window to a mode. Thin on purpose: the decisions live in WindowModeController. Never throws.
+    private void ApplyWindowMode(WindowMode mode)
+    {
+        if (!WindowModeController.ShouldApply(Environment.GetEnvironmentVariable, MenuCapture.EnvironmentVariable))
+        {
+            return;
+        }
+
+        try
+        {
+            bool exclusive = WindowModeController.IsExclusive(
+                HasGlfwMonitor(), _windowModeState?.Current ?? WindowMode.Windowed);
+            // A maximised or minimised window has no meaningful normal placement to remember. Leaving exclusive
+            // fullscreen always goes through Normal, which releases the monitor.
+            if (exclusive || (WindowState != WindowState.Normal && WindowState != WindowState.Fullscreen))
+            {
+                WindowState = WindowState.Normal;
+            }
+
+            WindowPlacement live = new(WindowBorder.Resizable, WindowState.Normal, ClientLocation, ClientSize);
+            _windowModeState ??= new WindowModeState(live);
+
+            Vector2i monitorPosition = default;
+            Vector2i monitorResolution = default;
+            if (Monitors.GetMonitorFromWindow(this) is { } monitor)
+            {
+                monitorPosition = new Vector2i(monitor.ClientArea.Min.X, monitor.ClientArea.Min.Y);
+                monitorResolution = new Vector2i(monitor.HorizontalResolution, monitor.VerticalResolution);
+            }
+
+            WindowPlacement target = _windowModeState.Enter(mode, live, monitorPosition, monitorResolution);
+            WindowBorder = target.Border;
+            if (target.State == WindowState.Fullscreen)
+            {
+                ClientLocation = target.ClientLocation;
+                ClientSize = target.ClientSize;
+                WindowState = WindowState.Fullscreen;
+            }
+            else
+            {
+                ClientSize = target.ClientSize;
+                ClientLocation = target.ClientLocation;
+            }
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[window] could not apply window mode {mode}: {exception.Message}");
+        }
+    }
+
+    private unsafe bool HasGlfwMonitor() => GLFW.GetWindowMonitor(WindowPtr) != null;
+
+    // F11 / Alt+Enter: flips between Windowed and the last fullscreen mode, applies it and saves the choice.
+    private void ToggleWindowMode()
+    {
+        if (!WindowModeController.ShouldApply(Environment.GetEnvironmentVariable, MenuCapture.EnvironmentVariable))
+        {
+            return;
+        }
+
+        _windowModeState ??= new WindowModeState(new WindowPlacement(
+            WindowBorder.Resizable, WindowState.Normal, ClientLocation, ClientSize));
+        WindowMode next = WindowModeController.Toggle(_desktopClientConfig.WindowMode, _windowModeState.LastFullscreen);
+        _desktopClientConfig.WindowMode = next;
+        ApplyWindowMode(next);
+        PersistDesktopClientConfig();
     }
 
     public void UpdateFPS()
@@ -442,6 +517,34 @@ public class Game : GameWindow
                     || (_settings.PauseMenuVisible && !_settings.DeveloperSettingsVisible)));
         bool active = menuShowing && _menuRenderer?.CursorWillDraw == true;
         return ClassicCursorPolicy.Decide(active, false, IsFocused, state);
+    }
+
+    // The tactical camera's window facts, once per frame: focus and whether the OS cursor is over the client area
+    // (polled, so a cursor that left for another monitor is known even without a leave event), then the cursor clip.
+    // The client rectangle is in screen pixels: ClientLocation is the client area's top-left (Location is the
+    // outer window, title bar and border included, and would shift the clip by their size).
+    private unsafe void SyncPlayCameraWindow(PlayScene scene)
+    {
+        bool hovered = GLFW.GetWindowAttrib(WindowPtr, WindowAttributeGetBool.Hovered);
+        scene.SyncCameraWindowState(IsFocused, hovered);
+        bool minimised = WindowState == WindowState.Minimized || ClientSize.X <= 0 || ClientSize.Y <= 0;
+        bool fullscreenLike = WindowModeController.IsFullscreenLike(_windowModeState?.Current ?? WindowMode.Windowed)
+            || WindowState == WindowState.Fullscreen
+            || (WindowBorder == WindowBorder.Hidden && WindowState == WindowState.Maximized);
+        Box2i clientRect = new(ClientLocation, ClientLocation + ClientSize);
+        scene.ApplyCursorConfinement(minimised, fullscreenLike, clientRect);
+        PersistCameraIfChanged();
+    }
+
+    // The Y key toggles the rig's mode and the scene writes it back to the settings; the menu rows persist their
+    // own changes, so only a settings value the config does not hold (the Y toggle) reaches the file here.
+    private void PersistCameraIfChanged()
+    {
+        if (!_desktopClientConfig.TacticalCamera.Equals(_settings.TacticalCamera))
+        {
+            _desktopClientConfig.TacticalCamera = _settings.TacticalCamera;
+            PersistDesktopClientConfig();
+        }
     }
 
     // The title screen or the connection screen: advance it and enter the world when a session connects.
@@ -503,7 +606,11 @@ public class Game : GameWindow
         // menu's text fields use, so there is one seam rather than two.
         _playScene.Clipboard = SystemClipboard;
         // The viewport and settings resolution follow a window that was resized while a menu was up.
-        _playScene.Resize(ClientSize);
+        if (WindowModeController.IsUsableSize(ClientSize))
+        {
+            _playScene.Resize(ClientSize);
+        }
+
         // One small real draw per program into offscreen targets, so the driver's draw-time shader specialisation
         // is paid here, behind the loading screen, and not on the first world frame. Never throws; DREAM_SHADER_WARMUP=0 skips.
         _playScene.WarmUpShaders();
@@ -589,7 +696,16 @@ public class Game : GameWindow
         Stopwatch frameStopwatch = Stopwatch.StartNew();
         if (_playScene != null)
         {
-            _playScene.Render(args, IsFocused, MouseState, size => ClientSize = size);
+            SyncPlayCameraWindow(_playScene);
+            _playScene.Render(args, IsFocused, MouseState, size =>
+            {
+                // A resolution preset only applies to a windowed window.
+                if (WindowModeController.CanSetResolution(_windowModeState?.Current ?? WindowMode.Windowed)
+                    && WindowModeController.IsUsableSize(size))
+                {
+                    ClientSize = size;
+                }
+            });
             RenderLoadingOverlay();
             RenderPauseMenu();
         }
@@ -826,6 +942,7 @@ public class Game : GameWindow
     {
         MenuScreen.Options => OptionsPanel.Build(w, _optionRows, backdrop: false),
         MenuScreen.KeyBindings => KeyBindingsPanel.Build(w, backdrop: false),
+        MenuScreen.Camera => CameraOptionsPanel.Build(w, _cameraRows, backdrop: false),
         _ => PauseMenuPanel.Build(w, _settings.AdminHudAvailable)
     };
 
@@ -880,6 +997,11 @@ public class Game : GameWindow
     {
         base.OnResize(e);
         Vector2i size = new(e.Width, e.Height);
+        if (!WindowModeController.IsUsableSize(size))
+        {
+            return;
+        }
+
         _startupScene?.Resize(size);
         _playScene?.Resize(size);
     }
@@ -897,6 +1019,12 @@ public class Game : GameWindow
     protected override void OnKeyDown(KeyboardKeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (WindowModeController.IsWindowModeToggle(e.Key, e.Modifiers, e.IsRepeat))
+        {
+            ToggleWindowMode();
+            return;
+        }
+
         if (_mainMenu == null)
         {
             return;
@@ -1002,6 +1130,7 @@ public class Game : GameWindow
         {
             try
             {
+                ReleaseCameraClipGuarded();
                 _playScene?.Dispose();
                 _playScene = null;
             }
@@ -1091,12 +1220,31 @@ public class Game : GameWindow
         DesktopClientTextConfig.TrySave(_desktopClientConfigPath, _desktopClientConfig);
     }
 
+    // Lets the OS cursor go before anything that could throw runs; a failure here is logged, never rethrown.
+    private void ReleaseCameraClipGuarded()
+    {
+        try
+        {
+            _playScene?.ReleaseCameraResources();
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[exit] cursor clip release failed: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
     // Backstop for the path OnUnload never sees: GameWindow.Run has no exception handling around the
     // frame callbacks, so an exception out of a frame leaves Run without OnUnload ever being called, and
     // GameWindow.Dispose does not call it either. Program.RunDesktop's `using` still reaches here, so the
     // integrated server is stopped and the world drained to disk before the process goes down.
     protected override void Dispose(bool disposing)
     {
+        if (disposing)
+        {
+            // Whatever else fails below, the OS cursor clip must not outlive the window.
+            ReleaseCameraClipGuarded();
+        }
+
         if (disposing && !_unloaded)
         {
             _unloaded = true;

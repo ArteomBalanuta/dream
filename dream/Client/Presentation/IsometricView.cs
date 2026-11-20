@@ -27,22 +27,34 @@ public static class IsometricView
 
     public static Matrix4 CreateProjection(float aspectRatio)
     {
+        return CreateProjection(aspectRatio, Distance);
+    }
+
+    // The projection for a camera this far from its target: only the far plane depends on the distance.
+    public static Matrix4 CreateProjection(float aspectRatio, float distance)
+    {
         return Matrix4.CreatePerspectiveFieldOfView(
             MathHelper.DegreesToRadians(FieldOfViewDegrees),
             aspectRatio,
             NearPlane,
-            FarPlane);
+            FarPlaneFor(distance));
     }
 
-    private static Vector3 ComputeFocusToCamera()
+    // The far plane keeps the fixed view's relation (FarPlane - Distance) at any distance.
+    public static float FarPlaneFor(float distance) => distance + (FarPlane - Distance);
+
+    // From the focus point towards a camera at this yaw, pitch and distance. The default pose gives FocusToCamera.
+    public static Vector3 FocusToCameraFor(float yawDegrees, float pitchDegrees, float distance)
     {
-        float pitch = MathHelper.DegreesToRadians(PitchDegrees);
-        float yaw = MathHelper.DegreesToRadians(YawDegrees);
+        float pitch = MathHelper.DegreesToRadians(pitchDegrees);
+        float yaw = MathHelper.DegreesToRadians(yawDegrees);
         return new Vector3(
             MathF.Cos(pitch) * MathF.Cos(yaw),
             MathF.Sin(pitch),
-            MathF.Cos(pitch) * MathF.Sin(yaw)) * Distance;
+            MathF.Cos(pitch) * MathF.Sin(yaw)) * distance;
     }
+
+    private static Vector3 ComputeFocusToCamera() => FocusToCameraFor(YawDegrees, PitchDegrees, Distance);
 }
 
 // Follows the eye with X and Z unchanged and Y smoothed, so jumps do not bob the camera.

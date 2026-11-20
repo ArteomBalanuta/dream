@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
+using Dream.Client.CameraControl;
 using Dream.Rendering.Mist;
 using Dream.Tests.Utilities;
 using Xunit;
@@ -278,6 +279,34 @@ public class WarMistStructuralTests
         Assert.Contains("_warMistRenderer?.Dispose();", disposeWarMist);
         Assert.Contains("_warMistRenderer = null;", disposeWarMist);
         Assert.DoesNotContain("GpuTimerSection", pass);
+    }
+
+    [Fact]
+    public void The_Slab_Covers_The_Farthest_View_Footprint_Around_The_View_Target()
+    {
+        // The slab is centred on the view target, so only the footprint (not the pan distance) must fit in it. On
+        // the widest window at the farthest zoom the footprint is wider than the default half extent, so the
+        // scene sizes the slab from it.
+        float radius = TacticalCameraLimits.FootprintRadius(TacticalCameraLimits.MaxDistance, TacticalCameraLimits.ReferenceAspect);
+        Assert.True(Dream.Client.Scenes.PlayScene.WarMistSlabHalfExtent >= radius);
+        Assert.True(Dream.Client.Scenes.PlayScene.WarMistSlabHalfExtent >= WarMistField.HalfExtent);
+    }
+
+    [Fact]
+    public void The_Pass_Centres_The_Slab_On_The_View_Target_And_The_Field_On_The_Player()
+    {
+        string source = ReadSource("dream/Client/Scenes/PlayScene.WarMist.cs");
+        string pass = Method(source, "private void DrawWarMistPass(");
+        string renderer = ReadSource("dream/Rendering/Mist/WarMistRenderer.cs");
+        string draw = Method(renderer, "public void Draw(");
+
+        Assert.Contains("focus, _runtime.LastViewTarget, WarMistSlabHalfExtent, _warMistSeconds, _exploration", pass);
+        Assert.Contains("Vector3 focus = _runtime.LastCameraFocus;", pass);
+        Assert.Contains("slabCentre.X - slabHalfExtent", draw);
+        Assert.Contains("slabCentre.Z + slabHalfExtent", draw);
+        Assert.Contains("Upload(_locations[LocationFocus], focus.X, focus.Z);", draw);
+        Assert.DoesNotContain("focus.X - WarMistField.HalfExtent", draw);
+        Assert.Contains("Draw(viewProjection, focus, focus, WarMistField.HalfExtent, timeSeconds, memory)", renderer);
     }
 
     private static float ShaderConstant(string shader, string name)

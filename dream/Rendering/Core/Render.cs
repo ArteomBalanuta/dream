@@ -88,6 +88,9 @@ public partial class Render : IDisposable
     private readonly HudRenderer _hudRenderer;
     private readonly ViewModelRenderer _viewModelRenderer;
     private bool _disposed;
+    private float _isometricDistance = IsometricView.Distance;
+    private bool _projectionIsometric;
+    private float _projectionFieldOfViewDegrees;
 
     private static Vector2i GetSafeViewportSize(Vector2i size)
     {
@@ -97,11 +100,13 @@ public partial class Render : IDisposable
     private void UpdateProjection(int width, int height, float fieldOfViewDegrees, bool isometric)
     {
         _currentSize = new Vector2i(width, height);
+        _projectionIsometric = isometric;
+        _projectionFieldOfViewDegrees = fieldOfViewDegrees;
         Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
         float aspectRatio = (float)safeViewportSize.X / safeViewportSize.Y;
 
         _projection = isometric
-            ? IsometricView.CreateProjection(aspectRatio)
+            ? IsometricView.CreateProjection(aspectRatio, _isometricDistance)
             : Matrix4.CreatePerspectiveFieldOfView(
                 MathHelper.DegreesToRadians(fieldOfViewDegrees),
                 aspectRatio,
@@ -118,6 +123,25 @@ public partial class Render : IDisposable
     {
         UpdateProjection(settings.WindowWidth, settings.WindowHeight, settings.FieldOfViewDegrees, settings.CameraViewMode == CameraViewMode.Isometric);
     }
+
+    // The tactical camera's current distance: only the isometric far plane depends on it (IsometricView.FarPlaneFor),
+    // so the projection is rebuilt only when it changes.
+    public void SetIsometricDistance(float distance)
+    {
+        if (!float.IsFinite(distance) || distance <= 0f || distance == _isometricDistance)
+        {
+            return;
+        }
+
+        _isometricDistance = distance;
+        if (_projectionIsometric)
+        {
+            UpdateProjection(_currentSize.X, _currentSize.Y, _projectionFieldOfViewDegrees, true);
+        }
+    }
+
+    // Screen up on the ground for the shadow receiver box; null keeps the fixed view's direction.
+    public Vector3? ShadowViewForwardGround { get; set; }
 
     public WorldRenderer World => _worldRenderer;
 

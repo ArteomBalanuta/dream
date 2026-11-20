@@ -37,6 +37,9 @@ public partial class Render
     // Set by the scene every update; carried into the classic HUD frame.
     public bool PointerOverEnemy { get; set; }
 
+    // Set by the scene every update while a camera rotation drag is held: the cursor shows Grab.
+    public bool CameraDragging { get; set; }
+
     [MemberNotNull(nameof(_hudShader), nameof(_shaderObj))]
     private void InitializeHUD()
     {
@@ -306,7 +309,8 @@ public partial class Render
             Labels = _classicLabels,
             Vendor = Vendor,
             Quickbar = Quickbar,
-            PointerOverEnemy = PointerOverEnemy
+            PointerOverEnemy = PointerOverEnemy,
+            CameraDragging = CameraDragging
         };
         HudSurfaceSelector selector = HudSelector(settings);
         bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out action, out closeInventory, out Exception? fault);
