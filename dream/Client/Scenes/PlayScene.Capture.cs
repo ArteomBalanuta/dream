@@ -853,6 +853,98 @@ public partial class PlayScene
             $"target {(_clickMove.Target is { } t ? $"alive {t.IsAlive} {(t.Anchor - _runtime.Player.Camera.Position).Length:0.0} m at {t.Anchor.X:0.0},{t.Anchor.Z:0.0}" : "none")}");
         LogCaptureActorBox();
         LogCaptureActorClip();
+        LogCaptureAimParallax();
+    }
+
+    // The aim A/B behind docs/ledger/work-log/2026-11-20-cursor-aim-parallax.md. For the nearest live
+    // enemy it prints how high its combat anchor stands above the player's body plane, and how far off
+    // the swing the enemy sits under BOTH aims: the facing the client actually sends, and the plane cut
+    // that used to be the only one.
+    //
+    // The plane cut is recomputed here rather than read off the controller, deliberately. It is the
+    // REMOVED behaviour, so this copy of its formula is the baseline; if it called into the controller
+    // it would follow the controller and the comparison would collapse to zero the day someone changed
+    // the aim again. Lateral miss is measured the way AuthoritativeCombatResolver's flat branch measures
+    // it - from the eye, on the ground plane - and compared against the same radius the resolver uses.
+    private void LogCaptureAimParallax()
+    {
+        EnemyActor? target = NearestLiveEnemy(_runtime.Player.Camera.Position);
+        if (target is null)
+        {
+            Console.WriteLine("[hud-capture] aimcheck: no live enemy");
+            return;
+        }
+
+        Vector3 anchor = target.Combatant.GetCombatAnchorWorldPosition();
+        Vector3 body = _runtime.Player.GetWorldPosition();
+        Vector3 eye = _runtime.Player.Camera.Position;
+        float anchorAboveBody = anchor.Y - body.Y;
+        float range = new Vector3(anchor.X - eye.X, 0f, anchor.Z - eye.Z).Length;
+
+        string sent = DescribeAimMiss(_runtime.Player.Camera.Front, eye, anchor);
+        string cut = TryPlaneCutFacing(body, out Vector3 cutFacing)
+            ? DescribeAimMiss(cutFacing, eye, anchor)
+            : "no ray";
+
+        Console.WriteLine(
+            $"[hud-capture] aimcheck: {target.DisplayName} anchor {anchorAboveBody:0.000} m above the body plane, " +
+            $"range {range:0.00} m, radius {EnemyRegistry.DefaultHitRadiusMetres:0.00} m, aimedAtTarget {_cursorAim.AimedAtTarget} | " +
+            $"sent {sent} | planecut {cut}");
+    }
+
+    // The lateral miss of one flat facing, and whether a swing along it reaches the anchor at all.
+    private static string DescribeAimMiss(Vector3 facing, Vector3 eye, Vector3 anchor)
+    {
+        Vector3 flat = new(facing.X, 0f, facing.Z);
+        if (flat.Length < 1e-4f)
+        {
+            return "no facing";
+        }
+
+        flat = flat.Normalized();
+        float dx = anchor.X - eye.X;
+        float dz = anchor.Z - eye.Z;
+        float projected = (dx * flat.X) + (dz * flat.Z);
+        float lx = dx - (flat.X * projected);
+        float lz = dz - (flat.Z * projected);
+        float lateral = MathF.Sqrt((lx * lx) + (lz * lz));
+        bool within = lateral <= EnemyRegistry.DefaultHitRadiusMetres && projected >= 0f;
+        return $"miss {lateral:0.000} m {(within ? "HIT" : "MISS")}";
+    }
+
+    // The facing the removed plane cut would have produced for the cursor where it is now.
+    private bool TryPlaneCutFacing(Vector3 body, out Vector3 facing)
+    {
+        facing = default;
+        Camera? camera = _render.LastWorldCamera;
+        if (camera is null
+            || !WorldCursorPicker.TryBuildRay(
+                camera.GetViewMatrix(),
+                _render.ProjectionMatrix,
+                _captureLast.Position,
+                _render.ViewportSize,
+                out Vector3 origin,
+                out Vector3 direction)
+            || direction.Y >= -0.0001f)
+        {
+            return false;
+        }
+
+        float t = (body.Y - origin.Y) / direction.Y;
+        if (t <= 0f)
+        {
+            return false;
+        }
+
+        Vector3 point = origin + (direction * t);
+        Vector3 flat = new(point.X - body.X, 0f, point.Z - body.Z);
+        if (flat.Length < CursorAimController.MinAimMetres)
+        {
+            return false;
+        }
+
+        facing = flat.Normalized();
+        return true;
     }
 
     // The clip the player's state machine actually selected this frame (acceptance M6). Logged next

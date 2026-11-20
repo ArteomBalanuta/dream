@@ -25,18 +25,24 @@ public interface ICursorAimHost
 // the player's own height. Under the isometric camera (50 degrees of pitch) a point h metres above that
 // plane draws h / tan(50) = 0.84h metres further along the camera's ground direction, so the ray through
 // it meets the plane that far past it and the facing points beside the enemy rather than at it. The
-// server's melee swing forgives 0.9 m of lateral miss (EnemyRegistry.DefaultHitRadiusMetres), and what
-// eats into that is the part of the 0.84h displacement lying ACROSS the line of attack, foreshortened by
-// range. How much lies across depends on where the enemy stands relative to the camera: along the
-// camera's ground direction none of it does, and square across it all of it does.
+// server's melee swing forgives 0.9 m of lateral miss (EnemyRegistry.DefaultHitRadiusMetres), and the
+// displacement eats into that by however much it turns the facing. There is no one worst bearing: while
+// the displacement is small the miss peaks with the enemy across the camera's ground direction, and once
+// it is comparable to the range it peaks with the enemy along it, because then the facing swings by
+// tens of degrees. Measure the case you care about rather than assuming an orientation.
 //
-// The h that matters is NOT the ground rise. What the player points at is the enemy's combat anchor, and
-// that sits WolfDefinition.CombatAnchorHeight (0.75 m) above the enemy's feet - so on dead level ground
-// the plane cut is already 0.63 m out, which at the skeleton's 1.5 m stand-off is 0.58 m of lateral
-// miss: 64% of the swing's whole tolerance spent before any slope. The remaining margin buys about
-// 0.59 m of ground rise at that range, and only 0.32 m further out. A one-block step therefore misses
-// every normal attack, which is the user's report; a cleave's 120-degree arc swallows the same error,
-// which is why skills kept landing on an enemy a normal attack could not touch.
+// The h that matters is NOT the ground rise: what the player points at is the enemy's combat anchor,
+// which stands above its feet. Both cases below are MEASURED in a running client, at the skeleton's
+// 1.5 m stand-off (artifacts/captures/aim-flat and aim-step, the aimcheck lines; see
+// docs/ledger/work-log/2026-11-20-cursor-aim-parallax.md):
+//
+//   level ground      anchor 0.250 m above the body plane -> plane cut misses by 0.160 m, still a hit
+//   one-block step    anchor 1.250 m above the body plane -> plane cut misses by 1.022 m, a clean MISS
+//
+// So level ground spends about a sixth of the tolerance and is safe, and a single block of rise puts the
+// swing 14% past the radius, missing every time. That is the user's report. A cleave's 120-degree arc
+// swallows the same error, which is why skills kept landing on an enemy a normal attack could not touch.
+// With the anchor as the aim point both cases measure 0.000 m.
 //
 // An enemy the cursor is ON needs no plane: the pick that found it is a ray/actor intersection, so its
 // anchor is where the enemy actually is and the facing is exact at any height.

@@ -21,23 +21,34 @@ What decides a hit is not the yaw error but the lateral miss: `AuthoritativeComb
 branch allows `EnemyRegistry.DefaultHitRadiusMetres` = 0.9 m of it. The part of the 0.84h displacement
 lying across the line of attack is what eats into that, foreshortened by range.
 
-**The h that matters is not the ground rise, and this is the part I got wrong first.** What the player
-points at is the enemy's *combat anchor*, and that sits `WolfDefinition.CombatAnchorHeight` = 0.75 m
-above the enemy's feet. So on dead level ground the plane cut is already 0.63 m out, which at the
-skeleton's 1.5 m stand-off is **0.58 m of lateral miss — 64% of the swing's entire tolerance, spent
-before any slope exists**. What is left buys about 0.59 m of actual ground rise at that range, and only
-0.32 m further out. A one-block step therefore misses every normal attack.
+**The h that matters is not the ground rise.** What the player points at is the enemy's *combat
+anchor*, so h is the height of that anchor above the player's body plane. Both cases are now measured
+in a running client at the skeleton's 1.5 m stand-off, not derived:
 
-That last number closes a loop. The commit that added `MaxMeleeHeightDifferenceMetres` says in its own
-comment that "the 3D distance made a one-block step an unhittable target" and fixed the distance half.
-This was the aim half of the same symptom, still live. And on level ground the 0.32 m of margin that
-remained is why hits felt unreliable in general: any enemy drift or player movement inside a frame
-could spend it. A cleave's 120° arc swallows all of this, which is exactly why skills kept landing on
-an enemy a normal attack could not touch, and why the report read as a broken enemy.
+| case | anchor above body plane | plane cut (old) | anchor aim (new) |
+| --- | --- | --- | --- |
+| level ground | 0.250 m | miss 0.160 m — hit | 0.000 m |
+| one-block step | 1.250 m | **miss 1.022 m — MISS** | 0.000 m |
 
-My first write-up of this said "a rise of about 1.34 m", treating h as the ground rise. It is the
-anchor height above the player's body plane; the ground rise is 0.75 m less. The tests now derive the
-flat-ground case from `WolfDefinition.CombatAnchorHeight` rather than passing a bare 0.
+The radius is 0.9 m, so a single block of rise puts the swing 14% past it and misses every time, while
+level ground spends about a sixth of the tolerance and is safe. That closes a loop: the commit that
+added `MaxMeleeHeightDifferenceMetres` says in its own comment that "the 3D distance made a one-block
+step an unhittable target" and fixed the distance half. This was the aim half of the same symptom, still
+live. A cleave's 120° arc swallows all of it, which is why skills kept landing on an enemy a normal
+attack could not touch.
+
+**I got this wrong twice before measuring it, in opposite directions.** First I treated h as the ground
+rise and said "a rise of about 1.34 m misses" — too pessimistic about what a slope does. Then I found
+`WolfDefinition.CombatAnchorHeight` = 0.75 m, assumed that was the anchor's height above the *player's*
+plane, and said level ground already spent 64% of the tolerance — too alarmist, and wrong by a factor of
+3.6. The 0.75 m is measured from the *enemy's own position*, and an enemy's body centre sits about half a
+metre below the player's, so the real figure is 0.250 m. Both errors were a wrong zero point, and both
+survived a review and a green suite because nothing in either measured the actual game. The capture did,
+in one run.
+
+The general form of this trap is in memory as `parallax-zero-is-the-anchor`: when you quantify a
+projection error, do not derive the zero point from the constants you happen to find — print it from a
+running frame.
 
 ## The fix
 
@@ -100,10 +111,17 @@ be replaced by real unit tests.
   The status line reads `aimOwnsFacing True aimedAtTarget True`, so the hover's anchor really does reach
   the aim in the shipped client, and the swing landed three times: `520 -> 482 -> 450 -> 399`. The run
   also re-confirms the Combat default — no mode key was pressed and the log says `mode Combat`.
-- **The raised case itself is still only proven on paper.** `dev teleport` takes an XZ pair and no Y, so
-  there is no cheap way to stage a one-block step at a fixed stand-off; the level-ground figure above is
-  in-engine, the 0.59 m crossing is arithmetic plus a unit test. The capture log prints `aimedAtTarget`,
-  which is the hook for doing it properly when a staged scene exists.
+- **The raised case is confirmed too**, `artifacts/captures/aim-step`. `dev tp` takes an XZ pair and no
+  Y, and this world's terrain is flat (every probed column 1.48–1.50 m), so the step is *built*: the
+  capture switches to Building, right-clicks the ground one cell out with `buildat`, switches back to
+  Combat, and spawns with `spawn RisenSkeleton 1 2` — `DevSpawn` puts the first enemy at exactly +X and
+  `TryFindStandable` has only the block's top to choose in that column, so the skeleton lands on it.
+  Result: anchor 1.250 m up, plane cut 1.022 m MISS, shipped aim 0.000 m HIT, and the swing landing
+  520 → 433 → 393 → 352. That is the user's bug reproduced and the fix verified in the engine.
+- The A/B comes from a new capture-only `aimcheck` line (`PlayScene.Capture.cs`), which prints the anchor
+  height, the range, and the lateral miss for both aims the way the resolver measures it. It recomputes
+  the plane cut from its own copy of the removed formula rather than calling the controller, so the
+  comparison cannot quietly collapse to zero if the aim changes again.
 - Unexamined by eye: W/A/S/D is projected against the aim facing, so while an enemy is hovered the walk
   direction now follows the enemy's true position rather than the cursor's ground point — up to ~30° of
   shift at a 3 m rise. It matches what click-to-move attack already does, but it is a feel change.

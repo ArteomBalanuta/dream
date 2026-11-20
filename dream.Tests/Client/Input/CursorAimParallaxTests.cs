@@ -68,26 +68,34 @@ public sealed class CursorAimParallaxTests
     }
 
     // An enemy 1.5 m away - the Risen Skeleton's stand-off - with its combat anchor the given height
-    // above the player's body plane, in the WORST orientation: the camera's ground direction lies across
-    // the line of attack, so all of the parallax becomes lateral miss. Along it, none would.
+    // above the player's body plane, at +X.
     //
-    // anchorAboveBody is NOT a ground rise. An enemy on level ground already has its anchor
-    // WolfDefinition.CombatAnchorHeight up, so FlatGroundAnchor is the zero case and anything more is
-    // that plus the rise.
+    // +X is not arbitrary and it is not the worst case: it is where DevSpawn puts the first enemy
+    // ("the first one stands at +X so a single spawn is predictable"), so these figures are directly
+    // comparable with the capture that measured the real thing. There IS no single worst bearing - the
+    // lateral miss peaks across the camera's ground direction while the displacement is small (0.21 m at
+    // the level-ground height) and swings round to +X once it is large (1.05 m at a one-block step),
+    // because a displacement comparable to the range turns the facing much further. Assuming one fixed
+    // worst orientation is a mistake this file made once.
+    //
+    // anchorAboveBody is NOT a ground rise; see LevelGroundAnchor.
     private static Vector3 RaisedEnemy(float anchorAboveBody)
     {
-        Vector3 ground = ViewDirection();
-        Vector2 cameraGround = new Vector2(ground.X, ground.Z).Normalized();
-        Vector2 across = new(cameraGround.Y, -cameraGround.X);
-        return new Vector3(
-            Body.X + (across.X * 1.5f),
-            Body.Y + anchorAboveBody,
-            Body.Z + (across.Y * 1.5f));
+        return new Vector3(Body.X + 1.5f, Body.Y + anchorAboveBody, Body.Z);
     }
 
-    // What an enemy standing on the same floor as the player really gives: its feet at the player's own
-    // height, its anchor 0.75 m up. Derived, because this is the number the whole argument turns on.
-    private const float FlatGroundAnchor = WolfDefinition.CombatAnchorHeight;
+    // How high an enemy's combat anchor really stands above the player's body plane on level ground.
+    //
+    // This is MEASURED, from the aimcheck line of artifacts/captures/aim-flat, and it is deliberately
+    // not derived from WolfDefinition.CombatAnchorHeight (0.75 m): that constant is measured from the
+    // ENEMY's own position, and an enemy's body centre sits about half a metre below the player's, so
+    // using it here overstates the error by 3.6x. Deriving it from the wrong origin is the mistake this
+    // file exists to stop repeating. The same capture with a block built under the enemy gives the step
+    // figure below.
+    private const float LevelGroundAnchor = 0.25f;
+
+    // The same enemy standing on one built block, from artifacts/captures/aim-step.
+    private const float OneBlockStepAnchor = LevelGroundAnchor + 1f;
 
     private static WorldPointerState Pointer() => new(new Vector2(640f, 360f), true, false, false);
 
@@ -97,7 +105,7 @@ public sealed class CursorAimParallaxTests
     [Fact]
     public void GivenTheEnemysAnchor_TheFacingIsExact_AtAnyHeight()
     {
-        foreach (float anchorAboveBody in new[] { 0f, FlatGroundAnchor, 1.4f, 3f })
+        foreach (float anchorAboveBody in new[] { 0f, LevelGroundAnchor, OneBlockStepAnchor, 3f })
         {
             Vector3 enemy = RaisedEnemy(anchorAboveBody);
             CursorAimController aim = new(new SpriteHost(enemy));
@@ -111,9 +119,9 @@ public sealed class CursorAimParallaxTests
     }
 
     // The bug, in the terms that decide a hit: with no aim point the facing comes from the plane cut,
-    // and with the anchor 1.4 m above the player's plane - a one-block step, 0.75 m of anchor plus about
-    // 0.65 m of ground - the enemy sits further off the swing than the swing's own radius. Every normal
-    // attack misses, silently, while a wide-arc skill still connects.
+    // and with the anchor 1.4 m above the player's plane - a little over the one-block step the engine
+    // measured at 1.25 m - the enemy sits further off the swing than the swing's own radius. Every
+    // normal attack misses, silently, while a wide-arc skill still connects.
     [Fact]
     public void WithNoAimPoint_ARaisedEnemyIsMissedByMoreThanTheSwingRadius()
     {
@@ -128,12 +136,10 @@ public sealed class CursorAimParallaxTests
         Assert.True(
             miss > EnemyRegistry.DefaultHitRadiusMetres,
             $"expected the plane cut to miss by more than {EnemyRegistry.DefaultHitRadiusMetres} m, got {miss:0.000} m");
-        // h / tan(pitch) along the camera's ground direction, foreshortened by the 1.5 m range. The band
-        // is deliberately narrow: it is the camera's geometry, so a pitch change must break this test
-        // rather than quietly shrink the bug it describes - one degree either way leaves it. It pins the
-        // PITCH only: RaisedEnemy places the enemy relative to the camera's own ground direction, so the
-        // figure is the same at every yaw and a yaw change cannot break this.
-        Assert.InRange(miss, 0.92f, 0.93f);
+        // h / tan(pitch) along the camera's ground direction, turned into a miss by the 1.5 m range. The
+        // band is deliberately narrow: it is the camera's geometry, so a change to either angle must
+        // break this test rather than quietly shrink the bug it describes.
+        Assert.InRange(miss, 1.16f, 1.18f);
 
         // Same geometry, aim point given: the miss goes away. This is the whole fix.
         Frame(aim, enemy);
@@ -157,26 +163,41 @@ public sealed class CursorAimParallaxTests
         Assert.Equal(0f, LateralMiss(facing, level), 4);
     }
 
-    // And why this is not only a slope fix. An enemy on the SAME floor still has its anchor 0.75 m up,
-    // so the plane cut misses it by 0.58 m - 64% of the 0.9 m the swing allows - leaving almost no margin
-    // for the enemy stepping sideways or the player walking. With the anchor, nothing is spent.
+    // Where the line actually falls, in the two cases the engine was made to measure: level ground is
+    // safe under the old plane cut, and one block of rise is not. This is the test that says what the fix
+    // is FOR - without it the file would only prove that a 1.4 m contrivance misses.
     [Fact]
-    public void EvenOnLevelGround_ThePlaneCutSpendsMostOfTheSwingsTolerance()
+    public void LevelGroundStillHitsUnderThePlaneCut_AndAOneBlockStepDoesNot()
     {
-        Vector3 enemy = RaisedEnemy(FlatGroundAnchor);
-        CursorAimController aim = new(new SpriteHost(enemy));
-
-        Frame(aim);
-        Assert.True(aim.TryGetFacing(out Vector3 cut));
-        float spent = LateralMiss(cut, enemy);
-        Assert.InRange(spent, 0.57f, 0.59f);
+        Vector3 level = RaisedEnemy(LevelGroundAnchor);
+        CursorAimController levelAim = new(new SpriteHost(level));
+        Frame(levelAim);
+        Assert.True(levelAim.TryGetFacing(out Vector3 levelCut));
+        float levelMiss = LateralMiss(levelCut, level);
         Assert.True(
-            spent > EnemyRegistry.DefaultHitRadiusMetres * 0.6f,
-            $"expected the level-ground cut to spend over 60% of the tolerance, spent {spent:0.000} m");
+            levelMiss < EnemyRegistry.DefaultHitRadiusMetres,
+            $"level ground must still hit under the old aim, missed by {levelMiss:0.000} m");
 
-        Frame(aim, enemy);
-        Assert.True(aim.TryGetFacing(out Vector3 aimed));
-        Assert.Equal(0f, LateralMiss(aimed, enemy), 4);
+        Vector3 stepped = RaisedEnemy(OneBlockStepAnchor);
+        CursorAimController stepAim = new(new SpriteHost(stepped));
+        Frame(stepAim);
+        Assert.True(stepAim.TryGetFacing(out Vector3 stepCut));
+        float stepMiss = LateralMiss(stepCut, stepped);
+        Assert.True(
+            stepMiss > EnemyRegistry.DefaultHitRadiusMetres,
+            $"one block of rise must miss under the old aim, missed by only {stepMiss:0.000} m");
+        // The engine measured 1.022 m for this case and this geometry gives 1.049 m: the difference is
+        // that the resolver swings from the eye, 0.35 m above the plane the cut is taken on. Pinned so
+        // the pair cannot drift apart silently - if this moves, re-run artifacts/captures/aim-step.
+        Assert.InRange(stepMiss, 1.03f, 1.06f);
+
+        // And the aim point removes the miss in both, which is the whole fix.
+        Frame(levelAim, level);
+        Assert.True(levelAim.TryGetFacing(out Vector3 levelAimed));
+        Assert.Equal(0f, LateralMiss(levelAimed, level), 4);
+        Frame(stepAim, stepped);
+        Assert.True(stepAim.TryGetFacing(out Vector3 stepAimed));
+        Assert.Equal(0f, LateralMiss(stepAimed, stepped), 4);
     }
 
     // Building is left exactly as it was: there the left button places a block instead of swinging, so
@@ -206,14 +227,14 @@ public sealed class CursorAimParallaxTests
     [Fact]
     public void AnAnchorInsideTheMinimumAimDistance_FallsThroughToThePlaneCut()
     {
-        Vector3 almostOnTop = new(Body.X + 0.05f, Body.Y + FlatGroundAnchor, Body.Z + 0.05f);
+        Vector3 almostOnTop = new(Body.X + 0.05f, Body.Y + OneBlockStepAnchor, Body.Z + 0.05f);
         CursorAimController aim = new(new SpriteHost(almostOnTop));
 
         Frame(aim, almostOnTop);
 
         Assert.False(aim.AimedAtTarget);
         Assert.True(aim.OwnsFacing);
-        // The cut is 0.75 / tan(pitch) out along the camera's ground direction, so there is a facing.
+        // The cut is 1.25 / tan(pitch) out along the camera's ground direction, so there is a facing.
         Assert.True(aim.TryGetFacing(out Vector3 facing));
         Assert.Equal(1f, facing.Length, 4);
     }
