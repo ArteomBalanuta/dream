@@ -35,6 +35,9 @@ public sealed class RebuildMapCombatCheckpointTests
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSessionId session = new("session-a");
         host.JoinSession(session.Value, "Player A");
+        // A join restores the mode from the profile, and a new character now starts in Combat.
+        // This test builds, so it says so rather than inheriting the old Building default.
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
         runtime.Enemies.Clear();
 
         // Checkpoint tracking is set up on the startup map, and a steady capture is incremental.

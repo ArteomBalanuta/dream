@@ -57,12 +57,18 @@ public sealed partial class StoredWorldJoinLoopbackTests(ITestOutputHelper outpu
     // versions collapse to identical normalised text, so the bump moves neither the byte count nor the
     // sha-256. That is why the hash here is byte-for-byte the attribute wave's 90a7bf84... rather than a
     // new value -- a protocol bump alone can never re-pin this test, only a payload change can.
+    // Re-pinned by the Combat default (PlayerInteractionModeExtensions.Default): a new character's join carries
+    // "interactionMode":1 where it carried 0, one digit for one digit, so the size is unchanged at 6,117 B. This was
+    // established, not assumed: the frames were dumped, the single "interactionMode":1 (the player actor in
+    // join-accepted) put back to 0, and the result hashed to 90a7bf84de99b7b7... byte for byte, the old pin. Nothing
+    // else moved. Sha-256 was 90a7bf84de99b7b7..., now 658ae3614d64122e.... Not normalised away like the tick, on
+    // purpose: the mode is part of what a new character's join looks like, and this gate should notice it move.
     // The join is 6,117 B in all.
     private const int C0FrameCount = 3;
     private const long C0TotalBytes = 6_117;
     private const string C0FrameKinds =
         "server.hello,server.join-accepted,server.world-chunk";
-    private const string C0Sha256 = "90a7bf84de99b7b72c5cca0a84403fbd3406d725b036b7872286cdf241324e36";
+    private const string C0Sha256 = "658ae3614d64122e9e3d60335088fa58089a6dbfef588403f0d0084b75c1abef";
     private const int JoinAcceptedGateBytes = 4_099;
 
     [Fact]
