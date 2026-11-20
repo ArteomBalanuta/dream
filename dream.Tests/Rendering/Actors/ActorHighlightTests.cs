@@ -20,6 +20,22 @@ public sealed class ActorHighlightTests
     }
 
     [Fact]
+    public void TheRim_IsWarmBoneGold()
+    {
+        Vector3 rim = ActorHighlight.Rim;
+        Assert.True(rim.X > rim.Y && rim.Y > rim.Z && rim.Z > 0f);
+    }
+
+    [Fact]
+    public void RimFor_IsTheRimOnlyForTheHighlightedId()
+    {
+        Vector4 on = ActorHighlight.RimFor(7, 7);
+        Assert.Equal(new Vector4(ActorHighlight.Rim, 0f), on);
+        Assert.Equal(Vector4.Zero, ActorHighlight.RimFor(7, 8));
+        Assert.Equal(Vector4.Zero, ActorHighlight.RimFor(null, 7));
+    }
+
+    [Fact]
     public void CombineOfZero_IsTheLift()
     {
         Vector3 combined = ActorHighlight.Combine(Vector3.Zero);
@@ -97,7 +113,7 @@ public sealed class ActorHighlightTests
         int dying = source.IndexOf("private void DrawDyingModels", StringComparison.Ordinal);
         string dyingBody = source[dying..source.IndexOf("private Vector3 _appliedTint", StringComparison.Ordinal)];
 
-        Assert.Contains("ApplyTint(model, shader, dying.Last.TintOffset)", dyingBody, StringComparison.Ordinal);
+        Assert.Contains("ApplyTint(model, shader, dying.Last.TintOffset, Vector4.Zero, camera.Position)", dyingBody, StringComparison.Ordinal);
         Assert.DoesNotContain("ActorHighlight", dyingBody, StringComparison.Ordinal);
         Assert.Contains("ActorHighlight.EnemyTint(HighlightActorId, actorId, visual.TintOffset)", source, StringComparison.Ordinal);
         // And what the linger stores (the LastDrawnEnemy built for the death linger) is the plain tint.

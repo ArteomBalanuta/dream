@@ -64,6 +64,11 @@ public class AnimatedModel : IDisposable
     // is today's look. The caller resets it to zero after drawing a tinted actor.
     public Vector3 ActorTintOffset { get; set; }
 
+    // The world hover's rim light (uActorRim / uActorRimEye in enemyFragment.glsl), written to a switched
+    // program exactly like ActorTintOffset. Zero is off. The caller zeroes it after drawing a rimmed actor.
+    public Vector4 ActorRim { get; set; }
+    public Vector3 ActorRimEye { get; set; }
+
     // The plant sway (uWind in cubeVertex.glsl, see Rendering/Ground/GroundWind): written to every program a
     // draw of this model binds, so the MASK variant never keeps a value an earlier draw left in it. Zero (the
     // default) is no sway; GroundScatterRenderer sets it per asset and zeroes it after.
@@ -609,6 +614,8 @@ public class AnimatedModel : IDisposable
         // Wave I: the enemy shader's colour tint (zero for every other model), so the MASK variant
         // never draws with a value an earlier frame or model left in it.
         program.SetVector3("uActorTintOffset", ActorTintOffset);
+        program.SetVector4("uActorRim", ActorRim);
+        program.SetVector3("uActorRimEye", ActorRimEye);
         // The equipment material response (enemyFragment.glsl, uEquipSurface / uEquipEye): zero for
         // every model AnimatedModel draws, so a MASK variant never answers light as a sculpted
         // pauldron because an equipment draw left its surface in that program object. The eye is

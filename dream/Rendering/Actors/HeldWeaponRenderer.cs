@@ -239,6 +239,7 @@ public sealed class HeldWeaponRenderer : IDisposable
         // Equipment never inherits an enemy's tint: EnemyRenderer sets uActorTintOffset per enemy
         // and the program is shared, so it is zeroed here as part of the pass's own frame state.
         shader.SetVector3("uActorTintOffset", Vector3.Zero);
+        shader.SetVector4("uActorRim", Vector4.Zero);
         // The real eye, for the specular half vector (uCameraPosition is the fog origin, not the eye).
         shader.SetEquipmentEye(camera.Position);
     }

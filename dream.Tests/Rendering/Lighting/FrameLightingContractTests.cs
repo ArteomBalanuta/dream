@@ -128,8 +128,10 @@ public class FrameLightingContractTests
         // FragColor. Split into separate matches it would still pass with a second post-floor block
         // inserted between them, which is exactly the change it exists to catch. The specular is
         // added to lit BEFORE dreamExpose, so the frame exposure still owns the result.
+        // The one other block allowed there is the world hover's rim (uActorRim, ActorRimShaderContractTests),
+        // gated on a positive colour so it is off for every draw but the hovered actor.
         Assert.Matches(
-            @"lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*(?://[^\n]*\n\s*)*if \(uEquipSurface\.y > 0\.0\) \{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*(?://[^\n]*\n\s*)*vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
+            @"lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*(?://[^\n]*\n\s*)*if \(uEquipSurface\.y > 0\.0\) \{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*(?://[^\n]*\n\s*)*(?:if \(uActorRim\.r \+ uActorRim\.g \+ uActorRim\.b > 0\.0\) \{[^{}]*\}\s*(?://[^\n]*\n\s*)*)?vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
             source);
     }
 

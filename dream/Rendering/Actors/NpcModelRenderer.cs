@@ -102,10 +102,12 @@ public sealed class NpcModelRenderer
     {
         shader.Use();
         shader.SetVector3(TintUniformName, Vector3.Zero);
+        shader.SetVector4(RimUniformName, Vector4.Zero);
         if (shader.AlphaMaskVariant is { } maskProgram)
         {
             maskProgram.Use();
             maskProgram.SetVector3(TintUniformName, Vector3.Zero);
+            maskProgram.SetVector4(RimUniformName, Vector4.Zero);
             shader.Use();
         }
     }
@@ -151,6 +153,7 @@ public sealed class NpcModelRenderer
                 deltaTime);
 
             Vector3 tint = ActorHighlight.NpcTint(HighlightActorId, npc.ActorId);
+            Vector4 rim = ActorHighlight.RimFor(HighlightActorId, npc.ActorId);
             bool lifted = !tint.Equals(Vector3.Zero);
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
             if (lifted)
@@ -158,6 +161,11 @@ public sealed class NpcModelRenderer
                 // The base program's uniform, and the model's value that BindProgram carries to the MASK variant.
                 model.ActorTintOffset = tint;
                 shader.SetVector3(TintUniformName, tint);
+                // The additive rim, with the real eye; zero is put back right after the draw (ZeroTint).
+                model.ActorRim = rim;
+                model.ActorRimEye = camera.Position;
+                shader.SetVector4(RimUniformName, rim);
+                shader.SetVector3(RimEyeUniformName, camera.Position);
             }
 
             Matrix4 modelMatrix = BuildModelMatrix(in visual, npc.Position, npc.Facing);
@@ -167,6 +175,7 @@ public sealed class NpcModelRenderer
             {
                 ZeroTint(shader);
                 model.ActorTintOffset = Vector3.Zero;
+                model.ActorRim = Vector4.Zero;
             }
 
             _casters.Add(model, instance, modelMatrix);
@@ -187,6 +196,8 @@ public sealed class NpcModelRenderer
 
     // The same uniform EnemyRenderer tints with; the villagers hold it at zero.
     public const string TintUniformName = "uActorTintOffset";
+    public const string RimUniformName = "uActorRim";
+    public const string RimEyeUniformName = "uActorRimEye";
 
     private const float DrawDistanceSquared = DrawDistance * DrawDistance;
 
