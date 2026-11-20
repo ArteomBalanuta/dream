@@ -86,9 +86,9 @@ the shipped rule — faster than the player's walk, slower than the player's spr
 
 | Branch | Owns | Job |
 | --- | --- | --- |
-| `ws/skeleton-forge` | `tools/ui-assets/gen_char_skeleton.py`, `dream/animations/enemies/skeleton.glb`, `tools/ui-assets/tests/check_actors.py`, `tools/ui-assets/build_all.py`, `dream/Rendering/Models/SkeletonAssetDefinition.cs` | forge the biped, author the four clips, gate it |
-| `ws/skeleton-client` | `dream/Rendering/Actors/EnemyVisualCatalog.cs`, `dream.Tests/Rendering/Actors/EnemyVisualCatalogTests.cs`, `dream.Tests/Rendering/Models/ForgedActorAssetTests.cs` | the visual entry, its clips, and the tests that pin them |
-| `ws/skeleton-content` | `dream/config/content/{enemies,spawns,loot}.json`, `dream/config/migrations/0018_*.sql`, `dream/Simulation/Content/EnemyTemplate.cs`, `dream.Tests/Simulation/Content/ContentCatalogTests.cs`, `dream.Tests/Server/Persistence/Migrations/EnemyKindsMigrationTests.cs` | the kind, its camps, its loot, its tuning row |
+| `ws/skeleton-forge` | `tools/ui-assets/gen_char_skeleton.py`, `dream/animations/enemies/skeleton.glb`, `tools/ui-assets/tests/{check_actors,check_sources}.py`, `tools/ui-assets/build_all.py`, `dream/Rendering/Models/SkeletonAssetDefinition.cs` | forge the biped, author the four clips, gate it |
+| `ws/skeleton-client` | `dream/Rendering/Actors/EnemyVisualCatalog.cs`, `dream/Rendering/Core/ModelAssets.cs`, `dream/Client/Scenes/PlayScene.Lifetime.cs`, `dream.Tests/Rendering/Actors/EnemyVisualCatalogTests.cs`, `dream.Tests/Rendering/Models/ForgedActorAssetTests.cs` | the visual entry, its clips, and the tests that pin them |
+| `ws/skeleton-content` | `dream/config/content/{enemies,spawns,loot}.json`, `dream/config/migrations/0018_*.sql`, `dream/Simulation/Content/EnemyTemplate.cs`, `dream.Tests/Simulation/Content/ContentCatalogTests.cs`, `dream.Tests/Server/Persistence/Migrations/EnemyKindsMigrationTests.cs`, `dream.Tests/Simulation/Content/SpawnCampTests.cs` | the kind, its camps, its loot, its tuning row |
 
 Disjoint by file. `SkeletonAssetDefinition.cs` is a NEW file owned by the forge track, so the client
 track compiles against a contract that is frozen here rather than against a file two tracks edit.
@@ -129,3 +129,38 @@ track compiles against a contract that is frozen here rather than against a file
   the gait threshold and a `charge` clip would never play.
 - No pose-layer contract: the blade is part of the mesh, as the hound's collar is. A skinned actor
   cannot carry node overrides, which resolve by renderable node name.
+
+## What the scouting pass settled, after the tracks were briefed
+
+Two read-only passes over the enemy path and the asset forge came back once the briefs were out,
+and amended the ownership map above. The findings worth keeping:
+
+- **The hound was never a new enemy KIND.** Commit `46c6738a` added a second enemy *model* and
+  re-pointed the existing `GraveHowler` at it. It touched no enum, no migration, no protocol version
+  and no spawn policy. So the hound diff is a complete map of the client half of this work and says
+  nothing about the server half — which is why the content track was briefed from `enemies.json` and
+  migration `0017` instead.
+- **No protocol bump.** The kind travels as `visualKey`, a *nullable string* in
+  `ActorSnapshotJsonConverter`, defaulted to `null` for the wolf so a wolf-only world stays byte
+  identical to before the field existed. An unknown key resolves to the wolf. The current version is
+  **22**, not the 21 this project's notes still say — bumped by the skill-effect-visuals wave.
+- **The body is global, not per-kind.** `WolfDefinition` hard-wires collision radius 0.30, height
+  0.60, anchor 0.75 and stand-off 1.20 for *every* enemy, and `EnemyFactory` has no per-kind branch
+  at all. A kind that needed a different body would have to turn that constant set into per-template
+  fields — the one real code change a "big" new enemy forces. **A skeleton is player-shaped and a
+  wolf's capsule is a reasonable fit, so this wave deliberately does not open it.**
+- **Spawn camps are test-pinned by exact count.** `SpawnCampTests` asserts 12 camps, 9 day / 3 night,
+  21 day members, 28 total, *and* that camp level tiers rise with distance from the world spawn. Any
+  camp added here must be placed further out than the level-5 Ashen Prowler camps.
+- **The authored row is boxed in from five directions**: `attackRange` must exceed ~1.0556 or the
+  enemy shoves instead of biting; `patrolSpeed <= moveSpeed`; `patrolSpeed <= 1.6` and
+  `moveSpeed >= 2.0` so nothing lands in the client's gait deadband; chase must sit strictly between
+  the player's cruise and sprint; and no tuning row may warn at boot. The frozen numbers (1.15 and
+  3.4) clear all five with room.
+- **A duplicate clip name THROWS on load** (`LoadAnimations` uses `Dictionary.Add`), while an
+  *unknown* clip name does not — `AnimatedModelInstance` stops and holds the pose. A silent freeze
+  mid-stride is the failure the strict clip-set gate exists to prevent.
+- **`check_actors.py` polices size in BYTES, not triangles**, and a ceiling set at four times the
+  asset's size fails too, on the grounds that it has stopped constraining anything.
+- **`--validate-content` checks no model, clip or visual key** — only the content JSON and the
+  formula probe. The real asset gate is `ForgedActorAssetTests` against the shipped GLB.
