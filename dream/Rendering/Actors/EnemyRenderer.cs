@@ -109,7 +109,7 @@ public sealed class EnemyRenderer
 
                 Shader shader = _render.GetShader(renderState.ShaderName);
                 model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-                ApplyTint(model, shader, visual.TintOffset);
+                ApplyTint(model, shader, ActorHighlight.EnemyTint(HighlightActorId, actorId, visual.TintOffset));
                 model.RenderPrepared(shader, instance, renderState.ModelMatrix);
                 model.EndRender();
                 _casters.Add(model, instance, renderState.ModelMatrix);
@@ -224,6 +224,10 @@ public sealed class EnemyRenderer
             _casters.Add(model, dying.Instance, dying.Last.ModelMatrix);
         }
     }
+
+    // The enemy the world hover rests on (combat actor id): drawn lifted. A corpse in the death linger is
+    // never highlighted, it keeps its plain tint.
+    public int? HighlightActorId { get; set; }
 
     // The tint last uploaded, the program it went to and the model that carries it to the MASK
     // variant on a program switch (AnimatedModel.ActorTintOffset).
