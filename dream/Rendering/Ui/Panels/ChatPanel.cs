@@ -16,6 +16,12 @@ public sealed class ChatHudState
     public const int MaxInputChars = 256;
     public const int MaxOnlineNames = 40;
 
+    // A System message is split on '\n' into at most this many stored lines; the rest is dropped.
+    public const int MaxLinesPerMessage = 16;
+
+    // Rows shown while the line is open (Typing), wrapped rows counted, before the room above the bar caps it.
+    public const int OpenVisibleRows = 24;
+
     private readonly List<ChatLine> _lines = new();
     private readonly char[] _input = new char[MaxInputChars];
     private int _inputLength;
