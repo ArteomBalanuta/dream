@@ -485,6 +485,11 @@ internal sealed class AuthoritativeCombatResolver
 
     // Horizontal (XZ) distance from the ray origin, which sits directly above the attacker's body centre, to
     // the target's combat anchor.
+    // How far an enemy's combat anchor may sit above or below the swing ray's origin (the attacker's eye) and
+    // still be hit by a flat ray: a floor level either way (the anchor is 0.9 m off the eye on a one-block step),
+    // not a ledge two blocks up.
+    internal const float MaxMeleeHeightDifferenceMetres = 1.5f;
+
     internal static bool IsWithinReach(Vector3 origin, Vector3 anchor, float reach)
     {
         float dx = anchor.X - origin.X;
@@ -503,6 +508,16 @@ internal sealed class AuthoritativeCombatResolver
         }
 
         Vector3 unit = direction.Normalized();
+        bool flat = MathF.Abs(unit.Y) < 0.01f;
+        float flatX = unit.X;
+        float flatZ = unit.Z;
+        if (flat)
+        {
+            float flatLength = MathF.Sqrt((flatX * flatX) + (flatZ * flatZ));
+            flatX /= flatLength;
+            flatZ /= flatLength;
+        }
+
         IReadOnlyList<EnemyActor> actors = _enemies.ActiveActors;
         EnemyActor? best = null;
         float bestDistance = maxRayDistance;
@@ -515,13 +530,36 @@ internal sealed class AuthoritativeCombatResolver
             }
 
             Vector3 anchor = actor.Combatant.GetCombatAnchorWorldPosition();
-            float projected = Vector3.Dot(anchor - origin, unit);
+            float projected;
+            float lateral;
+            if (flat)
+            {
+                // The swing ray is flat (cursor aim is yaw only) and starts at the eye, so an enemy on another
+                // floor level sits off it in height alone. Measure the miss on the ground plane and bound the
+                // height difference separately; the 3D distance made a one-block step an unhittable target.
+                float dx = anchor.X - origin.X;
+                float dz = anchor.Z - origin.Z;
+                projected = (dx * flatX) + (dz * flatZ);
+                float lx = dx - (flatX * projected);
+                float lz = dz - (flatZ * projected);
+                lateral = MathF.Sqrt((lx * lx) + (lz * lz));
+                if (MathF.Abs(anchor.Y - origin.Y) > MaxMeleeHeightDifferenceMetres)
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                projected = Vector3.Dot(anchor - origin, unit);
+                lateral = (anchor - (origin + (unit * projected))).Length;
+            }
+
             if (projected < 0f || projected > bestDistance)
             {
                 continue;
             }
 
-            if ((anchor - (origin + (unit * projected))).Length > EnemyRegistry.DefaultHitRadiusMetres
+            if (lateral > EnemyRegistry.DefaultHitRadiusMetres
                 || !IsWithinReach(origin, anchor, acceptedReach))
             {
                 continue;

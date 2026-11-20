@@ -229,6 +229,36 @@ public class AuthoritativeCombatResolverTests(ITestOutputHelper output)
     // The nearest enemy ALONG THE RAY is not always the nearest horizontally: an enemy off to the side of the ray
     // is near along it but farther from the attacker's feet. Gating after the pick lets it shadow an enemy that is
     // straight ahead and in reach; the gate is part of the selection, so the one in reach takes the swing.
+    // Regression: the player's swing ray is flat (the isometric cursor aim sets a yaw-only facing) and starts at the
+    // eye, 0.85 m above the feet. An enemy standing one block higher (or lower) has its anchor 0.9 m off that ray
+    // in height alone, which the 0.9 m hit radius took as a miss however well the player aimed, so the left-click
+    // attack never landed on it. The ray test must measure the lateral miss on the ground plane.
+    [Theory]
+    [InlineData(1.0f, 1.3f, 0f, true)]   // level ground, dead ahead
+    [InlineData(2.0f, 1.3f, 0f, true)]   // one block up: the case that failed
+    [InlineData(0.0f, 1.3f, 0f, true)]   // one block down
+    [InlineData(2.0f, 1.3f, 0.5f, true)] // one block up, aimed a little off
+    [InlineData(2.0f, 1.3f, 1.0f, false)] // one block up, aimed well off: still a miss
+    [InlineData(4.0f, 1.3f, 0f, false)]  // three blocks up: out of any melee reach
+    public void ProcessCombatUse_AFlatEyeHeightRayHitsAnEnemyOnAnotherFloorLevel(float feetY, float distance, float lateral, bool expectHit)
+    {
+        Fixture fixture = new(simulationSeed: 4242UL);
+        fixture.Host.Reach = WeaponReach.UnarmedMetres;
+        EnemyActor enemy = fixture.AddEnemy(new Vector3(5f + distance, feetY, 5f + lateral), maxHealth: 1_000_000);
+        Vector3 eye = new(5f, 1.85f, 5f);
+
+        AuthoritativeActionResult result = fixture.Resolver.ProcessCombatUse(
+            new PlayerActionMessage(SessionA, 3, new CombatUseIntent(eye, Vector3.UnitX)),
+            new CombatUseIntent(eye, Vector3.UnitX),
+            PlayerInteractionMode.Combat,
+            new PlayerCombatant(() => Vector3.Zero),
+            tick: 77UL);
+
+        Assert.True(result.Accepted);
+        Assert.Equal(expectHit, Assert.IsType<CombatResolutionResult>(result.Payload).TargetActorId == EnemyActorId);
+        Assert.Equal(expectHit, enemy.Combatant.Health.CurrentHealth < 1_000_000);
+    }
+
     [Fact]
     public void ProcessCombatUse_AnEnemyOutOfReachNearerAlongTheRayDoesNotShadowOneInReach()
     {
