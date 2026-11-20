@@ -192,7 +192,8 @@ public class Game : GameWindow
             _settings,
             _desktopClientConfig,
             ApplyFrameCap,
-            PersistDesktopClientConfig);
+            PersistDesktopClientConfig,
+            onWindowModeChanged: () => ApplyWindowMode(_desktopClientConfig.WindowMode));
         AddExtraOptionRows(rows);
         return rows;
     }
@@ -387,6 +388,72 @@ public class Game : GameWindow
             ? "[startup] GL debug output: high and medium severity"
             : "[startup] GL debug output: unavailable (no KHR_debug)");
 #endif
+        ApplyWindowMode(_desktopClientConfig.WindowMode);
+    }
+
+    private WindowModeState? _windowModeState;
+
+    // Moves the window to a mode. Thin on purpose: the decisions live in WindowModeController. Never throws.
+    private void ApplyWindowMode(WindowMode mode)
+    {
+        if (!WindowModeController.ShouldApply(Environment.GetEnvironmentVariable, MenuCapture.EnvironmentVariable))
+        {
+            return;
+        }
+
+        try
+        {
+            // A maximised or minimised window has no meaningful normal placement to remember.
+            if (WindowState != WindowState.Normal && WindowState != WindowState.Fullscreen)
+            {
+                WindowState = WindowState.Normal;
+            }
+
+            WindowPlacement live = new(WindowBorder.Resizable, WindowState.Normal, ClientLocation, ClientSize);
+            _windowModeState ??= new WindowModeState(live);
+
+            Vector2i monitorPosition = default;
+            Vector2i monitorResolution = default;
+            if (Monitors.GetMonitorFromWindow(this) is { } monitor)
+            {
+                monitorPosition = new Vector2i(monitor.ClientArea.Min.X, monitor.ClientArea.Min.Y);
+                monitorResolution = new Vector2i(monitor.HorizontalResolution, monitor.VerticalResolution);
+            }
+
+            WindowPlacement target = _windowModeState.Enter(mode, live, monitorPosition, monitorResolution);
+            if (WindowState == WindowState.Fullscreen && target.State != WindowState.Fullscreen)
+            {
+                WindowState = WindowState.Normal;
+            }
+
+            WindowBorder = target.Border;
+            if (target.State == WindowState.Fullscreen)
+            {
+                ClientLocation = target.ClientLocation;
+                ClientSize = target.ClientSize;
+                WindowState = WindowState.Fullscreen;
+            }
+            else
+            {
+                ClientSize = target.ClientSize;
+                ClientLocation = target.ClientLocation;
+            }
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[window] could not apply window mode {mode}: {exception.Message}");
+        }
+    }
+
+    // F11 / Alt+Enter: flips between Windowed and the last fullscreen mode, applies it and saves the choice.
+    private void ToggleWindowMode()
+    {
+        _windowModeState ??= new WindowModeState(new WindowPlacement(
+            WindowBorder.Resizable, WindowState.Normal, ClientLocation, ClientSize));
+        WindowMode next = WindowModeController.Toggle(_desktopClientConfig.WindowMode, _windowModeState.LastFullscreen);
+        _desktopClientConfig.WindowMode = next;
+        ApplyWindowMode(next);
+        PersistDesktopClientConfig();
     }
 
     public void UpdateFPS()
@@ -456,7 +523,8 @@ public class Game : GameWindow
         bool hovered = GLFW.GetWindowAttrib(WindowPtr, WindowAttributeGetBool.Hovered);
         scene.SyncCameraWindowState(IsFocused, hovered);
         bool minimised = WindowState == WindowState.Minimized || ClientSize.X <= 0 || ClientSize.Y <= 0;
-        bool fullscreenLike = WindowState == WindowState.Fullscreen
+        bool fullscreenLike = WindowModeController.IsFullscreenLike(_windowModeState?.Current ?? WindowMode.Windowed)
+            || WindowState == WindowState.Fullscreen
             || (WindowBorder == WindowBorder.Hidden && WindowState == WindowState.Maximized);
         Box2i clientRect = new(ClientLocation, ClientLocation + ClientSize);
         scene.ApplyCursorConfinement(minimised, fullscreenLike, clientRect);
@@ -929,6 +997,12 @@ public class Game : GameWindow
     protected override void OnKeyDown(KeyboardKeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (WindowModeController.IsWindowModeToggle(e.Key, e.Modifiers, e.IsRepeat))
+        {
+            ToggleWindowMode();
+            return;
+        }
+
         if (_mainMenu == null)
         {
             return;
