@@ -166,6 +166,9 @@ public partial class PlayScene
         // A live list owned by the presenter; it is only read within this frame.
         IReadOnlyList<RemotePlayerPresentationState> remotePlayerStates = _scenePresenter.BuildRemotePlayerStates(
             RemotePlayerRenderTick);
+        // The hover reads this list until the next render rebuilds it in place (between renders it is stable),
+        // and fills the info panel for this frame's HUD.
+        ComposeHoverPanel(remotePlayerStates);
 
         UpdateAudioFrame(presentation, remotePlayerStates, sky.StarVisibility, (float)args.Time);
         CollectFrameLights(in presentation, remotePlayerStates);

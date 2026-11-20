@@ -59,6 +59,10 @@ public sealed class HudView
 
     public HoverInfo? HoverInfo { get; set; }
 
+    // The clickable world label (ground item, NPC) the pointer rests on, written by WorldLabelsPanel during the
+    // build and read by the scene next update: a label stands for its entity in the world hover.
+    public HudLabelClick HoveredLabel { get; set; }
+
     // True while a camera rotation drag is held (set by the scene each frame).
     public bool CameraDragging { get; set; }
 

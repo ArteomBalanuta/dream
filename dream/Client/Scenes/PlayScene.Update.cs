@@ -9,6 +9,7 @@ using Dream.Client.Startup;
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Core;
+using Dream.Rendering.Ui;
 using Dream.Rendering.ViewModels;
 using Dream.Simulation.Players;
 
@@ -88,20 +89,17 @@ public partial class PlayScene
             // The capture script drives the pointer itself and never gives the window the focus, so it
             // counts as focused here, exactly as the consumable hotkeys already treat it.
             bool pointerFocused = _windowFocused || _hudCapture is not null;
-            // The hover pick comes first and its anchor is handed to the aim: aiming at the enemy's own
-            // position instead of a cut through the player's ground plane is what lets a swing land on
-            // an enemy standing on higher ground (see CursorAimController).
-            _render.PointerOverEnemy = _enemyHover.Evaluate(
-                pointer,
-                allowGameplayInput,
-                pointerFocused,
-                out Vector3 hoveredEnemyAnchor);
+            // The world hover comes first and a hovered enemy's anchor is handed to the aim: aiming at the
+            // enemy's own position instead of a cut through the player's ground plane is what lets a swing land
+            // on an enemy standing on higher ground (see CursorAimController). Click-to-move reads the same
+            // answer (ClickMoveHost.TryPick), so a click hits what the cursor shows.
+            UpdateWorldHover(in pointer, allowGameplayInput, pointerFocused, delta);
             _cursorAim.OnFrame(
                 pointer,
                 allowGameplayInput,
                 SuppressCursorAim,
                 pointerFocused,
-                _render.PointerOverEnemy ? hoveredEnemyAnchor : null);
+                _hover.Current.Kind == HoverKind.Enemy ? _hover.Anchor : null);
             _clickMove.OnFrame(pointer, allowGameplayInput, pointerFocused);
             // The camera reads the same pointer sample (its OverHud blocks the wheel). Its gate is its own: death
             // does not close it, and it takes the real focus, never the capture's stand-in.
@@ -111,7 +109,7 @@ public partial class PlayScene
         {
             // A closed gate still reaches the sampler, so a rotation drag held into the loading screen is released.
             UpdateCameraInput(keyboardState, mouseState, default, loadingGated: true);
-            _render.PointerOverEnemy = false;
+            ClearWorldHover();
         }
 
         // The frame only captures input; each prediction tick below turns it into one command

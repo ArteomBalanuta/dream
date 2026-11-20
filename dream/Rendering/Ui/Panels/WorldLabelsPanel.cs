@@ -27,6 +27,7 @@ public static class WorldLabelsPanel
     // A label with a click (ground item, NPC) is also a button: a click sends its pick to the actions.
     public static void Build(IUiCanvas c, IUiInput? i, HudView v, in UiLayout l, IHudActions? a)
     {
+        v.HoveredLabel = default;
         bool live = i is not null && a is not null && !InventoryUiState.Current.ModalOpen;
         // Labels are built first, under the bar and the windows, and neither a window frame nor the
         // bar's art registers a widget of its own everywhere it covers, so a click on an opaque but
@@ -120,6 +121,7 @@ public static class WorldLabelsPanel
                     if (i!.Hovered(id, hit))
                     {
                         c.Solid(hit, HoverFill);
+                        v.HoveredLabel = label.Click;
                     }
 
                     if (i.Button(id, hit))

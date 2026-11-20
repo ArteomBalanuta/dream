@@ -63,8 +63,16 @@ public readonly struct ClassicHudFrame
     // The quickbar's state (M4); null draws no quickbar and keeps the MP gem at ManaGemFill.
     public QuickbarHudState? Quickbar { get; init; }
 
-    // True while the pointer is over a live enemy a click would attack.
+    // True while the pointer is over a live enemy a click would attack. Used when HoverCursorKind is None.
     public bool PointerOverEnemy { get; init; }
+
+    // The kind of world thing under the pointer (drives the cursor); None falls back to PointerOverEnemy.
+    public HoverKind HoverCursorKind { get; init; }
+
+    // The hover info panel's state and content; HoverInfo null draws no panel.
+    public HoverPanelState HoverPanel { get; init; }
+
+    public HoverInfo? HoverInfo { get; init; }
 
     // True while a camera rotation drag is held.
     public bool CameraDragging { get; init; }
@@ -214,7 +222,11 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         v.Labels = frame.Labels ?? Array.Empty<HudWorldLabel>();
         v.Vendor = frame.Vendor;
         v.Quickbar = frame.Quickbar;
-        v.PointerOverEnemy = frame.PointerOverEnemy;
+        v.HoverCursorKind = frame.HoverCursorKind != HoverKind.None
+            ? frame.HoverCursorKind
+            : frame.PointerOverEnemy ? HoverKind.Enemy : HoverKind.None;
+        v.HoverPanel = frame.HoverPanel;
+        v.HoverInfo = frame.HoverInfo;
         v.CameraDragging = frame.CameraDragging;
 
         UiLayout layout = UiLayout.Create(frame.Width, frame.Height, frame.ConfiguredScale);
@@ -273,6 +285,9 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         _action = null;
         _closeInventory = false;
     }
+
+    // The clickable world label the pointer rested on in the last drawn frame, or default.
+    public HudLabelClick HoveredLabel => _view.HoveredLabel;
 
     // The economy picks of the last drawn frame (a clicked label, the vendor window), cleared by the read.
     public HudEconomyRequest TakeEconomyRequests()

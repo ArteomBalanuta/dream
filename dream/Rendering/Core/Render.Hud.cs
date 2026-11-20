@@ -37,6 +37,17 @@ public partial class Render
     // Set by the scene every update; carried into the classic HUD frame.
     public bool PointerOverEnemy { get; set; }
 
+    // The world hover for the classic HUD, set by the scene: the kind under the pointer (cursor), and the info
+    // panel's state and content (HoverInfo null: no panel).
+    public HoverKind HoverCursorKind { get; set; }
+
+    public HoverPanelState HoverPanel { get; set; }
+
+    public HoverInfo? HoverInfo { get; set; }
+
+    // The clickable world label the classic HUD's pointer rested on last frame, or default.
+    public HudLabelClick ClassicHoveredLabel => _classicSurface?.HoveredLabel ?? default;
+
     // Set by the scene every update while a camera rotation drag is held: the cursor shows Grab.
     public bool CameraDragging { get; set; }
 
@@ -310,6 +321,9 @@ public partial class Render
             Vendor = Vendor,
             Quickbar = Quickbar,
             PointerOverEnemy = PointerOverEnemy,
+            HoverCursorKind = HoverCursorKind,
+            HoverPanel = HoverPanel,
+            HoverInfo = HoverInfo,
             CameraDragging = CameraDragging
         };
         HudSurfaceSelector selector = HudSelector(settings);
@@ -355,8 +369,12 @@ public partial class Render
         _classicLabels.Clear();
         List<WorldActorLabelState> labels = _worldActorLabels;
         labels.Clear();
-        ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels);
-        ActorWorldLabelBuilder.AppendEnemyLabels(activeEnemies, labels, _actorHealthLabels, enemyPoseSource, enemyRenderTick);
+        // The actor the hover info panel shows loses its floating label while the panel is up.
+        HoverTargetId panel = HoverPanel.Visible && HoverInfo is not null ? HoverInfo.Target : HoverTargetId.None;
+        int? skipPlayer = panel.Kind == HoverKind.RemotePlayer ? (int)panel.Id : null;
+        int? skipEnemy = panel.Kind == HoverKind.Enemy ? (int)panel.Id : null;
+        ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels, skipPlayer);
+        ActorWorldLabelBuilder.AppendEnemyLabels(activeEnemies, labels, _actorHealthLabels, enemyPoseSource, enemyRenderTick, skipEnemy);
         for (int i = 0; i < labels.Count; i++)
         {
             WorldActorLabelState label = labels[i];

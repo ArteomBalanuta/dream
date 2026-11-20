@@ -30,11 +30,18 @@ public static class ActorWorldLabelBuilder
     public static void AppendRemotePlayerLabels(
         IReadOnlyList<RemotePlayerPresentationState> remotePlayers,
         List<WorldActorLabelState> destination,
-        ActorHealthLabelCache? healthLabels)
+        ActorHealthLabelCache? healthLabels,
+        int? skipActorId = null)
     {
         for (int index = 0; index < remotePlayers.Count; index++)
         {
             RemotePlayerPresentationState remotePlayer = remotePlayers[index];
+            if (remotePlayer.ActorId == skipActorId)
+            {
+                // The player the hover info panel shows.
+                continue;
+            }
+
             if (!remotePlayer.IsAlive)
             {
                 // A dead remote player is hidden, model and label, until it respawns.
@@ -56,12 +63,14 @@ public static class ActorWorldLabelBuilder
         List<WorldActorLabelState> destination,
         ActorHealthLabelCache? healthLabels,
         IEnemyRenderPoseSource? poseSource = null,
-        double renderTick = 0d)
+        double renderTick = 0d,
+        int? skipActorId = null)
     {
         for (int index = 0; index < enemies.Count; index++)
         {
             EnemyActor enemy = enemies[index];
-            if (!enemy.IsActive)
+            // skipActorId: the enemy the hover info panel shows, which says the same thing better.
+            if (!enemy.IsActive || enemy.Combatant.Actor.Id == skipActorId)
             {
                 continue;
             }
