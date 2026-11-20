@@ -35,16 +35,4 @@
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <Target Name="CopyDreamNativeRuntime" AfterTargets="Build">
-    <ItemGroup>
-      <DreamNativeRuntime Include="..\dream\bin\$(Configuration)\net10.0\libbulletc*.*" />
-      <DreamNativeRuntime Include="..\dream\bin\$(Configuration)\net10.0\BulletSharp.dll.config" />
-    </ItemGroup>
-
-    <Copy
-      SourceFiles="@(DreamNativeRuntime)"
-      DestinationFolder="$(OutDir)"
-      SkipUnchangedFiles="true" />
-  </Target>
-
 </Project>

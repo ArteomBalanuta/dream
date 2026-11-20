@@ -17,8 +17,10 @@
   </ItemGroup>
 
 	<ItemGroup>
-		<!-- BulletSharp 0.11.1 ships only .NET Framework assets; it runs on net10.0 with the bundled native libbulletc, so NU1701 is expected. -->
-		<PackageReference Include="BulletSharp" NoWarn="NU1701" />
+		<!-- BulletSharp 0.11.1 ships only .NET Framework assets; it runs on net10.0 with its native libbulletc, so NU1701 is expected.
+		     The package's build assets copy the Windows dll as libbulletc.dll on every OS and add nothing to publish, so they are
+		     excluded; the None items below ship exactly libbulletc.dll (win) and libbulletc.so (linux). -->
+		<PackageReference Include="BulletSharp" NoWarn="NU1701" ExcludeAssets="build" GeneratePathProperty="true" />
 		<PackageReference Include="ImGui.NET" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="NAudio.Core" />
@@ -29,6 +31,13 @@
 		<PackageReference Include="SixLabors.ImageSharp" />
 		<!-- Direct reference so the centrally pinned SQLite native bundle overrides the vulnerable transitive version from Microsoft.Data.Sqlite. -->
 		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('win'))">
+		<None Include="$(PkgBulletSharp)\build\net40-client\libbulletc-windows-x64.dll" Link="libbulletc.dll" Visible="false" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+	<ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('linux'))">
+		<None Include="$(PkgBulletSharp)\build\net40-client\libbulletc-linux-x64.so" Link="libbulletc.so" Visible="false" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
   <ItemGroup>
