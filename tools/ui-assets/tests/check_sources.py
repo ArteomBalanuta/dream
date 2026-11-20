@@ -27,7 +27,7 @@ ALLOWED_MODULES = {"__future__", "json", "math", "sys", "pathlib", "numpy", "PIL
                    # is unchanged - a tool may import its own siblings and the listed stdlib, nothing
                    # that reads art the project did not generate. Adding a sibling here needs the
                    # sibling to be an original generator in this directory; nothing else moves.
-                   "enginelook", "gen_char_npc", "gen_char_beast",
+                   "enginelook", "gen_char_npc", "gen_char_beast", "gen_char_skeleton",
                    # gen_terrain (baked surface tiles) and gen_ground_decals (decals that re-darken through the
                    # tiles' luma) are original sibling generators; regen_terrain.py imports them to rebuild both.
                    "gen_terrain", "gen_ground_decals"}

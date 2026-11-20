@@ -26,7 +26,7 @@ with its output and gated against it. Follow the steps in order. Long tables liv
 | rocks, pebbles, stumps, logs, roots, twigs, leaves, bones, dropped gear | `gen_ground_stone.py` | `.../ground/stone/` + `stone.json` | `check_ground_stone.py` |
 | flat floor decal (dirt, moss, puddle, crack, path, litter, scorch, stain) | `gen_ground_decals.py` | `.../ground/decals/` + `decals.json` | `check_ground_decals.py` |
 | placed scenery / buildings (hamlet) | `gen_props.py` | `dream/animations/props/<name>.glb` | `check_props.py` |
-| player, villagers, hound | `gen_char_player.py`, `gen_char_npc.py`, `gen_char_beast.py` | `dream/animations/players|npcs|enemies/` | `check_char.py`, `check_actors.py` |
+| player, villagers, hound, risen skeleton | `gen_char_player.py`, `gen_char_npc.py`, `gen_char_beast.py`, `gen_char_skeleton.py` | `dream/animations/players|npcs|enemies/` | `check_char.py`, `check_actors.py` |
 | voxel surface tile | `gen_terrain.py` | `tools/ui-assets/terrain/`, copied by hand to `dream/animations/library/forge/<n>/<n>.albedo.png` | `check_terrain.py` |
 | inventory icon | `gen_items.py` | `dream/ui/items/` | `check_items.py`, `check_loader.py` |
 | HUD, stone window, menu, damage digits, particles | `gen_hud.py`, `gen_window.py`, `gen_menu.py`, `gen_fx.py`, `gen_particles.py` | `dream/ui/<hud|window|menu|fx|particles>/` | `check_<same>.py`, `check_manifest.py`, `check_art.py` |

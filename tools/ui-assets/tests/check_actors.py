@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import hashlib
+import math
 import sys
 from pathlib import Path
 
@@ -31,6 +32,7 @@ import enginelook as L  # noqa: E402
 import gen_char_beast as B  # noqa: E402
 import gen_char_npc as N  # noqa: E402
 import gen_char_player as P  # noqa: E402
+import gen_char_skeleton as K  # noqa: E402
 import gltfwrite as G  # noqa: E402
 
 M3_SPREAD_MIN = 0.50          # the same floor check_char.py holds the player to (spec M3)
@@ -44,7 +46,7 @@ WEIGHT_SUM_TOL = 1e-6         # a WEIGHTS_0 row must sum to 1 to within this
 # written to describe collapses to 0 and cannot sit above it.
 BLENDED_MIN = 0.20
 BYTE_CEILING = {"villager-vendor": 320_000, "villager-smith": 320_000, "villager-warden": 320_000,
-                "hound": 420_000}
+                "hound": 420_000, "skeleton": 900_000}
 # R9: dream/animations/props drifted to 13 MB with dead_oak.glb alone at 3.3 MB. These ceilings are each about
 # 1.6x the asset's measured size, so ordinary authoring moves freely and a tessellation or atlas mistake does not.
 ASSETS = TOOLS.parents[1] / "dream" / "animations"
@@ -52,7 +54,8 @@ ASSETS = TOOLS.parents[1] / "dream" / "animations"
 SHIPPED = {"villager-vendor": ASSETS / "npcs" / "villager-vendor.glb",
            "villager-smith": ASSETS / "npcs" / "villager-smith.glb",
            "villager-warden": ASSETS / "npcs" / "villager-warden.glb",
-           "hound": ASSETS / "enemies" / "hound.glb"}
+           "hound": ASSETS / "enemies" / "hound.glb",
+           "skeleton": ASSETS / "enemies" / "skeleton.glb"}
 HOUND_WORLD_HEIGHT = 0.60     # WolfAssetDefinition.Normalization.TargetWorldHeight; GraveHowler shares it
 VILLAGER_WORLD_HEIGHT = L.PLAYER_WORLD_HEIGHT   # the spec's decision: villagers match the player
 
@@ -405,9 +408,282 @@ def check_hound() -> None:
         fail(f"gltfwrite accepted a skin of {G.MAX_JOINTS + 1} joints, past the engine's uniform array")
 
 
+# ---------------------------------------------------------------------------- the risen skeleton
+
+SKELETON_WORLD_HEIGHT = L.PLAYER_WORLD_HEIGHT   # a biped: the player's height, not the hound's 0.60
+CORPSE_REST_TOL = 0.30        # u: how far the final `die` pose's lowest vertex may sit off z = 0
+STAND_FLOOR_TOL = 0.50        # u: no key of idle/walk/attack may sink this far under the floor (hound walk: 0.45)
+LOOP_TOL = 1e-6               # degrees / u: a looping clip must close on its opening pose to this
+HEAD_MIN_EXTENT_U = 2.5       # u: the head's smallest bind-pose extent; the cranium is ~3.5 across, plates are 0.3
+HEAD_MIN_SCREEN_U = 2.8       # u: the head's smallest on-screen extent (iso camera) in the held die pose
+
+
+def clip_set_errors(names) -> list[str]:
+    """Contract C5: EXACTLY the four bare names, each once. A duplicate throws on load; an unknown name does not
+    throw, it just stops and holds the pose, which looks like a posing bug."""
+    out = []
+    if sorted(set(names)) != ["attack", "die", "idle", "walk"]:
+        out.append(f"clips {sorted(names)}, expected exactly idle/walk/attack/die as BARE names")
+    if len(set(names)) != len(list(names)):
+        out.append("a clip name appears twice")
+    return out
+
+
+def die_descent_errors(lows) -> str:
+    """The per-key lowest vertex of `die`: it may not sit meaningfully under the final (resting) height, and
+    it may not rise back out of the floor over the last keys."""
+    rest = lows[-1]
+    if min(lows) < rest - CORPSE_REST_TOL:
+        return f"sinks {rest - min(lows):.2f} u under the resting height"
+    if any(lows[i + 1] > lows[i] + CORPSE_REST_TOL for i in range(len(lows) - 1)):
+        return "pops back up out of the floor"
+    return ""
+
+
+def pose_gap(p, q) -> float:
+    """Largest difference between two charforge Poses (a joint missing from one is zero), degrees or u."""
+    keys = set(p.rot) | set(q.rot)
+    d = [abs(x - y) for k in keys for x, y in zip(p.rot.get(k, (0, 0, 0)), q.rot.get(k, (0, 0, 0)))]
+    d += [abs(x - y) for x, y in zip(p.root_move, q.root_move)]
+    return float(max(d)) if d else 0.0
+
+
+def _screen_minor(pts) -> float:
+    """Smaller extent of a point set projected through the shipped iso camera (yaw 45, pitch 50), in u, along
+    its principal axes: an edge-on disc is thin however it is turned."""
+    yaw, pitch = np.radians(45.0), np.radians(50.0)
+    x = pts[:, 0] * np.cos(yaw) - pts[:, 1] * np.sin(yaw)
+    y = pts[:, 0] * np.sin(yaw) + pts[:, 1] * np.cos(yaw)
+    sy = pts[:, 2] * np.cos(pitch) + y * np.sin(pitch)
+    uv = np.stack((x, sy), 1)
+    uv = uv - uv.mean(0)
+    _, vt = np.linalg.eigh(np.cov(uv.T))
+    return float(np.ptp(uv @ vt, axis=0).min())
+
+
+def _lowest_z(asset: dict, pose) -> float:
+    """Lowest vertex, in iso u, of the whole mesh posed by CPU skinning."""
+    res = C.skin(asset["skeleton"], pose, asset["meshes"], asset["skins"])
+    return float(min(float(np.asarray(r.v)[:, 2].min()) for r in res))
+
+
+def check_skeleton() -> None:
+    print("check_actors: the risen skeleton")
+    label = "skeleton"
+    a = gate_determinism(label, K.build_asset, K.glb_bytes)
+    data = K.glb_bytes(a)
+    gate_shipped(label, data)
+    gate_bytes(label, data)
+    doc, _ = G._check_container(data)
+
+    if "skins" not in doc or len(doc["skins"]) != 1:
+        fail(f"{label}: expected exactly one skin")
+        return
+    joints = doc["skins"][0]["joints"]
+    if len(joints) > MAX_JOINTS or len(joints) >= G.MAX_JOINTS:
+        fail(f"{label}: {len(joints)} joints over contract C3's {MAX_JOINTS} / the engine's {G.MAX_JOINTS}")
+    else:
+        ok(f"{label}: one skin, {len(joints)} joints (C3 cap {MAX_JOINTS}, engine cap {G.MAX_JOINTS})")
+    # the sibling: a skin over the cap must be refused by the generator itself, not just noticed here
+    over = tuple(K.JOINTS) + tuple(C.Joint(f"extra-{i}", "root", (0.0, 0.0, 0.0)) for i in range(MAX_JOINTS))
+    saved = K.JOINTS
+    K.JOINTS = over
+    try:
+        K.build_asset()
+    except ValueError:
+        ok(f"the joint cap is live: the generator refuses {len(over)} joints")
+    else:
+        fail(f"the generator accepted {len(over)} joints, past contract C3's {MAX_JOINTS}")
+    finally:
+        K.JOINTS = saved
+
+    # clips: exactly the four bare names (a duplicate throws on load, an unknown name holds the pose silently)
+    names = [x["name"] for x in doc["animations"]]
+    problems = clip_set_errors(names)
+    if problems:
+        fail(f"{label}: {'; '.join(problems)}")
+    else:
+        ok(f"{label}: clips {sorted(names)}")
+    # the siblings run the SAME function on the mistakes it exists to catch
+    for what, bad_names in (("the hound's extra gallop", [*names, "gallop"]),
+                            ("a pack-style prefixed name", ["idle", "AnimalArmature|Walk", "attack", "die"]),
+                            ("a duplicate name, which throws on load", [*names, "die"]),
+                            ("a missing clip", [n for n in names if n != "walk"])):
+        if not clip_set_errors(bad_names):
+            fail(f"the clip-set gate accepts {what}; it has stopped measuring")
+        else:
+            ok(f"the clip-set gate is live: it rejects {what}")
+
+    bad = [p for p in a["primitives"] if p.joints is None or p.weights is None]
+    if bad:
+        fail(f"{label}: {len(bad)} primitives carry no JOINTS_0/WEIGHTS_0")
+    else:
+        ok(f"{label}: all {len(a['primitives'])} primitives carry JOINTS_0 and WEIGHTS_0")
+    sums = weight_sums(a["primitives"])
+    if np.abs(sums - 1.0).max() > WEIGHT_SUM_TOL:
+        fail(f"{label}: a weight row sums to {sums[np.argmax(np.abs(sums - 1.0))]:.6f}, not 1")
+    else:
+        ok(f"{label}: every weight row sums to 1 (worst deviation {np.abs(sums - 1.0).max():.2e})")
+    p0 = a["primitives"][0]
+    w = np.array(p0.weights, dtype=np.float64, copy=True)
+    w[0] *= 0.5
+    dev = float(np.abs(weight_sums([dataclasses.replace(p0, weights=w), *a["primitives"][1:]]) - 1.0).max())
+    if dev <= WEIGHT_SUM_TOL:
+        fail("the weight-sum gate accepts a halved WEIGHTS_0 row; it has stopped measuring the weights")
+    else:
+        ok(f"the weight-sum gate is live: halving one row moves the worst deviation to {dev:.3f}")
+
+    idx = np.concatenate([np.asarray(p.joints, dtype=np.int64).reshape(-1) for p in a["primitives"]])
+    if idx.min() < 0 or idx.max() >= len(joints):
+        fail(f"{label}: a joint index is outside the skin")
+    else:
+        ok(f"{label}: every joint index lies inside the {len(joints)}-joint skin")
+    # the sibling: a skin that lost a joint (the last joint dropped) leaves every vertex bound to it outside the
+    # skin, and the same range test over the real primitives must catch it
+    short = len(joints) - 1
+    if idx.max() < short:
+        fail("the joint-index gate has nothing to catch: no vertex is bound to the last joint")
+    else:
+        ok(f"the joint-index gate is live: against a skin one joint short ({short}), index {int(idx.max())} "
+           f"falls outside")
+
+    blended = blended_share(a["primitives"])
+    if blended < BLENDED_MIN:
+        fail(f"{label}: only {blended:.1%} of vertices take a second joint's influence; this bind is rigid")
+    else:
+        ok(f"{label}: {blended:.1%} of vertices take a second joint's influence, over the {BLENDED_MIN:.0%} floor")
+    rigid = []
+    for prim in a["primitives"]:
+        rw = np.array(prim.weights, dtype=np.float64, copy=True)
+        rw[:, 0], rw[:, 1:] = 1.0, 0.0
+        rigid.append(dataclasses.replace(prim, weights=rw))
+    if blended_share(rigid) >= BLENDED_MIN:
+        fail("the blend floor accepts a rigid-only bind; it has stopped measuring")
+    else:
+        ok(f"the blend floor is live: a rigid-only bind reads {blended_share(rigid):.1%}")
+
+    err = _fk_error(a, a["inverse_bind"])
+    if err > FK_TOLERANCE:
+        fail(f"{label}: CPU skinning and glTF forward kinematics disagree by {err:.3e} world units")
+    else:
+        ok(f"{label}: CPU skinning agrees with glTF forward kinematics to {err:.2e} world units, every key of "
+           f"every clip")
+    unscaled = _fk_error(a, C.inverse_bind_export(a["skeleton"], 1.0))
+    if unscaled <= FK_TOLERANCE:
+        fail("the skinning cross-check passes an inverse bind with the export scale left out")
+    else:
+        ok(f"the skinning cross-check is live: dropping UNITS_PER_U moves vertices by {unscaled:.2f} world units")
+
+    surfaces = L.asset_surfaces(a, [a["encoded"]], world_height=SKELETON_WORLD_HEIGHT)
+    gate_grounding(label, surfaces, SKELETON_WORLD_HEIGHT)
+    z_bind = min(float(np.asarray(m.v)[:, 2].min()) for m in a["meshes"])
+    if abs(z_bind) > 1e-4:
+        fail(f"{label}: the exported bind pose's lowest vertex is at z = {z_bind:.4f} u, not 0")
+    else:
+        ok(f"{label}: the exported bind pose's lowest vertex sits at z = {z_bind:.4f} u")
+    if a["drop"] == 0.0:
+        fail("the grounding gate has nothing to catch: the authored figure already stood on z = 0")
+    else:
+        ok(f"the grounding gate is live: as authored the lowest vertex sat {a['drop']:.3f} u off the ground")
+    gate_palette(label, a["atlas"])
+    gate_m3(label, surfaces, [s for s, part in zip(surfaces, a["parts"]) if part[0].n is not None])
+
+    # `die` descends to the ground and never under it: no key may sit below the corpse's resting height by more
+    # than the tolerance, and the lowest point may not rise back out of the floor (a non-monotone drop pops)
+    corpse = a["clip_poses"]["die"][-1]
+    lows = [_lowest_z(a, p) for p in a["clip_poses"]["die"]]
+    low = lows[-1]
+    if abs(low) > CORPSE_REST_TOL:
+        fail(f"{label}: the held `die` frame's lowest vertex is {low:.2f} u off the ground")
+    else:
+        ok(f"{label}: the held `die` frame rests on the ground (lowest vertex {low:+.2f} u)")
+    problems = die_descent_errors(lows)
+    if problems:
+        fail(f"{label}: die {problems} (per-key lowest vertex {[round(x, 2) for x in lows]})")
+    else:
+        ok(f"{label}: die never sinks under the floor or pops back out of it (per-key lowest "
+           f"{[round(x, 2) for x in lows]})")
+    floating = _lowest_z(a, C.Pose(corpse.rot, (0.0, corpse.root_move[1], 0.0)))
+    if abs(floating) <= CORPSE_REST_TOL:
+        fail("the corpse gate accepts a corpse whose root was never dropped; it has stopped measuring")
+    else:
+        ok(f"the corpse gate is live: without the root drop the same pose sits {floating:+.2f} u off the ground")
+    # the sibling for the descent: the earlier authoring, which sank 4.9 u under the floor and then came back up
+    old = [0.0, -2.99, -3.73, -4.88, -0.01]
+    if not die_descent_errors(old):
+        fail("the die-descent gate accepts the sink-then-pop drop it was written for")
+    else:
+        ok("the die-descent gate is live: the old drop (-4.88 u then back to -0.01 u) is rejected")
+
+    # no key of a standing clip drives the figure through the floor (the hound's attack never leaves 0.000)
+    for name in ("idle", "walk", "attack"):
+        worst = min(_lowest_z(a, p) for p in a["clip_poses"][name])
+        if worst < -STAND_FLOOR_TOL:
+            fail(f"{label}: `{name}` drives the figure {-worst:.2f} u under the floor")
+        else:
+            ok(f"{label}: `{name}` stays within {STAND_FLOOR_TOL} u of the floor (worst {worst:+.2f} u)")
+    # the old attack key 3: the same lunge pose with the root dipped 0.9 u on top of it
+    deep = _lowest_z(a, C.Pose(a["clip_poses"]["attack"][3].rot, (0.0, 0.9, -0.9)))
+    if deep >= -STAND_FLOOR_TOL:
+        fail("the floor gate accepts the old attack lunge (root dipped 0.9 u); it has stopped measuring")
+    else:
+        ok(f"the floor gate is live: the old 0.9 u dip puts the lunge {-deep:.2f} u under the floor")
+
+    # clips that loop must close on their opening pose, to a tolerance (walk's last key is the first, to float)
+    for name in ("idle", "walk", "attack"):
+        gap = pose_gap(a["clip_poses"][name][0], a["clip_poses"][name][-1])
+        if gap > LOOP_TOL:
+            fail(f"{label}: `{name}` closes {gap:.3g} off its opening pose and will pop when it loops")
+        else:
+            ok(f"{label}: `{name}` closes on its opening pose (gap {gap:.1e})")
+    walk = a["clip_poses"]["walk"]
+    broken = pose_gap(walk[0], K._gait(math.tau * 7.5 / 8.0))
+    if broken <= LOOP_TOL:
+        fail("the loop-close gate accepts a walk that ends half a step early; it has stopped measuring")
+    else:
+        ok(f"the loop-close gate is live: a walk ending half a step early opens a gap of {broken:.1f}")
+
+    # THE HEAD. A stack of flat plates reads as a straw hat and vanishes edge-on; none of the gates above can
+    # see that. The head must be a volume in bind, and must still occupy a real patch of the screen in the
+    # held `die` frame - the pose the player looks at for the whole death linger.
+    head_ix = K.INDEX["head"]
+
+    def head_points(pose, only_flat=False):
+        res = C.skin(a["skeleton"], pose, a["meshes"], a["skins"])
+        pts = [np.asarray(r.v)[sk.i0 == head_ix] for r, sk, m in zip(res, a["skins"], a["meshes"])
+               if not only_flat or m.n is None]
+        return np.vstack(pts)
+
+    for what, flat in (("the head", False), ("a head of flat plates only", True)):
+        ext = np.ptp(head_points(C.Pose({}), flat), axis=0)
+        if flat:
+            if ext.min() >= HEAD_MIN_EXTENT_U:
+                fail(f"the head-volume gate accepts {what} (extents {ext.round(2)}); it has stopped measuring")
+            else:
+                ok(f"the head-volume gate is live: {what} has a smallest extent of {ext.min():.2f} u")
+        elif ext.min() < HEAD_MIN_EXTENT_U:
+            fail(f"{label}: the head is flat, extents {ext.round(2)} u (floor {HEAD_MIN_EXTENT_U})")
+        else:
+            ok(f"{label}: the head is a volume in bind, extents {ext.round(2)} u (floor {HEAD_MIN_EXTENT_U})")
+    for what, flat in (("the held die head", False), ("a flat-plate head in the held die pose", True)):
+        minor = _screen_minor(head_points(corpse, flat))
+        if flat:
+            if minor >= HEAD_MIN_SCREEN_U:
+                fail(f"the die-head gate accepts {what} (screen minor extent {minor:.2f} u); stopped measuring")
+            else:
+                ok(f"the die-head gate is live: {what} covers only {minor:.2f} u on screen")
+        elif minor < HEAD_MIN_SCREEN_U:
+            fail(f"{label}: the head covers only {minor:.2f} u of screen in the held die pose "
+                 f"(floor {HEAD_MIN_SCREEN_U})")
+        else:
+            ok(f"{label}: the head still covers {minor:.2f} u of screen in the held die pose "
+               f"(floor {HEAD_MIN_SCREEN_U})")
+
+
 def main() -> int:
     check_villagers()
     check_hound()
+    check_skeleton()
     print(f"check_actors: {len(errs)} problem(s)")
     return 1 if errs else 0
 

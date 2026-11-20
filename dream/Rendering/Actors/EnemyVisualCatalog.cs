@@ -98,6 +98,7 @@ public static class EnemyVisualCatalog
     public const string WolfKey = "enemy.wolf";
     public const string DireWolfKey = "enemy.dire-wolf";
     public const string HoundKey = "enemy.hound";
+    public const string SkeletonKey = "enemy.skeleton";
 
     // The gait boundary for every enemy: it sits in the empty middle between the fastest shipped
     // patrol walk and the slowest shipped chase, clear of both by the hysteresis, so nothing an
@@ -130,14 +131,34 @@ public static class EnemyVisualCatalog
         BeastAssetDefinition.DieClip,
         BeastAssetDefinition.GallopClip,
         PatrolReferenceSpeed,
-        // The hound is the GraveHowler's model and the howler chases at 6.0.
+        // The ground speed the hound's gallop clip was authored for, not a simulation chase speed.
         6.0f,
+        GaitThresholdSpeed,
+        GaitHysteresisSpeed);
+
+    // The skeleton has ONE gait, so its Sprint is its Move and the gait choice is a no-op. One clip
+    // has one authored ground speed, so BOTH references are the same number: a reference speed is the
+    // speed a clip was authored for, not the enemy's simulated chase speed. Two different numbers on
+    // one clip would make the playback rate drop when the gait latch flips at the start of a chase
+    // (EnemyVisualState snaps the forwarded speed from 1.6 up to 2.0 there), halving the stride
+    // mid-cycle with no clip rename to hide it. The value is the skeleton's OWN walk, measured from
+    // the stride the forge authored, not the wolf's PatrolReferenceSpeed inherited by default: at the
+    // shipped patrol speed of 1.25 it puts the feet exactly on the ground, where 1.4 skated by 40%.
+    public static readonly EnemyClipSet SkeletonClips = new(
+        SkeletonAssetDefinition.IdleClip,
+        SkeletonAssetDefinition.MoveClip,
+        SkeletonAssetDefinition.AttackClip,
+        SkeletonAssetDefinition.DieClip,
+        SkeletonAssetDefinition.MoveClip,
+        SkeletonAssetDefinition.WalkAuthoredGroundSpeed,
+        SkeletonAssetDefinition.WalkAuthoredGroundSpeed,
         GaitThresholdSpeed,
         GaitHysteresisSpeed);
 
     // Static so a Resolve never allocates a closure.
     private static readonly Func<float> WolfScale = static () => WolfAssetDefinition.VisualScale;
     private static readonly Func<float> HoundScale = static () => BeastAssetDefinition.HoundVisualScale;
+    private static readonly Func<float> SkeletonScale = static () => SkeletonAssetDefinition.VisualScale;
 
     private static readonly EnemyVisual Wolf = new(
         WolfAssetDefinition.ModelPath, 1f, Vector3.Zero, WolfClips, WolfScale);
@@ -152,6 +173,12 @@ public static class EnemyVisualCatalog
     // (14) and attack range (1.35) stayed those of the big dark wolf.
     private static readonly EnemyVisual Hound = new(
         BeastAssetDefinition.HoundModelPath, 1.35f, new Vector3(-0.45f, -0.45f, -0.35f), HoundClips, HoundScale);
+
+    // Unlike the hound, the skeleton does not replace another enemy's model: it normalises to its own
+    // biped height (the player's), so it needs no size multiplier to hold a level's presence. And its
+    // materials are authored dark already, so a tint offset would only crush them toward black.
+    private static readonly EnemyVisual Skeleton = new(
+        SkeletonAssetDefinition.ModelPath, 1f, Vector3.Zero, SkeletonClips, SkeletonScale);
 
     // What an unknown key draws, and the wolf's own look.
     public static EnemyVisual Default => Wolf;
@@ -174,6 +201,12 @@ public static class EnemyVisualCatalog
             string.Equals(visualKey, HoundKey, StringComparison.Ordinal))
         {
             return Hound;
+        }
+
+        if (visualKey.Length == SkeletonKey.Length &&
+            string.Equals(visualKey, SkeletonKey, StringComparison.Ordinal))
+        {
+            return Skeleton;
         }
 
         return Wolf;

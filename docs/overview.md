@@ -40,7 +40,7 @@ Each update, the client captures input into a `PlayerCommandFrame` for the serve
 
 ## Content And Art
 
-- `dream/config/content/`: `items.json`, `enemies.json`, `loot.json`, `npcs.json`, `quests.json`, `skills.json`, `spawns.json` (the three default skills are Cleave, Bolt and Mend; enemies include Wolf, DireWolf, AshenProwler and GraveHowler).
+- `dream/config/content/`: `items.json`, `enemies.json`, `loot.json`, `npcs.json`, `quests.json`, `skills.json`, `spawns.json` (the three default skills are Cleave, Bolt and Mend; enemies include Wolf, DireWolf, AshenProwler, GraveHowler and RisenSkeleton).
 - `dream/shaders/`, `dream/animations/`, `dream/fonts/` (Cinzel and EB Garamond, SIL OFL, with their licences), `dream/ui/` (atlases and sprite tables), `dream/audio/`: runtime assets copied into the output folder.
 - Art is original and procedural. `tools/ui-assets/` generates the UI, items, terrain, iso props and actors and effects with fixed seeds (output is byte-deterministic); `tools/audio/` generates the sound pack. See `tools/ui-assets/README.md`.
 

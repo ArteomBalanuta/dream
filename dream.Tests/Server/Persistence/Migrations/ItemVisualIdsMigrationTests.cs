@@ -36,7 +36,7 @@ public sealed class ItemVisualIdsMigrationTests
 
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
-        Assert.Equal(17, result.ToVersion);
+        Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, result.ToVersion);
         Assert.Equal("worn.head.leather-cap", Visual(database, 9001));
         Assert.Equal("held.weapon.sword", Visual(database, 9002));
     }
