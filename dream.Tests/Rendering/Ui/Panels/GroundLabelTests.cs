@@ -123,6 +123,36 @@ public sealed class GroundLabelTests : IDisposable
         Assert.All(boxes, b => Assert.True(float.IsFinite(b.Center.Y) && b.Size.X > 0f));
     }
 
+    [Fact]
+    public void OnlyTheHighlightedItemsBoxIsLifted()
+    {
+        List<WorldBox> plain = new();
+        List<WorldBox> lit = new();
+        ClientGroundItemCache ground = CacheWith(At(1, 3f, 3f), At(2, 4f, 3f));
+        ClientNpcCache npcs = NpcAt(ReplicatedActorIdRanges.FirstNpcId, 5f, 0f);
+
+        WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, plain);
+        WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, lit, highlightItemId: 2);
+
+        Assert.Equal(plain[0].Color, lit[0].Color);
+        Assert.Equal(ActorHighlight.Box(plain[1].Color), lit[1].Color);
+        Assert.NotEqual(plain[1].Color, lit[1].Color);
+    }
+
+    [Fact]
+    public void AHighlightIdMatchingNoItem_LiftsNothing()
+    {
+        List<WorldBox> plain = new();
+        List<WorldBox> lit = new();
+        ClientGroundItemCache ground = CacheWith(At(1, 3f, 3f));
+        ClientNpcCache npcs = NpcAt(ReplicatedActorIdRanges.FirstNpcId, 5f, 0f);
+
+        WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, plain);
+        WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, lit, highlightItemId: 99);
+
+        Assert.Equal(plain[0].Color, lit[0].Color);
+    }
+
     // ---- the label panel ----
 
     private static HudView ViewWith(params HudWorldLabel[] labels) => new() { InventoryOpen = true, Labels = labels };

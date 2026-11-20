@@ -54,7 +54,7 @@ public static class WorldEntityRenderer
     // Ground items only (M5): villagers are forged models now, drawn by NpcModelRenderer. The NPC
     // cache stays in the signature because the box pass and the label pass share the call site, and
     // the label pass anchors an NPC's label above where its head is.
-    public static void CollectBoxes(ClientGroundItemCache ground, ClientNpcCache npcs, Vector3 eye, List<WorldBox> destination)
+    public static void CollectBoxes(ClientGroundItemCache ground, ClientNpcCache npcs, Vector3 eye, List<WorldBox> destination, long? highlightItemId = null)
     {
         ArgumentNullException.ThrowIfNull(ground);
         ArgumentNullException.ThrowIfNull(npcs);
@@ -68,7 +68,13 @@ public static class WorldEntityRenderer
                 continue;
             }
 
-            destination.Add(new WorldBox(item.Position + new Vector3(0f, ItemSize.Y * 0.5f, 0f), ItemSize, ItemColor(item.Rarity)));
+            Vector3 colour = ItemColor(item.Rarity);
+            if (highlightItemId is long highlighted && highlighted == item.ItemInstanceId)
+            {
+                colour = ActorHighlight.Box(colour);
+            }
+
+            destination.Add(new WorldBox(item.Position + new Vector3(0f, ItemSize.Y * 0.5f, 0f), ItemSize, colour));
         }
     }
 
