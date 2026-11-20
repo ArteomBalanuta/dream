@@ -26,10 +26,11 @@ public partial class Render
 
     public int LastWorldEntityBoxCount => _worldEntityBoxes.Count;
 
-    // The villagers' models, created on the first frame that draws them (a field initializer
-    // cannot see `this`, and Render's constructor does not need one more renderer).
     // The ground item the world hover rests on (its item instance id): its box draws lifted.
     public long? HighlightGroundItemId { get; set; }
+
+    // The villagers' models, created on the first frame that draws them (a field initializer
+    // cannot see `this`, and Render's constructor does not need one more renderer).
 
     public NpcModelRenderer Npcs => _npcModelRenderer ??= new NpcModelRenderer(this);
 

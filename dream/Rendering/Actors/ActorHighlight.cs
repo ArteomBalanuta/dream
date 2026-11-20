@@ -1,3 +1,4 @@
+using Dream.Rendering.Ui;
 using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Actors;
@@ -17,12 +18,24 @@ public static class ActorHighlight
         (1f + ownTint.Y) * (1f + Lift.Y) - 1f,
         (1f + ownTint.Z) * (1f + Lift.Z) - 1f);
 
-    // A ground box's colour, lifted the same way (boxes are plain albedo, there is no tint uniform), kept
-    // inside the colour range.
+    // A ground box's colour, lifted the same way (boxes are plain albedo, there is no tint uniform). The box
+    // colours sit at or below WorldEntityRenderer.AlbedoCeiling, so the lifted one stays a transient emphasis
+    // (at most AlbedoCeiling x (1 + Lift.X)) rather than a blown-out white.
     public static Vector3 Box(Vector3 colour) => new(
-        MathF.Min(colour.X * (1f + Lift.X), 1f),
-        MathF.Min(colour.Y * (1f + Lift.Y), 1f),
-        MathF.Min(colour.Z * (1f + Lift.Z), 1f));
+        colour.X * (1f + Lift.X),
+        colour.Y * (1f + Lift.Y),
+        colour.Z * (1f + Lift.Z));
+
+    // Which enemy, villager and ground item draw lifted for a hover target: only the one of its kind, and none
+    // for an actor id that does not fit an int (actor ids are ints; ground items keep their long id).
+    public static HighlightTargets Targets(HoverTargetId current)
+    {
+        bool fitsInt = current.Id is >= int.MinValue and <= int.MaxValue;
+        return new HighlightTargets(
+            current.Kind == HoverKind.Enemy && fitsInt ? (int)current.Id : null,
+            current.Kind == HoverKind.Npc && fitsInt ? (int)current.Id : null,
+            current.Kind == HoverKind.GroundItem ? current.Id : null);
+    }
 
     // The enemy draw's choice: the combined tint for the highlighted actor only.
     public static Vector3 EnemyTint(int? highlightActorId, int actorId, Vector3 ownTint) =>
@@ -32,3 +45,6 @@ public static class ActorHighlight
     public static Vector3 NpcTint(int? highlightActorId, int actorId) =>
         highlightActorId is int id && id == actorId ? Lift : Vector3.Zero;
 }
+
+// The ids ActorHighlight.Targets picks for the enemy, villager and ground item renderers.
+public readonly record struct HighlightTargets(int? EnemyActorId, int? NpcActorId, long? GroundItemId);
