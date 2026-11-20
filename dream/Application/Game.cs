@@ -310,7 +310,7 @@ public class Game : GameWindow
                 _desktopClientConfig.HostPort,
                 _desktopClientConfig.PlayerName),
             PersistMultiplayer,
-            new WindowClipboard(this));
+            SystemClipboard);
         CursorState = _mainMenu.DesiredCursorState;
         // After any ended play scene's teardown (which set None), so the title screen keeps its music.
         GameAudio.Current.SetMusic(MusicTrack.Menu);
@@ -486,6 +486,9 @@ public class Game : GameWindow
         // Esc inside a pause-menu sub-screen (Options, Key Bindings) goes back one screen instead of
         // closing the whole menu; on the pause root it closes the menu as before.
         _playScene.TryEscapeBack = () => _settings.PauseMenuVisible && _pauseScreen.Apply(MenuAction.Back);
+        // Ctrl+V into the chat line, which is also where /dev commands are typed. The same clipboard the
+        // menu's text fields use, so there is one seam rather than two.
+        _playScene.Clipboard = SystemClipboard;
         // The viewport and settings resolution follow a window that was resized while a menu was up.
         _playScene.Resize(ClientSize);
         // The classic inventory's static panel state belongs to one scene.
@@ -907,6 +910,12 @@ public class Game : GameWindow
         Keys.V when control && !alt => MenuKey.Paste,
         _ => null
     };
+
+    // One clipboard for the window, shared by the menu's fields and the chat line. Created on first use
+    // because the window must exist before GLFW can be asked for it.
+    private IMenuClipboard? _systemClipboard;
+
+    private IMenuClipboard SystemClipboard => _systemClipboard ??= new WindowClipboard(this);
 
     // The system clipboard through GLFW. A clipboard that holds no text (or that GLFW cannot read) is empty.
     private sealed class WindowClipboard(Game window) : IMenuClipboard

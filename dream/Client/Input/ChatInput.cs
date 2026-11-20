@@ -1,5 +1,7 @@
+using System.Linq;
 using System.Text;
 using Dream.Multiplayer.Protocol;
+using Dream.Rendering.Ui.Menu;
 using Dream.Rendering.Ui.Panels;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 
@@ -25,6 +27,11 @@ public sealed class ChatInput
     // Where the slash commands that are player actions (party and trade) go, set by the scene. Null: they
     // are not sent.
     public Action<IPlayerActionPayload>? SendAction { get; set; }
+
+    // The system clipboard, set by the scene; null means paste does nothing. It is the SAME abstraction the
+    // menu's text fields use (IMenuClipboard), so there is one clipboard seam in the client and a test can
+    // supply a fake without a window.
+    public IMenuClipboard? Clipboard { get; set; }
 
     public bool IsTyping => State.Typing;
 
@@ -115,6 +122,40 @@ public sealed class ChatInput
         }
     }
 
+    // Paste the clipboard into the open line. Every character still goes through TypeCharacter, so the
+    // plain-character filter and MaxInputChars apply exactly as if it had been typed - a paste can never put
+    // something into the line that the keyboard could not. A chat line is single-line, so only the first
+    // non-empty line is taken (the same rule the menu's Address field uses), and a paste that would overrun
+    // the limit fills what fits instead of dropping the lot, which is what every text field does.
+    // Returns the number of UTF-16 units actually added, for the test to assert on.
+    public int Paste()
+    {
+        if (!State.Typing)
+        {
+            return 0;
+        }
+
+        string? text = Clipboard?.GetText();
+        if (string.IsNullOrEmpty(text))
+        {
+            return 0;
+        }
+
+        string line = text.Split(['\r', '\n']).FirstOrDefault(l => l.Trim().Length > 0)?.Trim() ?? string.Empty;
+        if (line.Length == 0)
+        {
+            return 0;
+        }
+
+        int before = State.Input.Length;
+        foreach (Rune rune in line.EnumerateRunes())
+        {
+            TypeCharacter((uint)rune.Value);
+        }
+
+        return State.Input.Length - before;
+    }
+
     // One frame of keys. canOpen is false while Settings is open or no server is connected.
     // Returns true when chat used this frame's keys (the line was open, or just closed), so the
     // caller skips the global keys.
@@ -138,6 +179,16 @@ public sealed class ChatInput
         {
             Cancel();
             return true;
+        }
+
+        // Paste before the queued characters, so a pasted line and anything typed in the same frame keep
+        // their order. GLFW raises no character event while Control is held, so Ctrl+V cannot also type a
+        // "v"; Shift+Insert is accepted too, because that is the other binding people reach for.
+        bool control = keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl);
+        bool shift = keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift);
+        if ((control && keyboard.IsKeyPressed(Keys.V)) || (shift && keyboard.IsKeyPressed(Keys.Insert)))
+        {
+            Paste();
         }
 
         foreach (uint unicode in _characters.Drain())

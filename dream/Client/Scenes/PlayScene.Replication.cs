@@ -8,6 +8,7 @@ using Dream.Rendering.Actors;
 using Dream.Client.Input;
 using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Ui;
+using Dream.Rendering.Ui.Menu;
 using Dream.Rendering.Ui.Panels;
 using Dream.Rendering.ViewModels;
 using OpenTK.Windowing.GraphicsLibraryFramework;
@@ -32,6 +33,14 @@ public partial class PlayScene
 
     // The window's text event (Game.OnTextInput); dropped unless the chat line is open.
     public void QueueTextInput(uint unicode) => _chatInput.QueueTextInput(unicode);
+
+    // The system clipboard, set by Game once the scene exists (the same instance the menu uses). Null
+    // leaves Ctrl+V doing nothing rather than throwing, which is what a headless or test scene wants.
+    public IMenuClipboard? Clipboard
+    {
+        get => _chatInput.Clipboard;
+        set => _chatInput.Clipboard = value;
+    }
 
     // Called once a frame before the global keys. True when chat used the frame's keys.
     private bool HandleChatInput(KeyboardState keyboardState)
