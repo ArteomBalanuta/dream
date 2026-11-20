@@ -1,0 +1,169 @@
+<title>__TITLE__ Turnaround</title>
+<meta charset="utf-8">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a model-sheet stage (four fixed views or free orbit) over a thin spec strip. Single dark look: a neutral studio backdrop so materials read true. */
+:root {
+  --bg: #141416;
+  --stage: #1b1b1e;
+  --panel: #1f1f23;
+  --line: #2e2e34;
+  --fg: #e8e6e3;
+  --muted: #8e8b87;
+  --accent: #c9b79c;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); margin: 0; }
+.wrap { display: flex; flex-direction: column; height: 100%; }
+.stage { position: relative; flex: 1 1 auto; min-height: 320px; background: radial-gradient(ellipse at 50% 45%, #232327 0%, var(--stage) 75%); }
+canvas#c { display: block; width: 100%; height: 100%; touch-action: none; }
+.labels { position: absolute; inset: auto 0 10px 0; display: grid; grid-template-columns: repeat(4, 1fr); pointer-events: none; }
+.labels span { text-align: center; font: 500 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font: 13px var(--mono); }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; border-top: 1px solid var(--line); background: var(--panel);
+  padding-block: 12px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.bar h1 { font: 600 15px var(--sans); margin: 0; letter-spacing: .01em; }
+.bar .stats { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; min-width: 0; }
+.group { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+button, select { font: 500 12px var(--sans); color: var(--fg); background: #26262b; border: 1px solid var(--line); padding: 7px 11px; border-radius: 5px; cursor: pointer; }
+button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 640px) { .labels span { font-size: 9px; } .group { margin-left: 0; } }
+</style>
+
+<div class="wrap">
+  <div class="stage">
+    <canvas id="c" aria-label="3D views of the model"></canvas>
+    <div class="labels" id="labels"><span>Front</span><span>Three-quarter</span><span>Side</span><span>Back</span></div>
+    <div class="loading" id="loading">Loading model…</div>
+  </div>
+  <div class="bar">
+    <h1>__TITLE__</h1>
+    <div class="stats" id="stats"></div>
+    <div class="group" role="toolbar" aria-label="View options">
+      <button id="bSheet" aria-pressed="true">Four views</button>
+      <select id="anim" aria-label="Animation"><option value="">Rest pose</option></select>
+      <button id="bWire" aria-pressed="false">Wireframe</button>
+      <button id="bBones" aria-pressed="false">Bones</button>
+      <button id="bNormal" aria-pressed="true">Normal map</button>
+      <button id="bAlbedo" aria-pressed="true">Albedo</button>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+const GLB_B64 = "__GLB_B64__";
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.85;
+renderer.setScissorTest(true);
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.8;
+const key = new THREE.DirectionalLight(0xfff4e8, 1.9); key.position.set(1.5, 3, 2.2); scene.add(key);
+const rim = new THREE.DirectionalLight(0xdfe6ff, 1.8); rim.position.set(-2, 2, -2.5); scene.add(rim);
+const fill = new THREE.DirectionalLight(0xffffff, 0.5); fill.position.set(-2, 0.5, 1.5); scene.add(fill);
+
+let center = new THREE.Vector3(0, 0.22, 0), radius = 0.35;
+const cams = [0, 1, 2, 3].map(() => new THREE.PerspectiveCamera(24, 1, 0.01, 20));
+const orbitCam = new THREE.PerspectiveCamera(30, 1, 0.01, 20);
+const controls = new OrbitControls(orbitCam, canvas);
+controls.enableDamping = true;
+controls.enabled = false;
+const dirs = [[0, 0, 1], [-0.72, 0, 0.69], [-1, 0, 0], [0, 0, -1]];  // front, 3/4, side, back (model faces +Z)
+function placeCams() {
+  const d = radius / Math.sin(THREE.MathUtils.degToRad(12)) * 1.02;
+  cams.forEach((c, i) => {
+    const v = new THREE.Vector3(...dirs[i]).normalize();
+    c.position.copy(center).addScaledVector(v, d); c.position.y += radius * 0.12;
+    c.lookAt(center);
+  });
+  orbitCam.position.copy(center).add(new THREE.Vector3(0.6, 0.25, 1.2).multiplyScalar(radius * 2.4));
+  controls.target.copy(center);
+}
+window.__viewer = { cams, orbitCam, controls, scene, setView: i => { dirs[i] && 0; } };
+
+const bytes = Uint8Array.from(atob(GLB_B64), c => c.charCodeAt(0));
+let mixer, clips = [], model, helper, mats = [], saved = new Map();
+const state = { sheet: true, wire: false, bones: false, normal: true, albedo: true };
+
+new GLTFLoader().parse(bytes.buffer, "", gltf => {
+  model = gltf.scene; scene.add(model);
+  model.traverse(o => { if (o.isMesh) { o.frustumCulled = false; mats.push(o.material); saved.set(o.material, { map: o.material.map, normalMap: o.material.normalMap }); } });
+  const box = new THREE.Box3().setFromObject(model);
+  box.getCenter(center); radius = box.getBoundingSphere(new THREE.Sphere()).radius;
+  placeCams();
+  mixer = new THREE.AnimationMixer(model); clips = gltf.animations;
+  const sel = document.getElementById("anim");
+  clips.forEach((c, i) => { const o = document.createElement("option"); o.value = i; o.textContent = c.name; sel.appendChild(o); });
+  if (clips.length) { sel.value = 0; playClip(0); }
+  helper = new THREE.SkeletonHelper(model); helper.visible = false; scene.add(helper);
+  const ex = gltf.parser.json.asset.extras || {};
+  const parts = Object.entries(ex.parts || {}).map(([k, v]) => `${k} ${v.toLocaleString()}`).join(" · ");
+  document.getElementById("stats").textContent =
+    `${(ex.triangles || 0).toLocaleString()} tris (${parts}) · sculpt ${(ex.sculpt_triangles || 0).toLocaleString()} · ` +
+    `${ex.texture_size}² maps · ${gltf.parser.json.skins[0].joints.length} bones · ${(bytes.length / 1048576).toFixed(1)} MB`;
+  document.getElementById("loading").hidden = true;
+  window.__viewer.ready = true;
+});
+
+function playClip(i) {
+  mixer.stopAllAction();
+  if (i === "" || i === null) return;
+  mixer.clipAction(clips[+i]).play();
+}
+document.getElementById("anim").addEventListener("change", e => playClip(e.target.value));
+function toggle(id, k, fn) {
+  const b = document.getElementById(id);
+  b.addEventListener("click", () => { state[k] = !state[k]; b.setAttribute("aria-pressed", state[k]); fn(state[k]); });
+}
+toggle("bSheet", "sheet", v => { controls.enabled = !v; document.getElementById("labels").hidden = !v; });
+toggle("bWire", "wire", v => mats.forEach(m => m.wireframe = v));
+toggle("bBones", "bones", v => { if (helper) helper.visible = v; });
+toggle("bNormal", "normal", v => mats.forEach(m => { m.normalMap = v ? saved.get(m).normalMap : null; m.needsUpdate = true; }));
+toggle("bAlbedo", "albedo", v => mats.forEach(m => { m.map = v ? saved.get(m).map : null; m.needsUpdate = true; }));
+
+const clock = new THREE.Clock();
+function frame() {
+  const dt = clock.getDelta();
+  if (mixer) mixer.update(dt);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.floor(w * renderer.getPixelRatio())) renderer.setSize(w, h, false);
+  renderer.setClearColor(0x000000, 0);
+  if (state.sheet) {
+    const cw = w / 4;
+    cams.forEach((c, i) => {
+      c.aspect = cw / h; c.updateProjectionMatrix();
+      renderer.setViewport(i * cw, 0, cw, h); renderer.setScissor(i * cw, 0, cw, h);
+      renderer.render(scene, c);
+    });
+  } else {
+    controls.update();
+    orbitCam.aspect = w / h; orbitCam.updateProjectionMatrix();
+    renderer.setViewport(0, 0, w, h); renderer.setScissor(0, 0, w, h);
+    renderer.render(scene, orbitCam);
+  }
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
