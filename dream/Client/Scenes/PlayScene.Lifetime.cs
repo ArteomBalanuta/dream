@@ -122,6 +122,7 @@ public partial class PlayScene
         ModelAssets.Preload(
             ModelAssets.WolfPath,
             ModelAssets.HoundPath,
+            ModelAssets.SkeletonPath,
             ModelAssets.NpcVendorPath,
             ModelAssets.NpcSmithPath,
             ModelAssets.NpcWardenPath,
