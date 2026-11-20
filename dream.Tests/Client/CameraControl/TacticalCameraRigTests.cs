@@ -164,10 +164,10 @@ public class TacticalCameraRigTests
         TacticalCameraSettings settings = TacticalCameraSettings.Default with { LeashMetres = 40f };
         TacticalCameraRig near = NewRig(settings);
         TacticalCameraRig far = NewRig(settings);
-        near.SnapTo(Focus, null, 11f, null, null);
-        far.SnapTo(Focus, null, 22f, null, null);
-        Run(near, Focus, Input(edge: new Vector2(0f, 1f)), 0.6f, 1f / 60f);
-        Run(far, Focus, Input(edge: new Vector2(0f, 1f)), 0.6f, 1f / 60f);
+        near.SnapTo(Focus, null, 10.5f, null, null);
+        far.SnapTo(Focus, null, 21f, null, null);
+        Run(near, Focus, Input(edge: new Vector2(0f, 1f)), 0.3f, 1f / 60f);
+        Run(far, Focus, Input(edge: new Vector2(0f, 1f)), 0.3f, 1f / 60f);
         Assert.InRange(far.PanOffset.Length / near.PanOffset.Length, 1.999f, 2.001f);
     }
 
@@ -390,5 +390,129 @@ public class TacticalCameraRigTests
         Assert.Equal(Vector3.Zero, rig.PanOffset);
         Assert.False(rig.ZoomGestureActive);
         Assert.Equal(TacticalCameraPose.Default(other), rig.Advance(other, CameraInputFrame.None, 1f / 60f));
+    }
+
+    private static TacticalCameraSettings WithAnchor(CameraAnchorMode mode) =>
+        TacticalCameraSettings.Default with { AnchorMode = mode };
+
+    [Fact]
+    public void SettingTheAnchorMode_SwitchesTheRigMode_KeepingTheTargetWhereItIs()
+    {
+        TacticalCameraRig rig = NewRig(WithAnchor(CameraAnchorMode.Follow));
+        Vector3 start = rig.Pose.Target;
+
+        rig.Settings = WithAnchor(CameraAnchorMode.Free);
+        Assert.Equal(CameraAnchorMode.Free, rig.AnchorMode);
+        Assert.Equal(start, rig.Pose.Target);
+        Vector3 walked = Focus + new Vector3(4f, 0f, 3f);
+        rig.Advance(walked, CameraInputFrame.None, 1f / 60f);
+        Assert.InRange((rig.Pose.Target - start).Length, 0f, 1e-4f);
+
+        rig.Settings = WithAnchor(CameraAnchorMode.Follow);
+        Assert.Equal(CameraAnchorMode.Follow, rig.AnchorMode);
+        Vector3 held = rig.Pose.Target;
+        Vector3 walkedMore = walked + new Vector3(2f, 0f, 0f);
+        rig.Advance(walkedMore, CameraInputFrame.None, 1f / 60f);
+        Assert.InRange((rig.Pose.Target - (held + new Vector3(2f, 0f, 0f))).Length, 0f, 1e-4f);
+    }
+
+    [Fact]
+    public void SettingTheSameAnchorModeAgain_LeavesAYKeyToggleAlone()
+    {
+        TacticalCameraRig rig = NewRig(WithAnchor(CameraAnchorMode.Follow));
+        rig.Advance(Focus, Input(toggle: true), 1f / 60f);
+        Assert.Equal(CameraAnchorMode.Free, rig.AnchorMode);
+
+        // The scene writes the toggled result back; the rig is already there.
+        rig.Settings = WithAnchor(CameraAnchorMode.Free);
+        Assert.Equal(CameraAnchorMode.Free, rig.AnchorMode);
+        rig.Settings = WithAnchor(CameraAnchorMode.Free) with { PanSpeed = 20f };
+        Assert.Equal(CameraAnchorMode.Free, rig.AnchorMode);
+    }
+
+    [Fact]
+    public void ClockPrecision_AfterHoursOfPlay_GestureStillEndsAndSingleHomeTapIsNotADoubleTap()
+    {
+        TacticalCameraRig rig = NewRig();
+        // ~1e5 s of play in big frames.
+        for (int i = 0; i < 1_000_000; i++)
+        {
+            rig.Advance(Focus, CameraInputFrame.None, 0.1f);
+        }
+
+        rig.Advance(Focus, Input(notches: 3f), 0.001f);
+        Assert.True(rig.ZoomGestureActive);
+        for (int i = 0; i < 1500; i++)
+        {
+            rig.Advance(Focus, CameraInputFrame.None, 0.001f);
+        }
+
+        Assert.False(rig.ZoomGestureActive);
+
+        float zoomed = rig.Pose.Distance;
+        Assert.NotEqual(IsometricView.Distance, zoomed);
+        rig.Advance(Focus, Input(recentre: true), 0.001f);
+        for (int i = 0; i < 1500; i++)
+        {
+            rig.Advance(Focus, CameraInputFrame.None, 0.001f);
+        }
+
+        rig.Advance(Focus, Input(recentre: true), 0.001f);
+        for (int i = 0; i < 1000; i++)
+        {
+            rig.Advance(Focus, CameraInputFrame.None, 0.001f);
+        }
+
+        Assert.Equal(zoomed, rig.Pose.Distance, 3);
+    }
+
+    [Fact]
+    public void FollowZoomToCursor_DoesNotAbsorbThePlayersWalkIntoTheOffset()
+    {
+        TacticalCameraRig rig = NewRig();
+        Vector3 focus = Focus;
+        rig.LatchZoomAnchor(focus);
+        for (int i = 0; i < 120; i++)
+        {
+            focus += new Vector3(5f / 60f, 0f, 0f);
+            rig.Advance(focus, Input(notches: i < 3 ? 1f : 0f), 1f / 60f);
+        }
+
+        Assert.InRange(rig.PanOffset.Length, 0f, 0.01f);
+    }
+
+    [Fact]
+    public void FreeZoomToCursor_KeepsTheAnchorFixedInWorldSpace()
+    {
+        TacticalCameraRig rig = NewRig(WithAnchor(CameraAnchorMode.Free));
+        rig.LatchZoomAnchor(Focus + new Vector3(3f, 0f, 2f));
+        for (int i = 0; i < 120; i++)
+        {
+            rig.Advance(Focus, Input(notches: i == 0 ? 1f : 0f), 1f / 60f);
+        }
+
+        Assert.True((rig.Pose.Target - Focus).Length > 0.05f);
+    }
+
+    [Fact]
+    public void ZoomToCursor_IsSkippedWhileTheYawIsTurning()
+    {
+        TacticalCameraRig rig = NewRig();
+        rig.LatchZoomAnchor(Focus + new Vector3(4f, 0f, 4f));
+        rig.Advance(Focus, Input(notches: 1f, steps: 1), 1f / 60f);
+        Assert.Equal(Vector3.Zero, rig.PanOffset);
+    }
+
+    [Fact]
+    public void ZoomToCursor_LeashWinsOverTheAnchor()
+    {
+        TacticalCameraRig rig = NewRig(TacticalCameraSettings.Default with { LeashMetres = 1f });
+        rig.LatchZoomAnchor(Focus + new Vector3(8f, 0f, 8f));
+        for (int i = 0; i < 120; i++)
+        {
+            rig.Advance(Focus, Input(notches: i < 3 ? 1f : 0f), 1f / 60f);
+        }
+
+        Assert.InRange(rig.PanOffset.Length, 0f, 1.0001f);
     }
 }
