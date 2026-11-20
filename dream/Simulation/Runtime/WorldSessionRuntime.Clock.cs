@@ -4,7 +4,8 @@ using Dream.Simulation.World;
 namespace Dream.Simulation.Runtime;
 
 // The world clock: advanced once per AdvanceAuthoritativeTick (never by queued-action processing),
-// so WorldTicks - CurrentServerTick stays constant for the life of the runtime.
+// so WorldTicks - CurrentServerTick is constant except at a jump (JumpWorldClockForward), after which
+// the host re-anchors every connected client.
 public sealed partial class WorldSessionRuntime
 {
     // The WorldTicks the current clock was created with. Every AdvanceAuthoritativeTick moves the
@@ -26,6 +27,14 @@ public sealed partial class WorldSessionRuntime
 
         WorldClock = new WorldClock(settings, worldTicks);
         _worldClockConfiguredTicks = worldTicks;
+    }
+
+    // Jumps the clock forward (the /dev tod command) and returns the anchor a client needs to follow it.
+    // The only thing that moves WorldTicks - CurrentServerTick after the first tick.
+    internal WorldClockAnchor JumpWorldClockForward(long ticks)
+    {
+        WorldClock.JumpForward(ticks);
+        return WorldClock.CaptureAnchor(CurrentServerTick);
     }
 
     long IRuntimePersistenceHost.WorldTicks => WorldClock.WorldTicks;

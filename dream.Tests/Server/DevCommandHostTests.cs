@@ -6,6 +6,7 @@ using Dream.Server;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 
 namespace Dream.Tests.Server;
 
@@ -95,6 +96,88 @@ public sealed class DevCommandHostTests
 
         Assert.StartsWith(DevCommandText.ReplyPrefix, reply, StringComparison.Ordinal);
         Assert.Contains("spawn", reply, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("/dev")]
+    [InlineData("/dev help")]
+    public void BareDevAndHelp_AnswerOneMultiLineReply_ThatListsTod(string line)
+    {
+        using Fixture f = new(allowed: true, Loopback);
+
+        string reply = Assert.Single(f.Say(ChatChannel.Command, line));
+
+        Assert.StartsWith(DevCommandText.ReplyPrefix, reply, StringComparison.Ordinal);
+        Assert.Contains('\n', reply);
+        Assert.Contains("tod", reply, StringComparison.Ordinal);
+        Assert.EndsWith(DevCommands.Help, reply, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnknownDevVerb_AnswersOneErrorReply_WithTheWholeHelp()
+    {
+        using Fixture f = new(allowed: true, Loopback);
+
+        string reply = Assert.Single(f.Dev("frobnicate"));
+
+        Assert.StartsWith(DevCommandText.ErrorPrefix + "Unknown dev command 'frobnicate'.\n", reply, StringComparison.Ordinal);
+        Assert.EndsWith(DevCommands.Help, reply, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Tod_JumpsTheClockToTheTick_AndReAnchorsEveryConnectionBeforeTheReply()
+    {
+        using Fixture f = new(allowed: true, Loopback);
+        const string other = "127.0.0.1:50002";
+        f.Join(other, "session-b", "Bob");
+        WorldClock clock = f.Runtime.WorldClock;
+        long before = clock.WorldTicks;
+
+        List<PendingConnectionReply> all = f.DevAll("tod 21:30");
+
+        Assert.Equal(21.5d / 24d, clock.TimeOfDay01, precision: 9);
+        Assert.True(clock.WorldTicks >= before);
+        List<(string Connection, ServerWorldClockMessage Message)> clocks =
+            [.. all.Where(r => r.Message is ServerWorldClockMessage).Select(r => (r.ConnectionId, (ServerWorldClockMessage)r.Message))];
+        Assert.Equal(2, clocks.Count);
+        Assert.Equal(
+            [Loopback, other],
+            clocks.Select(c => c.Connection).OrderBy(c => c, StringComparer.Ordinal).ToArray());
+        Assert.All(clocks, c => Assert.Equal(f.AnchorNow(), c.Message.Anchor));
+
+        int reply = all.FindIndex(r => r.ConnectionId == Loopback && r.Message is ServerChatMessage { Channel: ChatChannel.System });
+        Assert.True(reply >= 0);
+        Assert.All(all.Select((r, i) => (r, i)).Where(x => x.r.Message is ServerWorldClockMessage), x => Assert.True(x.i < reply));
+        string text = ((ServerChatMessage)all[reply].Message).Text;
+        Assert.Equal($"[dev] World time set to 21:30 (day {clock.DayNumber})", text);
+    }
+
+    [Fact]
+    public void Tod_ToTheTimeItAlreadyIs_StillAnchorsEveryone_AndMovesNothing()
+    {
+        using Fixture f = new(allowed: true, Loopback);
+        long before = f.Runtime.WorldClock.WorldTicks;
+
+        List<PendingConnectionReply> all = f.DevAll("tod 08:00");
+
+        Assert.Equal(before, f.Runtime.WorldClock.WorldTicks);
+        Assert.Single(all, r => r.Message is ServerWorldClockMessage);
+    }
+
+    [Theory]
+    [InlineData("tod off", true)]
+    [InlineData("tod 25:00", true)]
+    [InlineData("tod 21:30", false)]
+    public void Tod_ThatIsRefusedOrGatedOff_LeavesTheClock_AndSendsNoClockMessage(string line, bool devOn)
+    {
+        using Fixture f = new(allowed: devOn, Loopback);
+        long before = f.Runtime.WorldClock.WorldTicks;
+
+        List<PendingConnectionReply> all = f.DevAll(line);
+
+        Assert.Equal(before, f.Runtime.WorldClock.WorldTicks);
+        Assert.DoesNotContain(all, r => r.Message is ServerWorldClockMessage);
+        Assert.Single(all);
     }
 
     [Fact]
@@ -416,6 +499,24 @@ public sealed class DevCommandHostTests
         public string CharacterKey { get; }
 
         public List<string> Dev(string subcommands) => Say(ChatChannel.Command, DevCommandText.Command + " " + subcommands);
+
+        // Joins a second connection (a second player), as a real server has many.
+        public void Join(string connection, string session, string name)
+            => Assert.IsType<JoinAcceptedMessage>(Assert.Single(
+                _host.HandleClientMessage(connection, new ClientJoinRequestMessage(session, name))));
+
+        // The anchor a client is given for the clock as it reads now.
+        public WorldClockAnchor AnchorNow() => Runtime.WorldClock.CaptureAnchor(Runtime.CurrentServerTick);
+
+        // Every pending reply, to every connection, of one /dev line from the first player.
+        public List<PendingConnectionReply> DevAll(string subcommands)
+        {
+            _clock.Advance(TimeSpan.FromSeconds(2));
+            _host.HandleClientMessage(_connection, new ClientChatMessage(ChatChannel.Command, DevCommandText.Command + " " + subcommands));
+            List<PendingConnectionReply> replies = [];
+            _host.DrainPendingJoinRepliesInto(replies);
+            return replies;
+        }
 
         // Sends one line from the player and returns the text of the System replies it got back.
         public List<string> Say(ChatChannel channel, string text)

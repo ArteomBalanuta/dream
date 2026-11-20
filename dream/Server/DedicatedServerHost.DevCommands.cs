@@ -3,6 +3,7 @@ using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
 using Dream.Simulation.Persistence;
 using Dream.Simulation.Runtime;
+using Dream.Simulation.World;
 
 namespace Dream.Server;
 
@@ -52,7 +53,7 @@ public sealed partial class DedicatedServerHost
 
         if (subcommands.Count == 0)
         {
-            Reply(DevCommandText.ReplyPrefix + DevCommands.Usage);
+            Reply(DevCommandText.ReplyPrefix + DevCommands.Help);
             return;
         }
 
@@ -81,7 +82,7 @@ public sealed partial class DedicatedServerHost
 
             (bool ok, string message) = command.Kind switch
             {
-                DevCommandKind.Help => (true, DevCommands.Usage),
+                DevCommandKind.Help => (true, DevCommands.Help),
                 DevCommandKind.Spawn => runtime.DevSpawn(session, command.Key, command.Count, command.Distance),
                 DevCommandKind.Teleport => runtime.DevTeleport(session, command.Key, command.Key2, command.X, command.Z),
                 DevCommandKind.Give => runtime.DevGive(session, command.Key, command.Rarity, command.Count),
@@ -90,13 +91,30 @@ public sealed partial class DedicatedServerHost
                 DevCommandKind.SetHealth => runtime.DevSetHealth(session, command.Count),
                 DevCommandKind.SetMana => runtime.DevSetMana(session, command.Count),
                 DevCommandKind.Boost => DevBoost(runtime, session, sender.Name, command.Count),
-                _ => (false, DevCommands.Usage)
+                DevCommandKind.TimeOfDay => DevTimeOfDay(runtime, command.X, replies),
+                _ => (false, DevCommands.Help)
             };
             NetworkDiagnosticsLog.Write(
                 "server.dev",
                 $"player={SanitizeForLog(sender.Name)} verb={command.Kind} ok={ok}");
             Reply((ok ? DevCommandText.ReplyPrefix : DevCommandText.ErrorPrefix) + message);
         }
+    }
+
+    // tod = jump the world clock forward to a time of day. The clock is not a player's, so no seated or alive
+    // player is needed; it runs under the tick lock like every dev command. Every connected client is
+    // re-anchored (WorldTicks - CurrentServerTick moved), even when the clock already read that time, and the
+    // anchors are queued before the sender's "[dev] " reply.
+    private (bool Ok, string Message) DevTimeOfDay(WorldSessionRuntime runtime, double hours, List<PendingConnectionReply> replies)
+    {
+        long forward = WorldTimeOfDay.ForwardTicks(runtime.WorldClock.Settings, runtime.WorldClock.WorldTicks, hours);
+        WorldClockAnchor anchor = runtime.JumpWorldClockForward(forward);
+        foreach (KeyValuePair<string, string> claim in _connectionClaims)
+        {
+            replies.Add(new PendingConnectionReply(claim.Key, new ServerWorldClockMessage(anchor)));
+        }
+
+        return (true, $"World time set to {WorldTimeOfDay.Format(hours)} (day {runtime.WorldClock.DayNumber})");
     }
 
     // boost = the seat's stats (runtime) plus the admin role (account). The role lives on the ACCOUNT, not

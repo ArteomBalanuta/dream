@@ -123,6 +123,66 @@ public sealed class WorldClockTests
     }
 
     [Fact]
+    public void JumpForward_Zero_IsANoOp_AndNegativeThrows()
+    {
+        WorldClock clock = new(WorldClockSettings.Default, worldTicks: 1_234);
+        int events = 0;
+        clock.PhaseChanged += (_, _) => events++;
+
+        clock.JumpForward(0);
+
+        Assert.Equal(1_234L, clock.WorldTicks);
+        Assert.Equal(0, events);
+        Assert.Throws<ArgumentOutOfRangeException>(() => clock.JumpForward(-1));
+        Assert.Equal(1_234L, clock.WorldTicks);
+    }
+
+    [Fact]
+    public void JumpForward_AcrossAPhaseBound_RaisesOneEvent_AndWithinAPhaseNone()
+    {
+        WorldClockSettings settings = WorldClockSettings.Default;
+        WorldClock clock = new(settings);
+        List<(WorldDayPhase Previous, WorldDayPhase Current)> events = [];
+        clock.PhaseChanged += (previous, current) => events.Add((previous, current));
+
+        // 08:00 -> 12:00: still Day.
+        clock.JumpForward(4 * settings.TicksPerDay / 24);
+        Assert.Empty(events);
+        Assert.Equal(WorldDayPhase.Day, clock.Phase);
+
+        // 12:00 -> 22:00: skips Dusk, one Day -> Night event.
+        clock.JumpForward(10 * settings.TicksPerDay / 24);
+        Assert.Equal([(WorldDayPhase.Day, WorldDayPhase.Night)], events);
+        Assert.Equal(WorldDayPhase.Night, clock.Phase);
+        Assert.Equal(22d / 24d, clock.TimeOfDay01, precision: 9);
+    }
+
+    [Fact]
+    public void JumpForward_PastMidnight_AdvancesTheDayNumber()
+    {
+        WorldClockSettings settings = WorldClockSettings.Default;
+        WorldClock clock = new(settings);
+        Assert.Equal(0L, clock.DayNumber);
+
+        clock.JumpForward(settings.TicksPerDay - settings.StartOffsetTicks + (settings.TicksPerDay / 24));
+
+        Assert.Equal(1L, clock.DayNumber);
+        Assert.Equal(1d / 24d, clock.TimeOfDay01, precision: 9);
+    }
+
+    [Fact]
+    public void JumpForward_AllocatesNothing()
+    {
+        WorldClock clock = new(WorldClockSettings.FromDayLengthMinutes(1));
+        int changes = 0;
+        clock.PhaseChanged += (_, _) => changes++;
+
+        AllocationAssert.AtMost(0, () => clock.JumpForward(300), iterations: 1000);
+
+        Assert.True(changes > 0);
+    }
+
+    [Fact]
     public void FromDayLengthMinutes_ScalesTicksPerDay_AndKeepsTheEightOClockStart()
     {
         WorldClockSettings oneMinute = WorldClockSettings.FromDayLengthMinutes(1);
