@@ -121,6 +121,12 @@ public sealed class OpenALOutput : IAudioOutput
                 throw new InvalidOperationException("OpenAL: init error " + error);
             }
 
+            // An open that returned after the constructor gave up must not start a source nobody will stop.
+            if (_stop.IsCancellationRequested)
+            {
+                return;
+            }
+
             float[] scratch = new float[FramesPerBuffer * Channels];
             short[] pcm = new short[scratch.Length];
             foreach (int buffer in buffers)

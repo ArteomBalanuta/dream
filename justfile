@@ -91,7 +91,7 @@ package-linux version="":
 # Both bundles, built in parallel after one shared restore
 [group('package')]
 package-all version="": _dist-restore
-    {{just_executable()}} _package-pair {{version}}; exit $LASTEXITCODE
+    & '{{just_executable()}}' _package-pair {{version}}; exit $LASTEXITCODE
 
 # Run the newest packaged client from artifacts\dist (win-x64 stage; on Linux the linux-x64 run-dream.sh)
 [group('package')]

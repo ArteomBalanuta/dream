@@ -118,6 +118,11 @@ else {
     if ($gotBytes -ne $want) { Fail "export is $gotBytes bytes, HEAD records $want" }
     Write-Host ("package: exported HEAD $($fullSha.Substring(0, 7)): $($got.Count) files, {0:N1} MB -> $src" -f ($gotBytes / 1MB))
     Set-Content -Path $marker -Value $fullSha
+
+    # Each export is ~0.5 GB plus its own obj/bin; keep only this commit's so repeated packaging cannot fill the disk.
+    Get-ChildItem -Path $distSrc -Force | Where-Object { $_.Name -ne $fullSha } | ForEach-Object {
+        if ($_.FullName.StartsWith($distSrc + [IO.Path]::DirectorySeparatorChar)) { Remove-Item -Recurse -Force $_.FullName }
+    }
 }
 $csproj = Join-Path (Join-Path $src 'dream') 'dream.csproj'
 
@@ -152,8 +157,10 @@ foreach ($r in $rids) {
     if ($LASTEXITCODE -ne 0) { Fail "dotnet publish $r failed ($LASTEXITCODE)" }
 
     if ($r -eq 'win-x64') { Copy-Item $vcomp (Join-Path $stage 'vcomp140.dll') -Force }
-    Copy-Item (Join-Path $bundleDir 'README.txt') (Join-Path $stage 'README.txt') -Force
-    if ($r -eq 'linux-x64') { Copy-Item (Join-Path $bundleDir 'run-dream.sh') (Join-Path $stage 'run-dream.sh') -Force }
+    # From the export, so the bundle's README and launcher are HEAD's like everything else in it.
+    $exportBundle = Join-Path (Join-Path (Join-Path $src 'tools') 'dev') 'bundle'
+    Copy-Item (Join-Path $exportBundle 'README.txt') (Join-Path $stage 'README.txt') -Force
+    if ($r -eq 'linux-x64') { Copy-Item (Join-Path $exportBundle 'run-dream.sh') (Join-Path $stage 'run-dream.sh') -Force }
 
     & $py -I (Join-Path $PSScriptRoot 'archive_bundle.py') verify --rid $r $stage
     if ($LASTEXITCODE -ne 0) { Fail "bundle verify failed for $r (stage kept at $stage)" }
