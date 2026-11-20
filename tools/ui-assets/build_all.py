@@ -8,7 +8,7 @@ Two families, because they do not share an output root:
     under the one filename PlayerModelAssetDefinition asks for, the villagers write one GLB per variant.
 
 dream/animations/enemies/wolf.glb is NOT generated: it is the third-party pack the hound is replacing, and
-gen_char_beast writes hound.glb beside it without touching it.
+gen_char_beast writes hound.glb beside it without touching it, and gen_char_skeleton writes skeleton.glb there too.
 """
 import importlib
 import sys
@@ -20,6 +20,7 @@ ASSET_GENERATORS = (
     ("gen_char_player", lambda m, root: m.main(str(root / "animations" / "players"), "player-grim.glb")),
     ("gen_char_npc", lambda m, root: m.main(str(root / "animations" / "npcs"))),
     ("gen_char_beast", lambda m, root: m.main(str(root / "animations" / "enemies"))),
+    ("gen_char_skeleton", lambda m, root: m.main(str(root / "animations" / "enemies"))),
     ("gen_props", lambda m, root: m.main(str(root / "animations" / "props"))),
     ("gen_ground_flora", lambda m, root: m.main(root / "animations" / "ground")),
     ("gen_ground_stone", lambda m, root: m.main(root / "animations" / "ground")),
