@@ -10,7 +10,7 @@ JOINTS_0 and WEIGHTS_0, inverseBindMatrices in exported space, bare clip names: 
 Skinned, so it can carry no pose-layer contract (node overrides resolve by renderable node name). That is why the
 notched blade is GEOMETRY, fused into the right hand and bound to its joint, exactly as the hound's collar is.
 
-`walk` is also the enemy's sprint clip (one gait), so it is authored to still read at the playback ceiling of 1.6.
+`walk` is also the enemy's sprint clip (one gait). Its authored ground speed is stated by WALK_SPEED_M_S below.
 `die` runs once and the engine holds its final frame: that pose is the corpse, with the root dropped so it lies ON
 the ground.
 
@@ -50,7 +50,13 @@ SWAP = B.SWAP
 _quat_from_iso = B._quat_from_iso
 
 PELVIS_U = 14.0
-DIE_DROP = -9.0   # root z of the corpse: tuned so the posed mesh lies on z = 0 (check_actors.py measures it)
+# The walk's authored ground speed. Each foot is planted for half a 0.88 s cycle while the leg swings +-20 degrees
+# about the hip, so the planted foot travels 2 * leg * sin(20) per step and a full stride is two steps. Leg length
+# is |hip->knee| + |knee->ankle| = 6.61 + 6.41 u. In metres (16 u = 1 m) that is 1.11 m per cycle.
+WALK_CYCLE_S = 0.88
+WALK_STRIDE_U = 2.0 * 2.0 * (6.61 + 6.41) * math.sin(math.radians(20.0))
+WALK_SPEED_M_S = WALK_STRIDE_U / 16.0 / WALK_CYCLE_S
+DIE_DROP = -8.99  # root z of the corpse: tuned so the posed mesh lies on z = 0 (check_actors.py measures it)
 
 MATS = {
     "bone": C._mat("#6B6353", 0.82, 0.030, 0.24, wear=0.6),
@@ -92,6 +98,7 @@ INDEX = {n: i for i, n in enumerate(JOINT_NAMES)}
 
 BLADE_TILT = -37.0                  # the blade points forward and down from the fist: a sword held low
 BLADE_LEN = 11.0
+SWORD_PARTS = 6                     # grip, guard, pommel and three blade plates: the LAST parts built
 BLADE_DIR = (0.0, math.cos(math.radians(BLADE_TILT)), math.sin(math.radians(BLADE_TILT)))
 # tips that own vertices beyond their last child: joint -> offset of the segment end from the joint, u
 TIPS = {"head": (0.0, 0.3, 2.8), "arm-l-hand": (0.0, 0.4, -1.8),
@@ -147,7 +154,7 @@ def build_parts():
                 a = math.radians(160.0 * t)
                 path.append((ch[0] + sx * ax * math.sin(a), ch[1] + 0.2 - 1.8 * math.cos(a),
                              ch[2] + dz - 0.9 * t))
-            out.append((_tube(path, 0.42, 5), "bone.hi"))
+            out.append((_tube(path, 0.42, 5), "bone"))
     out.append((_tube([tuple(ch + (0, 1.7, 1.6)), tuple(ch + (0, 2.0, -0.8)), tuple(ch + (0, 1.8, -3.4))],
                       [0.5, 0.45, 0.35], 5), "bone"))
     # shoulder girdle: broad up-facing collar plates, and a tattered pauldron on the left shoulder
@@ -155,9 +162,9 @@ def build_parts():
         out.append((_plate(P._oct(2.4, 1.5, 0.4), 0.42, 0.7, (-6.0, 8.0 * sx, 0.0),
                            (ch[0] + sx * 1.9, ch[1] + 0.2, ch[2] + 2.9), 0.12), "bone.hi"))
     s = p["arm-l-upper"]
-    out.append((_plate(P._oct(1.9, 1.8, 0.4), 0.5, 0.7, (0.0, 20.0, 0.0), (s[0] + 0.9, s[1], s[2] + 1.0), 0.12),
+    out.append((_plate(P._oct(1.8, 1.7, 0.4), 0.5, 0.7, (0.0, 26.0, 0.0), (s[0] + 1.9, s[1], s[2] - 0.2), 0.12),
                 "rust"))
-    out.append((_plate(P._oct(1.6, 1.3, 0.4), 0.45, 0.7, (0.0, 34.0, 0.0), (s[0] + 2.1, s[1] + 0.2, s[2] - 0.9),
+    out.append((_plate(P._oct(1.5, 1.2, 0.4), 0.45, 0.7, (0.0, 38.0, 0.0), (s[0] + 2.8, s[1] + 0.2, s[2] - 1.7),
                        0.12), "rust"))
     # pelvis: a crossbar and two broad iliac plates
     r = p["root"]
@@ -172,31 +179,35 @@ def build_parts():
     for yy, tilt in ((1.5, 6.0), (-1.4, -4.0)):
         out.append((_plate(P._oct(1.7, 2.4, 0.3), 0.3, 0.8, (90.0 + tilt, 0.0, 0.0),
                            r + np.array((0.0, yy, -2.6))), "cavity"))
-    # skull: cranium, a brow plate, dark sockets, an iron cap and band, the jaw
-    out.append((_tube([tuple(hd + (0, -0.9, 1.3)), tuple(hd + (0, 0.4, 1.6)), tuple(hd + (0, 1.6, 1.2)),
-                       tuple(hd + (0, 2.4, 0.5))], [1.3, 1.75, 1.45, 0.8], 10), "bone"))
-    out.append((_plate(P._oct(1.75, 0.9, 0.4), 0.5, 0.7, (-16.0, 0.0, 0.0), hd + np.array((0, 1.6, 2.1)), 0.12),
+    # SKULL, as a VOLUME. A stack of flat plates reads as a straw hat and vanishes edge-on, so the head is a
+    # round cranium (a closed tube standing on its end), a brow ridge, a muzzle, two dark sockets set under the
+    # brow, an iron band ON the cranium, and a slightly open jaw. check_actors.py measures that this stays round.
+    out.append((_tube([tuple(hd + (0, 0.3, -0.1)), tuple(hd + (0, 0.3, 0.8)), tuple(hd + (0, 0.3, 1.9)),
+                       tuple(hd + (0, 0.3, 3.0)), tuple(hd + (0, 0.3, 3.6))], [0.9, 1.6, 1.75, 1.65, 1.25], 10),
+                "bone"))
+    out.append((_plate(P._oct(1.0, 1.1, 0.4), 0.3, 0.8, (0.0, 0.0, 0.0), hd + np.array((0, 0.3, 3.62)), 0.1),
                 "bone.hi"))
+    out.append((_tube([tuple(hd + (0, 1.2, 0.9)), tuple(hd + (0, 2.4, 0.6))], [1.15, 0.75], 8), "bone"))
+    out.append((_tube([tuple(hd + (-1.7, 1.2, 2.5)), tuple(hd + (0, 1.9, 2.55)), tuple(hd + (1.7, 1.2, 2.5))],
+                      0.55, 6), "bone"))
     for sx in (1.0, -1.0):
-        out.append((_tube([tuple(hd + (sx * 0.75, 1.7, 1.2)), tuple(hd + (sx * 0.75, 2.5, 1.2))], 0.42, 5),
+        out.append((_tube([tuple(hd + (sx * 0.8, 1.2, 1.7)), tuple(hd + (sx * 0.8, 2.3, 1.6))], 0.62, 6),
                     "cavity"))
-    ring = [tuple(hd + (1.95 * math.sin(a), 0.3 + 2.0 * math.cos(a), 2.2))
+    ring = [tuple(hd + (1.72 * math.sin(a), 0.3 + 1.72 * math.cos(a), 2.9))
             for a in np.linspace(0.0, math.tau, 11)]
-    out.append((_tube(ring, 0.38, 5), "iron"))
-    out.append((_plate(P._oct(1.35, 1.5, 0.4), 0.45, 0.6, (-8.0, 0.0, 0.0), hd + np.array((0, 0.2, 3.0)), 0.12),
-                "iron"))
+    out.append((_tube(ring, 0.3, 5), "iron"))
     j = p["jaw"]
-    out.append((_tube([tuple(j + (0, -0.5, 0.2)), tuple(j + (0, 0.9, -0.1)), tuple(j + (0, 2.1, -0.2))],
-                      [0.8, 0.7, 0.4], 6), "bone"))
+    out.append((_tube([tuple(j + (0, -0.9, 0.9)), tuple(j + (0, 0.7, -0.1)), tuple(j + (0, 2.0, -0.3))],
+                      [1.05, 0.95, 0.5], 7), "bone"))
     out.append((_tube([tuple(p["neck"] + (0, -0.2, -1.0)), tuple(p["neck"] + (0, -0.1, 0.6)),
                        tuple(hd + (0, 0.0, 0.0))], 0.5, 5), "bone.old"))
     # arms, legs
     for tag in ("l", "r"):
         u, lo, h = p[f"arm-{tag}-upper"], p[f"arm-{tag}-lower"], p[f"arm-{tag}-hand"]
-        out.append((_tube([tuple(u), tuple(lo), tuple(h)], [0.62, 0.48, 0.42], 6), "bone"))
+        out.append((_tube([tuple(u), tuple(lo), tuple(h)], [0.62, 0.48, 0.42], 6), "bone.old"))
         out.append((_tube([tuple(h + (0, -0.1, 0.3)), tuple(h + (0, 0.4, -1.5))], [0.5, 0.35], 5), "bone.old"))
         u, lo, f = p[f"leg-{tag}-upper"], p[f"leg-{tag}-lower"], p[f"leg-{tag}-foot"]
-        out.append((_tube([tuple(u), tuple(lo), tuple(f)], [0.85, 0.62, 0.5], 6), "bone"))
+        out.append((_tube([tuple(u), tuple(lo), tuple(f)], [0.85, 0.62, 0.5], 6), "bone.old"))
         out.append((_tube([tuple(f + (0, -0.6, 0.1)), tuple(f + (0, 1.0, -0.3)), tuple(f + (0, 2.7, -0.5))],
                           [0.6, 0.6, 0.35], 5), "bone.old"))
         out.append((_tube([tuple(lo + (0, 0.5, 0.4)), tuple(lo + (0, 0.7, -0.5))], [0.9, 0.9], 6), "bone"))
@@ -284,19 +295,19 @@ def clips(root_offset):
         # wind up across the body: sword arm up and over the opposite shoulder, torso coiled back
         _p({"arm-r-upper": (138.0, 0, -22.0), "arm-r-lower": (28.0, 0, 0), "arm-r-hand": (-10.0, 0, 0),
             "arm-l-upper": (-28.0, 0, -8.0), "spine1": (-4.0, 0, -14.0), "chest": (-6.0, 0, -12.0),
-            "head": (-4.0, 0, 8.0), "leg-l-upper": (-8.0, 0, 0), "leg-r-upper": (12.0, 0, 0)}, (0, -0.4, -0.2)),
+            "head": (-4.0, 0, 8.0), "leg-l-upper": (-8.0, 0, 0), "leg-r-upper": (12.0, 0, 0)}, (0, -0.4, 0.0)),
         # the cut, halfway: fast
         _p({"arm-r-upper": (84.0, 0, 8.0), "arm-r-lower": (14.0, 0, 0), "arm-l-upper": (-18.0, 0, 6.0),
             "spine1": (8.0, 0, 6.0), "chest": (10.0, 0, 8.0), "head": (6.0, 0, -4.0),
-            "leg-l-upper": (14.0, 0, 0), "leg-r-upper": (-6.0, 0, 0)}, (0, 0.4, -0.5)),
+            "leg-l-upper": (14.0, 0, 0), "leg-r-upper": (-6.0, 0, 0)}, (0, 0.4, 0.0)),
         # the end of the cut, blade low and forward
         _p({"arm-r-upper": (28.0, 0, 24.0), "arm-r-lower": (6.0, 0, 0), "arm-l-upper": (-8.0, 0, 10.0),
             "spine1": (14.0, 0, 18.0), "chest": (14.0, 0, 14.0), "head": (10.0, 0, -8.0),
             "leg-l-upper": (26.0, 0, 0), "leg-l-lower": (-8.0, 0, 0), "leg-r-upper": (-16.0, 0, 0),
-            "leg-r-lower": (-10.0, 0, 0)}, (0, 0.9, -0.9)),
+            "leg-r-lower": (-10.0, 0, 0)}, (0, 0.9, 0.0)),
         _p({"arm-r-upper": (22.0, 0, 14.0), "arm-r-lower": (10.0, 0, 0), "spine1": (8.0, 0, 8.0),
             "chest": (6.0, 0, 6.0), "head": (6.0, 0, -3.0), "leg-l-upper": (10.0, 0, 0),
-            "leg-r-upper": (-6.0, 0, 0)}, (0, 0.3, -0.3)),
+            "leg-r-upper": (-6.0, 0, 0)}, (0, 0.3, 0.0)),
         neutral]
     attack = _anim("attack", [0.0, 0.30, 0.38, 0.46, 0.80, 1.05], attack_poses, root_offset)
 
@@ -305,17 +316,17 @@ def clips(root_offset):
         neutral,
         _p({"leg-l-upper": (30.0, 0, 0), "leg-l-lower": (-52.0, 0, 0), "leg-r-upper": (22.0, 0, 0),
             "leg-r-lower": (-48.0, 0, 0), "spine1": (10.0, 0, 0), "chest": (8.0, 0, 0), "head": (-8.0, 0, 0),
-            "arm-l-upper": (-12.0, 0, 10.0), "arm-r-upper": (-4.0, 0, -8.0)}, (0, 0.0, -3.4)),
+            "arm-l-upper": (-12.0, 0, 10.0), "arm-r-upper": (-4.0, 0, -8.0)}, (0, 0.0, -0.41)),
         _p({"root": (-38.0, 0, 0), "leg-l-upper": (52.0, 0, 0), "leg-l-lower": (-82.0, 0, 0),
             "leg-r-upper": (44.0, 0, 0), "leg-r-lower": (-76.0, 0, 0), "spine1": (-8.0, 0, 0),
             "head": (-14.0, 0, 0), "arm-l-upper": (-34.0, 0, 20.0), "arm-r-upper": (-26.0, 0, -18.0)},
-           (0, 2.4, -6.6)),
+           (0, 2.4, -2.87)),
         _p({"root": (-80.0, 0, 0), "leg-l-upper": (30.0, 0, 6.0), "leg-l-lower": (-28.0, 0, 0),
             "leg-r-upper": (22.0, 0, -6.0), "leg-r-lower": (-24.0, 0, 0), "head": (-22.0, 0, 0),
-            "arm-l-upper": (-60.0, 0, 34.0), "arm-r-upper": (-54.0, 0, -30.0)}, (0, 5.4, -11.0)),
+            "arm-l-upper": (-40.0, 0, 34.0), "arm-r-upper": (-46.0, 0, -30.0)}, (0, 5.4, -6.12)),
         _p({"root": (-86.0, 0, 0), "leg-l-upper": (14.0, 0, 8.0), "leg-l-lower": (-12.0, 0, 0),
             "leg-r-upper": (8.0, 0, -8.0), "leg-r-lower": (-10.0, 0, 0), "head": (-26.0, 0, 6.0),
-            "jaw": (22.0, 0, 0), "arm-l-upper": (-70.0, 0, 40.0), "arm-r-upper": (-64.0, 0, -36.0)},
+            "jaw": (22.0, 0, 0), "arm-l-upper": (-39.0, 0, 40.0), "arm-r-upper": (-45.0, 0, -36.0)},
            (0, 6.0, DIE_DROP))]
     die = _anim("die", [0.0, 0.28, 0.62, 1.0, 1.5], die_poses, root_offset)
     return ([idle, walk, attack, die],
@@ -344,6 +355,13 @@ def build_asset() -> dict:
                           for j in JOINTS))
     bones = tuple((n, (a[0], a[1], a[2] - drop), (b[0], b[1], b[2] - drop), r) for n, a, b, r in bone_segments())
     skins = [C.bind(m, sk, bones) for m in split]
+    # The sword is one rigid object: grip, guard, pommel and every blade plate follow the hand joint alone, so a
+    # wrist rotation cannot shear the grip against the guard.
+    hand = INDEX["arm-r-hand"]
+    for i in range(len(skins) - SWORD_PARTS, len(skins)):
+        n = len(skins[i].i0)
+        skins[i] = C.Skin(np.full(n, hand, dtype=np.int32), np.full(n, hand, dtype=np.int32),
+                          np.zeros(n, dtype=np.float32))
 
     nodes = [G.GltfNode(name=j.name, parent=None if j.parent is None else INDEX[j.parent],
                         translation=(j.offset[0] * UNITS_PER_U, j.offset[2] * UNITS_PER_U,
