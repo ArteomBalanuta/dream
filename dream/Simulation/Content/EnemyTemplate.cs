@@ -28,7 +28,7 @@ public enum EnemySpawnRole : byte
 // 10-16 m/s, which is unreadable in an isometric camera): every chase is faster than the player's walk
 // and slower than the player's sprint, so a walking player is caught and holding Shift always escapes.
 // The wolf's attack interval and the per-kind numbers are authored here and tunable per kind in the
-// enemy_kinds table (migration 0017), which overrides them at server start. enemies.json carries no
+// enemy_kinds table (migrations 0017 and 0018), which overrides them at server start. enemies.json carries no
 // comment of its own because the loader rejects JSON comments, so the table lives here:
 //
 //   enemy          patrolSpeed  moveSpeed (chase)  attackIntervalSeconds
@@ -37,6 +37,11 @@ public enum EnemySpawnRole : byte
 //   AshenProwler   1.2          3.5                1.5
 //   GraveHowler    1.3          3.8                1.4
 //   RisenSkeleton  1.25         3.6                1.45
+//
+// The rows are in enemies.json's own FILE ORDER, not tier order, because that order is load-bearing:
+// FindTemplate returns the first template of a spawn role, so a kind appended last cannot change
+// which template either spawn slot picks. By tier the skeleton (level 6) sits between the Ashen
+// Prowler and the Grave Howler, and every column above interpolates between those two.
 //
 // The chase speeds rise with the tier so a higher tier closes faster, but none reaches the sprint speed:
 // with no stamina system an enemy that outruns sprint on open ground is an unescapable trap. The

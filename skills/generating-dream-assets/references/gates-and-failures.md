@@ -4,7 +4,7 @@
 
 - **Imports**: top-level module must be in `ALLOWED_MODULES`: `__future__ json math sys pathlib numpy PIL uiart typing
   dataclasses re hashlib tempfile importlib zlib forge gemtrace concurrent os isoforge gen_window charforge gltfwrite
-  gen_char_player struct io enginelook gen_char_npc gen_char_beast`. Any other sibling (`gen_props`, `groundkit`,
+  gen_char_player struct io enginelook gen_char_npc gen_char_beast gen_char_skeleton`. Any other sibling (`gen_props`, `groundkit`,
   `gen_iso_nature`, ...) is imported by name: `GP = importlib.import_module("gen_props")`, with `sys.path` holding the
   tools directory. A plain `import gen_props` fails the gate. Widening `ALLOWED_MODULES` needs the new name to be an
   original generator in this directory, with a comment saying so.

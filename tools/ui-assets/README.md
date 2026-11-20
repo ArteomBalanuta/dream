@@ -130,10 +130,11 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
 .venv/Scripts/python tools/ui-assets/gen_char_player.py    # writes char/player_grim.glb
 .venv/Scripts/python tools/ui-assets/gen_char_npc.py       # writes dream/animations/npcs/villager-*.glb
 .venv/Scripts/python tools/ui-assets/gen_char_beast.py     # writes dream/animations/enemies/hound.glb
+.venv/Scripts/python tools/ui-assets/gen_char_skeleton.py  # writes dream/animations/enemies/skeleton.glb
 .venv/Scripts/python tools/ui-assets/gen_char_preview.py   # writes previews/char_player.png
 .venv/Scripts/python tools/ui-assets/enginelook.py         # the engine's actor transfer function, self-tests
 .venv/Scripts/python tools/ui-assets/tests/check_char.py   # gates the player
-.venv/Scripts/python tools/ui-assets/tests/check_actors.py # gates the villagers and the hound
+.venv/Scripts/python tools/ui-assets/tests/check_actors.py # gates the villagers, the hound and the skeleton
 ```
 
 - `gen_char_npc.py` forges the three village NPCs (`vendor`, `smith`, `warden`) as rigid part
@@ -145,13 +146,23 @@ geometry, a baked albedo atlas and clips, and the engine does the rest.
   C3's 32-joint cap, every primitive carrying `JOINTS_0`/`WEIGHTS_0` with rows summing to 1, bare
   clip names (`idle`, `walk`, `attack`, `die`) and `inverseBindMatrices` in exported space. It
   writes `dream/animations/enemies/hound.glb` beside the third-party wolf without touching it.
+- `gen_char_skeleton.py` forges the risen skeleton, the first forged BIPED enemy. It takes its
+  structure from `gen_char_beast.py` (skinned, `_quat_from_iso`, the grounding drop, the root
+  channel built from the grounded skeleton) and its humanoid proportions from the player and the
+  villagers, so it is the worked reference for any further bipedal creature. Four bare clips
+  (`idle`, `walk`, `attack`, `die`) and ONE gait: `EnemyClipSet` names its `walk` as its sprint too,
+  which the type sanctions and which makes the gait choice a no-op. Unlike the beasts, which share
+  the wolf's 0.60 world height, it normalises to the PLAYER's 1.20 m, because it is player-shaped.
+  The blade is part of the mesh rather than a held item: a skinned actor can carry no pose-layer
+  contract, since node overrides resolve by renderable node name. Writes
+  `dream/animations/enemies/skeleton.glb`.
 - `enginelook.py` is the measuring instrument, not art: it states the engine's actor transfer
   function (spec contract C4 - ambient, directional, the point-light window, the actor floor, no
   tonemap and no gamma encode) once, with the engine's own night constants, plus the glTF forward
   kinematics `node_worlds`. Both gate scripts shade geometry through it, so a gate and the
   instrument cannot drift apart, and its constants are annotated with the C# symbol they copy
   (`TORCH_INTENSITY` is `HeldLightCatalog.TorchIntensity`). Run it directly for its self-tests.
-- `tests/check_actors.py` is to the villagers and the hound what `check_char.py` is to the player:
+- `tests/check_actors.py` is to the villagers, the hound and the skeleton what `check_char.py` is to the player:
   determinism, the shipped bytes, a per-asset byte ceiling (R9), rigid-or-skinned structure, the
   node names or the joint budget, the clip sets, grounding at y=0 and the normalised height, the
   palette, M3's bimodal-lambert floor, and - for the hound - that CPU skinning agrees with a

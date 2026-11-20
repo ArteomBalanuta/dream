@@ -139,8 +139,12 @@ track compiles against a contract that is frozen here rather than against a file
 ## Deliberately not done
 
 - No new combat skill, no undead damage type, no resistance system.
-- No second gait. One walk, aliased as the sprint, because the authored chase speed (3.4) sits below
-  the gait threshold and a `charge` clip would never play.
+- No second gait. One walk, aliased as the sprint, which `EnemyClipSet` explicitly sanctions: a model
+  with only one gait names its Move clip as its Sprint, so the gait choice becomes a no-op. (An
+  earlier draft of this line claimed the chase speed sits BELOW the gait threshold, which is simply
+  wrong — 3.6 is well above the threshold of 2.0, so the latch does flip. What follows from one clip
+  is that the flip renames nothing, and therefore never resets clip time. That turned out to matter:
+  see the reference-speed defect in the work log.)
 - No pose-layer contract: the blade is part of the mesh, as the hound's collar is. A skinned actor
   cannot carry node overrides, which resolve by renderable node name.
 
@@ -169,8 +173,8 @@ and amended the ownership map above. The findings worth keeping:
 - **The authored row is boxed in from five directions**: `attackRange` must exceed ~1.0556 or the
   enemy shoves instead of biting; `patrolSpeed <= moveSpeed`; `patrolSpeed <= 1.6` and
   `moveSpeed >= 2.0` so nothing lands in the client's gait deadband; chase must sit strictly between
-  the player's cruise and sprint; and no tuning row may warn at boot. The frozen numbers (1.15 and
-  3.4) clear all five with room.
+  the player's cruise and sprint; and no tuning row may warn at boot. The shipped numbers (1.25 and
+  3.6) clear all five with room.
 - **A duplicate clip name THROWS on load** (`LoadAnimations` uses `Dictionary.Add`), while an
   *unknown* clip name does not — `AnimatedModelInstance` stops and holds the pose. A silent freeze
   mid-stride is the failure the strict clip-set gate exists to prevent.

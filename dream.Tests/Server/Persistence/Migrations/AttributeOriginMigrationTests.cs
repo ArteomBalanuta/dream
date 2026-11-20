@@ -220,6 +220,8 @@ public sealed class AttributeOriginMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, result.ToVersion);
-        Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, result.ToVersion);
+        // Deliberately BOTH the derived constant and the literal: a migration directory that lost a
+        // file would still satisfy the derived one, because it derives from the same directory.
+        Assert.Equal(18, result.ToVersion);
     }
 }
