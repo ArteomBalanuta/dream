@@ -22,6 +22,8 @@ Outputs:
 
 - `artifacts/dist/<rid>/dream-<version>-<rid>/`: the stage folder (what is zipped).
 - `artifacts/dist/dream-<version>-<rid>.zip|.tar.gz`: one top-level folder. In the tar.gz `dream` and `run-dream.sh` are mode 0755.
+- `vcomp140.dll` source: `-Vcomp140 <path>` or the `DREAM_VCOMP140` environment variable is tried first, then vswhere
+  (Windows only). A non-Windows host without either fails: a win-x64 bundle is never shipped without it.
 - `artifacts/dist-bin/`: intermediate build output (never `dream\bin`).
 
 Publish is `--self-contained` with no trimming, no single-file and no ReadyToRun: BulletSharp is a net40 assembly, content

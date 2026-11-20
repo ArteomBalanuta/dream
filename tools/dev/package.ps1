@@ -14,16 +14,19 @@ param(
     [Parameter(Mandatory = $true)][ValidateSet('win-x64', 'linux-x64', 'all')][string]$Rid,
     [string]$Version = '',
     [switch]$NoRestore,
-    [switch]$RestoreOnly
+    [switch]$RestoreOnly,
+    [string]$Vcomp140 = ''
 )
 
 $ErrorActionPreference = 'Stop'
-$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$root = (Resolve-Path (Join-Path (Join-Path $PSScriptRoot '..') '..')).Path
 Set-Location $root
-$csproj = Join-Path $root 'dream\dream.csproj'
-$dist = Join-Path $root 'artifacts\dist'
+$csproj = Join-Path (Join-Path $root 'dream') 'dream.csproj'
+$dist = Join-Path (Join-Path $root 'artifacts') 'dist'
 $distBin = ($root -replace '\\', '/') + '/artifacts/dist-bin/'
 $bundleDir = Join-Path $PSScriptRoot 'bundle'
+
+$isWin = [IO.Path]::DirectorySeparatorChar -eq '\'
 
 function Fail([string]$message, [int]$code = 1) {
     Write-Host "package: $message" -ForegroundColor Red
@@ -31,17 +34,28 @@ function Fail([string]$message, [int]$code = 1) {
 }
 
 function Resolve-Python {
-    $venv = Join-Path $root '.venv\Scripts\python.exe'
+    if ($isWin) {
+        $venv = Join-Path (Join-Path (Join-Path $root '.venv') 'Scripts') 'python.exe'
+        if (Test-Path $venv) { return $venv }
+        return 'python'
+    }
+    $venv = Join-Path (Join-Path (Join-Path $root '.venv') 'bin') 'python'
     if (Test-Path $venv) { return $venv }
-    return 'python'
+    return 'python3'
 }
 
 function Find-Vcomp140 {
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    $given = if ($Vcomp140) { $Vcomp140 } else { $env:DREAM_VCOMP140 }
+    if ($given) {
+        if (-not (Test-Path $given -PathType Leaf)) { Fail "vcomp140.dll not found at '$given' (-Vcomp140 / DREAM_VCOMP140)" }
+        return (Resolve-Path $given).Path
+    }
+    if (-not $isWin) { Fail 'win-x64 bundles need vcomp140.dll (libbulletc.dll imports it) and this host cannot find it: pass -Vcomp140 <path> or set DREAM_VCOMP140' }
+    $vswhere = Join-Path (Join-Path (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio') 'Installer') 'vswhere.exe'
     if (-not (Test-Path $vswhere)) { Fail "vswhere.exe not found ($vswhere): install the Visual Studio C++ build tools to find vcomp140.dll" }
     $installs = @(& $vswhere -products '*' -property installationPath)
     foreach ($inst in $installs) {
-        $msvc = Join-Path $inst 'VC\Redist\MSVC'
+        $msvc = Join-Path (Join-Path (Join-Path $inst 'VC') 'Redist') 'MSVC'
         if (-not (Test-Path $msvc)) { continue }
         $hits = @(Get-ChildItem -Path $msvc -Directory | Sort-Object Name -Descending | ForEach-Object {
                 Get-ChildItem -Path (Join-Path $_.FullName 'x64') -Directory -Filter 'Microsoft.VC14*.OpenMP' -ErrorAction SilentlyContinue |
@@ -49,7 +63,7 @@ function Find-Vcomp140 {
             })
         if ($hits.Count -gt 0) { return $hits[0] }
     }
-    Fail 'vcomp140.dll not found under VC\Redist\MSVC\<ver>\x64\Microsoft.VC14*.OpenMP (libbulletc.dll imports VCOMP140.DLL; install the VS C++ redistributable component)'
+    Fail 'vcomp140.dll not found (pass -Vcomp140 <path> or set DREAM_VCOMP140); searched under VC\Redist\MSVC\<ver>\x64\Microsoft.VC14*.OpenMP (libbulletc.dll imports VCOMP140.DLL; install the VS C++ redistributable component)'
 }
 
 $dirty = @(git status --porcelain -- dream/config)
@@ -80,12 +94,12 @@ if ($RestoreOnly) { exit 0 }
 
 foreach ($r in $rids) {
     $name = "dream-$Version-$r"
-    $stage = Join-Path $dist "$r\$name"
+    $stage = Join-Path (Join-Path $dist $r) $name
     $ext = if ($r -eq 'win-x64') { 'zip' } else { 'tar.gz' }
     $archive = Join-Path $dist "$name.$ext"
 
     Write-Host "package: $r -> $stage"
-    if (-not $stage.StartsWith($dist + '\')) { Fail "stage $stage is outside $dist" }
+    if (-not $stage.StartsWith($dist + [IO.Path]::DirectorySeparatorChar)) { Fail "stage $stage is outside $dist" }
     if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
     if (Test-Path $archive) { Remove-Item -Force $archive }
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
