@@ -7,10 +7,10 @@ namespace Dream.Tests.Rendering.Ui.Panels;
 
 public class CursorPanelTests
 {
-    private static StatusBarRecordingCanvas Run(StatusBarFakeInput input, UiLayout l)
+    private static StatusBarRecordingCanvas Run(StatusBarFakeInput input, UiLayout l, HudView? view = null)
     {
         StatusBarRecordingCanvas c = new(StatusBarTestData.Table);
-        CursorPanel.Build(c, input, StatusBarTestData.View(), l, StatusBarTestData.Table);
+        CursorPanel.Build(c, input, view ?? StatusBarTestData.View(), l, StatusBarTestData.Table);
         return c;
     }
 
@@ -54,6 +54,26 @@ public class CursorPanelTests
         StatusBarRecordingCanvas c = new(StatusBarTestData.Table);
         CursorPanel.Build(c, new PlainInput(), StatusBarTestData.View(), l, StatusBarTestData.Table);
         Assert.Empty(c.Calls);
+    }
+
+    [Theory]
+    [InlineData(HoverKind.None, "cursor.pointer")]
+    [InlineData(HoverKind.RemotePlayer, "cursor.pointer")]
+    [InlineData(HoverKind.Enemy, "cursor.attack")]
+    [InlineData(HoverKind.Npc, "cursor.talk")]
+    [InlineData(HoverKind.GroundItem, "cursor.take")]
+    [InlineData(HoverKind.Interactable, "cursor.use")]
+    public void TheCursorFollowsTheHoverKind(HoverKind kind, string sprite)
+    {
+        UiLayout l = UiLayout.Create(1920, 1080, 0f);
+        HudView v = StatusBarTestData.View();
+        v.HoverCursorKind = kind;
+        StatusBarFakeInput hover = new() { Pointer = new UiPointer(new Vector2(10f, 10f), false, false, true) };
+
+        Assert.Equal(sprite, Assert.Single(Run(hover, l, v).Calls).Name);
+
+        StatusBarFakeInput drag = new() { Pointer = new UiPointer(new Vector2(10f, 10f), true, false, true), ActiveDragPayload = 3 };
+        Assert.Equal("cursor.grab", Assert.Single(Run(drag, l, v).Calls).Name);
     }
 
     [Fact]

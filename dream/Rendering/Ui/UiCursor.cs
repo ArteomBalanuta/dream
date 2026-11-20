@@ -2,7 +2,7 @@ using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Ui;
 
-public enum UiCursorKind : byte { Pointer, Pressed, Grab, Attack }
+public enum UiCursorKind : byte { Pointer, Pressed, Grab, Attack, Talk, Take, Use }
 
 // The sprite cursor shared by the classic HUD and the front-end menus.
 public static class UiCursor
@@ -17,11 +17,34 @@ public static class UiCursor
         : leftDown ? UiCursorKind.Pressed
         : UiCursorKind.Pointer;
 
+    // What the pointer rests on picks the cursor: Grab while dragging, then Attack over an enemy, Talk over an NPC,
+    // Take over a ground item, Use over an interactable, then Pressed while the left button is down, else Pointer.
+    // A remote player or nothing leaves Pressed / Pointer.
+    public static UiCursorKind Select(bool dragging, bool leftDown, HoverKind hovered)
+    {
+        if (dragging)
+        {
+            return UiCursorKind.Grab;
+        }
+
+        return hovered switch
+        {
+            HoverKind.Enemy => UiCursorKind.Attack,
+            HoverKind.Npc => UiCursorKind.Talk,
+            HoverKind.GroundItem => UiCursorKind.Take,
+            HoverKind.Interactable => UiCursorKind.Use,
+            _ => leftDown ? UiCursorKind.Pressed : UiCursorKind.Pointer
+        };
+    }
+
     public static string SpriteName(UiCursorKind kind) => kind switch
     {
         UiCursorKind.Grab => UiSpriteNames.CursorGrab,
         UiCursorKind.Attack => UiSpriteNames.CursorAttack,
         UiCursorKind.Pressed => UiSpriteNames.CursorPressed,
+        UiCursorKind.Talk => UiSpriteNames.CursorTalk,
+        UiCursorKind.Take => UiSpriteNames.CursorTake,
+        UiCursorKind.Use => UiSpriteNames.CursorUse,
         _ => UiSpriteNames.CursorPointer
     };
 
@@ -44,7 +67,8 @@ public static class UiCursor
             return false;
         }
 
-        if (!sprites.TryGet(SpriteName(kind), out UiSprite sprite))
+        // A kind whose sprite is missing (an older atlas) falls back to the pointer rather than drawing nothing.
+        if (!sprites.TryGet(SpriteName(kind), out UiSprite sprite) && !sprites.TryGet(UiSpriteNames.CursorPointer, out sprite))
         {
             return false;
         }

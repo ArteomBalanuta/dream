@@ -7,7 +7,7 @@
  "origin": "top-left",
  "scale": 4,
  "size": [
-  364,
+  461,
   408
  ],
  "sprites": {
@@ -47,8 +47,8 @@
    "slice": null,
    "tile": "none",
    "w": 128,
-   "x": 4,
-   "y": 140
+   "x": 276,
+   "y": 4
   },
   "cursor.pointer": {
    "h": 128,
@@ -60,7 +60,7 @@
    "slice": null,
    "tile": "none",
    "w": 128,
-   "x": 140,
+   "x": 4,
    "y": 140
   },
   "cursor.pressed": {
@@ -73,7 +73,46 @@
    "slice": null,
    "tile": "none",
    "w": 128,
+   "x": 140,
+   "y": 140
+  },
+  "cursor.take": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    9,
+    18
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 276,
+   "y": 140
+  },
+  "cursor.talk": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    9,
+    9
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
    "x": 4,
+   "y": 276
+  },
+  "cursor.use": {
+   "h": 128,
+   "meta": {},
+   "pivot": [
+    7,
+    5
+   ],
+   "slice": null,
+   "tile": "none",
+   "w": 128,
+   "x": 140,
    "y": 276
   }
  },
