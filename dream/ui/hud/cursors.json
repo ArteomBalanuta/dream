@@ -15,8 +15,8 @@
    "h": 128,
    "meta": {},
    "pivot": [
-    10,
-    11
+    8,
+    8
    ],
    "slice": null,
    "tile": "none",
@@ -28,8 +28,8 @@
    "h": 128,
    "meta": {},
    "pivot": [
-    10,
-    10
+    11,
+    2
    ],
    "slice": null,
    "tile": "none",
@@ -54,8 +54,8 @@
    "h": 128,
    "meta": {},
    "pivot": [
-    10,
-    10
+    11,
+    2
    ],
    "slice": null,
    "tile": "none",
