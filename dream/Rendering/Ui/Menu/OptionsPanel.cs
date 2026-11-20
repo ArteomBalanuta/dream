@@ -1,6 +1,6 @@
 namespace Dream.Rendering.Ui.Menu;
 
-// The Options screen: one line per MenuOptionRow, then Key Bindings and Back. Used by the main menu
+// The Options screen: one line per MenuOptionRow, then Camera, Key Bindings and Back. Used by the main menu
 // and the pause menu. backdrop is true on the title screen (the pause menu has the game behind it).
 public static class OptionsPanel
 {
@@ -10,7 +10,13 @@ public static class OptionsPanel
     public const float LabelWidthUnits = 120f;
     public const float TrackWidthUnits = 82f;
     public const string KeyBindingsLabel = "Key Bindings";
+    public const string CameraLabel = "Camera";
     public const string BackLabel = "Back";
+
+    // The panel's height in design units for a row count and a footer button count. The Options screen must
+    // fit MenuWidgets.DesignHeightUnits, so a screen with many rows moves them to a sub-screen.
+    public static float HeightUnits(int rowCount, int buttonCount) =>
+        50f + rowCount * RowHeightUnits + 8f + buttonCount * MenuWidgets.ButtonPitchUnits + 8f;
 
     public static MenuAction Build(MenuWidgets w, IReadOnlyList<MenuOptionRow> rows, bool backdrop)
     {
@@ -24,7 +30,7 @@ public static class OptionsPanel
             w.Dim(170);
         }
 
-        float heightUnits = 50f + rows.Count * RowHeightUnits + 8f + 2f * MenuWidgets.ButtonPitchUnits + 8f;
+        float heightUnits = HeightUnits(rows.Count, 3);
         float top = MathF.Max(6f, (MenuWidgets.DesignHeightUnits - heightUnits) * 0.5f);
         UiRect panel = w.Centered(top, PanelWidthUnits, heightUnits);
         w.DrawPanel(panel);
@@ -34,27 +40,39 @@ public static class OptionsPanel
         w.DrawDivider(w.Inside(panel, 30f, 34f, PanelWidthUnits - 60f, 6f));
 
         float rowsTop = 46f;
-        for (int i = 0; i < rows.Count; i++)
-        {
-            UiRect row = w.Inside(panel, 14f, rowsTop + i * RowHeightUnits, PanelWidthUnits - 28f, RowHeightUnits);
-            BuildRow(w, rows[i], FirstId + 4 + i * 4, row);
-        }
+        BuildRows(w, rows, panel, FirstId + 4);
 
         float buttonsTop = rowsTop + rows.Count * RowHeightUnits + 8f;
         MenuAction result = MenuAction.None;
+        UiRect camera = w.Inside(panel, (PanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f, buttonsTop + MenuWidgets.ButtonPitchUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
+        if (w.Button(FirstId + 2, camera, CameraLabel))
+        {
+            result = MenuAction.Camera;
+        }
+
         UiRect keys = w.Inside(panel, (PanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f, buttonsTop, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
         if (w.Button(FirstId, keys, KeyBindingsLabel))
         {
             result = MenuAction.KeyBindings;
         }
 
-        UiRect back = w.Inside(panel, (PanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f, buttonsTop + MenuWidgets.ButtonPitchUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
+        UiRect back = w.Inside(panel, (PanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f, buttonsTop + 2f * MenuWidgets.ButtonPitchUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
         if (w.Button(FirstId + 1, back, BackLabel))
         {
             result = MenuAction.Back;
         }
 
         return result;
+    }
+
+    // The rows of a panel, one RowHeightUnits apart from 46 units down; each uses four widget ids from firstId.
+    internal static void BuildRows(MenuWidgets w, IReadOnlyList<MenuOptionRow> rows, UiRect panel, int firstId)
+    {
+        for (int i = 0; i < rows.Count; i++)
+        {
+            UiRect row = w.Inside(panel, 14f, 46f + i * RowHeightUnits, PanelWidthUnits - 28f, RowHeightUnits);
+            BuildRow(w, rows[i], firstId + i * 4, row);
+        }
     }
 
     private static void BuildRow(MenuWidgets w, MenuOptionRow row, int id, UiRect rect)

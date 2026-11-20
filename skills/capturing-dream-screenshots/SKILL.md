@@ -62,6 +62,16 @@ writes `NN-<step>.png` of the real back buffer, and closes itself. The full step
      Example: `play,keys:g:3,dev:clear;spawn:wolf:1:3,wait:20,aimenemy,status,snap`.
    - `tod:<hours>|off` sets the client-only visual time of day (decimal hours in [0,24), e.g. `tod:21.5`); `off`
      returns to the world clock. Writes no PNG; no server change.
+   - `cam:` steps place the tactical camera (isometric view), each snapping the goal and the current pose with no
+     smoothing, one frame to render it, writing no PNG: `cam:yaw:<deg>` (view yaw), `cam:zoom:<metres>` (distance,
+     clamped to the allowed zoom range), `cam:pan:<dx>:<dz>` (view-target offset from the player, in metres, world
+     axes, clamped to the leash), `cam:free` and `cam:follow` (anchor mode), `cam:reset` (default pose on the
+     player). Each logs `[hud-capture] <step>: cam target=... yaw=... dist=... offset=... mode=...`, and `status`
+     logs the same `cam` part. Numbers are decimal, invariant culture. The camera never reads a capture script's
+     pointer, so edge pan and wheel zoom cannot fire. With no `cam:` step the frame is the fixed default view, so
+     existing scripts and golden scenes are unchanged. Order matters: `cam:reset` before a pose you want absolute,
+     then `snap`. Example (panned, rotated, zoomed-out view, which also checks the war mist covers it):
+     `play,keys:g:3,cam:reset,cam:yaw:135,cam:zoom:22,cam:pan:12:0,wait:10,snap,cam:reset,snap`.
 4. For A/B pairs keep everything equal but one variable:
    - `-TimeOfDay noon` and `-TimeOfDay night` (also `dawn`, `dusk`, `midnight`, `HH:MM`; server-side, it moves the
      world clock forward and is saved).

@@ -21,12 +21,25 @@ public class TacticalCameraMenuRowsTests
         GameSettings settings = new(new Vector2i(1440, 1024));
         DesktopClientConfig config = new();
         int[] persisted = new int[1];
-        List<MenuOptionRow> rows = MenuOptionRows.CreateStandard(settings, config, () => { }, () => persisted[0]++);
+        List<MenuOptionRow> rows = MenuOptionRows.CreateCameraRows(settings, config, () => persisted[0]++);
         return (rows, settings, config, persisted);
     }
 
     [Fact]
-    public void StandardRows_ContainEveryCameraRow()
+    public void CameraRows_ContainEveryCameraRow_AndTheStandardRowsDoNot()
+    {
+        (List<MenuOptionRow> cameraRows, GameSettings settings, DesktopClientConfig config, _) = Create();
+        List<MenuOptionRow> standard = MenuOptionRows.CreateStandard(settings, config, () => { }, () => { });
+        foreach (string label in Labels)
+        {
+            Assert.DoesNotContain(standard, r => r.Label == label);
+        }
+
+        Assert.Equal(Labels.Length, cameraRows.Count);
+        StandardRows_ContainEveryCameraRow();
+    }
+
+    private static void StandardRows_ContainEveryCameraRow()
     {
         (List<MenuOptionRow> rows, _, _, _) = Create();
         foreach (string label in Labels)
@@ -107,7 +120,8 @@ public class TacticalCameraMenuRowsTests
     [Fact]
     public void ExistingRows_AreStillThere()
     {
-        (List<MenuOptionRow> rows, _, _, _) = Create();
+        (_, GameSettings settings, DesktopClientConfig config, _) = Create();
+        List<MenuOptionRow> rows = MenuOptionRows.CreateStandard(settings, config, () => { }, () => { });
         Assert.Contains(rows, r => r.Label == "UI Scale");
         Assert.Contains(rows, r => r.Label == "Max FPS");
         Assert.Contains(rows, r => r.Label == "VSync");
