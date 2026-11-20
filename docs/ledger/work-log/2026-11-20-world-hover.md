@@ -84,9 +84,28 @@
   side-by-side hovered and unhovered frames of the same pose are indistinguishable. A dark model needs an additive
   term (for example a view-dependent rim light), which is a change to the shared actor shader. It is not done.
 
+## Wave 3: the hover rim light
+
+- `enemyFragment.glsl` gains `uActorRim` (rgb colour in lit space, w = a flat fill share) and `uActorRimEye`.
+  - The block sits after the equipment branch, guarded on a positive colour. Every other draw is unchanged.
+  - Back faces add nothing, and the rim is capped to the headroom under the clip point like the equipment rim.
+- Only the hovered enemy and villager set it (`ActorHighlight.RimFor`). `AnimatedModel.BindProgram` carries it to
+  the MASK variant. The equipment renderers zero it, and the enemy and villager resets clear it with the tint.
+- Tuned by same-pose captures (`artifacts/captures/rim*`):
+  - An edge alone (power 2.5, no fill) was invisible on the wolf. Seen from the isometric camera its body faces
+    up, so it shows almost no grazing edge.
+  - A 0.18 fill turned the wolf a flat khaki: it no longer read as the same animal.
+  - Shipped: fill 0.07, power 2.0, ember colour (0.64, 0.40, 0.18). The wolf stays dark, with a warm sheen on its
+    back and edges, at noon and at night.
+- Review found the enemy renderer cached the uploaded eye. The ground scatter's foliage writes a zero eye into the
+  same program, so a still camera's hovered enemy was rimmed toward the world origin. The eye is now uploaded on
+  every rimmed draw, and a capture after 60 still frames confirms it. The rim contract's negatives now run the
+  shared post-floor regex against an unguarded, a duplicated and a trailing block.
+- Verified: full suite 11033 passed, 0 failed at `d1db15ed`. The eye fix `93c55922` was checked with 78 targeted
+  tests, including the real-GL shader compile. Golden is unchanged (world snaps pass, `01-play` as on master).
+
 ## Follow-ups
 
 - `WorldCursorPicker.PickHoveredEnemy` is now unused by the game (kept, tested).
 - Replicate enemy kind, damage, speed and mana (a protocol bump), then the panel shows them with no HUD change.
-- A highlight that reads on dark models (an additive rim term in `enemyFragment.glsl`), and an `IHoverSource` for
-  interactables.
+- An `IHoverSource` for interactables. Remote players get no highlight.
