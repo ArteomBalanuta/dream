@@ -72,7 +72,7 @@ public sealed class EnemyKindsMigrationTests
         SchemaMigrationResult result = database.Schema.EnsureSchema();
 
         Assert.Equal(16, result.FromVersion);
-        Assert.Equal(17, result.ToVersion);
+        Assert.Equal(MigrationTestDatabase.ShippedLatestVersion, result.ToVersion);
         using SqliteConnection c = database.Open();
         (double Speed, double Attack) Row(long id)
         {
@@ -202,6 +202,8 @@ public sealed class EnemyKindsMigrationTests
             new("AshenProwler", float.NaN, 1.2f, 1.5f, 1.35f, 12f),
             // Inside the player separation, where the wolf could never bite.
             new("GraveHowler", 3.8f, 1.3f, 1.4f, 0.5f, 14f),
+            // The risen skeleton's reach is zeroed: invalid, so the authored 1.5 stays.
+            new("RisenSkeleton", 3.4f, 1.15f, 1.55f, 0f, 12f),
             // A kind the content does not have.
             new("Dragon", 3f, 1f, 1f, 2f, 10f),
         ];
@@ -209,15 +211,15 @@ public sealed class EnemyKindsMigrationTests
         ContentCatalog tuned = ServerBootstrap.ApplyEnemyKindTuning(rows, log.Add);
 
         Assert.Equal(2.0f, tuned.Wolf.MoveSpeed);
-        foreach (string kind in new[] { "DireWolf", "AshenProwler", "GraveHowler" })
+        foreach (string kind in new[] { "DireWolf", "AshenProwler", "GraveHowler", "RisenSkeleton" })
         {
             WorldSessionRuntime.DefaultEnemyContent.TryGetEnemy(kind, out EnemyTemplate shipped);
             Assert.True(tuned.TryGetEnemy(kind, out EnemyTemplate? kept));
             Assert.Equal(shipped, kept);
         }
 
-        Assert.Contains("server.content.enemy-tuning rows=1 skipped=4", log);
-        Assert.Equal(4, log.Count(line => line.StartsWith("server.content.enemy-tuning-skipped", StringComparison.Ordinal)));
+        Assert.Contains("server.content.enemy-tuning rows=1 skipped=5", log);
+        Assert.Equal(5, log.Count(line => line.StartsWith("server.content.enemy-tuning-skipped", StringComparison.Ordinal)));
     }
 
     // Every chase is faster than the player's walk and slower than the player's sprint, so a wolf catches a

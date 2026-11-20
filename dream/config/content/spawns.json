@@ -22,6 +22,8 @@
     { "key": "frontier-ash-heart", "template": "AshenProwler", "x": 60.5, "z": 60.5, "count": 3, "respawnSeconds": 180, "minWorldSize": 100 },
     { "key": "frontier-night-hunt", "template": "AshenProwler", "x": 50.5, "z": 78.5, "count": 3, "respawnSeconds": 120, "night": true, "minWorldSize": 100 },
     { "key": "frontier-howlers-pass", "template": "GraveHowler", "x": 88.5, "z": 62.5, "count": 2, "respawnSeconds": 300, "minWorldSize": 100 },
-    { "key": "frontier-howlers-barrow", "template": "GraveHowler", "x": 85.5, "z": 85.5, "count": 3, "respawnSeconds": 300, "minWorldSize": 100 }
+    { "key": "frontier-howlers-barrow", "template": "GraveHowler", "x": 85.5, "z": 85.5, "count": 3, "respawnSeconds": 300, "minWorldSize": 100 },
+    { "key": "frontier-risen-ford", "template": "RisenSkeleton", "x": 76.5, "z": 68.5, "count": 3, "respawnSeconds": 240, "night": true, "minWorldSize": 100 },
+    { "key": "frontier-risen-fen", "template": "RisenSkeleton", "x": 66.5, "z": 78.5, "count": 3, "respawnSeconds": 240, "night": true, "minWorldSize": 100 }
   ]
 }
