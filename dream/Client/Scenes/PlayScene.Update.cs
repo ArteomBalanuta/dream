@@ -90,6 +90,11 @@ public partial class PlayScene
             bool pointerFocused = _windowFocused || _hudCapture is not null;
             _cursorAim.OnFrame(pointer, allowGameplayInput, SuppressCursorAim, pointerFocused);
             _clickMove.OnFrame(pointer, allowGameplayInput, pointerFocused);
+            _render.PointerOverEnemy = _enemyHover.Evaluate(pointer, allowGameplayInput, pointerFocused);
+        }
+        else
+        {
+            _render.PointerOverEnemy = false;
         }
 
         // The frame only captures input; each prediction tick below turns it into one command

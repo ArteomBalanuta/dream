@@ -70,6 +70,7 @@ public partial class PlayScene : IDisposable
     private bool _localPlayerWasMoving;
     private ClickMoveController? _clickMoveController;
     private CursorAimController? _cursorAimController;
+    private EnemyHoverProbe? _enemyHoverProbe;
     // W/A/S/D of the current frame in camera space; projected to forward/strafe per tick, once that
     // tick's facing is known (PlayScene.Update).
     private OpenTK.Mathematics.Vector2 _tickCameraAxes;
@@ -121,6 +122,9 @@ public partial class PlayScene : IDisposable
     // Created on first use: it needs this scene for its host, which a field initialiser cannot take.
     private ClickMoveController _clickMove =>
         _clickMoveController ??= new ClickMoveController(new ClickMoveHost(this), new NavPathing());
+
+    private EnemyHoverProbe _enemyHover =>
+        _enemyHoverProbe ??= new EnemyHoverProbe(new ClickMoveHost(this));
 
     private CursorAimController _cursorAim =>
         _cursorAimController ??= new CursorAimController(new CursorAimHost(this));

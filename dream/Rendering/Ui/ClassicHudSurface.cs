@@ -211,6 +211,7 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         v.Labels = frame.Labels ?? Array.Empty<HudWorldLabel>();
         v.Vendor = frame.Vendor;
         v.Quickbar = frame.Quickbar;
+        v.PointerOverEnemy = frame.PointerOverEnemy;
 
         UiLayout layout = UiLayout.Create(frame.Width, frame.Height, frame.ConfiguredScale);
         Input.BeginFrame(frame.Pointer);
