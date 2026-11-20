@@ -58,6 +58,7 @@ public sealed class NpcModelRendererWiringTests
         string source = ReadRepoFile("dream", "Client", "Scenes", "PlayScene.Lifetime.cs");
 
         Assert.Contains("ModelAssets.HoundPath", source, StringComparison.Ordinal);
+        Assert.Contains("ModelAssets.SkeletonPath", source, StringComparison.Ordinal);
         Assert.Contains("ModelAssets.NpcVendorPath", source, StringComparison.Ordinal);
         Assert.Contains("ModelAssets.NpcSmithPath", source, StringComparison.Ordinal);
         Assert.Contains("ModelAssets.NpcWardenPath", source, StringComparison.Ordinal);
