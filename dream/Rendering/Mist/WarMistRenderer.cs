@@ -76,6 +76,9 @@ public sealed class WarMistRenderer : IDisposable
 
     public bool IsDisposed => _shader == null;
 
+    // The GL program handle, for the shader warm-up's bookkeeping.
+    public int ProgramHandle => _shader?.Handle ?? 0;
+
     // Draws the slices around the focus over the world and restores the world pass state afterwards:
     // depth writes on, blending off, face culling as it was, no VAO, texture units 0 and 1 empty.
     public void Draw(Matrix4 viewProjection, Vector3 focus, double timeSeconds, ExplorationMemory memory)

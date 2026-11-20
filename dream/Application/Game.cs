@@ -504,6 +504,9 @@ public class Game : GameWindow
         _playScene.Clipboard = SystemClipboard;
         // The viewport and settings resolution follow a window that was resized while a menu was up.
         _playScene.Resize(ClientSize);
+        // One small real draw per program into offscreen targets, so the driver's draw-time shader specialisation
+        // is paid here, behind the loading screen, and not on the first world frame. Never throws; DREAM_SHADER_WARMUP=0 skips.
+        _playScene.WarmUpShaders();
         // The classic inventory's static panel state belongs to one scene.
         Dream.Rendering.Ui.Panels.InventoryUiState.Reset();
     }
