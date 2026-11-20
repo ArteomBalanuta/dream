@@ -71,14 +71,45 @@ public class WindowModeTests
 
         row.SetValue!(1f);
         Assert.Equal(WindowMode.Borderless, config.WindowMode);
-        Assert.Equal(1, changed);
         row.SetValue!(2f);
         Assert.Equal(WindowMode.Fullscreen, config.WindowMode);
-        Assert.Equal(2, changed);
-        row.SetValue!(0f);
-        Assert.Equal(WindowMode.Windowed, config.WindowMode);
-        Assert.Equal(3, changed);
+        Assert.Equal(0, changed);
         row.Commit!();
+        Assert.Equal(1, changed);
+        Assert.Equal(1, persisted);
+    }
+
+    [Fact]
+    public void DisplayModeRow_DragAppliesOnceOnRelease()
+    {
+        int changed = 0;
+        (List<MenuOptionRow> rows, _) = Rows(() => changed++, () => { });
+        MenuOptionRow row = rows.Single(r => r.Label == "Display Mode");
+
+        row.SetValue!(1f);
+        row.SetValue!(2f);
+        row.SetValue!(1f);
+        Assert.Equal(0, changed);
+        row.Commit!();
+        Assert.Equal(1, changed);
+
+        row.SetValue!(1f);
+        row.Commit!();
+        Assert.Equal(1, changed);
+    }
+
+    [Fact]
+    public void DisplayModeRow_DragBackToStartDoesNotApply()
+    {
+        int changed = 0;
+        int persisted = 0;
+        (List<MenuOptionRow> rows, _) = Rows(() => changed++, () => persisted++);
+        MenuOptionRow row = rows.Single(r => r.Label == "Display Mode");
+
+        row.SetValue!(2f);
+        row.SetValue!(0f);
+        row.Commit!();
+        Assert.Equal(0, changed);
         Assert.Equal(1, persisted);
     }
 

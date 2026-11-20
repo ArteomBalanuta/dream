@@ -45,6 +45,7 @@ public static class MenuOptionRows
         ArgumentNullException.ThrowIfNull(onFrameCapChanged);
         ArgumentNullException.ThrowIfNull(persist);
 
+        WindowMode? windowModeAtDragStart = null;
         return
         [
             // 0.75 stands for auto (the largest scale that fits the window); 1..4 snap to quarter steps.
@@ -61,7 +62,9 @@ public static class MenuOptionRows
                 },
                 FormatUiScale,
                 persist),
-            // The window may change the mode itself (F11), so the getter always reads the config.
+            // The window may change the mode itself (F11), so the getter always reads the config. The setter only
+            // writes the config; the window changes once, on release, and only if the mode differs from where the
+            // drag began.
             MenuOptionRow.Slider(
                 "Display Mode",
                 0f,
@@ -70,11 +73,21 @@ public static class MenuOptionRows
                 () => WindowModeIndex(config.WindowMode),
                 value =>
                 {
+                    windowModeAtDragStart ??= config.WindowMode;
                     config.WindowMode = WindowModeSteps[Math.Clamp((int)MathF.Round(value), 0, WindowModeSteps.Length - 1)];
-                    onWindowModeChanged?.Invoke();
                 },
                 value => WindowModeDisplay(WindowModeSteps[Math.Clamp((int)MathF.Round(value), 0, WindowModeSteps.Length - 1)]),
-                persist),
+                () =>
+                {
+                    bool changed = windowModeAtDragStart is { } start && start != config.WindowMode;
+                    windowModeAtDragStart = null;
+                    if (changed)
+                    {
+                        onWindowModeChanged?.Invoke();
+                    }
+
+                    persist();
+                }),
             MenuOptionRow.Slider(
                 "Max FPS",
                 0f,
