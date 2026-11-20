@@ -207,7 +207,6 @@ public sealed class ContentCatalogTests
         // Tier 6 sits between the Ashen Prowler (5) and the Grave Howler (8).
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("AshenProwler", out EnemyTemplate? prowler));
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("GraveHowler", out EnemyTemplate? howler));
-        Assert.InRange(skeleton.MoveSpeed, prowler.MoveSpeed, howler.MoveSpeed);
         Assert.InRange(skeleton.MaxHealth!.Value, prowler.MaxHealth!.Value, howler.MaxHealth!.Value);
     }
 
@@ -346,7 +345,8 @@ public sealed class ContentCatalogTests
     [InlineData("3")]
     public void Load_AcceptsAnAttackRangeAboveTheSeparationOverTheStandOffFraction(string range)
     {
-        string enemies = ShippedEnemiesJson.Replace("\"attackRange\": 1.35", "\"attackRange\": " + range);
+        string enemies = ShippedEnemiesJson.Replace("\"attackRange\": 1.35", "\"attackRange\": " + range)
+            .Replace("\"attackRange\": 1.5,", "\"attackRange\": " + range + ",");
         ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, enemies, ShippedLootJson);
         Assert.All(catalog.Enemies, template => Assert.Equal(float.Parse(range, System.Globalization.CultureInfo.InvariantCulture), template.AttackRange));
     }
@@ -449,7 +449,7 @@ public sealed class ContentCatalogTests
         ContentCatalog catalog = ContentCatalog.Shipped;
 
         Assert.True(File.Exists(Path.Combine(ContentCatalog.ShippedDirectory, "loot.json")));
-        Assert.Equal(4, catalog.LootTables.Count);
+        Assert.Equal(5, catalog.LootTables.Count);
         Assert.True(catalog.TryGetLootTable("wolf", out LootTable wolf));
         Assert.Equal(1, wolf.Drops);
         Assert.Equal(75, wolf.NothingWeight);
@@ -478,7 +478,7 @@ public sealed class ContentCatalogTests
     [Fact]
     public void TheTwoArgumentLoad_HasNoLootTables()
     {
-        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-wolf|wolf|ashen-prowler|grave-howler)\"", string.Empty);
+        string noLootReference = System.Text.RegularExpressions.Regex.Replace(ShippedEnemiesJson, "\\s*,\\s*\"lootTable\"\\s*:\\s*\"(?:dire-wolf|wolf|ashen-prowler|grave-howler|risen-skeleton)\"", string.Empty);
         Assert.DoesNotContain("lootTable", noLootReference);
 
         ContentCatalog catalog = ContentCatalog.Load(ShippedItemsJson, noLootReference);

@@ -575,8 +575,8 @@ public sealed class SpawnCampTests
             AssertPlacedSanely(runtime, $"size {size} hour {hour}");
             if (size >= 100)
             {
-                // The frontier camps (M9): 24 members by day, and the night hunt's 3 more in the dark.
-                Assert.Equal(hour == 12 ? 24 : 27, Active(runtime));
+                // The frontier camps (M9): 24 members by day; the night adds the hunt (3) and the two risen skeleton camps (6) in the dark.
+                Assert.Equal(hour == 12 ? 24 : 33, Active(runtime));
             }
             else if (size >= 56)
             {
