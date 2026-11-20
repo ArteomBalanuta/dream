@@ -1,4 +1,5 @@
 using System.Globalization;
+using Dream.Multiplayer.Protocol;
 using Dream.Simulation.Players;
 
 namespace Dream.Server;
@@ -67,15 +68,22 @@ public static class DevCommands
     // The reply to a bare /dev and to "help": one ServerChatMessage, one line per command. The count and the
     // line length stay inside what the chat panel shows of one message (ChatHudState.MaxLinesPerMessage and
     // MaxTextChars; a test pins both).
+    public static IReadOnlyList<string> Verbs { get; } =
+        ["help", "spawn", "tp", "give", "clear", "heal", "hp", "mana", "boost", "tod"];
+
+    // One line on purpose: the closed chat shows only the last few lines, and a chained line of bad
+    // subcommands must not flood the stored history with a help list per mistake.
+    private static string UnknownText(string verb) => $"Unknown dev command '{Clip(verb)}'. /dev help lists them.";
+
     public static IReadOnlyList<string> HelpLines { get; } =
     [
-        "Dev commands (chain with ';', up to 8):",
+        $"Dev commands (chain with ';', up to {DevCommandText.MaxSubcommands}):",
         "help - show this list",
-        "spawn <enemy> [1-16] [1-16 m] - spawn enemies near you",
+        $"spawn <enemy> [1-{MaxSpawnCount}] [{MinSpawnDistance:0}-{MaxSpawnDistance:0} m] - spawn enemies near you",
         "tp <x> <z> - teleport to a map position",
         "tp camp|npc <key> - teleport to a camp or an npc",
         "tp spawn - teleport to the world spawn",
-        "give <item> [common|uncommon|rare] [1-20] - get items",
+        $"give <item> [common|uncommon|rare] [1-{MaxGiveCount}] - get items",
         "clear [radius m] - remove enemies",
         "heal - refill health and mana",
         "hp <n> - set your health",
@@ -91,16 +99,16 @@ public static class DevCommands
     private const string TimeOfDayOffText =
         "tod off is not supported: the world clock keeps running. Use tod <time> to jump it forward.";
 
-    private const string SpawnUsage = "Usage: spawn <enemy> [count 1-16] [distance 1-16 m]";
+    private static readonly string SpawnUsage = $"Usage: spawn <enemy> [count 1-{MaxSpawnCount}] [distance {MinSpawnDistance:0}-{MaxSpawnDistance:0} m]";
 
     private const string TeleportUsage = "Usage: tp <x> <z> | tp camp <key> | tp npc <key> | tp spawn";
 
-    private const string GiveUsage = "Usage: give <item> [common|uncommon|rare] [count 1-20]";
+    private static readonly string GiveUsage = $"Usage: give <item> [common|uncommon|rare] [count 1-{MaxGiveCount}]";
 
     public static bool TryParse(string? subcommand, out DevCommand command, out string error)
     {
         command = default;
-        error = "Unknown dev command ''.\n" + Help;
+        error = UnknownText(string.Empty);
         if (string.IsNullOrWhiteSpace(subcommand))
         {
             return false;
@@ -192,7 +200,7 @@ public static class DevCommands
             return TryParseGive(tokens, out command, out error);
         }
 
-        error = $"Unknown dev command '{Clip(verb)}'.\n" + Help;
+        error = UnknownText(verb);
         return false;
     }
 

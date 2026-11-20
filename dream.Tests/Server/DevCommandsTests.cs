@@ -167,7 +167,10 @@ public sealed class DevCommandsTests
     [InlineData("time 12")]
     public void Unknown_OrEmpty_IsRefusedWithTheUsage(string sub)
     {
-        Assert.Contains("spawn", Refused(sub), StringComparison.Ordinal);
+        string error = Refused(sub);
+
+        Assert.DoesNotContain((char)10, error);
+        Assert.Contains("/dev help", error, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -207,8 +210,14 @@ public sealed class DevCommandsTests
     [Fact]
     public void Help_EveryParsedVerbStartsALine_AndTheListFitsOneChatMessage()
     {
-        foreach (string verb in new[] { "help", "spawn", "tp", "give", "clear", "heal", "hp", "mana", "boost", "tod" })
+        foreach (string verb in DevCommands.Verbs)
         {
+            // Every verb the source-of-truth array names is known to the grammar (a usage error, never "Unknown").
+            if (!DevCommands.TryParse(verb, out _, out string parseError))
+            {
+                Assert.DoesNotContain("Unknown dev command", parseError, StringComparison.Ordinal);
+            }
+
             Assert.Contains(DevCommands.HelpLines, line => line.StartsWith(verb + " ", StringComparison.Ordinal));
         }
 
@@ -226,12 +235,24 @@ public sealed class DevCommandsTests
         Assert.DoesNotContain(DevCommands.HelpLines, line => line.StartsWith("frobnicate", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public void UnknownVerb_ReplyIsTheClippedVerbThenTheWholeHelp()
+    [Theory]
+    [InlineData("frobnicate" + "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]
+    [InlineData("zzz")]
+    public void UnknownVerb_ReplyIsOneLine_NamingTheClippedVerbAndDevHelp(string verb)
     {
-        string error = Refused("frobnicate" + new string('x', 40));
+        string error = Refused(verb);
 
-        Assert.StartsWith("Unknown dev command 'frobnicate" + new string('x', 14) + "'.\n", error, StringComparison.Ordinal);
-        Assert.EndsWith(DevCommands.Help, error, StringComparison.Ordinal);
+        Assert.DoesNotContain((char)10, error);
+        Assert.Contains("/dev help", error, StringComparison.Ordinal);
+        Assert.StartsWith("Unknown dev command '" + (verb.Length <= 24 ? verb : verb[..24]) + "'.", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EmptySubcommand_ReplyIsOneLine()
+    {
+        string error = Refused("  ");
+
+        Assert.DoesNotContain((char)10, error);
+        Assert.Contains("/dev help", error, StringComparison.Ordinal);
     }
 }

@@ -189,6 +189,46 @@ public class ChatPanelTests
     }
 
     [Fact]
+    public void OpenPanel_PromptFrame_IsAsWideAsTheLogPanel_AtTheSameX()
+    {
+        UiLayout l = Layout();
+        StatusBarRecordingCanvas c = Draw(Open((ChatChannel.World, "hello")), in l);
+
+        UiRect prompt = Assert.Single(c.Calls, k => k.Kind == StatusBarCallKind.Solid && k.Color == new UiColor(0x0B, 0x07, 0x06, 235)).Rect;
+        UiRect panel = ListPanel(c);
+
+        Assert.Equal(panel.X, prompt.X, 3);
+        Assert.Equal(panel.W, prompt.W, 3);
+        Assert.Equal(OpenWidth(in l), prompt.W, 3);
+    }
+
+    [Fact]
+    public void OpenPanel_HardBreak_NeverSplitsASurrogatePair()
+    {
+        UiLayout l = Layout();
+        ChatHudState chat = Open((ChatChannel.Say, new string('a', 3) + string.Concat(Enumerable.Repeat("😀", 60))));
+
+        StatusBarRecordingCanvas c = Draw(chat, in l);
+        List<StatusBarCall> rows = Rows(c);
+
+        Assert.True(rows.Count >= 2);
+        Assert.All(rows, r =>
+        {
+            Assert.False(char.IsLowSurrogate(r.Text![0]), "row starts with a low surrogate");
+            Assert.False(char.IsHighSurrogate(r.Text![^1]), "row ends with a high surrogate");
+        });
+    }
+
+    [Fact]
+    public void ASystemMessage_OfMostlyNewlines_IsScannedOnlyUpToTheCap()
+    {
+        ChatHudState chat = new();
+        string text = new string((char)10, ChatHudState.MaxPiecesScanned) + "late";
+        chat.AddServerMessage(ChatChannel.System, "", "early" + text);
+        Assert.Equal(["early"], Lines(chat));
+    }
+
+    [Fact]
     public void OpenPanel_WithARowNarrowerThanOneGlyph_StillTerminatesAndTakesOneCharPerRow()
     {
         // A viewport so small that the body column is narrower than a glyph.

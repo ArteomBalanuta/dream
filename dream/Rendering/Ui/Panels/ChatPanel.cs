@@ -107,8 +107,12 @@ public sealed class ChatHudState
     }
 
     // One System message is one stored line per '\n' piece (the server's help reply), at most
-    // MaxLinesPerMessage of them; the rest is never scanned. Only System splits: a player's Say, World,
+    // MaxLinesPerMessage of them. Empty pieces add no line, so they count toward a scan cap
+    // (MaxPiecesScanned) of their own: a message of mostly newlines is not walked in full.
+    // Only System splits: a player's Say, World,
     // Whisper or Party text can never add a line.
+    public const int MaxPiecesScanned = MaxLinesPerMessage * 4;
+
     private void AddSystemPieces(string? text)
     {
         if (string.IsNullOrEmpty(text))
@@ -118,7 +122,8 @@ public sealed class ChatHudState
 
         int start = 0;
         int added = 0;
-        while (start <= text.Length && added < MaxLinesPerMessage)
+        int scanned = 0;
+        while (start <= text.Length && added < MaxLinesPerMessage && scanned++ < MaxPiecesScanned)
         {
             int end = text.IndexOf('\n', start);
             int stop = end < 0 ? text.Length : end;
@@ -251,13 +256,14 @@ public static class ChatPanel
 
         if (chat.Typing)
         {
+            // Open: a wider panel that wraps and shows more history; the prompt under it is as wide and at
+            // the same x, so the two read as one tall box.
+            float openWidth = MathF.Min(l.ViewportWidth - 2f * x, MathF.Max(width, 340f * l.Scale));
             float y = bottom - rowH - 2f * pad;
-            Frame(c, new UiRect(x, y, width, rowH + 2f * pad), Prompt, hair);
-            DrawInput(c, chat, v, x + pad, y + pad, width - 2f * pad, style, hair, pad);
+            Frame(c, new UiRect(x, y, openWidth, rowH + 2f * pad), Prompt, hair);
+            DrawInput(c, chat, v, x + pad, y + pad, openWidth - 2f * pad, style, hair, pad);
             bottom = y - hair;
 
-            // Open: a wider panel that wraps and shows more history. The prompt keeps the closed width.
-            float openWidth = MathF.Min(l.ViewportWidth - 2f * x, MathF.Max(width, 340f * l.Scale));
             BuildOpenList(c, chat, l, style, x, bottom, openWidth, pad, rowH, hair);
             if (chat.OnlineVisible)
             {
@@ -398,6 +404,25 @@ public static class ChatPanel
 
     // The next wrapped row of text from pos, with pos moved past it and past the spaces it broke on. Breaks
     // at the last space that fits; with none, hard-breaks, always taking at least one char.
+    // Where a space-less word breaks: at least one char, never between the halves of a surrogate pair.
+    private static int HardBreak(ReadOnlySpan<char> rest, int fit)
+    {
+        int take = Math.Max(1, fit);
+        if (take < rest.Length && char.IsHighSurrogate(rest[take - 1]))
+        {
+            if (take > 1)
+            {
+                take--;
+            }
+            else if (char.IsLowSurrogate(rest[1]))
+            {
+                take = 2;
+            }
+        }
+
+        return take;
+    }
+
     private static ReadOnlySpan<char> NextRow(IUiCanvas c, ReadOnlySpan<char> text, ref int pos, UiTextStyle style, float avail, bool continuation)
     {
         if (continuation)
@@ -418,7 +443,7 @@ public static class ChatPanel
         else
         {
             int space = rest[..Math.Min(fit + 1, rest.Length)].LastIndexOf(' ');
-            take = space > 0 ? space : Math.Max(1, fit);
+            take = space > 0 ? space : HardBreak(rest, fit);
         }
 
         ReadOnlySpan<char> row = rest[..take];

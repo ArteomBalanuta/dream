@@ -114,14 +114,15 @@ public sealed class DevCommandHostTests
     }
 
     [Fact]
-    public void UnknownDevVerb_AnswersOneErrorReply_WithTheWholeHelp()
+    public void UnknownDevVerb_AnswersOneSingleLineErrorReply()
     {
         using Fixture f = new(allowed: true, Loopback);
 
         string reply = Assert.Single(f.Dev("frobnicate"));
 
-        Assert.StartsWith(DevCommandText.ErrorPrefix + "Unknown dev command 'frobnicate'.\n", reply, StringComparison.Ordinal);
-        Assert.EndsWith(DevCommands.Help, reply, StringComparison.Ordinal);
+        Assert.StartsWith(DevCommandText.ErrorPrefix + "Unknown dev command 'frobnicate'.", reply, StringComparison.Ordinal);
+        Assert.DoesNotContain((char)10, reply);
+        Assert.Contains("/dev help", reply, StringComparison.Ordinal);
     }
 
     [Fact]
