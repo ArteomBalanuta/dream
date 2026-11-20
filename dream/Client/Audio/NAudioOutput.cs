@@ -2,11 +2,8 @@ using NAudio.Wave;
 
 namespace Dream.Client.Audio;
 
-// The sound device. The only file that touches NAudio (WinMM waveOut): a WaveOutEvent pulls the
+// The WinMM sound device. The only file that touches NAudio (WinMM waveOut): a WaveOutEvent pulls the
 // mixer on its own thread. Opening can throw (no device, driver busy); the caller falls back to silence.
-public interface IAudioOutput : IDisposable
-{
-}
 
 public sealed class NAudioOutput : IAudioOutput
 {

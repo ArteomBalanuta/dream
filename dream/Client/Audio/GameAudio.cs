@@ -67,10 +67,9 @@ public static class GameAudio
 
             AudioClipBank bank = AudioClipBank.Load(directory, Console.Error.WriteLine);
             AudioMixer mixer = new(volumes);
-            // DREAM_AUDIO_DUMP replaces the device with a timer-driven pull into a WAV file (no sound).
-            IAudioOutput output = AudioDiagnostics.DumpPath is { } dumpPath
-                ? new OfflineDumpOutput(mixer, dumpPath)
-                : new NAudioOutput(mixer);
+            // DREAM_AUDIO_DUMP replaces the device with a timer-driven pull into a WAV file (no sound);
+            // otherwise the factory picks WinMM or OpenAL (DREAM_AUDIO_BACKEND).
+            IAudioOutput output = AudioOutputFactory.Create(mixer);
             s_current = new MixerGameAudio(mixer, bank, output, volumes);
         }
         catch (Exception ex)
