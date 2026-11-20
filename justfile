@@ -17,6 +17,8 @@ set shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 config := env("DREAM_CONFIG", "Debug")
 root := justfile_directory()
 ps := "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File"
+pkg := if os() == "windows" { ps + " tools\\dev\\package.ps1" } else { "pwsh -NoLogo -NoProfile -File tools/dev/package.ps1" }
+rid_here := if os() == "windows" { "win-x64" } else { "linux-x64" }
 py := if path_exists(root / ".venv/Scripts/python.exe") == "true" { root / ".venv/Scripts/python.exe" } else { "python" }
 game := "dream\\dream.csproj"
 tests := "dream.Tests\\dream.Tests.csproj"
@@ -64,7 +66,7 @@ rebuild: _bin-unlocked
     dotnet build {{game}} -c {{config}} --no-incremental
     dotnet build {{tests}} -c {{config}} --no-incremental
 
-# Build game + tests into artifacts\verify-bin: safe while you play (needs one normal `just build` first for the native Bullet files)
+# Build game + tests into artifacts\verify-bin: safe while you play
 [group('build')]
 build-verify:
     dotnet build {{tests}} -c {{config}} /p:BaseOutputPath={{root}}/artifacts/verify-bin/
@@ -73,6 +75,28 @@ build-verify:
 [group('build')]
 build-capture:
     dotnet build {{game}} -c Release /p:BaseOutputPath={{root}}/artifacts/capture-bin/
+
+# ---------------------------------------------------------------------------------------------- package
+
+# Self-contained win-x64 client -> artifacts\dist\dream-<version>-win-x64.zip (no SDK or runtime needed to run it)
+[group('package')]
+package-windows version="":
+    {{pkg}} -Rid win-x64 {{ if version != "" { "-Version " + version } else { "" } }}; exit $LASTEXITCODE
+
+# Self-contained linux-x64 client -> artifacts\dist\dream-<version>-linux-x64.tar.gz (built on Windows too)
+[group('package')]
+package-linux version="":
+    {{pkg}} -Rid linux-x64 {{ if version != "" { "-Version " + version } else { "" } }}; exit $LASTEXITCODE
+
+# Both bundles, built in parallel after one shared restore
+[group('package')]
+package-all version="": _dist-restore
+    just _package-pair {{version}}
+
+# Run the newest packaged client from artifacts\dist (win-x64 stage; on Linux the linux-x64 run-dream.sh)
+[group('package')]
+run-dist *args:
+    $s = Get-ChildItem '{{root}}/artifacts/dist/{{rid_here}}' -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if (-not $s) { Write-Host 'no packaged client for {{rid_here}}: run just package-{{ if os() == "windows" { "windows" } else { "linux" } }} first'; exit 1 }; Set-Location $s.FullName; & '{{ if os() == "windows" { "./dream.exe" } else { "./run-dream.sh" } }}' {{args}}; exit $LASTEXITCODE
 
 # ------------------------------------------------------------------------------------------------ run
 
@@ -261,6 +285,18 @@ worktrees-clean:
     {{ps}} tools\dev\worktrees.ps1 -CleanBuildOutput; exit $LASTEXITCODE
 
 # ------------------------------------------------------------------------------------------- internal
+
+[private]
+_dist-restore:
+    {{pkg}} -Rid all -RestoreOnly; exit $LASTEXITCODE
+
+[private]
+[parallel]
+_package-pair version="": (_package "win-x64" version) (_package "linux-x64" version)
+
+[private]
+_package rid version="":
+    {{pkg}} -Rid {{rid}} -NoRestore {{ if version != "" { "-Version " + version } else { "" } }}; exit $LASTEXITCODE
 
 [private]
 _bin-unlocked:
