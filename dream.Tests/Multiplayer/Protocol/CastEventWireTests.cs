@@ -58,7 +58,7 @@ public class CastEventWireTests
     [Fact]
     public void ProtocolVersion_IsTwentyTwo()
     {
-        Assert.Equal(22, TransportEnvelope.CurrentProtocolVersion);
+        Assert.Equal(23, TransportEnvelope.CurrentProtocolVersion);
     }
 
     [Fact]

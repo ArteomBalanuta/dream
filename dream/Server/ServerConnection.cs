@@ -1006,6 +1006,9 @@ public sealed class ServerConnection : IAsyncDisposable
                 case ServerChatMessage chat:
                     _codec.Encode(envelope, chat, _frameWriter);
                     break;
+                case ServerWorldClockMessage worldClock:
+                    _codec.Encode(envelope, worldClock, _frameWriter);
+                    break;
                 case ServerCharacterList characterList:
                     _codec.Encode(envelope, characterList, _frameWriter);
                     break;

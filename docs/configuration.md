@@ -207,7 +207,8 @@ The in-game HUD is the classic sprite HUD by default. The ImGui HUD is the autom
 #### Capture steps `dev:` and `tod:`
 
 - `dev:<sub>[:<arg>...][;<sub>...]` stages the world through the server-authoritative `/dev` command (see Dev commands under Characters And Accounts). Colons become spaces and the line is prefixed with `/dev `: `dev:clear;spawn:wolf:2:3;tp:camp:north-east-wolves` sends `/dev clear; spawn wolf 2 3; tp camp north-east-wolves`. Max 8 subcommands (`DevCommandText.MaxSubcommands`), no commas (they separate steps), the whole line at most `ClientChatMessage.MaxTextLength` (256) characters; a malformed step is dropped like any unknown step. Writes no PNG. Waits for one `[dev] ` reply per subcommand (or 240 frames), then 30 more frames. Each reply is logged `[hud-capture] dev <line> -> <reply>`; a missing one `[hud-capture] dev <line> -> no reply (<n> missing)`. Needs dev commands allowed and a loopback connection.
-- `tod:<hours>|off` sets the client-only visual time of day (`Render.TimeOfDayOverride`): decimal hours in [0,24), invariant culture (`tod:21.5`); `off` returns to the world clock. Writes no PNG; the server clock is untouched.
+- `tod:<hours>|off` sets the client-only visual time of day (`Render.TimeOfDayOverride`): decimal hours in [0,24), invariant culture (`tod:21.5`); `off` returns to the world clock. Writes no PNG; the server clock is untouched, and while it is on it wins over a server clock jump (`dev:tod:<time>`, which moves the real world clock for everyone).
+- `chat:open|close` opens or closes the chat line (`ChatInput.Open` / `Cancel`) and writes `NN-chat-open.png` like `snap`, so the open chat panel can be judged: `play,dev:help,chat:open`. A `[dev]` reply with several lines is logged on one line, with ` | ` between them.
 - capture.ps1 exit code 3: an out.log line matches `^\[hud-capture\] dev .* -> (\[dev\] error:|no reply)` and `-AllowDevErrors` was not passed.
 
 #### Capture traps
@@ -504,13 +505,15 @@ Put a name with spaces in double quotes. A ban or mute belongs to the account, n
 
 ### Dev commands
 
-`/dev <subcommand>[; <subcommand>...]` stages the world for testing. It is sent as a `Command` chat line (no protocol change) and the server answers the sender with exactly one System line per subcommand, starting `[dev] ` (`[dev] error: ` on failure). Up to 8 subcommands per line, run in order; a failure replies and the next still runs. `/dev` alone prints the usage line.
+`/dev <subcommand>[; <subcommand>...]` stages the world for testing. It is sent as a `Command` chat line (no protocol change) and the server answers the sender with exactly one System message per subcommand, starting `[dev] ` (`[dev] error: ` on failure). Up to 8 subcommands per line, run in order; a failure replies and the next still runs. An unknown subcommand gets one line pointing at `/dev help`. `/dev` alone and `/dev help` reply with the help: one message whose text has one command per line, separated by `
+` (`DevCommands.HelpLines`). The chat splits a System message on `
+` into separate lines (at most 16 per message, `ChatHudState.MaxLinesPerMessage`; player channels never split). Closed chat shows the last 8 lines, so press Enter to open the chat and read the whole list: the open chat is wider, shows up to 24 rows (`ChatHudState.OpenVisibleRows`, fewer when the window is short) and word-wraps long lines; the typing line underneath is as wide as the open log.
 
 Allowed only when **both** hold, checked when the command runs: dev commands are on (integrated server, or `DREAM_DEV_COMMANDS` on a dedicated server) **and** the connection is loopback (127.0.0.1 / ::1). Otherwise the reply is `[dev] error: Dev commands are off on this server.` The admin role does not matter. The loopback test sees the connection's source address, so a tunnel or proxy on the same machine (playit, ngrok, an nginx stream) makes remote players look like 127.0.0.1 and gives them dev commands too. Do not turn `DREAM_DEV_COMMANDS` on for a server reachable through one; a dedicated server with it set logs a `WARNING` at start whatever the bind (a tunnel forwards to 127.0.0.1 just as readily), with extra wording when the bind is not loopback. Keys match case-insensitively.
 
 | Subcommand | Effect |
 |---|---|
-| `help` | one usage line |
+| `help` | every command, one per line |
 | `spawn <enemy> [count 1-16] [distance 1-16 m]` | spawn on a ring round you, each on a standable surface; no camp, so not restored next start |
 | `tp <x> <z>` | go to world metres x,z (spawns.json / `status` units), onto the top standable surface; outside the map or no surface is an error |
 | `tp camp <key>` / `tp npc <key>` / `tp spawn` | go to a spawns.json camp, an NPC, or the world spawn |
@@ -518,8 +521,10 @@ Allowed only when **both** hold, checked when the command runs: dev commands are
 | `clear [radius m]` | despawn live enemies (all, or within radius); no loot, no XP; camps refill on their timers |
 | `heal` | full health and mana |
 | `hp <n>` / `mana <n>` | set current health (clamped 1..max) or mana (0..max) |
+| `boost [attribute]` | admin role (queued), attributes and level for testing |
+| `tod <time>` | jump the authoritative world clock **forward** to that time of day, for everyone: `HH:MM`, decimal hours in [0,24), or `dawn` `morning` `noon` `dusk` `evening` `midnight` `night` (`WorldTimeOfDay.TryParse`, as `DREAM_TIME_OF_DAY`). `tod 21 30` is read as 21:30, so the capture step `dev:tod:21:30` works. Every joined client gets a `server.world-clock` message (protocol v23) and re-anchors its sky. The clock keeps running, so `tod off` is an error. Side effects of a jump: camp respawns that fall due inside the skipped time come due at once, and phase-driven population (the night wolf) catches up on the next population step. A lockstep replay of a server that jumped diverges. |
 
-Not available: god mode, time of day, levels, kills with loot or XP.
+Not available: god mode, moving the clock backward or pausing it, levels, kills with loot or XP.
 
 ### Rolled items: `--items`
 
