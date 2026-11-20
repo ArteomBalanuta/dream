@@ -22,41 +22,52 @@ REQUIRED = {
     "linux-x64": ["dream", "libbulletc.so", "libcimgui.so", "libglfw.so.3", "libe_sqlite3.so", "run-dream.sh",
                   "README.txt", "config/content/*.json", "shaders/*"],
 }
-FORBIDDEN = ["*player-profiles.db*", "account-tokens.json", "imgui.ini"]
+# *.zip: the game loads no archive, so a zip in a bundle is a local asset pack that leaked in (redistribution unclear)
+FORBIDDEN = ["*player-profiles.db*", "account-tokens.json", "imgui.ini", "*.zip"]
+# uncompressed size cap (the clean bundle is about MAX_BYTES / 1.5); a bundle past it has swallowed untracked files
+MAX_BYTES = 0
 # native files of the other platform at the bundle root (managed .dll files are fine in a linux bundle)
 FOREIGN = {"win-x64": ["*.so", "*.so.*", "*.dylib"], "linux-x64": ["*.exe", "libbulletc.dll", "cimgui.dll",
            "glfw3.dll", "e_sqlite3.dll", "vcomp140.dll", "OpenAL32.dll", "soft_oal.dll"]}
-EXEC_FILES = ("dream", "run-dream.sh")
+EXEC_FILES = ("dream", "run-dream.sh", "createdump")
 
 
 def _entries_dir(path):
-    out = []
+    out, total = [], 0
     for dp, _dn, fns in os.walk(path):
         for fn in fns:
-            out.append((os.path.relpath(os.path.join(dp, fn), path).replace(os.sep, "/"), None))
-    return out
+            full = os.path.join(dp, fn)
+            total += os.path.getsize(full)
+            out.append((os.path.relpath(full, path).replace(os.sep, "/"), None))
+    return out, total
 
 
 def _entries_archive(path):
-    raw, problems = [], []
+    raw, problems, total = [], [], 0
     if path.endswith(".zip"):
         with zipfile.ZipFile(path) as z:
             for i in z.infolist():
                 if not i.is_dir():
                     raw.append((i.filename, None))
+                    total += i.file_size
     else:
         with tarfile.open(path, "r:gz") as t:
             for m in t.getmembers():
                 if m.isfile():
                     raw.append((m.name, m.mode & 0o7777))
+                    total += m.size
     tops = {n.split("/", 1)[0] for n, _ in raw}
     if len(tops) != 1:
         problems.append("archive must have exactly one top-level folder, found %s" % sorted(tops))
-    return [(n.split("/", 1)[1] if "/" in n else n, m) for n, m in raw], problems
+    return [(n.split("/", 1)[1] if "/" in n else n, m) for n, m in raw], problems, total
 
 
-def verify_entries(rid, entries, check_modes):
+def verify_entries(rid, entries, check_modes, total_bytes=0, max_bytes=None):
     problems = []
+    if max_bytes is None:
+        max_bytes = MAX_BYTES
+    if total_bytes > max_bytes:
+        problems.append("bundle is %.1f MB uncompressed, over the %.1f MB cap" % (total_bytes / 1048576.0, max_bytes / 1048576.0))
     names = [n for n, _ in entries]
     for pat in REQUIRED[rid]:
         if not any(fnmatch.fnmatchcase(n, pat) for n in names):
@@ -80,11 +91,12 @@ def verify_entries(rid, entries, check_modes):
 
 def verify(rid, path):
     if os.path.isdir(path):
-        entries, problems, modes = _entries_dir(path), [], False
+        entries, total = _entries_dir(path)
+        problems, modes = [], False
     else:
-        entries, problems = _entries_archive(path)
+        entries, problems, total = _entries_archive(path)
         modes = path.endswith(".tar.gz")
-    return problems + verify_entries(rid, entries, modes)
+    return problems + verify_entries(rid, entries, modes, total)
 
 
 def pack(rid, stage, out):
@@ -162,6 +174,11 @@ def selftest():
         expect("nested imgui.ini", verify("win-x64", make("win-x64", "n12", extra=("config/imgui.ini",))), True)
         expect("nested db-wal", verify("linux-x64", make("linux-x64", "n13", extra=("a/b/player-profiles.db-wal",))), True)
         expect("nested foreign so allowed", verify("win-x64", make("win-x64", "n14", extra=("sub/x.so",))), False)
+        expect("zip pack in stage", verify("win-x64", make("win-x64", "n16", extra=("animations/pack.zip",))), True)
+        expect("root zip in linux stage", verify("linux-x64", make("linux-x64", "n17", extra=("skybox.zip",))), True)
+        ents = [(f.replace("*.json", "a.json").replace("shaders/*", "shaders/a.glsl"), None) for f in REQUIRED["win-x64"]]
+        expect("over the size cap", verify_entries("win-x64", ents, False, 101, 100), True)
+        expect("at the size cap", verify_entries("win-x64", ents, False, 100, 100), False)
         expect("managed dll allowed in linux", verify("linux-x64", make("linux-x64", "n15", extra=("Foo.dll",))), False)
         t = os.path.join(tmp, "ok.tar.gz")
         pack("linux-x64", make("linux-x64", "a1"), t)
@@ -181,6 +198,13 @@ def selftest():
                         m.mode = 0o644
                     dst.addfile(m, src.extractfile(m))
         expect("tar without exec bit", verify("linux-x64", bad), True)
+        cd = make("linux-x64", "n20", extra=("createdump",))
+        ct = os.path.join(tmp, "cd.tar.gz")
+        pack("linux-x64", cd, ct)
+        expect("createdump packed executable", verify("linux-x64", ct), False)
+        with tarfile.open(ct) as tf:
+            if {m.name.split("/", 1)[1]: m.mode for m in tf.getmembers() if m.isfile()}["createdump"] != 0o755:
+                fails.append("createdump not 0755 in tar")
         z = os.path.join(tmp, "ok.zip")
         pack("win-x64", make("win-x64", "a2"), z)
         expect("good zip", verify("win-x64", z), False)

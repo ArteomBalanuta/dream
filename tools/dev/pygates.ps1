@@ -1,7 +1,7 @@
 <#
 Runs the repo's standalone Python gates in parallel and reports one line per gate.
 
-  tools\dev\pygates.ps1 [-Group all|golden|gallery|audio|ui] [-Python <exe>] [-Throttle N]
+  tools\dev\pygates.ps1 [-Group all|quick|golden|gallery|audio|ui|package] [-Python <exe>] [-Throttle N]
 
 Every gate is an independent process that only reads the repo (none writes into dream\), so they parallelise
 safely; logs go to artifacts\py-gates\<gate>.log. Exit 0 only when every gate exits 0.
@@ -10,7 +10,7 @@ Not included: check_look.py (measures a capture frame you pass it), the generato
 and anything dotnet (one test suite at a time - see tools\dev\test.ps1).
 #>
 param(
-    [ValidateSet('all', 'quick', 'golden', 'gallery', 'audio', 'ui')][string]$Group = 'all',
+    [ValidateSet('all', 'quick', 'golden', 'gallery', 'audio', 'ui', 'package')][string]$Group = 'all',
     [string]$Python,
     [int]$Throttle = [Math]::Max(2, [Environment]::ProcessorCount - 2)
 )
@@ -27,6 +27,7 @@ function Add-Gate($name, [string[]]$arguments) { $gates.Add([pscustomobject]@{ N
 
 if ($Group -in 'all', 'quick', 'golden') { Add-Gate 'golden' @('-I', 'tools\golden\tests\test_golden.py') }
 if ($Group -in 'all', 'quick', 'gallery') { Add-Gate 'gallery' @('-I', 'tools\dev\gallery.py', '--selftest') }
+if ($Group -in 'all', 'quick', 'package') { Add-Gate 'package-bundle' @('-I', 'tools\dev\archive_bundle.py', '--selftest') }
 if ($Group -in 'all', 'quick', 'audio') { Add-Gate 'audio' @('-I', 'tools\audio\build_all.py', '--check-only') }
 if ($Group -in 'all', 'ui') {
     Get-ChildItem (Join-Path $repo 'tools\ui-assets\tests') -Filter 'check_*.py' |

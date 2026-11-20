@@ -91,12 +91,12 @@ package-linux version="":
 # Both bundles, built in parallel after one shared restore
 [group('package')]
 package-all version="": _dist-restore
-    just _package-pair {{version}}
+    {{just_executable()}} _package-pair {{version}}; exit $LASTEXITCODE
 
 # Run the newest packaged client from artifacts\dist (win-x64 stage; on Linux the linux-x64 run-dream.sh)
 [group('package')]
 run-dist *args:
-    $s = Get-ChildItem '{{root}}/artifacts/dist/{{rid_here}}' -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if (-not $s) { Write-Host 'no packaged client for {{rid_here}}: run just package-{{ if os() == "windows" { "windows" } else { "linux" } }} first'; exit 1 }; Set-Location $s.FullName; & '{{ if os() == "windows" { "./dream.exe" } else { "./run-dream.sh" } }}' {{args}}; exit $LASTEXITCODE
+    $s = Get-ChildItem '{{root}}/artifacts/dist/{{rid_here}}' -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if (-not $s) { Write-Host 'no packaged client for {{rid_here}}: run just package-{{ if os() == "windows" { "windows" } else { "linux" } }} first'; exit 1 }; Set-Location $s.FullName; {{ if os() == "windows" { "& './dream.exe'" } else { "& sh './run-dream.sh'" } }} {{args}}; exit $LASTEXITCODE
 
 # ------------------------------------------------------------------------------------------------ run
 
