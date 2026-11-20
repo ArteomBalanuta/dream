@@ -18,6 +18,8 @@ public static class MenuOptionRows
 
     public static readonly VSyncMode[] VSyncSteps = [VSyncMode.Off, VSyncMode.On, VSyncMode.Adaptive];
 
+    public static readonly WindowMode[] WindowModeSteps = [WindowMode.Windowed, WindowMode.Borderless, WindowMode.Fullscreen];
+
     public const float UiScaleMin = 0.75f;
     public const float UiScaleMax = 4f;
 
@@ -58,6 +60,20 @@ public static class MenuOptionRows
                     config.UiScale = settings.UiScaleSetting;
                 },
                 FormatUiScale,
+                persist),
+            // The window may change the mode itself (F11), so the getter always reads the config.
+            MenuOptionRow.Slider(
+                "Display Mode",
+                0f,
+                WindowModeSteps.Length - 1,
+                1f,
+                () => WindowModeIndex(config.WindowMode),
+                value =>
+                {
+                    config.WindowMode = WindowModeSteps[Math.Clamp((int)MathF.Round(value), 0, WindowModeSteps.Length - 1)];
+                    onWindowModeChanged?.Invoke();
+                },
+                value => WindowModeDisplay(WindowModeSteps[Math.Clamp((int)MathF.Round(value), 0, WindowModeSteps.Length - 1)]),
                 persist),
             MenuOptionRow.Slider(
                 "Max FPS",
@@ -249,6 +265,16 @@ public static class MenuOptionRows
 
         return best;
     }
+
+    public static float WindowModeIndex(WindowMode mode) =>
+        Math.Max(0, Array.IndexOf(WindowModeSteps, mode));
+
+    public static string WindowModeDisplay(WindowMode mode) => mode switch
+    {
+        WindowMode.Borderless => "Borderless",
+        WindowMode.Fullscreen => "Fullscreen",
+        _ => "Windowed"
+    };
 
     public static float VSyncIndex(VSyncMode mode) =>
         Math.Max(0, Array.IndexOf(VSyncSteps, Enum.IsDefined(mode) ? mode : VSyncSettings.Default));

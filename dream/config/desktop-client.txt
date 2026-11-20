@@ -12,6 +12,7 @@ damage_text_speed=0.6
 damage_text_crit_depth=5
 max_fps=144
 vsync=adaptive
+window_mode=windowed
 msaa=4
 admin_hud=0
 ui_scale=0

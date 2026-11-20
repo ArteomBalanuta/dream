@@ -98,6 +98,7 @@ public static class DesktopClientTextConfig
             $"damage_text_crit_depth={Format(config.FloatingCombatText.CriticalDepthMultiplier)}",
             $"max_fps={config.MaxFramesPerSecond}",
             $"vsync={VSyncSettings.Describe(config.VSync)}",
+            $"window_mode={SerializeWindowMode(config.WindowMode)}",
             $"msaa={config.MsaaSamples}",
             $"admin_hud={(config.AdminHud ? 1 : 0)}",
             $"ui_scale={Format(config.UiScale)}",
@@ -163,6 +164,12 @@ public static class DesktopClientTextConfig
         if (key == "audio_enabled")
         {
             config.AudioEnabled = HudOptions.ParseFlag(value) ?? true;
+            return;
+        }
+
+        if (key == "window_mode")
+        {
+            config.WindowMode = ParseWindowMode(value);
             return;
         }
 
@@ -297,6 +304,21 @@ public static class DesktopClientTextConfig
                 return false;
         }
     }
+
+    // Unknown or missing values mean a normal window; never throws.
+    public static WindowMode ParseWindowMode(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "borderless" => WindowMode.Borderless,
+        "fullscreen" => WindowMode.Fullscreen,
+        _ => WindowMode.Windowed
+    };
+
+    public static string SerializeWindowMode(WindowMode mode) => mode switch
+    {
+        WindowMode.Borderless => "borderless",
+        WindowMode.Fullscreen => "fullscreen",
+        _ => "windowed"
+    };
 
     private static CameraConfineMode ParseConfineMode(string value)
     {
