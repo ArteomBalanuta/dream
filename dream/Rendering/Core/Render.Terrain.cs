@@ -82,6 +82,9 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetBool("useInstancing", false);
         // The cube program is shared with AnimatedModel, which leaves its last emissive flag set.
         shader.SetHasEmissiveTexture(false);
+        // The real eye for the opt-in material response; the per-material surface is set in
+        // BindStaticTerrainMaterial (zero = no response).
+        shader.SetEquipmentEye(camera.Position);
         shader.SetFloat("material.metallicFactor", 0f);
         shader.SetFloat("material.roughnessFactor", 1f);
         shader.SetInt("material.baseColorTexture", 0);
@@ -117,6 +120,7 @@ public partial class Render : IWorldInstanceDrawTarget
         int texture = _staticTerrainTextures.GetOrLoad(material);
         shader.SetVector4("material.baseColorFactor", material.BaseColor);
         shader.SetEmissiveFactor(material.Emissive);
+        shader.SetEquipmentSurface(material.Surface);
         // Terrain is opaque: it always draws with the terrain program, which has no discard
         // (and no alpha-mask variant).
         shader.SetBool("material.hasBaseColorTexture", texture != -1);
@@ -239,6 +243,9 @@ public partial class Render : IWorldInstanceDrawTarget
         shader.SetFloat("material.roughnessFactor", 1f);
         shader.SetEmissiveFactor(material.Emissive);
         shader.SetHasEmissiveTexture(false);
+        // The terrain program is shared with the batched pass, which leaves its last material's
+        // surface in it: fallback and dynamic cubes draw the plain tile, so switch the response off.
+        shader.SetEquipmentSurface(Vector4.Zero);
         // Fallback and dynamic cubes move, and the variation noise is keyed on world position, so
         // with it on they would "swim". They draw the plain tile (variation, blend and layer off),
         // the same look as the Grass/Dirt/Stone gltf cubes of the plain cube program.

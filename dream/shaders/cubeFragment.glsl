@@ -38,6 +38,25 @@ uniform Material material;
 // The boundary mist wall: the final colour is mixed toward smoke at and near the map edge.
 #include "boundaryMist.glsl"
 #include "clouds.glsl"
+// The shared material response (surface.glsl: lobe, shininess, F0, rim), after clouds.glsl as documented.
+#include "surface.glsl"
+
+// ---- Opt-in material response (OFF by default) ----------------------------------------------
+// This program (terrain, cubes, ground scatter, the view model) has no material response of its own:
+// the glTF metallic/roughness factors are uploaded and read by nothing. uEquipSurface (x metallic,
+// y roughness; z grain and w accentMix are unread here) and uEquipEye (the real eye, world space) are
+// the SAME uniform pair enemyFragment.glsl uses, written through Shader.SetEquipmentSurface /
+// SetEquipmentEye. Zero is off: the whole block below is skipped when uEquipSurface.y is not above 0,
+// so every draw that never sets it is bit-for-bit what it was. Deliberately NOT derived from
+// material.metallicFactor / roughnessFactor: the terrain pass uploads roughness 1.0 and prop glTFs
+// carry 0.5, so gating on those would switch the response on for the whole world.
+// Today only StaticTerrainMaterial.Surface of Stone and Rock sets it (Render.Terrain.cs). It is a
+// diffuse-surface response only: no grain, no uEquipDetail, no pattern, no brush.
+uniform vec4 uEquipSurface;
+uniform vec3 uEquipEye;
+
+// Deliberately equal to enemyFragment.glsl's EquipSpecularStrength (pinned by WorldMaterialResponseTests).
+const float WorldSpecularStrength = 0.30;
 
 #ifdef DREAM_TERRAIN
 // The terrain program (Shader.TerrainDefine): this file compiled a third time. The terrain tile
@@ -427,6 +446,32 @@ void main()
     n = dreamTerrainBump(n, terrainHx, terrainHy, terrainPosDx, terrainPosDy);
 #endif
     vec3 lit = (dreamAmbient(n) + dreamDirectShaded(n, fragPos) + dreamPointLights(n, fragPos)) * baseColor.rgb;
+
+    // Opt-in material response (see uEquipSurface above); mirrors the equipment block of
+    // enemyFragment.glsl minus the grain, detail, pattern and brush layers.
+    if (uEquipSurface.y > 0.0) {
+        float metallic = clamp(uEquipSurface.x, 0.0, 1.0);
+        float rough = clamp(uEquipSurface.y, EquipMinRoughness, 1.0);
+        vec3 v = normalize(uEquipEye - fragPos);
+        float shin = dreamSurfaceShininess(rough);
+        vec3 f0 = dreamSurfaceF0(baseColor.rgb, metallic);
+
+        // The lobe of the light the shadow map was rendered from takes the map; the other gets 1.0.
+        float mapV = dreamSunVisibility(fragPos, n);
+        bool sunMap = dreamShadowMapIsSun();
+        vec3 spec = dreamEquipLobe(n, v, uSunDirection.xyz, shin, f0)
+            * uSunDirection.w * uSunColor.rgb * (sunMap ? mapV : 1.0);
+        spec += dreamEquipLobe(n, v, uMoonDirection.xyz, shin, f0) * uMoonDirection.w * uMoonColor.rgb * (sunMap ? 1.0 : mapV);
+        spec += dreamPointSpecular(n, fragPos, v, shin, f0);
+        lit += spec * WorldSpecularStrength;
+
+        // The rim, capped to the headroom under the clip point (1 / exposure minus the current peak).
+        // This cap arithmetic is duplicated from enemyFragment.glsl on purpose: surface.glsl is frozen.
+        vec3 rimLight = dreamSurfaceRim(n, v, baseColor.rgb, metallic, rough);
+        float rimRoom = max((1.0 / max(uLightingParams.x, 0.01)) - max(lit.r, max(lit.g, lit.b)), 0.0);
+        float rimPeak = max(rimLight.r, max(rimLight.g, rimLight.b));
+        lit += rimLight * (rimPeak > rimRoom ? rimRoom / rimPeak : 1.0);
+    }
     // The emissive is added after exposure, before fog, into the HDR target. It is NOT clipped at 1.0
     // any more: only the part of it above the 0.80 knee (postTone.glsl) blooms, so an emitter that
     // should glow has to authorise a channel above 0.80 in its catalog Emissive(); one under it reads
