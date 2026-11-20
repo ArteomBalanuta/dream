@@ -130,3 +130,70 @@ learned about thin-axis detail.
 - **The Arcane emissive ratio.** The armour Membrane entry is about a sixth of the weapon gem, not a
   third (it was a third of the old value); comments and `ArmourArcaneEmissive_StaysBelowTheKnee_ByDesign`
   now say and pin that.
+
+## Measured after the review: the gem does not bloom, and cannot at this size
+
+The reviewer predicted from the shader arithmetic that the grade would grey out the gem's bloom
+halo. Measured, that is **negative — there is no halo to grey.** The grade-OFF frames have none
+either: at 8-16 px from the core the bloom contributes +0.0006 max channel, about 0.15 of one 8-bit
+step, and the ring's max channel matches the 32-64 px ring, so past 8 px the measurement is reading
+the floor rather than the gem.
+
+Why, from the shipped numbers. The gem's measured peak of 0.906 inverts through the shoulder to a
+scene value of **1.0255**, so the overflow feeding the bright pass is 0.2255 — the emissive raise
+did exactly what it was meant to. But the gem is about **5x6 px**, the bright pass is
+quarter-resolution in each axis, and the separable blur spreads those under-two bloom texels over
+roughly 36. The halo peaks at about **0.87 of one 8-bit step**: below quantisation. An emissive
+would need roughly **16x16 px** on screen before a halo is visible.
+
+**So the constraint was never amplitude — it was area**, which is the equipment wave's "frequency,
+not amplitude" lesson in a new place. Raising the emissive further would not buy a glow; it would
+only flatten the gem, which is the cost `ArmourMeshCatalog`'s Membrane entry exists to avoid.
+
+What the change did buy is a brighter, more saturated violet core, which reads well. The test is
+renamed to claim only that: `WeaponArcaneEmissive_ClearsTheKnee_SoItContributesToTheBloom`. The
+assertion stays, because a larger Arcane part later will bloom and this pins the value that makes
+that true.
+
+## The moon sheen greying is real, and it is an art call rather than a defect
+
+Measured on a moonlit cobble slab, the two grade-off controls agreeing to four decimals:
+
+| | grade off | grade on |
+| --- | --- | --- |
+| mean saturation | 0.532 | 0.155 |
+| mean max channel | 0.0166 | 0.0166 |
+| blue/red ratio | 2.17 | 1.22 |
+
+33% of the moon's cold tint survives, and 75% of the loss is in the 0.00-0.02 band. Stone beside a
+brazier is **identical in all three runs** — torch-lit material is above 0.08 and keeps its warmth.
+Note the mean max channel is unchanged to four decimals on a real frame: the identity holds in the
+shipped build.
+
+So the frame's dark ground reads neutral grey where it used to read deep blue. That is precisely
+what the change was built to do — `check_look.py`'s saturation criterion exists because the
+reference art's darks are near-neutral and ours were not — but it does mean losing the cold cast of
+moonlight, and that is an art judgement rather than a bug.
+
+The alternatives were simulated against both frames (the simulation reproduces the real graded frame
+to within 0.004, so it can be trusted):
+
+| edge / strength | dark frame | spawn frame | gate (<= 0.38, art band 0.311-0.371) |
+| --- | --- | --- | --- |
+| **0.08 / 0.80 (shipped)** | 0.191 | 0.333 | pass, mid-band |
+| 0.06 / 0.80 | 0.223 | 0.368 | pass, top of the band |
+| 0.05 / 1.00 | 0.210 | 0.354 | pass |
+| 0.05 / 0.80 | 0.246 | 0.393 | **fails** |
+| 0.04 / 0.80 | 0.278 | 0.424 | **fails** |
+
+Shipped as 0.08 / 0.80. Either passing alternative only moves tint survival in the 0.02-0.04 band
+from about 0.40 to 0.55 and leaves the bulk of the slab, which sits under 0.02, neutral either way —
+so neither buys back a cold moon, and both sit nearer the edge of the gate. `DREAM_SHADOW_NEUTRALISE`
+switches the whole thing off if the art call goes the other way.
+
+**Two ideas considered and dropped, with the reason.** Gating the weight on the bloom contribution
+(so a glow keeps its colour while ambient tint does not) would preserve the max-channel identity —
+any w in [0,1] does — but it would be solving a 0.0006 problem. Applying the grade to the scene
+*before* adding bloom does not merely complicate the identity argument, it destroys it: for a scene
+pixel (0, 0, 0.01) and a bloom of (0.02, 0, 0), the ungraded sum has max 0.020 and the graded sum
+has max 0.028, because the max of a sum is not determined by the max of its parts.
