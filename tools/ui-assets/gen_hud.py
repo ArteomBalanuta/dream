@@ -1727,13 +1727,23 @@ HUD_LAYOUT = {
 }
 
 
+def tip_pivot(img):
+    """The hotspot, read off the drawn art: the furthest up-left SOLID pixel along the cursor axis. The dark halo
+    is at most 0.95 opaque, so an alpha >= 250 cut on the shipped (downsampled) pixels leaves it out and the click lands
+    on the metal, not on its outline. check_hud measures the same thing from cursors.png."""
+    ys, xs = np.nonzero(U.downsample(img)[..., 3] >= 250)
+    k = (xs * math.cos(AXIS) + ys * math.sin(AXIS)).argmin()
+    return (int(xs[k]), int(ys[k]))
+
+
 def cursor_sprites():
-    piv = (int(TIP[0] * 4) + 2, int(TIP[1] * 4) + 2)
+    pointer, attack = cursor_pointer(), cursor_attack()
+    piv = tip_pivot(pointer)
     return [
-        U.Sprite("cursor.pointer", cursor_pointer(), pivot=piv),
+        U.Sprite("cursor.pointer", pointer, pivot=piv),
         U.Sprite("cursor.pressed", cursor_pressed(), pivot=tuple(int((v + 1) * 4) for v in cp(6.0, -0.6))),
         U.Sprite("cursor.grab", cursor_grab(), pivot=(44, 44)),
-        U.Sprite("cursor.attack", cursor_attack(), pivot=tuple(int(v * 4) for v in cp(0.8, 0.0))),
+        U.Sprite("cursor.attack", attack, pivot=tip_pivot(attack)),
         U.Sprite("cursor.forbid", cursor_forbid(), pivot=piv),
     ]
 

@@ -21,6 +21,7 @@ ROOT = TOOLS.parents[1] / "dream" / "ui" / "hud"
 HUD = ROOT / "hud.json"
 CUR = ROOT / "cursors.json"
 GEN = TOOLS / "gen_hud.py"
+TIP_PX = 1.5  # hotspot to the drawn point, art px
 NHP = ("normal", "hover", "pressed")
 
 SIZES_U = {
@@ -368,6 +369,17 @@ def check_states(errs, S, C):
         errs.append(f"cursor.pressed differs on only {changed:.1%} of pixels")
 
 
+def tip_distance(img, pivot):
+    """Pixels from the pivot to the up-left extreme of the SOLID art. The halo is at most 0.95 opaque, so alpha >= 250
+    leaves it out: a click must land on the drawn point, not on its outline."""
+    ys, xs = np.nonzero(img[..., 3] >= 250)
+    if not len(xs):
+        return float("inf")
+    s = xs + ys
+    on = s == s.min()
+    return float(np.sqrt((xs[on] - pivot[0]) ** 2 + (ys[on] - pivot[1]) ** 2).min())
+
+
 def check_cursors(errs, C, cur):
     for name in CURSORS:
         px, py = cur["sprites"][name]["pivot"]
@@ -377,6 +389,10 @@ def check_cursors(errs, C, cur):
             errs.append(f"{name}: pivot not on the art")
         if px >= 64 or py >= 64:
             errs.append(f"{name}: pivot not upper-left")
+    for name in ("cursor.pointer", "cursor.attack"):
+        d = tip_distance(C(name), cur["sprites"][name]["pivot"])
+        if d > TIP_PX:
+            errs.append(f"{name}: pivot is {d:.1f} px from the solid tip, want <= {TIP_PX}")
 
 
 def attack_errors(pointer, attack, pivot):
@@ -393,9 +409,9 @@ def attack_errors(pointer, attack, pivot):
     if not len(xs):
         errs.append("cursor.attack is empty")
     else:
-        d = np.sqrt((xs - pivot[0]) ** 2 + (ys - pivot[1]) ** 2).min()
-        if d > 2.0:
-            errs.append(f"cursor.attack: nearest opaque pixel is {d:.1f} px from the pivot, want <= 2")
+        d = tip_distance(attack, pivot)
+        if d > TIP_PX:
+            errs.append(f"cursor.attack: pivot is {d:.1f} px from the solid tip, want <= {TIP_PX}")
     return errs
 
 
@@ -417,6 +433,14 @@ def self_test():
         errs.append("self_test: an attack cursor equal to the pointer passed the IoU gate")
     if not any("pivot" in e for e in attack_errors(pointer, small, (20, 100))):
         errs.append("self_test: a pivot far from the art passed the pivot gate")
+    # on the art, 5 px behind the point, as the old gate allowed: it must now fail
+    if not any("pivot" in e for e in attack_errors(pointer, small, (72, 15))):
+        errs.append("self_test: a pivot on the art but far from the tip passed the pivot gate")
+    # a dark halo around the point must not count as the tip
+    halo = small.copy()
+    halo[5:10, 70:76, 3] = 200
+    if not any("pivot" in e for e in attack_errors(pointer, halo, (72, 6))):
+        errs.append("self_test: a pivot on the halo, short of the solid tip, passed the pivot gate")
     return errs
 
 
