@@ -1,10 +1,10 @@
 # Dream
 
-`dream` is an isometric, gothic, multiplayer action RPG for Windows, written in C# on .NET 10. You pick a character, walk a dark world seen from an isometric camera, fight enemies with skills, collect loot, trade with vendors and take quests. The world is owned by an authoritative server; the desktop client is a protocol client of it, whether the server is the one it starts on loopback for Single Player or a dedicated server elsewhere.
+`dream` is an isometric, gothic, multiplayer action RPG for Windows and Linux (x64), written in C# on .NET 10. Windows is the tested platform; Linux bundles build and pass their file checks, but have not yet been started on a Linux machine (see [docs/cross-platform.md](docs/cross-platform.md)). You pick a character, walk a dark world seen from an isometric camera, fight enemies with skills, collect loot, trade with vendors and take quests. The world is owned by an authoritative server; the desktop client is a protocol client of it, whether the server is the one it starts on loopback for Single Player or a dedicated server elsewhere.
 
 ## At A Glance
 
-- **Client:** OpenTK 4.9 window and OpenGL renderer, ImGui for menus, SharpGLTF for models, SixLabors.ImageSharp for images, NAudio for the sound pack under `dream/audio/`. The camera is isometric; it is the only view the client reaches.
+- **Client:** OpenTK 4.9 window and OpenGL renderer, ImGui for menus, SharpGLTF for models, SixLabors.ImageSharp for images, NAudio (WinMM) on Windows and OpenAL elsewhere for the sound pack under `dream/audio/` (`DREAM_AUDIO_BACKEND` overrides). The camera is isometric; it is the only view the client reaches.
 - **Server:** server-authoritative, fixed 64 Hz simulation (`SimulationClock.AuthoritativeTicksPerSecond`), actor snapshots every second tick (32 Hz by default, `DREAM_SNAPSHOT_INTERVAL_TICKS`). Physics through BulletSharp. TCP transport with length-prefixed JSON envelopes.
 - **Protocol:** version 22 (`TransportEnvelope.CurrentProtocolVersion`); a peer on another version is refused.
 - **Persistence:** SQLite worlds (`Microsoft.Data.Sqlite`, WAL mode). Accounts, characters, inventories, quests and enemies live in the world database `player-profiles.db`; schema and migrations are under `dream/config/`.
@@ -13,7 +13,7 @@
 
 ## Build, Run, Test
 
-Prerequisites: the .NET 10 SDK (`global.json` pins the version) and Windows with OpenGL.
+Prerequisites: the .NET 10 SDK (`global.json` pins the version) and Windows with OpenGL. Development, tests and the tooling are Windows-first; Linux is a packaging target.
 
 ```powershell
 dotnet build dream\dream.csproj
@@ -30,6 +30,20 @@ Faster loops (details in [docs/build-and-run.md](docs/build-and-run.md), Fast lo
 - `dream.exe --validate-content` checks the content JSON without starting the game.
 - `tools\dev\worktrees.ps1` reports (read-only by default) the git worktrees and their build output sizes.
 - `tools\dev\gallery.py` builds an HTML page of the generated art and the newest capture screenshots.
+
+## Shareable Builds
+
+Self-contained client bundles that need no SDK or .NET runtime on the recipient's machine (details, Linux requirements and
+what is verified: [docs/cross-platform.md](docs/cross-platform.md)):
+
+```powershell
+just package-windows    # artifacts\dist\dream-<version>-win-x64.zip
+just package-linux      # artifacts\dist\dream-<version>-linux-x64.tar.gz (built on Windows too)
+just package-all        # both, in parallel
+just run-dist           # start the newest packaged client
+```
+
+Bundles are built from the last commit, not from the working tree. On Linux, unpack the tar.gz and run `./run-dream.sh`.
 
 ## Controls
 

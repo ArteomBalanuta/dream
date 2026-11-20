@@ -2,9 +2,26 @@
 
 Shareable, self-contained desktop clients for win-x64 and linux-x64. Recipients install no SDK and no .NET runtime.
 
+## Status
+
+On `master` since 2026-11-20 (`3f1e6dfc`). What has and has not been checked:
+
+| | win-x64 | linux-x64 |
+| --- | --- | --- |
+| Bundle builds and passes `archive_bundle.py verify` | yes | yes (cross-built on Windows) |
+| Started from the extracted bundle | yes: `--validate-content`, `--worlds list` on a fresh `DREAM_DATA_DIR`, and a capture of the player walking on the ground (Bullet loaded) | **no**: no Linux host or WSL was available |
+| Sound | WinMM, as before | **OpenAL backend never run on any machine** |
+| Bullet profiler guard (the >63-thread crash) | patched | not patched |
+| `package.ps1` on a Linux host (pwsh 7) | n/a | not run (paths are written portably) |
+
+Confirming Linux: run `just package-linux`, copy the tar.gz to a Linux x64 desktop, `tar -xzf` it and run `./run-dream.sh`.
+It is confirmed when the title screen appears, Single Player reaches the world, the player walks on the ground and the
+menu plays sound. If it fails, the console output and the missing library (`ldd ./libbulletc.so ./libcimgui.so
+./libglfw.so.3`) are what to look at first.
+
 ## Commands
 
-Run from the repo root (needs `just`, Python and, for Windows bundles, the Visual Studio C++ redistributable).
+Run from the repo root (needs `just` and Python; a win-x64 bundle also needs a `vcomp140.dll` source, see Outputs).
 
 ```powershell
 just package-windows          # artifacts\dist\dream-<version>-win-x64.zip
@@ -70,8 +87,8 @@ copy `libbulletc` under platform-suffixed names into the wrong places; the proje
 copy the right file as `libbulletc.dll` or `libbulletc.so` into any build or publish output.
 
 - `vcomp140.dll`: `libbulletc.dll` imports `VCOMP140.DLL`, so a machine without the VC++ redistributable could not load
-  physics. The Windows bundle copies it from `VC\Redist\MSVC\<ver>\x64\Microsoft.VC14*.OpenMP` (found through
-  vswhere; packaging fails clearly when it is missing).
+  physics. The Windows bundle ships its own copy (sources in the order listed under Outputs; packaging fails before
+  any work when none is found).
 - `BulletProfilerGuard` (`dream/Simulation/Physics/BulletProfilerGuard.cs`) patches Windows x64 only. Linux keeps the latent
   crash when Bullet's profiler sees more than 63 threads. Follow-up: resolve `btGetCurrentThreadIndex` with `dlsym`.
 

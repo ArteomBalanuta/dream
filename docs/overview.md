@@ -2,7 +2,7 @@
 
 ## What This Project Is
 
-`dream` is an isometric, gothic, multiplayer action RPG for Windows, written in C# on .NET 10 (OpenTK renderer, BulletSharp physics, SQLite persistence). A player picks a character, walks the world by clicking, fights enemies with skills, loots them, trades with vendors and takes quests. Everything that matters is decided by a server that owns the world; the desktop client predicts its own player, draws the replicated state and sends commands.
+`dream` is an isometric, gothic, multiplayer action RPG for Windows and Linux x64 (Linux bundles built but not yet run on a Linux machine; `docs/cross-platform.md`), written in C# on .NET 10 (OpenTK renderer, BulletSharp physics, SQLite persistence). A player picks a character, walks the world by clicking, fights enemies with skills, loots them, trades with vendors and takes quests. Everything that matters is decided by a server that owns the world; the desktop client predicts its own player, draws the replicated state and sends commands.
 
 ## Runtime Flow
 

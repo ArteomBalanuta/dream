@@ -8,7 +8,7 @@ Dream keeps BulletSharp (managed wrapper over Bullet's `libbulletc`) for the Lin
 
 Bullet is not a decoration: the player is a Bullet rigid body (`dream/Simulation/Players/PlayerMotor.cs`), terrain and cube colliders are Bullet shapes bound by `dream/Simulation/World/WorldPhysicsBinder.cs`, and both the client (`dream/Client/World/ClientWorldSession.cs`) and the server (`dream/Simulation/Runtime/WorldSessionRuntime.cs`) step it. Replacing it changes movement feel and lockstep determinism, which is a separate project with its own tests.
 
-BulletSharp 0.11.1 ships `libbulletc` for Linux x64 inside the package, so the Linux client needs no native build of our own. The package's `build` assets are excluded and the natives are copied per RID as `libbulletc.dll` / `libbulletc.so` (workstream W1).
+BulletSharp 0.11.1 ships `libbulletc` for Linux x64 inside the package, so the Linux client needs no native build of our own. The package's `build` assets are excluded and the natives are copied per RID as `libbulletc.dll` / `libbulletc.so` by RID-conditioned `None` items in `dream/dream.csproj`.
 
 ## Consequences
 
