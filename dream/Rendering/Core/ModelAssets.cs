@@ -38,6 +38,7 @@ public static class ModelAssets
     // GLB, so a path whose asset is not shipped yet costs one failed background decode (logged by
     // RenderFaultLog) and draws nothing.
     public static readonly string HoundPath = BeastAssetDefinition.HoundModelPath;
+    public static readonly string SkeletonPath = SkeletonAssetDefinition.ModelPath;
     public static readonly string NpcVendorPath = NpcAssetDefinition.VendorModelPath;
     public static readonly string NpcSmithPath = NpcAssetDefinition.SmithModelPath;
     public static readonly string NpcWardenPath = NpcAssetDefinition.WardenModelPath;

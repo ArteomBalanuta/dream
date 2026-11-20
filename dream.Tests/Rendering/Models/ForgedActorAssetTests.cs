@@ -94,6 +94,35 @@ public class ForgedActorAssetTests
         Assert.NotEqual(BeastAssetDefinition.MoveClip, BeastAssetDefinition.GallopClip);
     }
 
+    // The skeleton's four clip names, against the SHIPPED GLB: nothing in the engine throws on a clip
+    // it cannot find, so a forge that renamed one would freeze the skeleton in its pose.
+    public static TheoryData<string> SkeletonClipNames => new()
+    {
+        SkeletonAssetDefinition.IdleClip,
+        SkeletonAssetDefinition.MoveClip,
+        SkeletonAssetDefinition.AttackClip,
+        SkeletonAssetDefinition.DieClip
+    };
+
+    [Fact]
+    public void TheSkeleton_IsShipped()
+    {
+        Assert.True(
+            File.Exists(SkeletonAssetDefinition.ModelPath),
+            $"Missing forged skeleton at {SkeletonAssetDefinition.ModelPath}");
+    }
+
+    [Theory]
+    [MemberData(nameof(SkeletonClipNames))]
+    public void TheShippedSkeleton_CarriesEveryClipItsClipSetNames(string clipName)
+    {
+        AnimatedModelData data = AnimatedModelData.Load(SkeletonAssetDefinition.ModelPath);
+
+        Assert.True(
+            data.Skeleton.TryGetClip(clipName, out _),
+            $"The shipped skeleton GLB has no '{clipName}' clip; the enemy would hold its pose instead of animating.");
+    }
+
     // Every clip name the wolf's EnemyClipSet can return, against the SHIPPED third-party pack. This is
     // the one that matters most here: the strings are not ours, nothing in the engine throws on a clip it
     // cannot find (AnimatedModelInstance just holds the pose), and `Die` really was aliased to the idle

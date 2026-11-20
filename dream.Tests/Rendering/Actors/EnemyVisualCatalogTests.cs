@@ -125,7 +125,7 @@ public sealed class EnemyVisualCatalogTests
     [InlineData(EnemyBehaviorState.Dead)]
     public void TheBehaviourOnlyResolve_IsTheZeroSpeedCase(EnemyBehaviorState state)
     {
-        foreach (EnemyClipSet clips in new[] { EnemyVisualCatalog.WolfClips, EnemyVisualCatalog.HoundClips })
+        foreach (EnemyClipSet clips in new[] { EnemyVisualCatalog.WolfClips, EnemyVisualCatalog.HoundClips, EnemyVisualCatalog.SkeletonClips })
         {
             Assert.Equal(clips.Resolve(state, 0f), clips.Resolve(state));
         }
@@ -212,6 +212,84 @@ public sealed class EnemyVisualCatalogTests
         Assert.True(howler > 0 && hound > howler);
     }
 
+    [Fact]
+    public void TheSkeleton_IsItsOwnModel_WithItsOwnClips()
+    {
+        EnemyVisual skeleton = EnemyVisualCatalog.Resolve(EnemyVisualCatalog.SkeletonKey);
+
+        Assert.Equal("enemy.skeleton", EnemyVisualCatalog.SkeletonKey);
+        Assert.Equal(SkeletonAssetDefinition.ModelPath, skeleton.ModelPath);
+        Assert.NotEqual(WolfAssetDefinition.ModelPath, skeleton.ModelPath);
+        Assert.NotEqual(BeastAssetDefinition.HoundModelPath, skeleton.ModelPath);
+        Assert.EndsWith(
+            Path.Combine("animations", "enemies", "skeleton.glb"),
+            skeleton.ModelPath,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SkeletonAssetDefinition.IdleClip, skeleton.Clips.Idle);
+        Assert.Equal(SkeletonAssetDefinition.MoveClip, skeleton.Clips.Move);
+        Assert.Equal(SkeletonAssetDefinition.AttackClip, skeleton.Clips.Attack);
+        Assert.Equal(SkeletonAssetDefinition.DieClip, skeleton.Clips.Die);
+        Assert.NotEqual(skeleton.Clips.Idle, skeleton.Clips.Die);
+    }
+
+    // The skeleton normalises to its own biped height and is authored dark, so unlike the hound it
+    // keeps neither the dire wolf's 1.35 nor its tint. Both differ from the hound's on purpose.
+    [Fact]
+    public void TheSkeleton_IsUnscaled_AndUntinted_BecauseItReplacesNoOtherModel()
+    {
+        EnemyVisual skeleton = EnemyVisualCatalog.Resolve(EnemyVisualCatalog.SkeletonKey);
+        EnemyVisual hound = EnemyVisualCatalog.Resolve(EnemyVisualCatalog.HoundKey);
+
+        Assert.Equal(1f, skeleton.ScaleMultiplier);
+        Assert.Equal(Vector3.Zero, skeleton.TintOffset);
+        Assert.NotEqual(hound.ScaleMultiplier, skeleton.ScaleMultiplier);
+        Assert.NotEqual(hound.TintOffset, skeleton.TintOffset);
+    }
+
+    [Fact]
+    public void TheSkeletonsSprintAndMoveClips_AreTheSameOnPurpose_BecauseItHasOneGait()
+    {
+        EnemyClipSet clips = EnemyVisualCatalog.SkeletonClips;
+
+        Assert.Equal(clips.Move, clips.Sprint);
+        Assert.Equal(SkeletonAssetDefinition.MoveClip, clips.Sprint);
+        // So the gait choice is a no-op at every speed, across the threshold and well past it.
+        foreach (float speed in new[] { 0.5f, 1.4f, 2.9f, 3.0f, 3.4f, 9f })
+        {
+            Assert.Equal(clips.Move, clips.Resolve(EnemyBehaviorState.Chasing, speed));
+        }
+
+        // Liveness: the wolf and hound have two gaits, so the same comparison can say "different".
+        Assert.NotEqual(EnemyVisualCatalog.WolfClips.Move, EnemyVisualCatalog.WolfClips.Sprint);
+        Assert.NotEqual(EnemyVisualCatalog.HoundClips.Move, EnemyVisualCatalog.HoundClips.Sprint);
+        // The stride is scaled to its authored chase speed (3.4), so a chase at it plays at rate 1.
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 3.4f), 4);
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 1.4f), 4);
+    }
+
+    // Read the same way as the hound's: the skeleton key appears once, under the RisenSkeleton kind.
+    [Fact]
+    public void OnlyTheRisenSkeleton_PointsAtTheSkeleton()
+    {
+        string json = ReadEnemiesJson();
+
+        Assert.Equal(1, json.Split("enemy.skeleton", StringSplitOptions.None).Length - 1);
+        int kind = json.IndexOf("RisenSkeleton", StringComparison.Ordinal);
+        int key = json.IndexOf("enemy.skeleton", StringComparison.Ordinal);
+        Assert.True(kind > 0 && key > kind);
+    }
+
+    private static string ReadEnemiesJson()
+    {
+        string root = AppContext.BaseDirectory;
+        while (root != null && !File.Exists(Path.Combine(root, "dream", "config", "content", "enemies.json")))
+        {
+            root = Path.GetDirectoryName(root)!;
+        }
+
+        return File.ReadAllText(Path.Combine(root!, "dream", "config", "content", "enemies.json"));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -219,6 +297,9 @@ public sealed class EnemyVisualCatalogTests
     [InlineData("enemy.unknown")]
     [InlineData("ENEMY.DIRE-WOLF")]
     [InlineData("enemy.dire-wolf ")]
+    [InlineData("ENEMY.SKELETON")]
+    [InlineData("enemy.skeleton ")]
+    [InlineData("enemy.skeleto")]
     public void UnknownOrNullKeys_DrawTheDefaultWolf(string? key)
     {
         Assert.Equal(EnemyVisualCatalog.Resolve("enemy.wolf"), EnemyVisualCatalog.Resolve(key));
