@@ -137,7 +137,7 @@ public static class EnemyVisualCatalog
         GaitHysteresisSpeed);
 
     // The skeleton has ONE gait, so its Sprint is its Move and the gait choice is a no-op. Its
-    // sprint reference is the RisenSkeleton's authored chase speed (3.4), the way the hound's is the
+    // sprint reference is the RisenSkeleton's authored chase speed (3.6), the way the hound's is the
     // Grave Howler's 6.0, so the walk clip's stride is scaled to the speed it actually chases at.
     public static readonly EnemyClipSet SkeletonClips = new(
         SkeletonAssetDefinition.IdleClip,
@@ -146,7 +146,7 @@ public static class EnemyVisualCatalog
         SkeletonAssetDefinition.DieClip,
         SkeletonAssetDefinition.MoveClip,
         PatrolReferenceSpeed,
-        3.4f,
+        3.6f,
         GaitThresholdSpeed,
         GaitHysteresisSpeed);
 

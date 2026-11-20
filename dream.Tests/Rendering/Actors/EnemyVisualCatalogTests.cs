@@ -254,7 +254,7 @@ public sealed class EnemyVisualCatalogTests
         Assert.Equal(clips.Move, clips.Sprint);
         Assert.Equal(SkeletonAssetDefinition.MoveClip, clips.Sprint);
         // So the gait choice is a no-op at every speed, across the threshold and well past it.
-        foreach (float speed in new[] { 0.5f, 1.4f, 2.9f, 3.0f, 3.4f, 9f })
+        foreach (float speed in new[] { 0.5f, 1.4f, 2.9f, 3.0f, 3.6f, 9f })
         {
             Assert.Equal(clips.Move, clips.Resolve(EnemyBehaviorState.Chasing, speed));
         }
@@ -262,8 +262,8 @@ public sealed class EnemyVisualCatalogTests
         // Liveness: the wolf and hound have two gaits, so the same comparison can say "different".
         Assert.NotEqual(EnemyVisualCatalog.WolfClips.Move, EnemyVisualCatalog.WolfClips.Sprint);
         Assert.NotEqual(EnemyVisualCatalog.HoundClips.Move, EnemyVisualCatalog.HoundClips.Sprint);
-        // The stride is scaled to its authored chase speed (3.4), so a chase at it plays at rate 1.
-        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 3.4f), 4);
+        // The stride is scaled to its authored chase speed (3.6), so a chase at it plays at rate 1.
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 3.6f), 4);
         Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 1.4f), 4);
     }
 
