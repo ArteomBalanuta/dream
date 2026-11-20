@@ -5,6 +5,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui;
+using Dream.Rendering.Ui.Panels;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -374,7 +375,7 @@ public partial class Render
         List<WorldActorLabelState> labels = _worldActorLabels;
         labels.Clear();
         // The actor the hover info panel shows loses its floating label while the panel is up.
-        HoverTargetId panel = HoverPanel.Visible && HoverPanel.Alpha > 0f && HoverInfo is not null ? HoverInfo.Target : HoverTargetId.None;
+        HoverTargetId panel = HoverInfoPanel.WillDraw(HoverPanel, HoverInfo) ? HoverInfo!.Target : HoverTargetId.None;
         int? skipPlayer = panel.Kind == HoverKind.RemotePlayer ? (int)panel.Id : null;
         int? skipEnemy = panel.Kind == HoverKind.Enemy ? (int)panel.Id : null;
         ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels, skipPlayer);
