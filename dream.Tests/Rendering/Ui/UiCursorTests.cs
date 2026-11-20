@@ -69,4 +69,35 @@ public class UiCursorTests
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(AssetPaths.UiDirectory, "hud", "cursors.json")));
         Assert.Equal(UiCursor.ArtPixelsPerUnit, doc.RootElement.GetProperty("scale").GetSingle());
     }
+
+    // The sword's drawn tip (the real cursors.json pivot) lands on the pointer, whatever the layout scale.
+    [Theory]
+    [InlineData(1f)]
+    [InlineData(2f)]
+    [InlineData(3f)]
+    [InlineData(4f)]
+    [InlineData(5.5f)]
+    [InlineData(8f)]
+    public void AttackTip_LandsOnThePointerAtEveryLayoutScale(float scale)
+    {
+        UiSprite sprite = StatusBarTestData.Table.Get(UiSpriteNames.CursorAttack);
+        float k = scale / UiCursor.ArtPixelsPerUnit;
+        foreach (Vector2 at in new[] { new Vector2(400f, 300f), new Vector2(0f, 0f), new Vector2(123.4f, 77.7f) })
+        {
+            UiRect r = UiCursor.Rect(in sprite, at, scale);
+            // The origin is rounded to a whole pixel, so the tip is within half a pixel.
+            Assert.InRange(r.X + sprite.PivotX * k - at.X, -0.5f, 0.5f);
+            Assert.InRange(r.Y + sprite.PivotY * k - at.Y, -0.5f, 0.5f);
+            Assert.Equal(sprite.W * k, r.W, 3);
+            Assert.Equal(sprite.H * k, r.H, 3);
+        }
+    }
+
+    [Fact]
+    public void AttackPivot_IsTheRealBladeTipInsideTheTopLeftQuarter()
+    {
+        UiSprite sprite = StatusBarTestData.Table.Get(UiSpriteNames.CursorAttack);
+        Assert.InRange(sprite.PivotX, 0f, 63f);
+        Assert.InRange(sprite.PivotY, 0f, 63f);
+    }
 }
