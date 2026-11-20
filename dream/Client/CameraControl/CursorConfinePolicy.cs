@@ -10,6 +10,18 @@ public static class CursorConfinePolicy
         bool fullscreenLike,
         bool pauseOrSettingsOpen,
         bool loading,
-        bool inPlay) =>
-        throw new NotImplementedException("tactical-camera stub");
+        bool inPlay)
+    {
+        if (mode == CameraConfineMode.Off || !focused || minimised || !inPlay || pauseOrSettingsOpen || loading)
+        {
+            return false;
+        }
+
+        return mode switch
+        {
+            CameraConfineMode.FullscreenOnly => fullscreenLike,
+            CameraConfineMode.Always => true,
+            _ => false
+        };
+    }
 }
