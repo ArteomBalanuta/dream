@@ -3,6 +3,7 @@ using Dream.Rendering.Ui.Panels;
 using Dream.Tests.Utilities;
 using OpenTK.Mathematics;
 using Xunit;
+using Dream.Tests.Support;
 
 namespace Dream.Tests.Rendering.Ui.Panels;
 
@@ -79,12 +80,51 @@ public class HoverInfoPanelTests
         Assert.Equal(0, c.Count);
     }
 
-    [Fact]
-    public void ReserveCoversTheWorstCasePanelAndWhatDrawsAfterIt()
+    // Measured, not restated: the fullest panel there can be (every bar and line, every string a long run of a
+    // one-pixel glyph, so the width never cuts it first) drawn into a real batch at every UI scale emits no more
+    // quads than WorstCaseQuads. Without the per-string glyph cap this fails: 200 dots fit the panel's width.
+    [Theory]
+    [InlineData(1f)]
+    [InlineData(2f)]
+    [InlineData(3f)]
+    [InlineData(4f)]
+    public void TheFullestPanel_InARealBatch_StaysWithinTheWorstCase(float scale)
     {
-        Assert.Equal(
-            HoverInfoPanel.FrameQuads + (HoverInfoPanel.QuadsPerBar * HoverInfo.MaxBars) + (HoverInfoPanel.MaxRows * HoverInfoPanel.MaxGlyphsPerRow * 2),
-            HoverInfoPanel.WorstCaseQuads);
+        UiGlyphTable glyphs = BlockGlyphs.Create();
+        // A drawn glyph box (so no scale culls it) with a one-pixel advance: 200 of them fit the panel's width.
+        glyphs.Set(UiTextStyle.Body, '.', new UiGlyph(0f, 2f, 6f, 11f, 0f, 0f, 1f, 1f, 1f));
+        UiBatch batch = new(glyphs);
+        UiLayout l = UiLayout.Create(1920, 1080, scale);
+        batch.BeginFrame(in l);
+        batch.TextScale = l.TextScale;
+
+        string dots = new('.', 200);
+        HoverInfo info = new()
+        {
+            Target = new HoverTargetId(HoverKind.Enemy, 7),
+            Disposition = HoverDisposition.Hostile,
+            Title = dots,
+            Subtitle = dots,
+            Hint = dots,
+            BarCount = HoverInfo.MaxBars,
+            LineCount = HoverInfo.MaxLines
+        };
+        for (int n = 0; n < HoverInfo.MaxBars; n++)
+        {
+            info.Bars[n] = new HoverBar(HoverBarKind.Health, 50, 100, dots);
+        }
+
+        for (int n = 0; n < HoverInfo.MaxLines; n++)
+        {
+            info.Lines[n] = new HoverLine(".", dots);
+        }
+
+        int before = batch.QuadCount;
+        HoverInfoPanel.Build(batch, Input(), ViewFor(info), in l, StatusBarTestData.Table);
+        int used = batch.QuadCount - before;
+
+        Assert.True(used > 4 * HoverInfoPanel.MaxGlyphsPerRow, $"the panel's text must have drawn (used {used} quads at layout scale {l.Scale})");
+        Assert.True(used <= HoverInfoPanel.WorstCaseQuads, $"panel emitted {used} quads, worst case is {HoverInfoPanel.WorstCaseQuads}");
         Assert.True(HoverInfoPanel.ReserveQuads >= HoverInfoPanel.WorstCaseQuads + HoverInfoPanel.DownstreamQuads);
     }
 

@@ -163,4 +163,44 @@ public class ClassicHudSurfaceTests
         Assert.False(stillHeld.PrimaryUsePressed);
         Assert.True(fresh.PrimaryUsePressed);
     }
+
+    // The world hover takes a hovered clickable label as its target. A frame the classic HUD does not build (still
+    // loading, failed) must not leave the last frame's label hover behind, or the hover stays pinned on that NPC.
+    [Fact]
+    public void ALabelHover_DoesNotSurviveAFrameThatBuildsNoLabels()
+    {
+        FakeBackend backend = new() { Sprites = Sprites() };
+        ClassicHudSurface surface = new(backend);
+        HudLabelClick npc = new(HudLabelClickKind.InteractNpc, 5001);
+        HudWorldLabel[] labels = [new HudWorldLabel(new Vector2(700f, 300f), "Mara", "", npc)];
+        ClassicHudFrame frame = Frame() with { Pointer = new UiPointer(new Vector2(700f, 305f), false, false, true), Labels = labels };
+
+        surface.Draw(frame);
+        surface.Draw(frame);
+        Assert.Equal(npc, surface.HoveredLabel);
+
+        backend.State = ClassicHudBackendState.Loading;
+        Assert.False(surface.Draw(frame));
+        Assert.Equal(default, surface.HoveredLabel);
+    }
+
+    // And the renderer only reads the label hover from a frame the classic HUD really built: every path through
+    // the HUD pass (built or not, a throw, the ImGui surface) sets the flag it is gated on.
+    [Fact]
+    public void TheRenderer_GatesTheLabelHover_OnEveryPathOfTheHudPass()
+    {
+        string root = AppContext.BaseDirectory;
+        while (!Directory.Exists(Path.Combine(root, "dream", "Rendering")))
+        {
+            root = Path.GetDirectoryName(root)!;
+        }
+
+        string hud = File.ReadAllText(Path.Combine(root, "dream", "Rendering", "Core", "Render.Hud.cs"));
+        Assert.Contains("ClassicHoveredLabel => _classicLabelsBuilt ?", hud, StringComparison.Ordinal);
+        Assert.Contains("_classicLabelsBuilt = drew;", hud, StringComparison.Ordinal);
+        int catchAt = hud.IndexOf("catch (Exception ex)", hud.IndexOf("_classicLabelsBuilt = drew;", StringComparison.Ordinal), StringComparison.Ordinal);
+        int clearedInCatch = hud.IndexOf("_classicLabelsBuilt = false;", catchAt, StringComparison.Ordinal);
+        Assert.True(catchAt > 0 && clearedInCatch > catchAt && clearedInCatch - catchAt < 200, "the catch must clear the flag");
+        Assert.True(hud.IndexOf("_classicLabelsBuilt = false;", clearedInCatch + 1, StringComparison.Ordinal) > clearedInCatch, "the ImGui branch must clear the flag");
+    }
 }

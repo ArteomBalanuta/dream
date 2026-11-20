@@ -15,13 +15,14 @@ public static class HoverInfoPanel
     public const float OtherWidthUnits = 110f;
 
     // Worst case of the panel's own quads: the nine-slice frame, every bar (frame, trough, fill, lit edge), and a
-    // glyph quad plus its shadow quad for every glyph of every row. A row is cut to the panel width, so a row holds
-    // at most MaxGlyphsPerRow glyphs; the rows are title, subtitle, the bars' texts, the lines and the hint.
+    // glyph quad plus its shadow quad for every glyph of every string. Every string is cut to the panel width AND to
+    // MaxGlyphsPerRow characters (Text enforces it, so the bound holds for any font, even a title of narrow dots).
+    // The strings are the title, subtitle and hint, one per bar, and two per line (its label and its value).
     public const int FrameQuads = 9;
     public const int QuadsPerBar = 4;
     public const int MaxGlyphsPerRow = 32;
-    public const int MaxRows = 3 + HoverInfo.MaxBars + HoverInfo.MaxLines;
-    public const int WorstCaseQuads = FrameQuads + (QuadsPerBar * HoverInfo.MaxBars) + (MaxRows * MaxGlyphsPerRow * 2);
+    public const int MaxStrings = 3 + HoverInfo.MaxBars + (2 * HoverInfo.MaxLines);
+    public const int WorstCaseQuads = FrameQuads + (QuadsPerBar * HoverInfo.MaxBars) + (MaxStrings * MaxGlyphsPerRow * 2);
 
     // What the item tooltip, the context menu, the drag ghost and the cursor still need after this panel.
     public const int DownstreamQuads = 256;
@@ -63,7 +64,8 @@ public static class HoverInfoPanel
     };
 
     // True when Build has anything to draw for this state and info; the world label of the hovered actor yields
-    // to the panel exactly when this holds.
+    // to the panel when this holds. Build can still skip a frame on a nearly full batch or a non-finite pointer,
+    // which cannot be known when the labels are projected; then that actor shows neither for that frame.
     public static bool WillDraw(in HoverPanelState state, HoverInfo? info) =>
         state.Visible && float.IsFinite(state.Alpha) && state.Alpha > 0f && info is not null && !info.Target.IsNone;
 
@@ -193,6 +195,11 @@ public static class HoverInfoPanel
         }
 
         ReadOnlySpan<char> span = text.AsSpan();
+        if (span.Length > MaxGlyphsPerRow)
+        {
+            span = span[..MaxGlyphsPerRow];
+        }
+
         span = span[..UiText.FitLength(c, span, in t, maxWidth)];
         if (span.IsEmpty)
         {
