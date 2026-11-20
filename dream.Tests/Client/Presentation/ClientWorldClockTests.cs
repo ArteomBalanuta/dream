@@ -185,4 +185,83 @@ public class ClientWorldClockTests
         Assert.Equal(WorldClockSettings.StartTimeOfDay01, clock.TimeOfDay01Exact(99.5));
         Assert.Equal(WorldDayPhase.Day, clock.Phase(99.5));
     }
+
+    private static WorldClockAnchor A(ulong serverTick, long worldTicks) =>
+        new(serverTick, worldTicks, Settings.TicksPerDay, Settings.StartOffsetTicks);
+
+    [Fact]
+    public void Join_OlderThanAHeldJump_OnTheSameTimeline_KeepsTheJump()
+    {
+        ClientWorldClock clock = new();
+        WorldClockAnchor jump = A(900, 50_000);
+        clock.ApplyJump(jump);
+
+        clock.ApplyJoin(A(500, 0));
+
+        Assert.Equal(jump, clock.Anchor);
+    }
+
+    [Fact]
+    public void Join_LaterThanAHeldJump_ReplacesIt()
+    {
+        ClientWorldClock clock = new();
+        clock.ApplyJump(A(900, 50_000));
+        WorldClockAnchor join = A(1000, 50_100);
+
+        clock.ApplyJoin(join);
+
+        Assert.Equal(join, clock.Anchor);
+    }
+
+    [Fact]
+    public void Join_WithOtherClockSettings_WinsOverTheJump()
+    {
+        ClientWorldClock clock = new();
+        clock.ApplyJump(A(900, 50_000));
+        WorldClockAnchor join = new(500, 0, Settings.TicksPerDay * 2, Settings.StartOffsetTicks);
+
+        clock.ApplyJoin(join);
+
+        Assert.Equal(join, clock.Anchor);
+    }
+
+    [Fact]
+    public void Join_DropsTheHeldJump_AfterUsingIt()
+    {
+        ClientWorldClock clock = new();
+        clock.ApplyJump(A(900, 50_000));
+        clock.ApplyJoin(A(500, 0));
+        WorldClockAnchor second = A(600, 0);
+
+        clock.ApplyJoin(second);
+
+        Assert.Equal(second, clock.Anchor);
+    }
+
+    [Fact]
+    public void ApplyJoin_Null_Clears_AndDropsTheHeldJump()
+    {
+        ClientWorldClock clock = new();
+        clock.ApplyJump(A(900, 50_000));
+
+        clock.ApplyJoin(null);
+
+        Assert.False(clock.HasAnchor);
+        WorldClockAnchor join = A(500, 0);
+        clock.ApplyJoin(join);
+        Assert.Equal(join, clock.Anchor);
+    }
+
+    [Fact]
+    public void Jump_WithoutADayLength_IsIgnored()
+    {
+        ClientWorldClock clock = new();
+        WorldClockAnchor kept = A(500, 0);
+        clock.Apply(kept);
+
+        clock.ApplyJump(new WorldClockAnchor(900, 50_000, 0, 0));
+
+        Assert.Equal(kept, clock.Anchor);
+        Assert.True(clock.HasAnchor);
+    }
 }

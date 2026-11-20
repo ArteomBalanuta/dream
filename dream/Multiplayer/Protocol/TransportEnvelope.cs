@@ -78,8 +78,11 @@ public readonly record struct TransportEnvelope(
     // cast happened in the interval, so a tick without a cast is byte-identical to v21 apart from the
     // version digit; a v21 client would skip the unknown property and never show a peer's cast, so
     // both sides refuse the other.
+    // Version 23 (world clock jumps) adds the "server.world-clock" message (ServerWorldClockMessage),
+    // sent when the server moves its world clock other than by the one-tick-per-tick advance; a v22
+    // peer fails on the unknown kind, so both sides refuse each other.
     // Decode rejects any other version.
-    public const int CurrentProtocolVersion = 22;
+    public const int CurrentProtocolVersion = 23;
 
     // SCALE-2: the receiving connection's own last accepted command sequence, written in the
     // envelope header ("ack") ahead of a shared snapshot payload (ServerSnapshotMessage.SharedBody)

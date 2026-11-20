@@ -19,7 +19,7 @@ public class WorldClockAnchorProtocolTests
         string json = EncodeToJson(join);
 
         Assert.Equal(
-            """{"protocolVersion":22,"messageKind":"server.join-accepted","sequence":1,"payload":{"sessionId":"session-a","actorId":101,"currentServerTick":1234,"worldClock":{"serverTick":1234,"worldTicks":98765,"ticksPerDay":115200,"startOffsetTicks":38400}}}""",
+            """{"protocolVersion":23,"messageKind":"server.join-accepted","sequence":1,"payload":{"sessionId":"session-a","actorId":101,"currentServerTick":1234,"worldClock":{"serverTick":1234,"worldTicks":98765,"ticksPerDay":115200,"startOffsetTicks":38400}}}""",
             json);
     }
 
@@ -93,9 +93,9 @@ public class WorldClockAnchorProtocolTests
         Assert.Equal(join.CurrentServerTick, delivered.WorldClock.Value.ServerTick);
     }
 
-    // No snapshot carries the clock: the anchor is a join-accepted field only.
+    // No snapshot carries the clock: the anchor is a join-accepted field and the server.world-clock message (v23).
     [Fact]
-    public void OnlyJoinAccepted_HasAWorldClockField()
+    public void OnlyJoinAcceptedAndTheJumpMessage_HaveAWorldClockField()
     {
         Type[] messageTypes = typeof(JoinAcceptedMessage).Assembly.GetTypes()
             .Where(type => typeof(IServerToClientMessage).IsAssignableFrom(type) && !type.IsAbstract && !type.IsInterface)
@@ -107,7 +107,7 @@ public class WorldClockAnchorProtocolTests
                 property.PropertyType == typeof(WorldClockAnchor) || property.PropertyType == typeof(WorldClockAnchor?)))
             .ToArray();
 
-        Assert.Equal([typeof(JoinAcceptedMessage)], withClock);
+        Assert.Equal([typeof(JoinAcceptedMessage), typeof(ServerWorldClockMessage)], withClock.OrderBy(type => type.Name).ToArray());
         Assert.DoesNotContain(
             typeof(ServerSnapshotEnvelope).GetProperties(),
             property => property.PropertyType == typeof(WorldClockAnchor) || property.PropertyType == typeof(WorldClockAnchor?));
