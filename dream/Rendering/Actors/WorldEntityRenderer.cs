@@ -43,12 +43,17 @@ public static class WorldEntityRenderer
     private static readonly Vector3 RobeSize = new(0.7f, 1.3f, 0.5f);
     private static readonly Vector3 HeadSize = new(0.34f, 0.34f, 0.34f);
 
-    // Bone, dim rose and dim mint: the tier colours of the item names, darkened for the grim palette.
+    // The brightest a lit albedo channel may be: output is albedo x gain (about 2.2 near a brazier) with no
+    // tonemap, so a channel above this blows out by a fire (AGENTS.md, "Render colours are albedo").
+    public const float AlbedoCeiling = 0.40f;
+
+    // Bone, dim rose and dim mint: the tier colours of the item names, darkened for the grim palette. Each is the
+    // old hue scaled so its largest channel sits at AlbedoCeiling (they were 0.56-0.62, and blew out by a fire).
     public static Vector3 ItemColor(ItemRarity rarity) => rarity switch
     {
-        ItemRarity.Uncommon => new Vector3(0.62f, 0.30f, 0.38f),
-        ItemRarity.Rare => new Vector3(0.24f, 0.62f, 0.48f),
-        _ => new Vector3(0.56f, 0.53f, 0.47f)
+        ItemRarity.Uncommon => new Vector3(0.40f, 0.19f, 0.25f),
+        ItemRarity.Rare => new Vector3(0.15f, 0.40f, 0.31f),
+        _ => new Vector3(0.40f, 0.38f, 0.34f)
     };
 
     // Ground items only (M5): villagers are forged models now, drawn by NpcModelRenderer. The NPC

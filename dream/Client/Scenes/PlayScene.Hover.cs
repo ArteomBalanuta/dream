@@ -115,11 +115,10 @@ public partial class PlayScene
         _render.PointerOverEnemy = _hover.Current.Kind == HoverKind.Enemy;
 
         // The hovered thing's model reads lit up; at once on enter, gone on exit.
-        HoverTargetId current = _hover.Current;
-        bool actorId = current.Id is >= int.MinValue and <= int.MaxValue;
-        _render.Enemies.HighlightActorId = current.Kind == HoverKind.Enemy && actorId ? (int)current.Id : null;
-        _render.Npcs.HighlightActorId = current.Kind == HoverKind.Npc && actorId ? (int)current.Id : null;
-        _render.HighlightGroundItemId = current.Kind == HoverKind.GroundItem ? current.Id : null;
+        Dream.Rendering.Actors.HighlightTargets lit = Dream.Rendering.Actors.ActorHighlight.Targets(_hover.Current);
+        _render.Enemies.HighlightActorId = lit.EnemyActorId;
+        _render.Npcs.HighlightActorId = lit.NpcActorId;
+        _render.HighlightGroundItemId = lit.GroundItemId;
     }
 
     // Before the HUD pass: fills the info panel for the debounced panel target from live state.

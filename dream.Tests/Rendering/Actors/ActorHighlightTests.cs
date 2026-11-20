@@ -1,4 +1,5 @@
 using Dream.Rendering.Actors;
+using Dream.Rendering.Ui;
 using Dream.Simulation.Inventory;
 using OpenTK.Mathematics;
 using Xunit;
@@ -14,7 +15,8 @@ public sealed class ActorHighlightTests
     {
         Vector3 lift = ActorHighlight.Lift;
         Assert.True(lift.X > lift.Y && lift.Y > lift.Z && lift.Z > 0f);
-        Assert.True(lift.X <= 0.40f);
+        // A modest lift: no channel is raised by more than a third.
+        Assert.True(lift.X <= 1f / 3f);
     }
 
     [Fact]
@@ -52,17 +54,22 @@ public sealed class ActorHighlightTests
             Vector3 plain = WorldEntityRenderer.ItemColor(rarity);
             Vector3 lit = ActorHighlight.Box(plain);
 
+            float ceiling = WorldEntityRenderer.AlbedoCeiling;
+            Assert.True(MathF.Max(plain.X, MathF.Max(plain.Y, plain.Z)) <= ceiling, $"{rarity} box colour {plain} is over the albedo ceiling");
             Assert.True(lit.X > plain.X && lit.Y > plain.Y && lit.Z > plain.Z, rarity.ToString());
-            Assert.True(lit.X <= 1f && lit.Y <= 1f && lit.Z <= 1f, rarity.ToString());
+            Assert.True(MathF.Max(lit.X, MathF.Max(lit.Y, lit.Z)) <= (ceiling * (1f + ActorHighlight.Lift.X)) + 1e-6f, rarity.ToString());
         }
     }
 
+    // The box lift is the same relative lift as an actor's (no clamp hides a too-bright base colour: the base
+    // colours are what keep it in range, and EveryRarityBox pins them).
     [Fact]
-    public void ABoxChannelNearOne_IsClamped()
+    public void TheBoxLift_IsTheActorLift()
     {
-        Vector3 lit = ActorHighlight.Box(new Vector3(0.95f, 0.2f, 0.2f));
+        Vector3 colour = new(0.40f, 0.20f, 0.10f);
+        Vector3 lit = ActorHighlight.Box(colour);
 
-        Assert.Equal(1f, lit.X);
+        Assert.Equal(colour * (Vector3.One + ActorHighlight.Lift), lit);
     }
 
     [Fact]
@@ -93,8 +100,43 @@ public sealed class ActorHighlightTests
         Assert.Contains("ApplyTint(model, shader, dying.Last.TintOffset)", dyingBody, StringComparison.Ordinal);
         Assert.DoesNotContain("ActorHighlight", dyingBody, StringComparison.Ordinal);
         Assert.Contains("ActorHighlight.EnemyTint(HighlightActorId, actorId, visual.TintOffset)", source, StringComparison.Ordinal);
-        // And what the linger stores is the plain tint.
-        Assert.Contains("visual.TintOffset,\n", source.Replace("\r\n", "\n"), StringComparison.Ordinal);
+        // And what the linger stores (the LastDrawnEnemy built for the death linger) is the plain tint.
+        int stored = source.IndexOf("new EnemyDeathLinger.LastDrawnEnemy(", StringComparison.Ordinal);
+        Assert.True(stored > 0);
+        string storedArgs = source[stored..source.IndexOf(");", stored, StringComparison.Ordinal)];
+        Assert.Contains("visual.TintOffset", storedArgs, StringComparison.Ordinal);
+        Assert.DoesNotContain("ActorHighlight", storedArgs, StringComparison.Ordinal);
+    }
+
+    // The scene hands each renderer only the hovered thing of its own kind, and nothing for an id that is not an
+    // actor id (actor ids are ints; a ground item keeps its long id).
+    [Fact]
+    public void Targets_LightOnlyTheHoveredKind()
+    {
+        Assert.Equal(new HighlightTargets(7, null, null), ActorHighlight.Targets(new HoverTargetId(HoverKind.Enemy, 7)));
+        Assert.Equal(new HighlightTargets(null, 9, null), ActorHighlight.Targets(new HoverTargetId(HoverKind.Npc, 9)));
+        Assert.Equal(new HighlightTargets(null, null, 5_000_000_000L), ActorHighlight.Targets(new HoverTargetId(HoverKind.GroundItem, 5_000_000_000L)));
+        Assert.Equal(default, ActorHighlight.Targets(HoverTargetId.None));
+        Assert.Equal(default, ActorHighlight.Targets(new HoverTargetId(HoverKind.RemotePlayer, 3)));
+        Assert.Equal(default, ActorHighlight.Targets(new HoverTargetId(HoverKind.Enemy, 5_000_000_000L)));
+    }
+
+    // A lifted villager puts the shared uniform back to zero right after its own draw, in both programs and on
+    // the model, or the lift reaches the next villager (and the MASK variant). Pinned on the source: GL class.
+    [Fact]
+    public void ALiftedVillager_ResetsTheTint_RightAfterItsDraw()
+    {
+        string source = File.ReadAllText(RepoFile("dream", "Rendering", "Actors", "NpcModelRenderer.cs")).Replace("\r\n", "\n");
+        int end = source.IndexOf("model.EndRender();", StringComparison.Ordinal);
+        Assert.True(end > 0);
+        string after = source[end..source.IndexOf("_casters.Add(", end, StringComparison.Ordinal)];
+        Assert.Contains("if (lifted)", after, StringComparison.Ordinal);
+        Assert.Contains("ZeroTint(shader);", after, StringComparison.Ordinal);
+        Assert.Contains("model.ActorTintOffset = Vector3.Zero;", after, StringComparison.Ordinal);
+        int zero = source.IndexOf("void ZeroTint(", StringComparison.Ordinal);
+        Assert.True(zero > 0, "ZeroTint must exist");
+        string zeroBody = source[zero..source.IndexOf("\n    }", zero, StringComparison.Ordinal)];
+        Assert.Contains("AlphaMaskVariant", zeroBody, StringComparison.Ordinal);
     }
 
     private static string RepoFile(params string[] parts)
