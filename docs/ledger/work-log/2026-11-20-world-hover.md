@@ -67,8 +67,26 @@
 - Not exercised in a live capture: NPC, ground item and remote player hover. These are covered by unit tests and
   headless `HudPreviewTests` PNGs; no capture step points the cursor at an NPC.
 
+## Wave 2: the hovered model highlight
+
+- `ActorHighlight`: the hovered enemy, villager or ground box draws with a multiplicative warm lift (+0.30, +0.24,
+  +0.16) on its base colour, via the shared `uActorTintOffset`. It combines with an enemy's own tint, so the Dire
+  Wolf stays darker than a plain wolf. Corpses in the death linger keep the plain tint. The villager pass puts zero
+  back after the lifted one, in both programs. The scene takes its ids from one tested helper (`Targets`).
+- The placeholder ground box colours were 0.56-0.62 per channel, over the 0.40 albedo ceiling, so a lift had no
+  headroom. Each is now its old hue scaled to 0.40 (`WorldEntityRenderer.AlbedoCeiling`).
+- Verified:
+  - Full suite 11018 passed, 0 failed at `c512ae0d`. The fix commit `138a156c` was checked with the Rendering
+    tier (4121 passed, 0 failed) and a proven negative on the villager reset pin.
+  - Golden unchanged: world snaps pass, and `01-play` still fails as it does on master.
+- **What the captures show** (`artifacts/captures/hl-ab-noon`, `hl-npc-night`): the villager reads clearly lighter
+  and warmer when hovered. The wolf does not: a 30% multiplicative lift of near-black fur is still near-black, and
+  side-by-side hovered and unhovered frames of the same pose are indistinguishable. A dark model needs an additive
+  term (for example a view-dependent rim light), which is a change to the shared actor shader. It is not done.
+
 ## Follow-ups
 
 - `WorldCursorPicker.PickHoveredEnemy` is now unused by the game (kept, tested).
 - Replicate enemy kind, damage, speed and mana (a protocol bump), then the panel shows them with no HUD change.
-- Highlight tint on the hovered model (wave 2 of the plan), and an `IHoverSource` for interactables.
+- A highlight that reads on dark models (an additive rim term in `enemyFragment.glsl`), and an `IHoverSource` for
+  interactables.
