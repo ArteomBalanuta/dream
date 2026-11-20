@@ -48,7 +48,9 @@ internal enum HudCaptureVerb : byte
     // dev:<sub>[;<sub>...] stages the world through the /dev chat command; A = replies to wait for.
     Dev,
     // tod:<hours>|off sets the client-only visual time of day; A = minutes 0..1439, -1 = off.
-    TimeOfDay
+    TimeOfDay,
+    // chat:open|close opens or closes the chat line (the wide wrapped panel); A = 1 open, 0 close.
+    Chat
 }
 
 // Keys a capture script can hold, by name (keys:w+space:30).
@@ -278,6 +280,9 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
                 return true;
             case "tod" when parts.Length == 2 && TryParseTimeOfDay(parts[1], out int minutes):
                 spec = new(HudCaptureVerb.TimeOfDay, minutes, 0);
+                return true;
+            case "chat" when parts.Length == 2 && (parts[1] == "open" || parts[1] == "close"):
+                spec = new(HudCaptureVerb.Chat, parts[1] == "open" ? 1 : 0, 0);
                 return true;
             default:
                 return false;

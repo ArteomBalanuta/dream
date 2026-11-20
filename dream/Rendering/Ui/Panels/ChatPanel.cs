@@ -82,6 +82,12 @@ public sealed class ChatHudState
             channel = ChatChannel.System;
         }
 
+        if (channel == ChatChannel.System)
+        {
+            AddSystemPieces(text);
+            return;
+        }
+
         string cleanText = Sanitize(text, MaxTextChars);
         if (cleanText.Length == 0)
         {
@@ -98,6 +104,43 @@ public sealed class ChatHudState
             _ => $"{cleanFrom}: {cleanText}"
         };
         AddLine(channel, line);
+    }
+
+    // One System message is one stored line per '\n' piece (the server's help reply), at most
+    // MaxLinesPerMessage of them; the rest is never scanned. Only System splits: a player's Say, World,
+    // Whisper or Party text can never add a line.
+    private void AddSystemPieces(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        int start = 0;
+        int added = 0;
+        while (start <= text.Length && added < MaxLinesPerMessage)
+        {
+            int end = text.IndexOf('\n', start);
+            int stop = end < 0 ? text.Length : end;
+            if (stop > start && text[stop - 1] == '\r')
+            {
+                stop--;
+            }
+
+            string piece = Sanitize(text[start..stop], MaxTextChars);
+            if (piece.Length > 0)
+            {
+                AddLine(ChatChannel.System, piece);
+                added++;
+            }
+
+            if (end < 0)
+            {
+                break;
+            }
+
+            start = end + 1;
+        }
     }
 
     // A local line (a parse hint); same clamping.
@@ -212,6 +255,16 @@ public static class ChatPanel
             Frame(c, new UiRect(x, y, width, rowH + 2f * pad), Prompt, hair);
             DrawInput(c, chat, v, x + pad, y + pad, width - 2f * pad, style, hair, pad);
             bottom = y - hair;
+
+            // Open: a wider panel that wraps and shows more history. The prompt keeps the closed width.
+            float openWidth = MathF.Min(l.ViewportWidth - 2f * x, MathF.Max(width, 340f * l.Scale));
+            BuildOpenList(c, chat, l, style, x, bottom, openWidth, pad, rowH, hair);
+            if (chat.OnlineVisible)
+            {
+                BuildOnline(c, chat, l, style, pad, rowH, hair);
+            }
+
+            return;
         }
 
         int count = Math.Min(chat.LineCount, ChatHudState.VisibleLines);
@@ -251,6 +304,136 @@ public static class ChatPanel
         {
             BuildOnline(c, chat, l, style, pad, rowH, hair);
         }
+    }
+
+    // The open list: newest line at the bottom, each line word-wrapped to the panel, as many rows as the
+    // budget allows. Spans only; nothing here allocates.
+    private static void BuildOpenList(IUiCanvas c, ChatHudState chat, in UiLayout l, UiTextStyle style, float x, float bottom, float width, float pad, float rowH, float hair)
+    {
+        if (chat.LineCount == 0)
+        {
+            return;
+        }
+
+        int budget = Math.Min(ChatHudState.OpenVisibleRows, (int)MathF.Floor((bottom - MathF.Round(6f * l.Scale) - 2f * pad) / rowH));
+        budget = Math.Max(1, budget);
+        float markW = c.MeasureText(ServerMark, style);
+
+        int used = 0;
+        int oldest = chat.LineCount;
+        int skip = 0;
+        for (int k = chat.LineCount - 1; k >= 0 && used < budget; k--)
+        {
+            ChatHudState.ChatLine line = chat.GetLine(k);
+            float avail = RowWidth(width, pad, line.Channel, markW);
+            int rows = CountRows(c, line.Text, style, avail);
+            int room = budget - used;
+            oldest = k;
+            if (rows <= room)
+            {
+                used += rows;
+                skip = 0;
+            }
+            else
+            {
+                skip = rows - room;
+                used = budget;
+            }
+        }
+
+        float h = used * rowH + 2f * pad;
+        float top = bottom - h;
+        Frame(c, new UiRect(x, top, width, h), Panel, hair);
+        int row = 0;
+        for (int k = oldest; k < chat.LineCount; k++)
+        {
+            ChatHudState.ChatLine line = chat.GetLine(k);
+            UiColor color = ChannelColor(line.Channel);
+            bool system = line.Channel == ChatChannel.System;
+            float avail = RowWidth(width, pad, line.Channel, markW);
+            float tx = x + pad + (system ? markW : 0f);
+            ReadOnlySpan<char> text = line.Text;
+            int pos = 0;
+            int index = 0;
+            int firstShown = k == oldest ? skip : 0;
+            do
+            {
+                ReadOnlySpan<char> part = NextRow(c, text, ref pos, style, avail, index > 0);
+                if (index >= firstShown)
+                {
+                    float ty = MathF.Round(top + pad + row * rowH);
+                    if (system && index == 0)
+                    {
+                        c.Text(ServerMark, new Vector2(x + pad + hair, ty + hair), style, Shadow);
+                        c.Text(ServerMark, new Vector2(x + pad, ty), style, color);
+                    }
+
+                    c.Text(part, new Vector2(tx + hair, ty + hair), style, Shadow);
+                    c.Text(part, new Vector2(tx, ty), style, color);
+                    row++;
+                }
+
+                index++;
+            }
+            while (pos < text.Length);
+        }
+    }
+
+    private static float RowWidth(float width, float pad, ChatChannel channel, float markW) =>
+        MathF.Max(0f, width - 2f * pad - (channel == ChatChannel.System ? markW : 0f));
+
+    private static int CountRows(IUiCanvas c, ReadOnlySpan<char> text, UiTextStyle style, float avail)
+    {
+        int pos = 0;
+        int rows = 0;
+        do
+        {
+            NextRow(c, text, ref pos, style, avail, rows > 0);
+            rows++;
+        }
+        while (pos < text.Length);
+
+        return rows;
+    }
+
+    // The next wrapped row of text from pos, with pos moved past it and past the spaces it broke on. Breaks
+    // at the last space that fits; with none, hard-breaks, always taking at least one char.
+    private static ReadOnlySpan<char> NextRow(IUiCanvas c, ReadOnlySpan<char> text, ref int pos, UiTextStyle style, float avail, bool continuation)
+    {
+        if (continuation)
+        {
+            while (pos < text.Length && text[pos] == ' ')
+            {
+                pos++;
+            }
+        }
+
+        ReadOnlySpan<char> rest = text[pos..];
+        int fit = PanelText.FitLength(c, rest, style, avail);
+        int take;
+        if (fit >= rest.Length)
+        {
+            take = rest.Length;
+        }
+        else
+        {
+            int space = rest[..Math.Min(fit + 1, rest.Length)].LastIndexOf(' ');
+            take = space > 0 ? space : Math.Max(1, fit);
+        }
+
+        ReadOnlySpan<char> row = rest[..take];
+        while (row.Length > 1 && row[^1] == ' ')
+        {
+            row = row[..^1];
+        }
+
+        pos += take;
+        while (pos < text.Length && text[pos] == ' ')
+        {
+            pos++;
+        }
+
+        return row;
     }
 
     private static void DrawInput(IUiCanvas c, ChatHudState chat, HudView v, float x, float y, float maxWidth, UiTextStyle style, float hair, float pad)

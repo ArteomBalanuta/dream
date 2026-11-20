@@ -68,7 +68,8 @@ internal static class HudCaptureDevStep
             || string.Equals(text, WholeLineUnavailableText, StringComparison.Ordinal)
             || string.Equals(text, WholeLineTooManyText, StringComparison.Ordinal));
 
-    public static string FormatReplyLog(string line, string reply) => $"[hud-capture] dev {line} -> {reply}";
+    public static string FormatReplyLog(string line, string reply) =>
+        $"[hud-capture] dev {line} -> {reply.Replace("\n", " | ")}";
 
     public static string FormatTimeoutLog(string line, int missing) => $"[hud-capture] dev {line} -> no reply ({missing} missing)";
 }
