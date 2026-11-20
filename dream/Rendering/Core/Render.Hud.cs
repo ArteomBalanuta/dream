@@ -34,6 +34,9 @@ public partial class Render
     // The quickbar's state, shared by the scene every frame before the HUD pass (M4); null draws none.
     public QuickbarHudState? Quickbar { get; set; }
 
+    // Set by the scene every update; carried into the classic HUD frame.
+    public bool PointerOverEnemy { get; set; }
+
     [MemberNotNull(nameof(_hudShader), nameof(_shaderObj))]
     private void InitializeHUD()
     {

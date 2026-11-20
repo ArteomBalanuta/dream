@@ -62,6 +62,9 @@ public readonly struct ClassicHudFrame
 
     // The quickbar's state (M4); null draws no quickbar and keeps the MP gem at ManaGemFill.
     public QuickbarHudState? Quickbar { get; init; }
+
+    // True while the pointer is over a live enemy a click would attack.
+    public bool PointerOverEnemy { get; init; }
 }
 
 // The timing of the liquid gems, pure and allocation free. The surface advances the eased levels and the
