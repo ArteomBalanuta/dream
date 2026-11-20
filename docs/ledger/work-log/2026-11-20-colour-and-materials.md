@@ -114,3 +114,19 @@ learned about thin-axis detail.
   below the floor-bound limits. Not isolated.
 - Noon's A1 bright share (0.011 against a 0.020 floor) is untouched and out of scope: daylight has
   no local light pools, so moving it is a lighting change rather than a grade.
+
+## Review corrections (`fix/colour-review`)
+
+- **Correction to "proven inert when off".** The wave's reasoning that `AnimatedModel.BindProgram`
+  resets the cube program's surface was wrong: `BindProgram` runs only on a mid-node switch to an
+  alpha-mask variant, and `BeginRender` does not call it. The base `cube` program is safe only because
+  nothing ever writes a non-zero surface to it. The terrain program's surface is now written in one
+  helper (`Render.BindTerrainSurface`), reset at the start of the batched pass, and a structural test
+  (`WorldMaterialResponseTests`) fails for any terrain bind or draw path that skips it.
+- **The grade's `w <= 1` invariant** is now clamped in `dreamToneNeutraliseShadows`, in the C# mirror and
+  in `PostChain`'s constructor, with a test at strengths 1.5 and 100. `PostChain` takes the neutralise
+  strength as a parameter like the bloom strength, and `PostChainUniformContractTests` checks the three
+  uniform-name arrays against the shader sources in both directions.
+- **The Arcane emissive ratio.** The armour Membrane entry is about a sixth of the weapon gem, not a
+  third (it was a third of the old value); comments and `ArmourArcaneEmissive_StaysBelowTheKnee_ByDesign`
+  now say and pin that.

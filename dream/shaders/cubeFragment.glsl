@@ -452,7 +452,10 @@ void main()
     if (uEquipSurface.y > 0.0) {
         float metallic = clamp(uEquipSurface.x, 0.0, 1.0);
         float rough = clamp(uEquipSurface.y, EquipMinRoughness, 1.0);
-        vec3 v = normalize(uEquipEye - fragPos);
+        // Same guard as dreamEquipLobe's: an eye at the fragment (or a never-set eye) is a zero
+        // vector and normalize() of it is NaN, which would spread to the whole fragment.
+        vec3 toEye = uEquipEye - fragPos;
+        vec3 v = dot(toEye, toEye) < 1e-8 ? vec3(0.0, 1.0, 0.0) : normalize(toEye);
         float shin = dreamSurfaceShininess(rough);
         vec3 f0 = dreamSurfaceF0(baseColor.rgb, metallic);
 
