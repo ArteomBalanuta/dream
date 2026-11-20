@@ -5,7 +5,8 @@ using Dream.Simulation.Enemies;
 namespace Dream.Client.Input;
 
 // What the cursor points at in the world. Pure ray maths plus a cell march, so it is testable with
-// a fake INavWorld. Runs on presses and held repaths only.
+// a fake INavWorld. Runs on presses and held repaths, and once per frame for the hover probe, which takes
+// the allocation-free PickHoveredEnemy path.
 public static class WorldCursorPicker
 {
     public const float EnemyMaxDistance = 90f;
@@ -129,6 +130,48 @@ public static class WorldCursorPicker
         return new ClickPick(ClickPickKind.Ground, new NavCell(x, (int)FloorTop, z), p, null);
     }
 
+    // Distance along the ray to the first blocked cell (the same march Pick makes), or infinity when the
+    // ray leaves the map without meeting one.
+    private static float WallDistance(INavWorld world, Vector3 origin, Vector3 direction)
+    {
+        int steps = (int)(MarchMaxMetres / MarchStepMetres);
+        for (int i = 0; i <= steps; i++)
+        {
+            Vector3 p = origin + (direction * (i * MarchStepMetres));
+            int x = (int)MathF.Floor(p.X);
+            int y = (int)MathF.Floor(p.Y);
+            int z = (int)MathF.Floor(p.Z);
+            if (x < 0 || y < 0 || z < 0 || x >= world.Width || y >= world.Height || z >= world.Depth)
+            {
+                continue;
+            }
+
+            if (world.IsBlocked(x, y, z))
+            {
+                return i * MarchStepMetres;
+            }
+        }
+
+        return float.PositiveInfinity;
+    }
+
+    // The live enemy a click on this ray would target, or null. Same rule as Pick with the registry
+    // overload (an enemy wins only in front of the first wall) but allocates nothing: no closure,
+    // delegate or target object, so the per-frame hover probe can run it every frame.
+    public static EnemyActor? PickHoveredEnemy(INavWorld world, EnemyRegistry enemies, Vector3 origin, Vector3 direction)
+    {
+        float wallDistance = WallDistance(world, origin, direction);
+        EnemyActor? hit = enemies.TryResolveHit(origin, direction, EnemyMaxDistance, EnemyHitRadius);
+        if (hit is null || !EnemyClickTarget.IsLive(hit, enemies))
+        {
+            return null;
+        }
+
+        return Vector3.Dot(hit.Combatant.GetCombatAnchorWorldPosition() - origin, direction) <= wallDistance
+            ? hit
+            : null;
+    }
+
     public static ClickPick Pick(
         INavWorld world,
         EnemyRegistry enemies,
@@ -157,10 +200,13 @@ public sealed class EnemyClickTarget : IClickTarget
         _registry = registry;
     }
 
-    public bool IsAlive =>
-        _actor.IsActive
-        && (_registry is null
-            || (_registry.TryGetEnemyByActorId(_actor.Combatant.Actor.Id, out EnemyActor? current) && ReferenceEquals(current, _actor)));
+    public bool IsAlive => IsLive(_actor, _registry);
+
+    // Active, and (with a registry) still the very actor the registry holds.
+    internal static bool IsLive(EnemyActor actor, EnemyRegistry? registry) =>
+        actor.IsActive
+        && (registry is null
+            || (registry.TryGetEnemyByActorId(actor.Combatant.Actor.Id, out EnemyActor? current) && ReferenceEquals(current, actor)));
 
     public Vector3 Anchor => _actor.Combatant.GetCombatAnchorWorldPosition();
 }

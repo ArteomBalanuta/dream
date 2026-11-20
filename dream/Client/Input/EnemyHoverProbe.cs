@@ -25,8 +25,6 @@ public sealed class EnemyHoverProbe
             return false;
         }
 
-        return _host.TryPick(pointer.Position, out ClickPick pick)
-            && pick.Kind == ClickPickKind.Enemy
-            && pick.Target is { IsAlive: true };
+        return _host.IsEnemyAt(pointer.Position);
     }
 }

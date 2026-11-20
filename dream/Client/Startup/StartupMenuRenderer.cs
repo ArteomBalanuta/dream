@@ -45,14 +45,18 @@ public sealed class StartupMenuRenderer : IDisposable
     // True when the last frame drew the sprite cursor, so the OS cursor should be hidden.
     public bool SpriteCursorActive => _cursorActive;
 
+    // True when the cursor texture and its pointer sprite loaded, so a focused frame will draw the sprite.
+    public bool SpriteCursorAvailable =>
+        _cursorTexture != 0 && _cursorSprites is not null
+        && _cursorSprites.TryGet(UiCursor.SpriteName(UiCursorKind.Pointer), out _);
+
     // The cursors page as its own texture; on any failure the ImGui cursor stays as the fallback.
     private void TryLoadCursor()
     {
         try
         {
             if (!UiSpriteTable.TryLoadPages(AssetPaths.UiDirectory, [UiPage.Cursors], out UiSpriteTable? table, out _)
-                || table is null
-                || !table.TryGetPageSize(UiPage.Cursors, out int w, out int h))
+                || table is null)
             {
                 return;
             }
@@ -62,12 +66,13 @@ public sealed class StartupMenuRenderer : IDisposable
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, texture);
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, png.Width, png.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, png.Rgba);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
             _cursorTexture = texture;
             _cursorSprites = table;
-            _cursorPageW = w;
-            _cursorPageH = h;
+            // The UVs divide by the decoded size, which is what the texture actually holds.
+            _cursorPageW = png.Width;
+            _cursorPageH = png.Height;
         }
         catch (Exception ex)
         {
@@ -95,10 +100,9 @@ public sealed class StartupMenuRenderer : IDisposable
             return false;
         }
 
-        // Layout scale 4 puts one art texel on one screen pixel at the cursor's art density.
-        UiRect r = UiCursor.Rect(in sprite, position, 4f);
-        System.Numerics.Vector2 uv0 = new(sprite.X / (float)_cursorPageW, sprite.Y / (float)_cursorPageH);
-        System.Numerics.Vector2 uv1 = new((sprite.X + sprite.W) / (float)_cursorPageW, (sprite.Y + sprite.H) / (float)_cursorPageH);
+        Vector2i safeSize = GetSafeViewportSize(_currentSize);
+        UiRect r = UiCursor.Rect(in sprite, position, CursorLayoutScale(safeSize.X, safeSize.Y, UiScaleSetting));
+        CursorUv(in sprite, _cursorPageW, _cursorPageH, out System.Numerics.Vector2 uv0, out System.Numerics.Vector2 uv1);
         ImGui.GetForegroundDrawList().AddImage(
             (IntPtr)_cursorTexture,
             new System.Numerics.Vector2(r.X, r.Y),
@@ -106,6 +110,20 @@ public sealed class StartupMenuRenderer : IDisposable
             uv0,
             uv1);
         return true;
+    }
+
+    // The user's UI scale setting; the cursor is sized by the same layout scale as the menus and the HUD.
+    public float UiScaleSetting { get; set; }
+
+    // The layout scale every other sprite cursor uses at this viewport and setting.
+    public static float CursorLayoutScale(int width, int height, float uiScaleSetting) =>
+        UiScale.Resolve(width, height, uiScaleSetting);
+
+    // Texture coordinates of a sprite on a page of the given decoded size.
+    public static void CursorUv(in UiSprite sprite, int pageWidth, int pageHeight, out System.Numerics.Vector2 uv0, out System.Numerics.Vector2 uv1)
+    {
+        uv0 = new(sprite.X / (float)pageWidth, sprite.Y / (float)pageHeight);
+        uv1 = new((sprite.X + sprite.W) / (float)pageWidth, (sprite.Y + sprite.H) / (float)pageHeight);
     }
 
     public void Resize(Vector2i size)

@@ -73,7 +73,12 @@ public sealed class StartupConnectionScene : IDisposable
     }
 
     // The sprite cursor replaces the OS one while it is drawn and the window is focused.
-    public CursorState DesiredCursorState => _renderer.SpriteCursorActive && _windowFocused ? CursorState.Hidden : CursorState.Normal;
+    public CursorState DesiredCursorState => DesiredCursorStateFor(_windowFocused);
+
+    // Decided from the live focus and whether the cursor sprite loaded, not from what the last frame drew,
+    // so the first focused frame does not show the OS arrow beside the sprite.
+    public CursorState DesiredCursorStateFor(bool windowFocused) =>
+        _renderer.SpriteCursorAvailable && windowFocused ? CursorState.Hidden : CursorState.Normal;
 
     private bool _windowFocused = true;
 
@@ -87,9 +92,11 @@ public sealed class StartupConnectionScene : IDisposable
         FrameEventArgs args,
         bool windowFocused,
         MouseState mouseState,
-        KeyboardState keyboardState)
+        KeyboardState keyboardState,
+        float uiScaleSetting = 0f)
     {
         _windowFocused = windowFocused;
+        _renderer.UiScaleSetting = uiScaleSetting;
         string previousHost = _host;
         string previousPort = _portText;
         string previousPlayerName = _playerName;
