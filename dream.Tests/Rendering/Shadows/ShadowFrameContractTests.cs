@@ -111,11 +111,16 @@ public class ShadowFrameContractTests
             string text = Regex.Replace(File.ReadAllText(file), @"//[^
 ]*", string.Empty);
             int calls = Regex.Matches(text, @"dreamSunVisibility\s*\(").Count;
-            // The sculpted-equipment wave added the third and last caller: enemyFragment.glsl gates
+            // The sculpted-equipment wave added the third caller: enemyFragment.glsl gates
             // the equipment SPECULAR on the same visibility, so a pauldron does not glint while the
-            // figure stands in a doorway's shadow. Still exactly one call per file, still only on
-            // the dominant light's term, and still nothing else in the tree calls it.
-            if (Path.GetFileName(file) is "lighting.glsl" or "clouds.glsl" or "enemyFragment.glsl")
+            // figure stands in a doorway's shadow. The world material wave added the fourth:
+            // cubeFragment.glsl's opt-in material response (uEquipSurface) is the same specular path
+            // on terrain and props, so it needs the same sun-visibility select as the equipment path
+            // -- a wet rock must not glint inside a shadow either. It is the identical shape: the
+            // dominant lobe takes mapV, the other gets exactly 1.0, and the diffuse term is still
+            // shadowed once inside dreamDirectShaded, never twice. Still exactly one call per file,
+            // still only on the dominant light's term, and still nothing else in the tree calls it.
+            if (Path.GetFileName(file) is "lighting.glsl" or "clouds.glsl" or "enemyFragment.glsl" or "cubeFragment.glsl")
             {
                 Assert.Equal(1, calls);
             }
