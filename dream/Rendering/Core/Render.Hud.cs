@@ -305,7 +305,8 @@ public partial class Render
             CombatText = _classicCombatText,
             Labels = _classicLabels,
             Vendor = Vendor,
-            Quickbar = Quickbar
+            Quickbar = Quickbar,
+            PointerOverEnemy = PointerOverEnemy
         };
         HudSurfaceSelector selector = HudSelector(settings);
         bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out action, out closeInventory, out Exception? fault);
