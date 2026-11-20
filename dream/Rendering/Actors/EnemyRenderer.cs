@@ -249,7 +249,6 @@ public sealed class EnemyRenderer
     // The hover rim (uActorRim / uActorRimEye) last uploaded to the base program, same bookkeeping as the tint.
     // The rim shares _maskTintDirty: it is set when a non-zero rim is handed to a model.
     private Vector4 _appliedRim;
-    private Vector3 _appliedRimEye;
 
     private void ApplyTint(AnimatedModel model, Shader shader, Vector3 tint, Vector4 rim, Vector3 rimEye)
     {
@@ -272,10 +271,13 @@ public sealed class EnemyRenderer
             _appliedRim = rim;
         }
 
-        if (!rim.Equals(Vector4.Zero) && !rimEye.Equals(_appliedRimEye))
+        // The eye is uploaded on EVERY rimmed draw, never from a cache: other draws of this program (the ground
+        // scatter's foliage, through AnimatedModel.BindProgram) write their own zero eye into it between frames,
+        // so a cached "already there" would leave a still camera's hovered enemy rimmed toward the world origin.
+        // One upload per hovered draw.
+        if (!rim.Equals(Vector4.Zero))
         {
             shader.SetVector3(RimEyeUniformName, rimEye);
-            _appliedRimEye = rimEye;
         }
     }
 

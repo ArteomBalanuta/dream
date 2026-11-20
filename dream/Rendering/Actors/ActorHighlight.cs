@@ -12,8 +12,8 @@ public static class ActorHighlight
     public static readonly Vector3 Lift = new(0.30f, 0.24f, 0.16f);
 
     // The rim light (uActorRim in enemyFragment.glsl), added to the lit colour before exposure, so it lifts a
-    // near-black model the multiplicative Lift cannot. Warm bone/gold, brightest where the surface turns edge-on
-    // to the eye (pow 2.5). The shader caps it to the headroom under the clip point (1 / exposure minus the
+    // near-black model the multiplicative Lift cannot. Warm ember, brightest where the surface turns edge-on
+    // to the eye (ActorRimPower in enemyFragment.glsl), plus a flat RimFill share. The shader caps it to the headroom under the clip point (1 / exposure minus the
     // fragment's own peak), so it reads as a gold edge at noon and at night and never clips beside a brazier.
     public static readonly Vector3 Rim = new(0.64f, 0.40f, 0.18f);
 
