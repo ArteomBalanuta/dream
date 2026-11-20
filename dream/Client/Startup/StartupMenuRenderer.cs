@@ -9,6 +9,7 @@ using Dream.Assets;
 using Dream.Client.Input;
 using Dream.Multiplayer.Protocol;
 using Dream.Rendering.Core;
+using Dream.Rendering.Ui;
 using Dream.Simulation.Players;
 using Dream.Simulation.World;
 
@@ -28,11 +29,101 @@ public sealed class StartupMenuRenderer : IDisposable
     private int _indexBuffer;
     private Vector2i _currentSize;
     private bool _wasFocused = true;
+    private int _cursorTexture;
+    private UiSpriteTable? _cursorSprites;
+    private int _cursorPageW;
+    private int _cursorPageH;
+    private bool _cursorActive;
 
     public StartupMenuRenderer(Vector2i initialSize)
     {
         _currentSize = initialSize;
         InitializeImGui();
+        TryLoadCursor();
+    }
+
+    // True when the last frame drew the sprite cursor, so the OS cursor should be hidden.
+    public bool SpriteCursorActive => _cursorActive;
+
+    // True when the cursor texture and its pointer sprite loaded, so a focused frame will draw the sprite.
+    public bool SpriteCursorAvailable =>
+        _cursorTexture != 0 && _cursorSprites is not null
+        && _cursorSprites.TryGet(UiCursor.SpriteName(UiCursorKind.Pointer), out _);
+
+    // The cursors page as its own texture; on any failure the ImGui cursor stays as the fallback.
+    private void TryLoadCursor()
+    {
+        try
+        {
+            if (!UiSpriteTable.TryLoadPages(AssetPaths.UiDirectory, [UiPage.Cursors], out UiSpriteTable? table, out _)
+                || table is null)
+            {
+                return;
+            }
+
+            DecodedTexture png = TextureDecoder.DecodeRgba(Path.Combine(AssetPaths.UiDirectory, UiSpriteTable.PagePngPath(UiPage.Cursors)!));
+            int texture = GL.GenTexture();
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, texture);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, png.Width, png.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, png.Rgba);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            _cursorTexture = texture;
+            _cursorSprites = table;
+            // The UVs divide by the decoded size, which is what the texture actually holds.
+            _cursorPageW = png.Width;
+            _cursorPageH = png.Height;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[startup] the sprite cursor is unavailable: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    // Drawn last over everything; false (nothing drawn) when the texture is missing or the pointer is not usable.
+    private bool DrawSpriteCursor(bool windowFocused, MouseState mouseState)
+    {
+        if (_cursorTexture == 0 || _cursorSprites is null || !windowFocused)
+        {
+            return false;
+        }
+
+        UiCursorKind kind = UiCursor.Select(false, mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left), false);
+        if (!_cursorSprites.TryGet(UiCursor.SpriteName(kind), out UiSprite sprite))
+        {
+            return false;
+        }
+
+        Vector2 position = new(mouseState.Position.X, mouseState.Position.Y);
+        if (!float.IsFinite(position.X) || !float.IsFinite(position.Y))
+        {
+            return false;
+        }
+
+        Vector2i safeSize = GetSafeViewportSize(_currentSize);
+        UiRect r = UiCursor.Rect(in sprite, position, CursorLayoutScale(safeSize.X, safeSize.Y, UiScaleSetting));
+        CursorUv(in sprite, _cursorPageW, _cursorPageH, out System.Numerics.Vector2 uv0, out System.Numerics.Vector2 uv1);
+        ImGui.GetForegroundDrawList().AddImage(
+            (IntPtr)_cursorTexture,
+            new System.Numerics.Vector2(r.X, r.Y),
+            new System.Numerics.Vector2(r.X + r.W, r.Y + r.H),
+            uv0,
+            uv1);
+        return true;
+    }
+
+    // The user's UI scale setting; the cursor is sized by the same layout scale as the menus and the HUD.
+    public float UiScaleSetting { get; set; }
+
+    // The layout scale every other sprite cursor uses at this viewport and setting.
+    public static float CursorLayoutScale(int width, int height, float uiScaleSetting) =>
+        UiScale.Resolve(width, height, uiScaleSetting);
+
+    // Texture coordinates of a sprite on a page of the given decoded size.
+    public static void CursorUv(in UiSprite sprite, int pageWidth, int pageHeight, out System.Numerics.Vector2 uv0, out System.Numerics.Vector2 uv1)
+    {
+        uv0 = new(sprite.X / (float)pageWidth, sprite.Y / (float)pageHeight);
+        uv1 = new((sprite.X + sprite.W) / (float)pageWidth, (sprite.Y + sprite.H) / (float)pageHeight);
     }
 
     public void Resize(Vector2i size)
@@ -148,6 +239,7 @@ public sealed class StartupMenuRenderer : IDisposable
 
         ImGui.End();
 
+        _cursorActive = DrawSpriteCursor(windowFocused, mouseState);
         ImGui.Render();
         RenderImGuiDrawData(ImGui.GetDrawData());
 
@@ -171,6 +263,11 @@ public sealed class StartupMenuRenderer : IDisposable
 
         _disposed = true;
         GL.DeleteTexture(_fontTexture);
+        if (_cursorTexture != 0)
+        {
+            GL.DeleteTexture(_cursorTexture);
+        }
+
         _shaderObj.Dispose();
         GL.DeleteBuffer(_vertexBuffer);
         GL.DeleteBuffer(_indexBuffer);
@@ -252,7 +349,7 @@ public sealed class StartupMenuRenderer : IDisposable
         Vector2i safeViewportSize = GetSafeViewportSize(_currentSize);
         io.DisplaySize = new System.Numerics.Vector2(safeViewportSize.X, safeViewportSize.Y);
         io.DeltaTime = (float)args.Time;
-        io.MouseDrawCursor = true;
+        io.MouseDrawCursor = _cursorTexture == 0;
         io.MousePos = new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y);
         io.MouseDown[0] = mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Left);
         io.MouseDown[1] = mouseState.IsButtonDown(OpenTK.Windowing.GraphicsLibraryFramework.MouseButton.Right);

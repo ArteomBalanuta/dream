@@ -43,6 +43,9 @@ public sealed class HudView
     public const int BackpackSlots = BagGrid.CellCount;
     public const int WornSlots = 12;
 
+    // True while the pointer is over a live enemy a click would attack (set by the scene each frame).
+    public bool PointerOverEnemy { get; set; }
+
     private static readonly IReadOnlyList<FloatingCombatTextRenderState> NoCombatText = Array.Empty<FloatingCombatTextRenderState>();
     private static readonly IReadOnlyList<HudWorldLabel> NoLabels = Array.Empty<HudWorldLabel>();
 

@@ -62,6 +62,9 @@ public readonly struct ClassicHudFrame
 
     // The quickbar's state (M4); null draws no quickbar and keeps the MP gem at ManaGemFill.
     public QuickbarHudState? Quickbar { get; init; }
+
+    // True while the pointer is over a live enemy a click would attack.
+    public bool PointerOverEnemy { get; init; }
 }
 
 // The timing of the liquid gems, pure and allocation free. The surface advances the eased levels and the
@@ -208,6 +211,7 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         v.Labels = frame.Labels ?? Array.Empty<HudWorldLabel>();
         v.Vendor = frame.Vendor;
         v.Quickbar = frame.Quickbar;
+        v.PointerOverEnemy = frame.PointerOverEnemy;
 
         UiLayout layout = UiLayout.Create(frame.Width, frame.Height, frame.ConfiguredScale);
         Input.BeginFrame(frame.Pointer);

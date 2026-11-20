@@ -70,6 +70,7 @@ public partial class PlayScene : IDisposable
     private bool _localPlayerWasMoving;
     private ClickMoveController? _clickMoveController;
     private CursorAimController? _cursorAimController;
+    private EnemyHoverProbe? _enemyHoverProbe;
     // W/A/S/D of the current frame in camera space; projected to forward/strafe per tick, once that
     // tick's facing is known (PlayScene.Update).
     private OpenTK.Mathematics.Vector2 _tickCameraAxes;
@@ -122,6 +123,9 @@ public partial class PlayScene : IDisposable
     private ClickMoveController _clickMove =>
         _clickMoveController ??= new ClickMoveController(new ClickMoveHost(this), new NavPathing());
 
+    private EnemyHoverProbe _enemyHover =>
+        _enemyHoverProbe ??= new EnemyHoverProbe(new ClickMoveHost(this));
+
     private CursorAimController _cursorAim =>
         _cursorAimController ??= new CursorAimController(new CursorAimHost(this));
 
@@ -168,6 +172,25 @@ public partial class PlayScene : IDisposable
         public bool NoclipActive => _scene._runtime.Player.IsNoclipEnabled;
 
         public PlayerInteractionMode Mode => _scene._runtime.InteractionMode;
+
+        public bool IsEnemyAt(OpenTK.Mathematics.Vector2 screenPosition)
+        {
+            Dream.Simulation.Players.Camera? camera = _scene._render.LastWorldCamera;
+            INavWorld? world = World;
+            if (camera is null || world is null)
+            {
+                return false;
+            }
+
+            return WorldCursorPicker.TryBuildRay(
+                    camera.GetViewMatrix(),
+                    _scene._render.ProjectionMatrix,
+                    screenPosition,
+                    _scene._render.ViewportSize,
+                    out Vector3 origin,
+                    out Vector3 direction)
+                && WorldCursorPicker.PickHoveredEnemy(world, _scene._runtime.Enemies, origin, direction) is not null;
+        }
 
         public bool TryPick(OpenTK.Mathematics.Vector2 screenPosition, out ClickPick pick)
         {

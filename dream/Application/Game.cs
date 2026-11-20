@@ -311,7 +311,7 @@ public class Game : GameWindow
                 _desktopClientConfig.PlayerName),
             PersistMultiplayer,
             SystemClipboard);
-        CursorState = _mainMenu.DesiredCursorState;
+        CursorState = WithMenuCursor(_mainMenu.DesiredCursorState);
         // After any ended play scene's teardown (which set None), so the title screen keeps its music.
         GameAudio.Current.SetMusic(MusicTrack.Menu);
     }
@@ -425,10 +425,23 @@ public class Game : GameWindow
             }
         }
 
-        CursorState = _playScene?.DesiredCursorState
+        CursorState = WithMenuCursor(_playScene?.DesiredCursorState
             ?? _mainMenu?.DesiredCursorState
-            ?? _startupScene?.DesiredCursorState
-            ?? CursorState.Normal;
+            ?? _startupScene?.DesiredCursorStateFor(IsFocused)
+            ?? CursorState.Normal);
+    }
+
+    // The sprite cursor of the shared menu renderer hides the OS cursor on the title screen, the pause menu
+    // and the loading overlay. The HUD's own sprite cursor never draws under the pause menu
+    // (SettingsVisible), so the two never show together. Decided from what will draw this frame.
+    private CursorState WithMenuCursor(CursorState state)
+    {
+        bool menuShowing = _mainMenu != null
+            || (_playScene != null
+                && (_playScene.LoadingOverlayVisible
+                    || (_settings.PauseMenuVisible && !_settings.DeveloperSettingsVisible)));
+        bool active = menuShowing && _menuRenderer?.CursorWillDraw == true;
+        return ClassicCursorPolicy.Decide(active, false, IsFocused, state);
     }
 
     // The title screen or the connection screen: advance it and enter the world when a session connects.
@@ -583,7 +596,7 @@ public class Game : GameWindow
         }
         else
         {
-            _startupScene?.Render(args, IsFocused, MouseState, KeyboardState);
+            _startupScene?.Render(args, IsFocused, MouseState, KeyboardState, _settings.UiScaleSetting);
         }
         RunMenuFlowStep();
         Stopwatch swapStopwatch = Stopwatch.StartNew();
@@ -762,9 +775,14 @@ public class Game : GameWindow
             ClientSize.X,
             ClientSize.Y,
             _settings.UiScaleSetting,
-            new UiPointer(new Vector2(-1000f, -1000f), false, false, IsFocused),
+            LoadingPointer(),
             _loadingBuild);
     }
+
+    // Esc over the loading screen opens the pause menu, which draws the one cursor of the frame; the
+    // loading pointer then stays off so two sprite cursors never draw.
+    private UiPointer LoadingPointer() =>
+        new(new Vector2(MouseState.Position.X, MouseState.Position.Y), false, false, IsFocused && !_settings.PauseMenuVisible);
 
     private LoadingScreenState _loadingState;
     private Action<MenuWidgets>? _loadingBuildCache;

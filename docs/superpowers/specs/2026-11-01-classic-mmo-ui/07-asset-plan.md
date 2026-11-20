@@ -124,7 +124,7 @@ px = u x 4. `{n,h,p,d}` = state suffixes.
 
 Gem layers share a pivot. Iteration 2 supersedes the old greyscale mask: see "Gem layers" in the Iteration 2 section. The cut is original and ray traced (`gemtrace.py`), never radial and never rescaled from screenshot pixels.
 
-`dream/ui/hud/cursors.png`: `cursor.pointer .pressed .grab .attack .forbid`, 32x32 u. Own steel gauntlet design, tip upper-left, ~30 u long. Pivot = fingertip hotspot. Spec 01 s4.
+`dream/ui/hud/cursors.png`: `cursor.pointer .pressed .grab .attack .forbid`, 32x32 u. Own blued-steel gauntlet design, tip upper-left, ~30 u long; `.attack` is a small sword (no hand), drawn while the pointer is over a live enemy. Every pivot is derived from the solid tip of the art (fingertip, blade point) and gated within 1.5 art px of it. The same sprites are drawn on the title screen, every menu, the loading overlay and the startup screen. Spec 01 s4.
 
 ### C. `dream/ui/items/` and `dream/ui/fx/`
 

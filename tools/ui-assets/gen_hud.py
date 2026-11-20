@@ -1133,22 +1133,36 @@ def cp(a, b, tip=TIP, ang=AXIS):
 
 
 def gauntlet(pose):
-    """pose: point, press (tip bent short), fist (grab), grip (holding a blade)."""
-    r = Relief(CUR, CUR, "#6E7074", 0.0, 0.9)
-    steel = "#7A7C80"
-    dark = "#3C3D40"
+    """pose: point, press (tip bent short), fist (grab). Blued steel, fluted lames, riveted, gold engraved cuff."""
+    r = Relief(CUR, CUR, "#3A4048", 0.0, 0.9)
+    steel = "#566270"
+    dark = "#262A31"
+    flute = "#6F7C8B"
     gold = "hud.gold.mid"
-    # flared cuff
+    # flared cuff with fluting, then the engraved gold band and rivets
     r.plate([cp(21.0, -5.8), cp(21.0, 5.8), cp(29.5, 8.6), cp(31.5, 4), cp(31.5, -4), cp(29.5, -8.6)], 0.2, 2.2, "round", alb=dark)
+    for b in (-4.6, -2.3, 0.0, 2.3, 4.6):
+        r.sweep([cp(23.2, b * 0.9), cp(30.4, b * 1.3)], 0.5, 2.3, alb="#343A43", gloss=0.8, step_px=2.0)
     r.plate([cp(20.2, -6.2), cp(20.2, 6.2), cp(22.0, 6.6), cp(22.0, -6.6)], 3.0, 0.6, "round", alb=gold, gloss=0.6)
-    # back of the hand: lames
+    for k in range(-5, 6):
+        b = k * 1.1
+        r.sweep([cp(20.5, b), cp(21.7, b)], 0.16, 4.3, alb="hud.gold.dim", gloss=0.2, step_px=1.0)
+    for b in (-6.0, 6.0):
+        r.sweep([cp(21.1, b * 0.99)], 0.5, 4.2, alb="hud.gold.bright", gloss=0.9, step_px=1.0)
+    # back of the hand: fluted lames with rivets
     for a0, a1, wd, z in ((16.0, 21.0, 6.0, 2.0), (12.6, 16.8, 6.2, 2.6)):
         r.plate([cp(a0, -wd * 0.95), cp(a0, wd), cp(a1, wd), cp(a1, -wd)], z, 1.3, "round", alb=steel)
+        for b in (-wd * 0.5, 0.0, wd * 0.5):
+            r.sweep([cp(a0 + 0.9, b), cp(a1 - 0.9, b)], 0.32, z + 1.6, alb=flute, gloss=1.0, step_px=2.0)
+        for b in (-wd * 0.85, wd * 0.85):
+            r.sweep([cp((a0 + a1) / 2, b)], 0.42, z + 2.3, alb="#9AA3AE", gloss=1.0, step_px=1.0)
     # folded fingers on the b>0 side, thumb on b<0
-    if pose in ("point", "press", "grip"):
+    if pose in ("point", "press"):
         for i, b in enumerate((0.6, 3.0, 5.2)):
             r.sweep([cp(13.2, b), cp(9.4 + i * 0.5, b + 0.1), cp(11.4 + i * 0.3, b + 0.2)], [1.25, 1.15, 1.0], 4.0, alb=steel, step_px=2.0)
+            r.sweep([cp(11.9 + i * 0.1, b - 0.9), cp(11.9 + i * 0.1, b + 0.9)], 0.22, 5.4, alb="#0E1013", gloss=0.2, step_px=1.0)
     r.sweep([cp(18, -5.6), cp(13.0, -7.4), cp(9.0, -6.2)], [1.9, 1.4, 0.9], 4.2, alb=steel, step_px=2.0)
+    r.sweep([cp(15.2, -6.7)], 0.42, 6.4, alb="#9AA3AE", gloss=1.0, step_px=1.0)
     if pose == "point":
         segs = [(0.0, 5.0, 1.0, 1.35), (5.0, 9.6, 1.35, 1.5), (9.6, 13.6, 1.5, 1.6)]
     elif pose == "press":
@@ -1160,16 +1174,26 @@ def gauntlet(pose):
         o = -1.3
         r.sweep([cp(a0 + 0.2, o), cp(a1, o)], [r0, r1], 4.8 - i * 0.2, alb=steel, step_px=2.0)
     if pose == "point":
-        r.plate([cp(segs[0][0] - 0.0, -1.3), cp(segs[0][0] + 2.4, 0.0), cp(segs[0][0] + 2.4, -2.6)], 6.2, 0.7, "round", alb="#9A9CA0")
-    if pose in ("fist", "grip"):
+        for a in (5.0, 9.6):
+            r.sweep([cp(a, -1.3 - 1.6), cp(a, -1.3 + 1.6)], 0.2, 6.3, alb="#0E1013", gloss=0.2, step_px=1.0)
+        r.plate([cp(segs[0][0] - 0.0, -1.3), cp(segs[0][0] + 2.4, 0.0), cp(segs[0][0] + 2.4, -2.6)], 6.2, 0.7, "round", alb="#8A94A0")
+    if pose == "fist":
         for i, b in enumerate((-4.2, -1.4, 1.4, 4.2)):
             r.sweep([cp(13.5, b), cp(9.0, b), cp(10.2, b + 0.1)], [1.6, 1.5, 1.3], 4.0, alb=steel, step_px=2.0)
+            r.sweep([cp(11.3, b - 1.1), cp(11.3, b + 1.1)], 0.22, 5.6, alb="#0E1013", gloss=0.2, step_px=1.0)
         r.sweep([cp(16, -6.2), cp(11.5, -4.4), cp(9.0, -1.6)], [1.7, 1.3, 1.0], 6.0, alb=steel, step_px=2.0)
     return r
 
 
 def cursor_render(r):
     img = r.render(amb=0.95, dif=0.85, key=1.1, fill=0.45, ao=0.6, ao_r=0.9)
+    # worn bright edges: opaque pixels whose up-left neighbour is empty catch the light
+    a = img[..., 3] > 0.5
+    up = np.zeros_like(a)
+    up[1:, 1:] = a[:-1, :-1]
+    edge = a & ~up
+    img = img.copy()
+    img[..., :3] = np.where(edge[..., None], np.clip(img[..., :3] * 0.85 + 0.30, 0, 1), img[..., :3])
     return U.halo(img, 0.55, opacity=0.95)
 
 
@@ -1187,16 +1211,22 @@ def cursor_grab():
 
 
 def cursor_attack():
-    r = gauntlet("grip")
-    # short blade running to the hotspot
-    tip = TIP
-    a = cp(9.5, -1.6)
-    b = cp(9.5, 1.6)
-    m = U.poly_mask(CUR, CUR, [cp(0, -1.2), a, b])
-    r.mask_plate(m > 0.5, 6.5, 1.0, "chamfer", alb="#C8CAD0", gloss=1.0)
-    r.sweep([cp(9.7, -3.2), cp(9.7, 3.2)], 0.65, 7.8, alb="hud.gold.mid", gloss=0.6)
-    img = cursor_render(r)
-    return img
+    """A small sword on the 47 degree axis, point up-left on the hotspot. No hand."""
+    r = Relief(CUR, CUR, "#3A4048", 0.0, 0.9)
+    L = 14.0
+    blade = [cp(-0.4, 0.0), cp(2.2, -0.95), cp(L, -1.05), cp(L, 1.05), cp(2.2, 0.95)]
+    r.plate(blade, 4.0, 0.9, "round", alb="#B4BCC6", gloss=1.0)
+    r.sweep([cp(3.0, 0.0), cp(L - 1.0, 0.0)], 0.28, 5.3, alb="#566270", gloss=0.6, step_px=2.0)
+    r.sweep([cp(1.0, -0.62), cp(L - 0.4, -0.78)], 0.14, 5.6, alb="#F2F4F6", gloss=1.0, step_px=2.0)
+    # gold crossguard, dark leather grip with wraps, gold pommel
+    r.sweep([cp(L + 0.6, -3.7), cp(L + 0.6, -1.0), cp(L + 0.6, 1.0), cp(L + 0.6, 3.7)], [0.5, 0.85, 0.85, 0.5], 4.8, alb="hud.gold.mid", gloss=0.7, step_px=2.0)
+    r.sweep([cp(L + 1.4, 0.0), cp(L + 6.4, 0.0)], 0.78, 4.6, alb="#3A2616", gloss=0.25, step_px=2.0)
+    for k in range(5):
+        a0 = L + 2.0 + k * 1.0
+        r.sweep([cp(a0, -0.7), cp(a0 + 0.4, 0.7)], 0.2, 5.5, alb="#1C120A", gloss=0.1, step_px=1.0)
+    r.sweep([cp(L + 7.4, 0.0)], 1.15, 4.8, alb="hud.gold.mid", gloss=0.7, step_px=1.0)
+    r.sweep([cp(L + 7.2, -0.3)], 0.35, 6.0, alb="hud.gold.bright", gloss=0.9, step_px=1.0)
+    return cursor_render(r)
 
 
 def cursor_forbid():
@@ -1697,13 +1727,23 @@ HUD_LAYOUT = {
 }
 
 
+def tip_pivot(img):
+    """The hotspot, read off the drawn art: the furthest up-left SOLID pixel along the cursor axis. The dark halo
+    is at most 0.95 opaque, so an alpha >= 250 cut on the shipped (downsampled) pixels leaves it out and the click lands
+    on the metal, not on its outline. check_hud measures the same thing from cursors.png."""
+    ys, xs = np.nonzero(U.downsample(img)[..., 3] >= 250)
+    k = (xs * math.cos(AXIS) + ys * math.sin(AXIS)).argmin()
+    return (int(xs[k]), int(ys[k]))
+
+
 def cursor_sprites():
-    piv = (int(TIP[0] * 4) + 2, int(TIP[1] * 4) + 2)
+    pointer, attack = cursor_pointer(), cursor_attack()
+    piv = tip_pivot(pointer)
     return [
-        U.Sprite("cursor.pointer", cursor_pointer(), pivot=piv),
+        U.Sprite("cursor.pointer", pointer, pivot=piv),
         U.Sprite("cursor.pressed", cursor_pressed(), pivot=tuple(int((v + 1) * 4) for v in cp(6.0, -0.6))),
         U.Sprite("cursor.grab", cursor_grab(), pivot=(44, 44)),
-        U.Sprite("cursor.attack", cursor_attack(), pivot=piv),
+        U.Sprite("cursor.attack", attack, pivot=tip_pivot(attack)),
         U.Sprite("cursor.forbid", cursor_forbid(), pivot=piv),
     ]
 

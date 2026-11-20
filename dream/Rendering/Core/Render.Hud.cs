@@ -34,6 +34,9 @@ public partial class Render
     // The quickbar's state, shared by the scene every frame before the HUD pass (M4); null draws none.
     public QuickbarHudState? Quickbar { get; set; }
 
+    // Set by the scene every update; carried into the classic HUD frame.
+    public bool PointerOverEnemy { get; set; }
+
     [MemberNotNull(nameof(_hudShader), nameof(_shaderObj))]
     private void InitializeHUD()
     {
@@ -302,7 +305,8 @@ public partial class Render
             CombatText = _classicCombatText,
             Labels = _classicLabels,
             Vendor = Vendor,
-            Quickbar = Quickbar
+            Quickbar = Quickbar,
+            PointerOverEnemy = PointerOverEnemy
         };
         HudSurfaceSelector selector = HudSelector(settings);
         bool drew = ClassicHudFrameGuard.Draw(surface, in frame, out action, out closeInventory, out Exception? fault);
@@ -621,8 +625,8 @@ public partial class Render
         // ImGui always gets the real mouse, so the Build panel works during play. The classic HUD
         // draws its own sprite cursor, so the ImGui one stays off there, except over an ImGui window
         // (the Build panel), where the sprite cursor is not drawn and the OS one is hidden.
-        bool classicCursor = ClassicHudCursorActive && !settings.SettingsVisible && !io.WantCaptureMouse;
-        io.MouseDrawCursor = !classicCursor;
+        io.MouseDrawCursor = ClassicCursorPolicy.ImGuiDrawsCursor(
+            ClassicHudCursorActive, settings.SettingsVisible, settings.PauseMenuVisible, io.WantCaptureMouse);
         io.MousePos = windowFocused
             ? new System.Numerics.Vector2(mouseState.Position.X, mouseState.Position.Y)
             : new System.Numerics.Vector2(-float.MaxValue, -float.MaxValue);
