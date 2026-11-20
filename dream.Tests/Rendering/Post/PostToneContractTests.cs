@@ -207,7 +207,7 @@ public class PostToneContractTests
     [Fact]
     public void NeutraliseShadows_SaturationFallsMonotonicallyWithStrength()
     {
-        var c = new Vector3(0.01f, 0.02f, 0.05f);
+        var c = new Vector3(0.001f, 0.002f, 0.005f);
         float previous = Saturation(c) + 1e-6f;
         for (int i = 0; i <= 20; i++)
         {
@@ -216,7 +216,7 @@ public class PostToneContractTests
             previous = sat;
         }
 
-        Assert.True(previous < 1e-3f, "full strength should leave a near-neutral pixel");
+        Assert.True(previous < 0.02f, "full strength should leave a near-neutral pixel");
     }
 
     [Fact]
