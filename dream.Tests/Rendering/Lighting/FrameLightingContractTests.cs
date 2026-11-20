@@ -18,6 +18,11 @@ namespace Dream.Tests.Rendering.Lighting;
 // tests feed ReferenceNoon directly, so they still prove the shaders reproduce the legacy look.
 public class FrameLightingContractTests
 {
+    // Everything between the light floor and FragColor: the equipment block, at most the guarded hover rim
+    // block, the emissive and the final write. Shared with ActorRimShaderContractTests' synthetic negatives.
+    internal const string PostFloorContract =
+        @"lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*(?://[^\n]*\n\s*)*if \(uEquipSurface\.y > 0\.0\) \{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*(?://[^\n]*\n\s*)*(?:if \(uActorRim\.r \+ uActorRim\.g \+ uActorRim\.b > 0\.0\) \{[^{}]*\}\s*(?://[^\n]*\n\s*)*)?vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);";
+
     private static readonly string[] WorldFragmentShaders = ["cubeFragment.glsl", "enemyFragment.glsl"];
 
     // The spawn point the old point lights were matched at.
@@ -131,7 +136,7 @@ public class FrameLightingContractTests
         // The one other block allowed there is the world hover's rim (uActorRim, ActorRimShaderContractTests),
         // gated on a positive colour so it is off for every draw but the hovered actor.
         Assert.Matches(
-            @"lit = max\(lit, baseColor\.rgb \* uLightingParams\.y\);\s*(?://[^\n]*\n\s*)*if \(uEquipSurface\.y > 0\.0\) \{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*(?://[^\n]*\n\s*)*(?:if \(uActorRim\.r \+ uActorRim\.g \+ uActorRim\.b > 0\.0\) \{[^{}]*\}\s*(?://[^\n]*\n\s*)*)?vec3 emissive = material\.emissiveFactor;\s*if \(material\.hasEmissiveTexture\) \{[^}]*\}\s*FragColor = vec4\(dreamApplyBoundaryMist\(dreamApplyFog\(dreamExpose\(lit\) \+ emissive, fragPos\), fragPos\), baseColor\.a\);",
+            PostFloorContract,
             source);
     }
 

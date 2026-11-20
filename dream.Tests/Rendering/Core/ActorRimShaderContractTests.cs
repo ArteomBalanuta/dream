@@ -102,13 +102,37 @@ public sealed class ActorRimShaderContractTests
         Assert.Contains("program.SetVector3(\"uActorRimEye\", ActorRimEye);", source);
     }
 
+    // The real gate on the block's place and shape is the post-floor contract in FrameLightingContractTests: it
+    // must accept the shipped shader and reject an unguarded block, a second block, and a bare statement after it.
     [Fact]
-    public void ARimMissingItsGuard_WouldBeCaught()
+    public void ThePostFloorContract_RejectsAnUnguardedDuplicatedOrTrailingRim()
     {
-        // Synthetic negative: the guard assertion must fail on a shader whose block runs unconditionally.
-        string unguarded = Shader.Replace("if (uActorRim.r + uActorRim.g + uActorRim.b > 0.0) {", "{", StringComparison.Ordinal);
-        Assert.DoesNotContain("if (uActorRim.r + uActorRim.g + uActorRim.b > 0.0) {", unguarded);
+        const string Guard = "if (uActorRim.r + uActorRim.g + uActorRim.b > 0.0) {";
+        Assert.Matches(Dream.Tests.Rendering.Lighting.FrameLightingContractTests.PostFloorContract, Shader);
+
+        string unguarded = Shader.Replace(Guard, "{", StringComparison.Ordinal);
         Assert.NotEqual(Shader, unguarded);
+        Assert.DoesNotMatch(Dream.Tests.Rendering.Lighting.FrameLightingContractTests.PostFloorContract, unguarded);
+
+        string block = Block();
+        string whole = block + "\n    }";
+        string duplicated = Shader.Replace(whole, whole + "\n    " + whole, StringComparison.Ordinal);
+        Assert.NotEqual(Shader, duplicated);
+        Assert.DoesNotMatch(Dream.Tests.Rendering.Lighting.FrameLightingContractTests.PostFloorContract, duplicated);
+
+        string trailing = Shader.Replace(whole, whole + "\n    lit += vec3(0.1);", StringComparison.Ordinal);
+        Assert.NotEqual(Shader, trailing);
+        Assert.DoesNotMatch(Dream.Tests.Rendering.Lighting.FrameLightingContractTests.PostFloorContract, trailing);
+    }
+
+    // A still camera's hovered enemy must be rimmed toward the eye, not the world origin: other draws of the shared
+    // program write a zero eye into it, so the enemy renderer may not skip the eye upload on a cached value.
+    [Fact]
+    public void TheEnemyRenderer_UploadsTheEye_OnEveryRimmedDraw()
+    {
+        string source = Read("dream", "Rendering", "Actors", "EnemyRenderer.cs");
+        Assert.DoesNotContain("_appliedRimEye", source);
+        Assert.Contains("if (!rim.Equals(Vector4.Zero))\n        {\n            shader.SetVector3(RimEyeUniformName, rimEye);", source.Replace("\r\n", "\n"));
     }
 
     private static string Block()
