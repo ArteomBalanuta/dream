@@ -18,7 +18,7 @@ public readonly record struct PersistedPlayerProfile(
         return new PersistedPlayerProfile(
             name,
             name,
-            PlayerInteractionMode.Building,
+            PlayerInteractionModeExtensions.Default,
             // Every attribute starts at PlayerStatRules.NewCharacterAttribute, and the health seed
             // is what the player.max_health formula ("50 + vitality * 5") makes of that vitality;
             // the formula service recomputes it on load, so a seed out of step would only show as

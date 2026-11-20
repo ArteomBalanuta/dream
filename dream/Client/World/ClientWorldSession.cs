@@ -74,7 +74,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
 
     public PlayerSessionId LocalPlayerSessionId => PlayerSessionId.LocalDefault;
 
-    public PlayerInteractionMode InteractionMode { get; private set; } = PlayerInteractionMode.Building;
+    public PlayerInteractionMode InteractionMode { get; private set; } = PlayerInteractionModeExtensions.Default;
 
     public ulong CurrentServerTick { get; private set; }
 

@@ -216,7 +216,7 @@ public sealed partial class WorldSessionRuntime
                 Player.Combatant.Actor.Id,
                 isLocal: false,
                 displayName: displayName);
-            _sessionInteractionModes[primary.SessionId] = PlayerInteractionMode.Building;
+            _sessionInteractionModes[primary.SessionId] = PlayerInteractionModeExtensions.Default;
             SeatPrimary(primary.SessionId);
             return primary;
         }
@@ -240,7 +240,7 @@ public sealed partial class WorldSessionRuntime
             actorId,
             isLocal: false,
             displayName: displayName);
-        _sessionInteractionModes[remote.SessionId] = PlayerInteractionMode.Building;
+        _sessionInteractionModes[remote.SessionId] = PlayerInteractionModeExtensions.Default;
         return remote;
     }
 
