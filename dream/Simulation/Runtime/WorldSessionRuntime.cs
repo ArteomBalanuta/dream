@@ -176,7 +176,7 @@ public sealed partial class WorldSessionRuntime : IDisposable
             displayName: "local-player");
         // The first spawn is protected like a respawn (see AttachRemoteSession).
         localSeat.ProtectedThroughTick = PlayerRespawnRules.SpawnProtectionTicks;
-        _sessionInteractionModes[LocalPlayerSessionId] = PlayerInteractionModeExtensions.Default;
+        _sessionInteractionModes[LocalPlayerSessionId] = PlayerInteractionMode.Building;
         _lastAppliedCommandFrame = CreateIdleCommandFrame(LocalPlayerSessionId, sequence: 0);
 
         _worldObjects = new WorldObjectRegistry();

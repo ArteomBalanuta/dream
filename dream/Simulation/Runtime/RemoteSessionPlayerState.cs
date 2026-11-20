@@ -77,7 +77,7 @@ public sealed class RemoteSessionPlayerState : IAuthoritativePlayerTarget, IDisp
 
     public bool IsAlive => Combatant.Health.IsAlive;
 
-    public PlayerInteractionMode InteractionMode { get; private set; } = PlayerInteractionModeExtensions.Default;
+    public PlayerInteractionMode InteractionMode { get; private set; } = PlayerInteractionMode.Building;
 
     // The runtime disposes this state when the session detaches and lists only spawned sessions.
     bool IAuthoritativePlayerTarget.IsSpawned => !_disposed;

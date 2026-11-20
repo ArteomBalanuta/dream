@@ -142,6 +142,10 @@ public sealed class PvpRespawnSealTests
         using WorldSessionRuntime runtime = WaveIRuntimeKit.CreateRuntime();
         runtime.AttachRemoteSession(A, "Alice");
         runtime.AttachRemoteSession(B, "Bob");
+        // Stated, not inherited: a session now starts in Combat, and a build is refused outside Building.
+        // This test is about build PROTECTION, so the building mode is its precondition rather than a
+        // default it happens to get.
+        runtime.SetSessionInteractionMode(A, PlayerInteractionMode.Building);
         AuthoritativeActionResult placed = runtime.ProcessAuthoritativeAction(
             new PlayerActionMessage(A, 1, new BuildUseIntent(new Vector3(41.5f, 1.5f, 41.5f))));
         Assert.True(placed.Accepted, placed.Rejection?.Reason);

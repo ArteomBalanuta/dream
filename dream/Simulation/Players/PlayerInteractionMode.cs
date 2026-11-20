@@ -8,9 +8,14 @@ public enum PlayerInteractionMode
 
 public static class PlayerInteractionModeExtensions
 {
-    // The mode a session starts in: what a new profile is created with, what the server gives a fresh
-    // remote session, and what the client assumes until the first snapshot corrects it. All three used
-    // to say Building independently, which is why changing one of them would not have changed anything.
+    // The mode a PLAYER starts in, which is not the same thing as the mode a session starts in.
+    //
+    // A join restores the mode from the player's profile (WorldSessionRuntime.Persistence calls
+    // SetSessionInteractionMode with profile.InteractionMode), so this is the default a NEW profile is
+    // created with, plus what the client assumes until the first snapshot corrects it. The session
+    // table and RemoteSessionPlayerState keep starting in Building deliberately: that is the state
+    // before any profile is applied, and the whole simulation - and a large number of tests that build
+    // without ever creating a profile - rely on it.
     //
     // It is Combat because the left button only attacks in Combat (CursorAimController gates on it), so
     // a player who has not found the mode keys clicks an enemy and gets NOTHING - no swing, no miss, no

@@ -216,7 +216,7 @@ public sealed partial class WorldSessionRuntime
                 Player.Combatant.Actor.Id,
                 isLocal: false,
                 displayName: displayName);
-            _sessionInteractionModes[primary.SessionId] = PlayerInteractionModeExtensions.Default;
+            _sessionInteractionModes[primary.SessionId] = PlayerInteractionMode.Building;
             SeatPrimary(primary.SessionId);
             return primary;
         }
@@ -240,7 +240,7 @@ public sealed partial class WorldSessionRuntime
             actorId,
             isLocal: false,
             displayName: displayName);
-        _sessionInteractionModes[remote.SessionId] = PlayerInteractionModeExtensions.Default;
+        _sessionInteractionModes[remote.SessionId] = PlayerInteractionMode.Building;
         return remote;
     }
 
@@ -399,7 +399,7 @@ public sealed partial class WorldSessionRuntime
     // Saves the profile only when the mode changes (or saveUnchanged, the join's restore): a starved
     // seat's frames keep the mode it already has (RequestedMode), which used to queue a profile save
     // every tick.
-    private void SetSessionInteractionMode(
+    internal void SetSessionInteractionMode(
         PlayerSessionId sessionId,
         PlayerInteractionMode interactionMode,
         bool saveUnchanged = false)
