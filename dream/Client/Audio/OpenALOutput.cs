@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using OpenTK.Audio.OpenAL;
 
 namespace Dream.Client.Audio;
@@ -11,6 +12,8 @@ public sealed class OpenALOutput : IAudioOutput
     private const int FramesPerBuffer = 2048;
     private const int Channels = 2;
     private const int PollMilliseconds = 5;
+    private const int OpenTimeoutMilliseconds = 5000;
+    private const int JoinTimeoutMilliseconds = 2000;
 
     private readonly AudioMixer _mixer;
     private readonly AudioReadStats _stats;
@@ -29,11 +32,17 @@ public sealed class OpenALOutput : IAudioOutput
         try
         {
             _thread.Start();
-            _opened.Wait();
+            if (!_opened.Wait(OpenTimeoutMilliseconds))
+            {
+                // A driver that hangs while opening must not hang the game: the pump thread is a background
+                // thread, and once _stop is set it releases whatever it opened as soon as it gets control back.
+                throw new InvalidOperationException("OpenAL: opening the audio device timed out");
+            }
+
             if (_openError is { } error)
             {
-                _thread.Join();
-                throw error;
+                _thread.Join(JoinTimeoutMilliseconds);
+                ExceptionDispatchInfo.Capture(error).Throw();
             }
         }
         catch
@@ -76,7 +85,7 @@ public sealed class OpenALOutput : IAudioOutput
         _stop.Cancel();
         if (_thread.IsAlive)
         {
-            _thread.Join();
+            _thread.Join(JoinTimeoutMilliseconds);
         }
 
         _stats.Dispose();
@@ -153,26 +162,34 @@ public sealed class OpenALOutput : IAudioOutput
     {
         while (!_stop.IsCancellationRequested)
         {
-            AL.GetSource(source, ALGetSourcei.BuffersProcessed, out int processed);
-            if (processed > 0)
-            {
-                int[] done = AL.SourceUnqueueBuffers(source, processed);
-                foreach (int buffer in done)
-                {
-                    Fill(buffer, scratch, pcm);
-                }
+            Refill(source, scratch, pcm);
 
-                AL.SourceQueueBuffers(source, done);
-            }
-
-            // Underrun: the source ran dry and stopped; restart it on the refilled queue.
+            // Underrun: the source ran dry and stopped. Every queued buffer is now processed, so refill again
+            // (the source may have finished more since the first look) before restarting; otherwise the restart
+            // would replay audio that was already heard.
             AL.GetSource(source, ALGetSourcei.SourceState, out int state);
             if ((ALSourceState)state != ALSourceState.Playing)
             {
+                Refill(source, scratch, pcm);
                 AL.SourcePlay(source);
             }
 
             _stop.Token.WaitHandle.WaitOne(PollMilliseconds);
+        }
+    }
+
+    private void Refill(int source, float[] scratch, short[] pcm)
+    {
+        AL.GetSource(source, ALGetSourcei.BuffersProcessed, out int processed);
+        if (processed > 0)
+        {
+            int[] done = AL.SourceUnqueueBuffers(source, processed);
+            foreach (int buffer in done)
+            {
+                Fill(buffer, scratch, pcm);
+            }
+
+            AL.SourceQueueBuffers(source, done);
         }
     }
 

@@ -102,18 +102,23 @@ public sealed class AudioOutputBackendTests
         Assert.Equal([(short)7, (short)7], untouched);
     }
 
-    // With no openal32.dll (or no device) opening must throw, never hang or crash, so GameAudio falls back to silence.
+    // With no OpenAL library (or no device) opening must throw one of the failures the backend produces, and must
+    // return within a bound, so GameAudio falls back to silence instead of hanging or crashing.
     [Fact]
-    public void OpenAlOpenFailureThrowsOrOpensCleanly()
+    public void OpenAlOpenFailureThrowsExpectedTypeWithinBoundOrOpensCleanly()
     {
         AudioMixer mixer = new(new AudioVolumes());
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             using OpenALOutput output = new(mixer);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is DllNotFoundException or TypeInitializationException or InvalidOperationException)
         {
-            // Expected on a machine without OpenAL.
+            // Library missing, or the library loaded and reported no device / no context / a timeout.
         }
+
+        // 5 s open timeout + 2 s join timeout inside the backend, plus slack.
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), "OpenALOutput construction took " + clock.Elapsed);
     }
 }
