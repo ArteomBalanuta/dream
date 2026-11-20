@@ -1,6 +1,6 @@
 # Tactical camera: edge pan, rotation and zoom-to-cursor (plan)
 
-Status: design, not started. Base: `master` at `d3c78ef1`.
+Status: built on `integrate/tactical-camera` (not merged). Base: `master` at `d3c78ef1`. Outcome: `docs/ledger/work-log/2026-11-20-tactical-camera.md`.
 
 ## Overview
 
