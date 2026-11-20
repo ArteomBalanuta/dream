@@ -206,4 +206,14 @@ public class WorldCursorPickerTests
         wolf.Combatant.Health.SetAuthoritativeState(0, 80);
         Assert.False(target.IsAlive);
     }
+
+    [Fact]
+    public void WallDepth_IsTheDistanceToTheFirstBlockedCell_AndInfinityWhenThereIsNone()
+    {
+        Vector3 origin = new(6.5f, 1.5f, 10.5f);
+
+        // The cube at x = 10 starts 3.5 m along +X; the march steps 5 cm.
+        Assert.Equal(3.5f, WorldCursorPicker.WallDepth(new FloorWorld(), origin, Vector3.UnitX), WorldCursorPicker.MarchStepMetres);
+        Assert.True(float.IsPositiveInfinity(WorldCursorPicker.WallDepth(new FloorWorld(), origin, Vector3.UnitZ * -1f)));
+    }
 }
