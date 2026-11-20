@@ -633,6 +633,18 @@ public partial class PlayScene
 
             case HudCaptureVerb.Snap:
                 break;
+            case HudCaptureVerb.Chat:
+                // chat:open / chat:close, then a PNG like snap: the open panel is judged in a capture.
+                if (spec.A == 1)
+                {
+                    _chatInput.Open();
+                }
+                else
+                {
+                    _chatInput.Cancel();
+                }
+
+                break;
             default:
                 ApplyHudCaptureState(name);
                 break;

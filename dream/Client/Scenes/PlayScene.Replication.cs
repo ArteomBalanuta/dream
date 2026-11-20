@@ -147,6 +147,13 @@ public partial class PlayScene
             return;
         }
 
+        if (message is ServerWorldClockMessage worldClock)
+        {
+            // Not a routed kind: the server moved its world clock (the /dev tod jump), so re-anchor the sky.
+            _worldClock.ApplyJump(worldClock.Anchor);
+            return;
+        }
+
         if (message is ServerGroundItems groundItems)
         {
             // Not a routed kind either: it only feeds the ground list, which validates every entry.
@@ -188,14 +195,8 @@ public partial class PlayScene
             _chatInput.State.Clear();
             _predictionReconciler.Reset();
             _serverTickClock.Reset(joinAcceptedMessage.CurrentServerTick);
-            if (joinAcceptedMessage.WorldClock is { } worldClockAnchor)
-            {
-                _worldClock.Apply(worldClockAnchor);
-            }
-            else
-            {
-                _worldClock.Clear();
-            }
+            // A jump that overtook a chunked join stays (ApplyJoin keeps the newer anchor on the same timeline).
+            _worldClock.ApplyJoin(joinAcceptedMessage.WorldClock);
 
             ClientJoinAcceptedApplier.ApplyToPresenter(_scenePresenter, joinAcceptedMessage);
             // The presenter just released every enemy interpolation buffer of the old world; the

@@ -26,7 +26,7 @@ already have an answer here. Each `skills/<name>/SKILL.md` is the procedure; rea
 | --- | --- | --- |
 | See a change in the real game (PNG screenshots, unattended, parallel runs) | `skills/capturing-dream-screenshots/scripts/capture.ps1` (`DREAM_HUD_CAPTURE`; `-FromSource`, `-DataDir`, `-Seed`, `-Serial`; exit 0/1/2/3) | `capturing-dream-screenshots` skill, `docs/configuration.md` (HUD (classic and ImGui), Capture traps) |
 | Stage the world (spawn enemies, give items, teleport, clear, heal, set hp/mana) | `/dev <sub>[; <sub>...]` chat command, or the `dev:` capture step; loopback and dev-commands-allowed only | `docs/configuration.md` (Dev commands) |
-| Force a time of day for a look | `tod:<hours>` or `tod:off` capture step (client-only visual) | `docs/configuration.md` (Capture steps `dev:` and `tod:`) |
+| Force a time of day for a look | `tod:<hours>` or `tod:off` capture step (client-only visual); `/dev tod <time>` or `dev:tod:<time>` jumps the real world clock forward for everyone | `docs/configuration.md` (Capture steps `dev:` and `tod:`) |
 | Catch visual regressions | `tools/golden/run.ps1 -Scene all [-FromSource]` (median baselines, per-step noise, pixel/tone/block checks) | `tools/golden/README.md` |
 | Run the narrowest test tier | `tools/dev/test.ps1 -Area <tier>` (Content, Rendering, Simulation, Net, Client, Fast, Full) | `tools/dev/README.md`, `docs/build-and-run.md` |
 | Check content JSON in under a second | `dream.exe --validate-content` (exit 0/1/8) | `docs/configuration.md` (Content validation) |
@@ -42,7 +42,7 @@ already have an answer here. Each `skills/<name>/SKILL.md` is the procedure; rea
 | Report worktrees and their build output | `tools/dev/worktrees.ps1` (read-only without flags) | `tools/dev/README.md` |
 | Write a new repo skill | conventions and validation | `creating-dream-skills` skill |
 
-Deliberately not built yet: live hot reload of content, a scripted bot client, `/dev time`, `/dev god`.
+Deliberately not built yet: live hot reload of content, a scripted bot client, `/dev god`.
 
 ## Rules Learned The Hard Way
 

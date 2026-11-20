@@ -25,9 +25,9 @@ Inside the `Game` constructor:
 
 When the play session ends on its own (NETR-2: a lost connection, the 8 s server-silence watchdog, a rejected or timed-out join), `PlayScene.SessionEndReason` becomes non-null and `Game` returns to the connection screen instead of leaving a dead scene running. After that frame's update it clears the play scene, swaps in a fresh on-demand local server handle, and calls `PlaySessionEndTransition.TearDown`. That disposes the play scene (GL resources first, on the render thread) and the old local server handle (stopping the integrated server if it was started), each exactly once. Teardown failures are logged, not thrown. The new connection scene keeps the endpoint and player name, shows "Session ended: <reason>", and does not auto-connect again. The liveness timeouts are listed in `docs/configuration.md`, Connection liveness.
 
-### Client session lifecycle (protocol version 22)
+### Client session lifecycle (protocol version 23)
 
-`RemoteClientSession` (`dream/Client/Networking/RemoteClientSession.cs`) speaks protocol version `TransportEnvelope.CurrentProtocolVersion` = 22 (`TransportEnvelope.cs`; the versions up to v13 are described below); a peer on another version is refused with `ProtocolVersionMismatchException`. Its timers, all listed with the server-side ones in `docs/configuration.md`, Connection liveness:
+`RemoteClientSession` (`dream/Client/Networking/RemoteClientSession.cs`) speaks protocol version `TransportEnvelope.CurrentProtocolVersion` = 23 (`TransportEnvelope.cs`; the versions up to v13 are described below); a peer on another version is refused with `ProtocolVersionMismatchException`. Its timers, all listed with the server-side ones in `docs/configuration.md`, Connection liveness:
 
 - Keepalive: when no frame has gone out for `KeepaliveInterval` (1 s, `RemoteClientSession.cs:98`), the send loop writes one empty frame, so a frozen game loop does not look dead to the server (server idle timeout 10 s, `ServerConnectionOptions.cs:12`).
 - Server-silence watchdog: `ServerSilenceTimeout` (8 s, line 117) ends a joined session that receives no inbound bytes, with `ServerSilenceDisconnectReason`.
