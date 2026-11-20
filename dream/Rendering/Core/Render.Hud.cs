@@ -46,7 +46,11 @@ public partial class Render
     public HoverInfo? HoverInfo { get; set; }
 
     // The clickable world label the classic HUD's pointer rested on last frame, or default.
-    public HudLabelClick ClassicHoveredLabel => _classicSurface?.HoveredLabel ?? default;
+    // Only from a frame the classic HUD really built: after a fault (latched to ImGui), a skipped frame or a
+    // switch to the ImGui surface the last label hover would otherwise stay pinned as the world hover target.
+    public HudLabelClick ClassicHoveredLabel => _classicLabelsBuilt ? _classicSurface?.HoveredLabel ?? default : default;
+
+    private bool _classicLabelsBuilt;
 
     // Set by the scene every update while a camera rotation drag is held: the cursor shows Grab.
     public bool CameraDragging { get; set; }
@@ -370,7 +374,7 @@ public partial class Render
         List<WorldActorLabelState> labels = _worldActorLabels;
         labels.Clear();
         // The actor the hover info panel shows loses its floating label while the panel is up.
-        HoverTargetId panel = HoverPanel.Visible && HoverInfo is not null ? HoverInfo.Target : HoverTargetId.None;
+        HoverTargetId panel = HoverPanel.Visible && HoverPanel.Alpha > 0f && HoverInfo is not null ? HoverInfo.Target : HoverTargetId.None;
         int? skipPlayer = panel.Kind == HoverKind.RemotePlayer ? (int)panel.Id : null;
         int? skipEnemy = panel.Kind == HoverKind.Enemy ? (int)panel.Id : null;
         ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels, skipPlayer);
@@ -425,9 +429,11 @@ public partial class Render
                     combatFeedback, rejectionMessage, status, inventory, enemyPoseSource, enemyRenderTick,
                     out classicAction, out classicClose);
                 _classicCursorActive = drew && !settings.SettingsVisible;
+                _classicLabelsBuilt = drew;
             }
             catch (Exception ex)
             {
+                _classicLabelsBuilt = false;
                 classicAction = null;
                 classicClose = false;
                 LatchClassicHud(selector, ex.Message, ex);
@@ -436,6 +442,7 @@ public partial class Render
         else
         {
             _classicCursorActive = false;
+            _classicLabelsBuilt = false;
         }
 
         // Read by DrawHudInterface: with the classic surface it keeps only Settings and Build.

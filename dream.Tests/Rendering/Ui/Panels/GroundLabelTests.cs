@@ -170,6 +170,42 @@ public sealed class GroundLabelTests : IDisposable
         Assert.Equal([ReplicatedActorIdRanges.FirstNpcId], actions.Talks);
     }
 
+    private HudLabelClick HoverAt(Vector2 at, HudView view, PickActions actions)
+    {
+        _scene.Input.Pointer = at;
+        WorldLabelsPanel.Build(_scene.Canvas, _scene.Input, view, _scene.Layout, actions);
+        _scene.Input.EndFrame();
+        return view.HoveredLabel;
+    }
+
+    // A clickable label under the pointer stands for its entity in the world hover: the panel reports which
+    // one, by its click target (never its place in the list), and forgets it as soon as the pointer leaves or
+    // the labels go dead under the HUD.
+    [Fact]
+    public void TheHoveredClickableLabel_IsReported_AndClearedWhenThePointerLeaves()
+    {
+        PickActions actions = new();
+        HudLabelClick npc = new(HudLabelClickKind.InteractNpc, ReplicatedActorIdRanges.FirstNpcId);
+        HudView view = ViewWith(
+            new HudWorldLabel(new Vector2(300f, 200f), "Torch", "", new HudLabelClick(HudLabelClickKind.PickUpGround, 77)),
+            new HudWorldLabel(new Vector2(700f, 200f), "Mara", "", npc),
+            new HudWorldLabel(new Vector2(1000f, 200f), "Wolf", "Lv 1  10/10"));
+
+        HoverAt(new Vector2(700f, 205f), view, actions);
+        Assert.Equal(npc, HoverAt(new Vector2(700f, 205f), view, actions));
+
+        Assert.Equal(default, HoverAt(new Vector2(500f, 205f), view, actions));
+        // An actor label has no click, so it is no hover proxy.
+        Assert.Equal(default, HoverAt(new Vector2(1000f, 205f), view, actions));
+
+        // Over the status bar the labels are dead: a stale hover must not survive into that frame.
+        HoverAt(new Vector2(300f, 205f), view, actions);
+        Assert.Equal(new HudLabelClick(HudLabelClickKind.PickUpGround, 77), HoverAt(new Vector2(300f, 205f), view, actions));
+        UiRect bar = _scene.Layout.Bar;
+        Assert.Equal(default, HoverAt(new Vector2(bar.X + (bar.W * 0.5f), bar.Y + (bar.H * 0.5f)), view, actions));
+        Assert.Empty(actions.Pickups);
+    }
+
     [Fact]
     public void AnActorLabelHasNoClick_AndALabelWithoutInputIsPlainText()
     {
