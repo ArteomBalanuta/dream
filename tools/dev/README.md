@@ -59,3 +59,10 @@ configuration. Script exit codes pass through (`test.ps1` 3 = refused beside a t
   `artifacts\py-gates\`. `quick` (golden, gallery, audio) takes about 2 minutes; `all` adds every
   `tools\ui-assets\tests\check_*.py` but `check_look.py` and took 19 minutes wall clock (98 minutes serial) on
   2026-11-20, because several checks regenerate whole atlases with their own process pools.
+- `package.ps1 -Rid win-x64|linux-x64|all [-Version v] [-NoRestore] [-RestoreOnly]`: builds a self-contained client bundle
+  (`just package-windows|package-linux|package-all`, `just run-dist`). Refuses while `dream/config` is dirty (exit 3), publishes
+  into `artifacts\dist\<rid>\dream-<version>-<rid>\` (output under `artifacts\dist-bin`, never `dream\bin`), adds `vcomp140.dll`
+  on win-x64 and `bundle\run-dream.sh` on linux-x64, verifies, then packs `artifacts\dist\dream-<version>-<rid>.zip|.tar.gz`.
+  Works in Windows PowerShell 5.1 and pwsh 7. See `docs/cross-platform.md`.
+- `archive_bundle.py verify|pack|--selftest` (stdlib only, run with `python -I`): the required/forbidden file lists and the
+  archive writer behind `package.ps1`; the tar.gz gets `dream` and `run-dream.sh` at 0755 with LF endings.
