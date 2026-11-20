@@ -425,3 +425,7 @@ docs/superpowers/specs/**/reference/
 # local capture scratch
 _rv_cap/
 _cap/
+
+# creature-asset-generator skill: local Python env and build outputs
+skills/creature-asset-generator/.venv/
+out/creatures/

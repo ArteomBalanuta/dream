@@ -1,0 +1,4 @@
+interface:
+  display_name: "Creature Asset Generator"
+  short_description: "Sculpt, texture and rig creatures as .glb"
+  default_prompt: "Use $creature-asset-generator to build a rigged, textured creature model from a reference image."
