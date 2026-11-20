@@ -32,3 +32,10 @@ reference art until an import path (rigid split per bone, albedo range check) ex
 Python deps live in a git-ignored `skills/creature-asset-generator/.venv`, created per machine
 (`numpy scipy pillow scikit-image fast-simplification xatlas`). Build outputs go to the ignored
 `out/creatures/`.
+
+## Asset committed
+
+- `dream/animations/enemies/skeleton_warrior.glb` (7.7 MB): the full-quality skeleton warrior build
+  (26k triangles, 24 bones, Idle + Rattle, embedded 2048² JPEG maps). Not referenced by
+  `config/content/enemies.json` or any code yet, so the game ignores it; it is only copied to the
+  output folder with the rest of `animations/`. Wiring it in needs the import work described above.
