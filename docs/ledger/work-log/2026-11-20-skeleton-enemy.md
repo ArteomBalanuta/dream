@@ -137,26 +137,40 @@ shipped villagers read 0.549 and the hound 0.439, so the skeleton sits inside th
 already occupy. Every authored `MATS` colour is inside the 0.40 bound — the brightest is `bone.hi`
 at 0.201 linear, against `bone` at 0.147 which it shares verbatim with the hound.
 
-## Looked at, in the real game
+## Looked at, in the real game -- and the first look was a lie
 
 `check_actors.py` measures spread, palette, bytes, skinning and grounding. None of that is a picture,
-so the wave was also captured in the engine with `capture.ps1`:
+so the wave was also captured in the engine with `capture.ps1`.
 
-- **Night, staged**: `dev:clear;spawn:RisenSkeleton:1:3` answers `[dev] spawned 1 RisenSkeleton near
-  5.0,5.0`, the nameplate reads **Risen Skeleton / Lv 6 520/520**, and the figure stands and holds
-  its blade.
-- **Noon, beside a Grave Howler**: the biped-against-quadruped scale relationship reads correctly —
-  a standing figure at roughly player height next to a low hound, which is the point of the 1.20
-  world height against the beasts' 0.60.
-- **Offline, every clip key** rendered through the same chain `gen_char_preview.py` uses: the skull
+**The first capture was invalid, and the user caught it by looking at the screenshot.** It showed a
+wolf wearing a "Risen Skeleton / Lv 6 520/520" nameplate. Everything in the logs said success:
+`[dev] spawned 1 RisenSkeleton near 5.0,5.0`, the right name, the right level, the right health.
+
+The cause is a split that is easy to miss. **`capture.ps1` never builds.** It runs whatever
+`dream.exe` is sitting in `artifacts/capture-bin`, and `-FromSource` only redirects
+`DREAM_ASSET_ROOT` at the working tree. So the CONTENT came from source -- which is why the kind
+existed and the nameplate was right -- while the CLIENT CODE was a binary from two weeks earlier,
+with no `enemy.skeleton` branch in `EnemyVisualCatalog`. An unresolved visual key does not draw
+nothing: by design it **falls back to the default wolf**. So the failure rendered as a finished
+feature.
+
+A nameplate is content; a model is code. The fallback that makes the wire format safe is the same
+fallback that makes a stale binary indistinguishable from a working one.
+
+After rebuilding `dream/dream.csproj` in Release into `artifacts/capture-bin` (and confirming
+`skeleton.glb` was present in the output), the re-capture shows the actual model: an upright biped
+with a bone dome head, separated shoulders and two legs mid-stride, under the same nameplate.
+
+What the corrected captures show:
+
+- **Noon, staged**: the model renders as the forged skeleton, not the fallback wolf.
+- **Offline, every clip key**, rendered through the same chain `gen_char_preview.py` uses: the skull
   reads at gameplay size, the pauldron is a separate mass at all four yaws, the attack arc is legible
-  (neutral, blade up, cut across, follow-through, recover), and the corpse lies flat with its skull at
-  the leading end.
+  (neutral, blade up, cut across, follow-through, recover), and the corpse lies flat with its skull
+  at the leading end.
 
-One trap worth repeating: **`capture.ps1` without `-FromSource` runs a prebuilt
-`artifacts/capture-bin` whose content JSON can predate your change.** It answered
-`[dev] error: Unknown enemy 'risenskeleton'. Known: Wolf, DireWolf, AshenProwler, GraveHowler.` — a
-message indistinguishable from a real content bug. The same script with `-FromSource` spawned it.
+The earlier night capture in this wave was run against the same stale binary and proves nothing
+about the model; only the rebuilt run does.
 
 ## Deliberately not done
 
