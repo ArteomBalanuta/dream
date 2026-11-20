@@ -19,14 +19,25 @@ therefore meets the player's plane that far **past** it, and the facing points b
 
 What decides a hit is not the yaw error but the lateral miss: `AuthoritativeCombatResolver`'s flat
 branch allows `EnemyRegistry.DefaultHitRadiusMetres` = 0.9 m of it. The part of the 0.84h displacement
-lying across the line of attack is what eats into that, foreshortened by range — so at the Risen
-Skeleton's 1.5 m stand-off a rise of about 1.34 m misses every swing, and further out about 1.09 m
-does. A cleave's 120° arc swallows the same error, which is exactly why skills kept landing on an enemy
-a normal attack could not touch, and why the report read as a broken enemy.
+lying across the line of attack is what eats into that, foreshortened by range.
 
-The numbers in the band: 1.4 m of rise at 1.5 m range misses by 0.9249 m — it clears the 0.9 m radius by
-**under 3%**. That thin margin is why the symptom was "sometimes it just does nothing" rather than a
-clean dead zone, and it is why this was worth measuring instead of eyeballing.
+**The h that matters is not the ground rise, and this is the part I got wrong first.** What the player
+points at is the enemy's *combat anchor*, and that sits `WolfDefinition.CombatAnchorHeight` = 0.75 m
+above the enemy's feet. So on dead level ground the plane cut is already 0.63 m out, which at the
+skeleton's 1.5 m stand-off is **0.58 m of lateral miss — 64% of the swing's entire tolerance, spent
+before any slope exists**. What is left buys about 0.59 m of actual ground rise at that range, and only
+0.32 m further out. A one-block step therefore misses every normal attack.
+
+That last number closes a loop. The commit that added `MaxMeleeHeightDifferenceMetres` says in its own
+comment that "the 3D distance made a one-block step an unhittable target" and fixed the distance half.
+This was the aim half of the same symptom, still live. And on level ground the 0.32 m of margin that
+remained is why hits felt unreliable in general: any enemy drift or player movement inside a frame
+could spend it. A cleave's 120° arc swallows all of this, which is exactly why skills kept landing on
+an enemy a normal attack could not touch, and why the report read as a broken enemy.
+
+My first write-up of this said "a rise of about 1.34 m", treating h as the ground rise. It is the
+anchor height above the player's body plane; the ground rise is 0.75 m less. The tests now derive the
+flat-ground case from `WolfDefinition.CombatAnchorHeight` rather than passing a bare 0.
 
 ## The fix
 
@@ -84,9 +95,15 @@ be replaced by real unit tests.
   green after the last test-side edits: 1134 passed, 0 failed. The synthetic negative is real — delete
   the branch and `WithNoAimPoint_ARaisedEnemyIsMissedByMoreThanTheSwingRadius` is the case that was
   shipping.
-- **Not verified in the engine.** The maths is pinned against the real camera constants and the real
-  resolver constant, but nobody has yet stood a skeleton on a rise in a running client and swung at it.
-  The capture log now prints `aimedAtTarget` next to `aimOwnsFacing`, which is the hook for doing it.
+- **Confirmed in a running client**, `artifacts/captures/aim-parallax`:
+  `play,wait:60,dev:clear;spawn:RisenSkeleton:2:3,wait:40,aimenemy,status,holdleft:300,status,snap`.
+  The status line reads `aimOwnsFacing True aimedAtTarget True`, so the hover's anchor really does reach
+  the aim in the shipped client, and the swing landed three times: `520 -> 482 -> 450 -> 399`. The run
+  also re-confirms the Combat default — no mode key was pressed and the log says `mode Combat`.
+- **The raised case itself is still only proven on paper.** `dev teleport` takes an XZ pair and no Y, so
+  there is no cheap way to stage a one-block step at a fixed stand-off; the level-ground figure above is
+  in-engine, the 0.59 m crossing is arithmetic plus a unit test. The capture log prints `aimedAtTarget`,
+  which is the hook for doing it properly when a staged scene exists.
 - Unexamined by eye: W/A/S/D is projected against the aim facing, so while an enemy is hovered the walk
   direction now follows the enemy's true position rather than the cursor's ground point — up to ~30° of
   shift at a 3 m rise. It matches what click-to-move attack already does, but it is a feel change.

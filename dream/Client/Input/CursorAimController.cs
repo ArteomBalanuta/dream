@@ -21,16 +21,22 @@ public interface ICursorAimHost
 // moves between frames, the cursor does not).
 //
 // The aim point is the enemy's own anchor when the cursor is on one, and otherwise a cut of the cursor
-// ray with the horizontal plane through the player's body. The plane cut is exact only for a target
-// standing at the player's own height. Under the isometric camera (50 degrees of pitch) a target raised
-// by h metres draws h / tan(50) = 0.84h metres further along the camera's ground direction, so the ray
-// through its sprite meets the player's plane that far past it and the facing points beside the enemy
-// rather than at it. The server's melee swing forgives 0.9 m of lateral miss, and what eats into that is
-// the part of the 0.84h displacement lying ACROSS the line of attack, foreshortened by range. How much
-// of it lies across depends on where the enemy stands relative to the camera: facing along the camera's
-// ground direction no rise misses at all, and at the worst angle, square across it, the 0.9 m is crossed
-// by a rise of 1.34 m at the skeleton's 1.5 m stand-off, or 1.09 m further out. A cleave's 120-degree arc
-// swallows the same error, which is why skills kept landing on an enemy a normal attack could not touch.
+// ray with the horizontal plane through the player's body. The plane cut is exact only for a point AT
+// the player's own height. Under the isometric camera (50 degrees of pitch) a point h metres above that
+// plane draws h / tan(50) = 0.84h metres further along the camera's ground direction, so the ray through
+// it meets the plane that far past it and the facing points beside the enemy rather than at it. The
+// server's melee swing forgives 0.9 m of lateral miss (EnemyRegistry.DefaultHitRadiusMetres), and what
+// eats into that is the part of the 0.84h displacement lying ACROSS the line of attack, foreshortened by
+// range. How much lies across depends on where the enemy stands relative to the camera: along the
+// camera's ground direction none of it does, and square across it all of it does.
+//
+// The h that matters is NOT the ground rise. What the player points at is the enemy's combat anchor, and
+// that sits WolfDefinition.CombatAnchorHeight (0.75 m) above the enemy's feet - so on dead level ground
+// the plane cut is already 0.63 m out, which at the skeleton's 1.5 m stand-off is 0.58 m of lateral
+// miss: 64% of the swing's whole tolerance spent before any slope. The remaining margin buys about
+// 0.59 m of ground rise at that range, and only 0.32 m further out. A one-block step therefore misses
+// every normal attack, which is the user's report; a cleave's 120-degree arc swallows the same error,
+// which is why skills kept landing on an enemy a normal attack could not touch.
 //
 // An enemy the cursor is ON needs no plane: the pick that found it is a ray/actor intersection, so its
 // anchor is where the enemy actually is and the facing is exact at any height.
