@@ -33,12 +33,21 @@
 		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
 	</ItemGroup>
 
-	<ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('win'))">
+	<ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or '$(RuntimeIdentifier)' == 'win-x64'">
 		<None Include="$(PkgBulletSharp)\build\net40-client\libbulletc-windows-x64.dll" Link="libbulletc.dll" Visible="false" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
-	<ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('linux'))">
+	<ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or '$(RuntimeIdentifier)' == 'linux-x64'">
 		<None Include="$(PkgBulletSharp)\build\net40-client\libbulletc-linux-x64.so" Link="libbulletc.so" Visible="false" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
+
+	<!-- Earlier builds copied the BulletSharp package's platform-suffixed natives and BulletSharp.dll.config into the output;
+	     incremental builds never delete them, and the stale config breaks native loading. Remove exactly those names. -->
+	<Target Name="DeleteStaleBulletNatives" AfterTargets="Build">
+		<ItemGroup>
+			<_StaleBulletNative Include="$(OutDir)libbulletc-windows-x64.dll;$(OutDir)libbulletc-windows-x86.dll;$(OutDir)libbulletc-linux-x64.so;$(OutDir)libbulletc-linux-x86.so;$(OutDir)BulletSharp.dll.config" />
+		</ItemGroup>
+		<Delete Files="@(_StaleBulletNative)" ContinueOnError="true" />
+	</Target>
 
   <ItemGroup>
     <None Update="shaders\**\*;animations\**\*;fonts\**\*;audio\**\*;config\**\*;ui\**\*">

@@ -35,4 +35,12 @@
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Same cleanup as dream.csproj, for this project's own output folder (stale natives from older builds). -->
+  <Target Name="DeleteStaleBulletNatives" AfterTargets="Build">
+    <ItemGroup>
+      <_StaleBulletNative Include="$(OutDir)libbulletc-windows-x64.dll;$(OutDir)libbulletc-windows-x86.dll;$(OutDir)libbulletc-linux-x64.so;$(OutDir)libbulletc-linux-x86.so;$(OutDir)BulletSharp.dll.config" />
+    </ItemGroup>
+    <Delete Files="@(_StaleBulletNative)" ContinueOnError="true" />
+  </Target>
+
 </Project>
