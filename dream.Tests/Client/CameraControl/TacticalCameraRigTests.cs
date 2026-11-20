@@ -164,8 +164,8 @@ public class TacticalCameraRigTests
         TacticalCameraSettings settings = TacticalCameraSettings.Default with { LeashMetres = 40f };
         TacticalCameraRig near = NewRig(settings);
         TacticalCameraRig far = NewRig(settings);
-        near.SnapTo(Focus, null, 12f, null, null);
-        far.SnapTo(Focus, null, 24f, null, null);
+        near.SnapTo(Focus, null, 11f, null, null);
+        far.SnapTo(Focus, null, 22f, null, null);
         Run(near, Focus, Input(edge: new Vector2(0f, 1f)), 0.6f, 1f / 60f);
         Run(far, Focus, Input(edge: new Vector2(0f, 1f)), 0.6f, 1f / 60f);
         Assert.InRange(far.PanOffset.Length / near.PanOffset.Length, 1.999f, 2.001f);
