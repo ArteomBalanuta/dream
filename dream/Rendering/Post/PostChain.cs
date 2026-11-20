@@ -34,9 +34,10 @@ public sealed class PostChain : IDisposable
     // a uniform cannot be added to a shader and left unset here.
     public static readonly string[] BrightUniformNames = ["uScene", "uSourceTexel"];
     public static readonly string[] BlurUniformNames = ["uSource", "uDirection"];
-    public static readonly string[] ResolveUniformNames = ["uScene", "uBloom", "uBloomStrength"];
+    public static readonly string[] ResolveUniformNames = ["uScene", "uBloom", "uBloomStrength", "uShadowNeutralise"];
 
     private readonly float _bloomStrength;
+    private readonly float _shadowNeutralise;
     private Shader? _bright;
     private Shader? _blur;
     private Shader? _resolve;
@@ -55,6 +56,7 @@ public sealed class PostChain : IDisposable
     {
         GLUtils.AssertRenderThread("Post chain creation");
         _bloomStrength = Math.Clamp(bloomStrength, 0f, 2f);
+        _shadowNeutralise = PostSettings.ResolveShadowNeutraliseStrengthFromEnvironment();
         _bright = new Shader(AssetPaths.Shader(VertexShaderFile), AssetPaths.Shader(BrightShaderFile));
         try
         {
@@ -77,6 +79,8 @@ public sealed class PostChain : IDisposable
     public bool IsDisposed => _resolve == null;
 
     public float BloomStrength => _bloomStrength;
+
+    public float ShadowNeutraliseStrength => _shadowNeutralise;
 
     /// <summary>The quarter-resolution bloom side for a scene side, never under the blur's reach.</summary>
     public static int BloomSide(int sceneSide) =>
@@ -134,6 +138,7 @@ public sealed class PostChain : IDisposable
         resolve.SetInt(_resolveLocations[0], 0);
         resolve.SetInt(_resolveLocations[1], 1);
         resolve.SetFloat(_resolveLocations[2], _bloomStrength);
+        resolve.SetFloat(_resolveLocations[3], _shadowNeutralise);
         DrawFullscreen();
 
         GL.BindVertexArray(0);

@@ -52,3 +52,34 @@ vec3 dreamToneOverflow(vec3 c)
 
     return c * ((m - DreamToneKnee) / m);
 }
+
+// SHADOW NEUTRALISATION - the resolve's second transform, and the only one that touches chroma.
+//
+// The frame's darks are blue-dominant (a cold ambient plus the violet boundary mist) where the
+// reference art's darks are near-neutral, and 63% of night pixels sit under value 0.05, so they
+// dominate the mean saturation. This pulls the channels of a very dark pixel toward its OWN MAX
+// channel: the colour loses chroma and keeps its brightness. The weight is 1 at black and falls
+// to 0 at DreamShadowNeutraliseEdge by a smoothstep, so there is no ring where it stops.
+//
+// It is written subtractively, c + (m - c) * w, and not as mix(c, vec3(m), w). The max channel's
+// term is exactly (m - m) * w = 0, so m survives bit for bit. mix() computes m*(1-w) + m*w, which
+// can land an ULP off and flip a byte. And it mixes toward the max channel rather than toward luma
+// or the mean for the same reason: any other target moves the max channel, and the max channel is
+// what every value-derived number the look gate measures (near-black share, bright share, mean
+// value, the actor spread) reads. With this form only saturation moves.
+//
+// Every pixel this changes is below 0.08, far below the 0.80 knee where dreamToneRolloff is the
+// identity, so the two transforms commute on every pixel either one touches. Mirrored by
+// PostSettings.ShadowNeutraliseEdge / NeutraliseShadows and pinned by a test.
+const float DreamShadowNeutraliseEdge = 0.08;
+
+vec3 dreamToneNeutraliseShadows(vec3 c, float strength)
+{
+    float m = max(max(c.r, c.g), c.b);
+    float w = (1.0 - smoothstep(0.0, DreamShadowNeutraliseEdge, m)) * strength;
+    if (w <= 0.0) { return c; }
+    // c + (m - c) * w, NOT mix(c, vec3(m), w): the max channel's term is exactly
+    // (m - m) * w = 0, so m survives bit-for-bit. mix() computes m*(1-w) + m*w,
+    // which can land an ULP off and flip a byte.
+    return c + (vec3(m) - c) * w;
+}

@@ -353,6 +353,32 @@ so the bloom can only ever take the light the shoulder is about to compress.
 `PostSettings.Rolloff` mirrors it in C# and `PostToneContractTests` pins all of that, including that
 the C# copy of the knee still matches the number in the GLSL.
 
+### The shadow neutralisation
+
+The resolve applies a **second transform**, last: `dreamToneNeutraliseShadows` in `postTone.glsl`. The
+frame's darks are blue-dominant (cold ambient plus the violet boundary mist) where the reference art's
+darks are near-neutral, and about 63% of night pixels sit under value 0.05, so they set the mean
+saturation. Measured on captures, saturation is ~0.54 in every value band; only the darks' share
+made the mean high. The look gate's mean-saturation criterion failed at 0.544 on night frames.
+
+- It pulls a pixel toward its **own max channel**, weighted by `1 - smoothstep(0, 0.08, max)` times
+  a strength of 0.80 (`PostSettings.ShadowNeutraliseEdge`, `DefaultShadowNeutraliseStrength`). The
+  weight reaches 0 at 0.08, so there is no ring around a torch pool.
+- It is written `c + (m - c) * w`, not `mix(c, vec3(m), w)`: the max channel's term is exactly
+  `(m - m) * w = 0`, so the **max channel survives bit for bit**. Every value-derived number the
+  gate measures (near-black share, bright share, mean value, the A3 actor spread) is therefore
+  unchanged, and only saturation moves. Mixing toward luma or the mean would move all of them.
+- Every pixel it changes is below 0.08, far below the 0.80 knee where the shoulder is the identity, so
+  the two transforms commute.
+- Result at 0.08 / 0.80 on captured frames: night 0.544 to 0.327, noon 0.378 to 0.327. The target
+  band is **0.311-0.371, measured off the reference art** (recorded in the header of
+  `tools/ui-assets/check_look.py`); the point is landing inside it, not scraping under 0.38.
+  The gate's threshold is not touched.
+
+`DREAM_SHADOW_NEUTRALISE` (0 to 1, default 0.80) sets the strength; `0` is the post-on, grade-off A/B,
+and `DREAM_POST=0` takes the whole chain out. `PostSettings.NeutraliseShadows` mirrors it in C#, and
+`PostToneContractTests` pins the bit-exact max channel, the edge constant, and that the resolve calls it.
+
 ### The bloom
 
 The bright pass writes `dreamToneOverflow` — the part of a pixel above the knee, in the pixel's own
