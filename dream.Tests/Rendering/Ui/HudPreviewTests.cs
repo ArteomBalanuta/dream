@@ -428,4 +428,89 @@ public class HudPreviewTests
 
         Assert.Equal(1920, c.Width);
     }
+
+    // ---- hover info panel scenes ----------------------------------------------------------------
+
+    private static void BuildHover(UiBatch b, UiSpriteTable t, UiLayout lay, HudView view, Vector2 pointer)
+    {
+        UiInputRouter router = new();
+        b.BeginFrame(in lay);
+        router.BeginFrame(new UiPointer(pointer, false, false, true));
+        ClassicHud.Build(b, router, view, in lay, t, new NoActions());
+        HoverInfoPanel.Build(b, router, view, in lay, t);
+        CursorPanel.Build(b, router, view, in lay, t);
+        router.EndFrame();
+    }
+
+    private static HudView HoverView(HoverInfo info, HoverKind kind, bool inventory = false)
+    {
+        HudView v = StatusBarTestData.View();
+        v.InventoryOpen = inventory;
+        v.HoverInfo = info;
+        v.HoverCursorKind = kind;
+        v.HoverPanel = new HoverPanelState(true, 1f, kind);
+        return v;
+    }
+
+    private static HoverInfo NpcInfo()
+    {
+        HoverInfo info = new()
+        {
+            Target = new HoverTargetId(HoverKind.Npc, 3),
+            Disposition = HoverDisposition.Friendly,
+            Title = "Maren the Smith",
+            Subtitle = "Blacksmith",
+            LineCount = 1,
+            Hint = "Click to talk"
+        };
+        info.Lines[0] = new HoverLine("Wares", "Weapons, armour");
+        return info;
+    }
+
+    private static HoverInfo ItemInfo()
+    {
+        HoverInfo info = new()
+        {
+            Target = new HoverTargetId(HoverKind.GroundItem, 91),
+            Disposition = HoverDisposition.Item,
+            Title = "Ashen Longsword",
+            Subtitle = "Rare weapon",
+            Tier = ItemTier.Rare,
+            LineCount = 2,
+            Hint = "Click to take"
+        };
+        info.Lines[0] = new HoverLine("Damage", "14 - 22");
+        info.Lines[1] = new HoverLine("Weight", "6");
+        return info;
+    }
+
+    [Fact]
+    public void HoverPanels_Scenes()
+    {
+        const int w = 1920;
+        const int h = 1080;
+        Vector2 centre = new(w * 0.45f, h * 0.4f);
+        (string Name, HudView View, Vector2 Pointer)[] scenes =
+        [
+            ("hover-enemy-full", HoverView(HoverInfoPanelTests.EnemyInfo(100, 100), HoverKind.Enemy), centre),
+            ("hover-enemy-half", HoverView(HoverInfoPanelTests.EnemyInfo(50, 100), HoverKind.Enemy), centre),
+            ("hover-npc", HoverView(NpcInfo(), HoverKind.Npc), centre),
+            ("hover-item", HoverView(ItemInfo(), HoverKind.GroundItem), centre),
+            ("hover-defeated", HoverView(DefeatedInfo(), HoverKind.Enemy), centre),
+            ("hover-corner", HoverView(HoverInfoPanelTests.EnemyInfo(30, 100), HoverKind.Enemy), new Vector2(w - 24f, h - 150f)),
+            ("hover-inventory", HoverView(ItemInfo(), HoverKind.GroundItem, inventory: true), new Vector2(w * 0.7f, h * 0.45f))
+        ];
+        foreach ((string name, HudView view, Vector2 pointer) in scenes)
+        {
+            UiSoftwareCompositor c = Render(name, w, h, (b, t, lay) => BuildHover(b, t, lay, view, pointer));
+            Assert.Equal(w, c.Width);
+        }
+    }
+
+    private static HoverInfo DefeatedInfo()
+    {
+        HoverInfo info = HoverInfoPanelTests.EnemyInfo(0, 100);
+        info.Defeated = true;
+        return info;
+    }
 }
