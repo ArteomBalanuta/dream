@@ -65,6 +65,9 @@ public sealed class SkyRenderer : IDisposable
 
     public bool IsDisposed => _shader == null;
 
+    // The GL program handle, for the shader warm-up's bookkeeping.
+    public int ProgramHandle => _shader?.Handle ?? 0;
+
     // Draws the sky behind everything already in the depth buffer and restores the world pass
     // state afterwards: depth test on, DepthFunc Less, depth writes on, blending off, and face
     // culling as it was.

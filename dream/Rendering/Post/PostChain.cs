@@ -79,6 +79,9 @@ public sealed class PostChain : IDisposable
 
     public bool IsDisposed => _resolve == null;
 
+    // The three program handles, for the shader warm-up's bookkeeping.
+    public IEnumerable<int> ProgramHandles => new[] { _bright?.Handle ?? 0, _blur?.Handle ?? 0, _resolve?.Handle ?? 0 };
+
     public float BloomStrength => _bloomStrength;
 
     public float ShadowNeutraliseStrength => _shadowNeutralise;
@@ -88,11 +91,11 @@ public sealed class PostChain : IDisposable
         Math.Max(sceneSide / PostSettings.BloomDownscale, PostSettings.MinimumBloomSide);
 
     /// <summary>
-    /// Runs the chain and leaves the default framebuffer bound with the scene on it, the viewport
+    /// Runs the chain and leaves the output framebuffer (the default one unless the shader warm-up gave its own) bound with the scene on it, the viewport
     /// covering the window and the state the HUD expects (blending off, depth test off, depth
     /// writes on).
     /// </summary>
-    public void Run(int sceneTexture, int width, int height)
+    public void Run(int sceneTexture, int width, int height, int outputFramebuffer = 0)
     {
         Shader bright = _bright ?? throw new ObjectDisposedException(nameof(PostChain));
         Shader blur = _blur!;
@@ -130,8 +133,8 @@ public sealed class PostChain : IDisposable
         blur.SetVector2(_blurLocations[1], new OpenTK.Mathematics.Vector2(0f, 1f / _bloomHeight));
         DrawFullscreen();
 
-        // 3. Resolve to the window.
-        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        // 3. Resolve to the window (the shader warm-up passes its own small target instead).
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, outputFramebuffer);
         GL.Viewport(0, 0, width, height);
         resolve.Use();
         BindTexture(TextureUnit.Texture0, sceneTexture);

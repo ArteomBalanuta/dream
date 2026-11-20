@@ -46,6 +46,17 @@ That ordering keeps enemy actors in the same depth-tested world layer as cubes, 
   forces it. `RenderDocHook` attaches the RenderDoc in-app API before the first context: unset `DREAM_RENDERDOC`
   attaches only if RenderDoc already injected itself, `1` loads it from the default install path, any other value is a
   path to `renderdoc.dll`. `DREAM_RENDERDOC_CAPTURE_FRAME=<n>` captures presented frame n.
+- **Shader warm-up.** Every program is compiled and linked when the renderer is built, but NVIDIA only emits machine
+  code at the first draw that shows it the vertex layout and target ("Vertex shader in program N is being recompiled
+  based on GL state", a medium-severity performance message in DEBUG builds). `PlayScene.WarmUpShaders` (called from
+  `Game.EnterPlayScene`) pays that behind the loading screen: one small real draw per registry program and `AlphaMaskVariant`
+  (`Render.WarmUpWorldPrograms`), per shipped vertex layout (static `StaticMeshBuffer`, skinned `AnimatedModel` buffers,
+  each with and without `InstanceMatrixBuffer` attributes), plus the sky, boundary void, effects, war mist and post
+  chain through their own `Draw`/`Run`. It draws into a 64 px offscreen target (sun shadow map for `shadowDepth`),
+  restores every piece of GL state on every exit path, and is never fatal. Logs `[startup] shader warm-up: N programs,
+  M draws, F failed, T ms`. `DREAM_SHADER_WARMUP=0` skips it. The 2D programs (ImGui, HUD, title menu) are not warmed:
+  they draw every frame from the title screen on. A new program is warmed automatically if it is in the registry;
+  one with its own renderer needs a step in `PlayScene.Warmup.cs`.
 
 ## Shader Usage
 

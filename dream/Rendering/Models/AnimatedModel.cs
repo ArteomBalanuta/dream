@@ -255,6 +255,75 @@ public class AnimatedModel : IDisposable
             UsesSkinning = primitive.UsesSkinning
         };
     }
+
+    // A one-triangle mesh uploaded through CreateBuffers, the very path every model takes, so its VAO carries the
+    // shipped skinned vertex layout (position, normal, tangent, texcoord0, joints, weights at locations 0..5) without
+    // restating it. Only the shader warm-up draws it: a driver that specialises a vertex shader on the attribute
+    // layout at the first draw needs a draw with this layout, and with the instance attributes added, to do it early.
+    internal static WarmUpMesh CreateWarmUpMesh()
+    {
+        AnimatedModelData.Vertex[] vertices =
+        [
+            new() { Position = new Vector3(-0.5f, -0.5f, 0f), Normal = Vector3.UnitZ, Tangent = Vector3.UnitX, TexCoord0 = new Vector2(0f, 0f), Weights = new Vector4(1f, 0f, 0f, 0f) },
+            new() { Position = new Vector3(0.5f, -0.5f, 0f), Normal = Vector3.UnitZ, Tangent = Vector3.UnitX, TexCoord0 = new Vector2(1f, 0f), Weights = new Vector4(1f, 0f, 0f, 0f) },
+            new() { Position = new Vector3(0f, 0.5f, 0f), Normal = Vector3.UnitZ, Tangent = Vector3.UnitX, TexCoord0 = new Vector2(0.5f, 1f), Weights = new Vector4(1f, 0f, 0f, 0f) }
+        ];
+        MeshBuffers buffers = CreateBuffers(new AnimatedModelPrimitiveData(
+            vertices, [0u, 1u, 2u], SharpGLTF.Schema2.PrimitiveType.TRIANGLES, 0, false));
+        return new WarmUpMesh(buffers.VAO, buffers.VBO, buffers.EBO, buffers.IndexCount, buffers.PrimitiveType);
+    }
+
+    // Named Release, not Dispose, because source-reading tests locate the model's own disposal in this file by text.
+    internal sealed class WarmUpMesh
+    {
+        private readonly int _vao;
+        private readonly int _vbo;
+        private readonly int _ebo;
+        private readonly int _indexCount;
+        private readonly PrimitiveType _primitiveType;
+        private bool _disposed;
+
+        internal WarmUpMesh(int vao, int vbo, int ebo, int indexCount, PrimitiveType primitiveType)
+        {
+            _vao = vao;
+            _vbo = vbo;
+            _ebo = ebo;
+            _indexCount = indexCount;
+            _primitiveType = primitiveType;
+        }
+
+        // The draw RenderPose makes, or with `instances` the one RenderPreparedInstanced makes.
+        internal void Draw(InstanceMatrixBuffer? instances)
+        {
+            GL.BindVertexArray(_vao);
+            if (instances == null)
+            {
+                GL.DrawElements(_primitiveType, _indexCount, DrawElementsType.UnsignedInt, 0);
+                RenderCounters.CountDraw();
+            }
+            else
+            {
+                instances.BindAttributes();
+                GL.DrawElementsInstanced(_primitiveType, _indexCount, DrawElementsType.UnsignedInt, IntPtr.Zero, 1);
+                RenderCounters.CountDraw();
+            }
+
+            GL.BindVertexArray(0);
+        }
+
+        internal void Release()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            GL.DeleteVertexArray(_vao);
+            GL.DeleteBuffer(_vbo);
+            GL.DeleteBuffer(_ebo);
+        }
+    }
     #endregion
 
     #region Rendering

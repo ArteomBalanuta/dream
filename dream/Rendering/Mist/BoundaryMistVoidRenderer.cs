@@ -50,6 +50,9 @@ public sealed class BoundaryMistVoidRenderer : IDisposable
 
     public bool IsDisposed => _shader == null;
 
+    // The GL program handle, for the shader warm-up's bookkeeping.
+    public int ProgramHandle => _shader?.Handle ?? 0;
+
     // Draws the smoke behind everything already in the depth buffer (depth 1, DepthFunc Lequal, no
     // depth writes, premultiplied blend) and restores the world pass state afterwards: DepthFunc
     // Less, depth writes on, blending off, and face culling as it was. The true camera position

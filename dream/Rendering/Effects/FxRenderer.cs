@@ -81,6 +81,9 @@ public sealed class FxRenderer : IDisposable
 
     public bool IsDisposed => _shader == null;
 
+    // The GL program handle, for the shader warm-up's bookkeeping.
+    public int ProgramHandle => _shader?.Handle ?? 0;
+
     // Draws the first `count` instances over the world and restores the world pass state
     // afterwards: depth writes on, blending off, face culling as it was, no VAO.
     public void Draw(FxInstance[] instances, int count, in FxViewBasis basis, Matrix4 viewProjection)
