@@ -145,11 +145,12 @@ public sealed class EnemyHoverAnchorTests
         });
     }
 
-    // And that the shipped scene really takes that override, which no unit test can reach: PlayScene
-    // owns a GLFW window. Without this line the probe falls to the interface default, which allocates a
-    // closure, a delegate and a target object on every frame, and nothing above would notice.
+    // And that the shipped scene really overrides it, which no unit test can reach: PlayScene owns a GLFW
+    // window. The override serves the world hover's answer (WorldHover, picked once and throttled), so it
+    // never falls to the interface default, which runs a full pick and allocates a closure, a delegate and a
+    // target object, and it never picks a second time on its own.
     [Fact]
-    public void ThePlayScene_ServesTheAnchorFromTheAllocationFreePick()
+    public void ThePlayScene_ServesTheAnchorFromTheWorldHover()
     {
         string scene = ReadRepoFile("dream", "Client", "Scenes", "PlayScene.cs");
         int method = scene.IndexOf("public bool TryGetEnemyAnchorAt(", StringComparison.Ordinal);
@@ -158,7 +159,9 @@ public sealed class EnemyHoverAnchorTests
         int nextMethod = scene.IndexOf("\n        public ", method + 1, StringComparison.Ordinal);
         Assert.True(nextMethod > method);
         string body = scene[method..nextMethod];
-        Assert.Contains("WorldCursorPicker.PickHoveredEnemy(", body, StringComparison.Ordinal);
+        Assert.Contains("TryGetHoveredEnemy(", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryPick(", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("WorldCursorPicker.", body, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(params string[] parts)
