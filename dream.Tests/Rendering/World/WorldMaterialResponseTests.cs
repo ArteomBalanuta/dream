@@ -12,7 +12,7 @@ namespace Dream.Tests.Rendering.World;
 public class WorldMaterialResponseTests
 {
     // The only terrain families that opt in this wave.
-    private static readonly GeometryMaterialId[] OptedIn = [];
+    private static readonly GeometryMaterialId[] OptedIn = [GeometryMaterialId.Stone, GeometryMaterialId.Rock];
 
     [Fact]
     public void World_Specular_Strength_Equals_The_Equipment_Specular_Strength()

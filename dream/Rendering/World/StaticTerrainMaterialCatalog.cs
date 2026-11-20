@@ -21,6 +21,12 @@ public static class StaticTerrainMaterialCatalog
     private static readonly StaticTerrainMaterialRole[] GrassRoles =
         [StaticTerrainMaterialRole.Top, StaticTerrainMaterialRole.Side, StaticTerrainMaterialRole.Bottom];
     private static readonly StaticTerrainMaterialRole[] SingleRole = [StaticTerrainMaterialRole.Single];
+    // The opt-in material response (uEquipSurface: x metallic, y roughness; z, w unread by the world
+    // shader): a wet-slate sheen that catches the moon and a torch. Only Stone and Rock use it;
+    // every other material keeps Vector4.Zero, which is "no response".
+    // Declared BEFORE MaterialsBySlot: static initialisers run in textual order, and the table reads it.
+    private static readonly Vector4 StoneSurface = new(0.05f, 0.50f, 0f, 0f);
+
     private static readonly StaticTerrainMaterial[] MaterialsBySlot = CreateMaterialTable();
 
     // Returns a shared, cached list; callers must not mutate it.
@@ -108,11 +114,11 @@ public static class StaticTerrainMaterialCatalog
                 new Vector4(1f, 1f, 1f, 1f),
                 ResolveGrassTexture(role)),
             GeometryMaterialId.Dirt => Single(materialId, ResolveForgeTexture("dirt")),
-            GeometryMaterialId.Stone => Single(materialId, ResolveForgeTexture("stone")),
+            GeometryMaterialId.Stone => Single(materialId, ResolveForgeTexture("stone"), StoneSurface),
             GeometryMaterialId.Sand => Single(materialId, ResolveForgeTexture("sand")),
             GeometryMaterialId.Mud => Single(materialId, ResolveForgeTexture("mud")),
             GeometryMaterialId.Snow => Single(materialId, ResolveForgeTexture("snow")),
-            GeometryMaterialId.Rock => Single(materialId, ResolveForgeTexture("rock")),
+            GeometryMaterialId.Rock => Single(materialId, ResolveForgeTexture("rock"), StoneSurface),
             GeometryMaterialId.GrassPath => Single(materialId, ResolveForgeTexture("grass_path")),
             // Untextured warm block that glows: the emissive term is added after exposure, so it
             // reads at night without lighting itself (its light on the surroundings comes from
@@ -129,13 +135,16 @@ public static class StaticTerrainMaterialCatalog
         };
     }
 
-    private static StaticTerrainMaterial Single(GeometryMaterialId materialId, string texturePath)
+    private static StaticTerrainMaterial Single(GeometryMaterialId materialId, string texturePath, Vector4 surface = default)
     {
         return new StaticTerrainMaterial(
             materialId,
             StaticTerrainMaterialRole.Single,
             new Vector4(1f, 1f, 1f, 1f),
-            texturePath);
+            texturePath)
+        {
+            Surface = surface
+        };
     }
 
     private static string ResolveGrassTexture(StaticTerrainMaterialRole role)
