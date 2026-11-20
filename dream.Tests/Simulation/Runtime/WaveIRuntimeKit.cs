@@ -114,7 +114,7 @@ internal static class WaveIRuntimeKit
         string table(string key) =>
             "{\"key\":\"" + key + "\",\"drops\":" + drops + ",\"nothingWeight\":0,\"items\":[" + entries + "]," +
             "\"rarity\":{\"common\":" + common + ",\"uncommon\":" + uncommon + ",\"rare\":" + rare + "}}";
-        string loot = "{\"version\":1,\"tables\":[" + table("wolf") + "," + table("dire-wolf") + "," + table("ashen-prowler") + "," + table("grave-howler") + "]}";
+        string loot = "{\"version\":1,\"tables\":[" + table("wolf") + "," + table("dire-wolf") + "," + table("ashen-prowler") + "," + table("grave-howler") + "," + table("risen-skeleton") + "]}";
         return ContentCatalog.Load(items, enemies, loot);
     }
 

@@ -36,7 +36,7 @@ public enum EnemySpawnRole : byte
 //   DireWolf       1.1          3.3                1.6
 //   AshenProwler   1.2          3.5                1.5
 //   GraveHowler    1.3          3.8                1.4
-//   RisenSkeleton  1.15         3.4                1.55
+//   RisenSkeleton  1.25         3.6                1.45
 //
 // The chase speeds rise with the tier so a higher tier closes faster, but none reaches the sprint speed:
 // with no stamina system an enemy that outruns sprint on open ground is an unescapable trap. The

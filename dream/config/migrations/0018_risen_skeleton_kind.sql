@@ -7,5 +7,5 @@
 
 INSERT INTO enemy_kinds (enemy_kind, chase_speed, patrol_speed, attack_interval_seconds, attack_range, aggro_range)
 VALUES
-    ('RisenSkeleton', 3.4, 1.15, 1.55, 1.5, 12)
+    ('RisenSkeleton', 3.6, 1.25, 1.45, 1.5, 13)
 ON CONFLICT(enemy_kind) DO NOTHING;

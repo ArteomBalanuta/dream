@@ -199,14 +199,18 @@ public sealed class ContentCatalogTests
         Assert.Equal("enemy.skeleton", skeleton.VisualKey);
         Assert.Equal("risen-skeleton", skeleton.LootTable);
         Assert.Equal(EnemySpawnRole.NightExtra, skeleton.SpawnRole);
-        Assert.Equal(3.4f, skeleton.MoveSpeed);
-        Assert.Equal(1.15f, skeleton.PatrolSpeed);
-        Assert.Equal(1.55f, skeleton.AttackIntervalSeconds);
+        Assert.Equal(3.6f, skeleton.MoveSpeed);
+        Assert.Equal(1.25f, skeleton.PatrolSpeed);
+        Assert.Equal(1.45f, skeleton.AttackIntervalSeconds);
         Assert.Equal(1.5f, skeleton.AttackRange);
         Assert.Equal(520, skeleton.MaxHealth);
         // Tier 6 sits between the Ashen Prowler (5) and the Grave Howler (8).
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("AshenProwler", out EnemyTemplate? prowler));
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("GraveHowler", out EnemyTemplate? howler));
+        Assert.InRange(skeleton.MoveSpeed, prowler.MoveSpeed, howler.MoveSpeed);
+        Assert.InRange(skeleton.PatrolSpeed, prowler.PatrolSpeed, howler.PatrolSpeed);
+        Assert.InRange(skeleton.AttackIntervalSeconds!.Value, howler.AttackIntervalSeconds!.Value, prowler.AttackIntervalSeconds!.Value);
+        Assert.InRange(skeleton.AggroRange, prowler.AggroRange, howler.AggroRange);
         Assert.InRange(skeleton.MaxHealth!.Value, prowler.MaxHealth!.Value, howler.MaxHealth!.Value);
     }
 
@@ -601,7 +605,7 @@ public sealed class ContentCatalogTests
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("GraveHowler", out EnemyTemplate? howler));
         Assert.Equal(1.3f, howler.PatrolSpeed);
         Assert.True(ContentCatalog.Shipped.TryGetEnemy("RisenSkeleton", out EnemyTemplate? skeleton));
-        Assert.Equal(1.15f, skeleton.PatrolSpeed);
+        Assert.Equal(1.25f, skeleton.PatrolSpeed);
         // Every shipped enemy chases faster than it patrols: see the table in EnemyTemplate.cs.
         Assert.All(ContentCatalog.Shipped.Enemies, enemy => Assert.True(enemy.PatrolSpeed < enemy.MoveSpeed));
         Assert.Equal(3.8f, howler.MoveSpeed);

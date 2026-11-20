@@ -203,7 +203,7 @@ public sealed class EnemyKindsMigrationTests
             // Inside the player separation, where the wolf could never bite.
             new("GraveHowler", 3.8f, 1.3f, 1.4f, 0.5f, 14f),
             // The risen skeleton's reach is zeroed: invalid, so the authored 1.5 stays.
-            new("RisenSkeleton", 3.4f, 1.15f, 1.55f, 0f, 12f),
+            new("RisenSkeleton", 3.6f, 1.25f, 1.45f, 0f, 13f),
             // A kind the content does not have.
             new("Dragon", 3f, 1f, 1f, 2f, 10f),
         ];
