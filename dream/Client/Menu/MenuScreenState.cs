@@ -2,7 +2,7 @@ using Dream.Rendering.Ui.Menu;
 
 namespace Dream.Client.Menu;
 
-// Which screen of a menu is showing. Options and Key Bindings are reached from the root and go back to
+// Which screen of a menu is showing. Options is reached from the root; Key Bindings and Camera are reached from the root and go back to
 // their parent; Credits and Options both return to the root.
 public sealed class MenuScreenState
 {
@@ -21,6 +21,8 @@ public sealed class MenuScreenState
             (MenuScreen.Multiplayer, MenuAction.Back) => MenuScreen.Root,
             (MenuScreen.Options, MenuAction.KeyBindings) => MenuScreen.KeyBindings,
             (MenuScreen.KeyBindings, MenuAction.Back) => MenuScreen.Options,
+            (MenuScreen.Options, MenuAction.Camera) => MenuScreen.Camera,
+            (MenuScreen.Camera, MenuAction.Back) => MenuScreen.Options,
             (MenuScreen.Options, MenuAction.Back) => MenuScreen.Root,
             (MenuScreen.Credits, MenuAction.Back) => MenuScreen.Root,
             _ => Current

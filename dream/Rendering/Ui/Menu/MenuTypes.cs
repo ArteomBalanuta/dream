@@ -14,17 +14,19 @@ public enum MenuAction : byte
     ExitToMainMenu,
     ExitGame,
     KeyBindings,
+    Camera,
     Back,
     Join,
     Host
 }
 
-// Which screen of a menu is showing. The main menu and the pause menu share Options and KeyBindings.
+// Which screen of a menu is showing. The main menu and the pause menu share Options, KeyBindings and Camera.
 public enum MenuScreen : byte
 {
     Root,
     Options,
     KeyBindings,
+    Camera,
     Credits,
     Multiplayer
 }

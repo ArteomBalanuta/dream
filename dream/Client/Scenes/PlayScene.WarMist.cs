@@ -1,5 +1,6 @@
 using OpenTK.Mathematics;
 using Dream.Application;
+using Dream.Client.CameraControl;
 using Dream.Client.Presentation;
 using Dream.Rendering.Core;
 using Dream.Rendering.Mist;
@@ -19,6 +20,12 @@ public partial class PlayScene
     private ExplorationMemory? _exploration;
     private Map? _explorationMap;
     private double _warMistSeconds;
+
+    // The slab's half side: the default, or the view footprint's radius at the farthest zoom on the widest window
+    // when that is larger (the slab is axis aligned and the view turns, so the whole disc must be covered).
+    internal static readonly float WarMistSlabHalfExtent = MathF.Max(
+        WarMistField.HalfExtent,
+        TacticalCameraLimits.FootprintRadius(TacticalCameraLimits.MaxDistance, TacticalCameraLimits.ReferenceAspect));
 
     // Runs at the top of the effects pass, in the Actors GPU section: the opaque world and the
     // actors are drawn, and the effects section has not started. The only on/off gate is
@@ -73,7 +80,9 @@ public partial class PlayScene
             }
         }
 
-        _warMistRenderer.Draw(presentation.Camera.GetViewMatrix() * _render.ProjectionMatrix, focus, _warMistSeconds, _exploration);
+        // The slab follows the view (a panned camera sees far from the player); the density and clear field stays
+        // on the player, so panning never thins the veil anywhere the player has not been.
+        _warMistRenderer.Draw(presentation.Camera.GetViewMatrix() * _render.ProjectionMatrix, focus, _runtime.LastViewTarget, WarMistSlabHalfExtent, _warMistSeconds, _exploration);
     }
 
     private void DisposeWarMist()

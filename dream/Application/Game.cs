@@ -59,6 +59,7 @@ public class Game : GameWindow
     private bool _menuRendererFailed;
     private readonly bool _menuEnabled;
     private readonly List<MenuOptionRow> _optionRows;
+    private readonly List<MenuOptionRow> _cameraRows;
     private readonly MenuScreenState _pauseScreen = new();
     private bool _pauseWasVisible;
     private bool _exitToMainMenuPending;
@@ -143,6 +144,7 @@ public class Game : GameWindow
         GameAudio.EnsureStarted(AudioVolumes.FromConfig(_desktopClientConfig));
         _localServer = CreateLocalServerHandle();
         _optionRows = BuildOptionRows();
+        _cameraRows = MenuOptionRows.CreateCameraRows(_settings, _desktopClientConfig, PersistDesktopClientConfig);
         bool remoteClient = RemoteClientOptions.TryResolveFromEnvironment(out RemoteClientOptions? remoteOptions);
         _menuEnabled = MenuLaunchPolicy.ShouldShowMainMenu(Environment.GetEnvironmentVariable, remoteClient);
         // A client that only joins a remote server never passes ServerBootstrap's content check, so
@@ -310,7 +312,8 @@ public class Game : GameWindow
                 _desktopClientConfig.HostPort,
                 _desktopClientConfig.PlayerName),
             PersistMultiplayer,
-            SystemClipboard);
+            SystemClipboard,
+            _cameraRows);
         CursorState = WithMenuCursor(_mainMenu.DesiredCursorState);
         // After any ended play scene's teardown (which set None), so the title screen keeps its music.
         GameAudio.Current.SetMusic(MusicTrack.Menu);
@@ -446,7 +449,8 @@ public class Game : GameWindow
 
     // The tactical camera's window facts, once per frame: focus and whether the OS cursor is over the client area
     // (polled, so a cursor that left for another monitor is known even without a leave event), then the cursor clip.
-    // The client rectangle is in screen pixels: GLFW's window position is the client area's top-left.
+    // The client rectangle is in screen pixels: ClientLocation is the client area's top-left (Location is the
+    // outer window, title bar and border included, and would shift the clip by their size).
     private unsafe void SyncPlayCameraWindow(PlayScene scene)
     {
         bool hovered = GLFW.GetWindowAttrib(WindowPtr, WindowAttributeGetBool.Hovered);
@@ -454,8 +458,20 @@ public class Game : GameWindow
         bool minimised = WindowState == WindowState.Minimized || ClientSize.X <= 0 || ClientSize.Y <= 0;
         bool fullscreenLike = WindowState == WindowState.Fullscreen
             || (WindowBorder == WindowBorder.Hidden && WindowState == WindowState.Maximized);
-        Box2i clientRect = new(Location, Location + ClientSize);
+        Box2i clientRect = new(ClientLocation, ClientLocation + ClientSize);
         scene.ApplyCursorConfinement(minimised, fullscreenLike, clientRect);
+        PersistCameraIfChanged();
+    }
+
+    // The Y key toggles the rig's mode and the scene writes it back to the settings; the menu rows persist their
+    // own changes, so only a settings value the config does not hold (the Y toggle) reaches the file here.
+    private void PersistCameraIfChanged()
+    {
+        if (!_desktopClientConfig.TacticalCamera.Equals(_settings.TacticalCamera))
+        {
+            _desktopClientConfig.TacticalCamera = _settings.TacticalCamera;
+            PersistDesktopClientConfig();
+        }
     }
 
     // The title screen or the connection screen: advance it and enter the world when a session connects.
@@ -841,6 +857,7 @@ public class Game : GameWindow
     {
         MenuScreen.Options => OptionsPanel.Build(w, _optionRows, backdrop: false),
         MenuScreen.KeyBindings => KeyBindingsPanel.Build(w, backdrop: false),
+        MenuScreen.Camera => CameraOptionsPanel.Build(w, _cameraRows, backdrop: false),
         _ => PauseMenuPanel.Build(w, _settings.AdminHudAvailable)
     };
 
@@ -1017,6 +1034,7 @@ public class Game : GameWindow
         {
             try
             {
+                ReleaseCameraClipGuarded();
                 _playScene?.Dispose();
                 _playScene = null;
             }
@@ -1106,12 +1124,31 @@ public class Game : GameWindow
         DesktopClientTextConfig.TrySave(_desktopClientConfigPath, _desktopClientConfig);
     }
 
+    // Lets the OS cursor go before anything that could throw runs; a failure here is logged, never rethrown.
+    private void ReleaseCameraClipGuarded()
+    {
+        try
+        {
+            _playScene?.ReleaseCameraResources();
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[exit] cursor clip release failed: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
     // Backstop for the path OnUnload never sees: GameWindow.Run has no exception handling around the
     // frame callbacks, so an exception out of a frame leaves Run without OnUnload ever being called, and
     // GameWindow.Dispose does not call it either. Program.RunDesktop's `using` still reaches here, so the
     // integrated server is stopped and the world drained to disk before the process goes down.
     protected override void Dispose(bool disposing)
     {
+        if (disposing)
+        {
+            // Whatever else fails below, the OS cursor clip must not outlive the window.
+            ReleaseCameraClipGuarded();
+        }
+
         if (disposing && !_unloaded)
         {
             _unloaded = true;

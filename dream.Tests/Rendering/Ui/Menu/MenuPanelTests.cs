@@ -1,3 +1,6 @@
+using Dream.Application;
+using Dream.Client.Menu;
+using Dream.Configuration;
 using Dream.Assets;
 using Dream.Rendering.Ui;
 using Dream.Rendering.Ui.Menu;
@@ -263,7 +266,7 @@ public sealed class MenuPanelTests
     // The pointer position of a row's control, computed from the panel the same way it lays them out.
     private (UiRect Track, UiRect Toggle) ControlRects(int rowIndex, int rowCount)
     {
-        float heightUnits = 50f + rowCount * OptionsPanel.RowHeightUnits + 8f + 2f * MenuWidgets.ButtonPitchUnits + 8f;
+        float heightUnits = OptionsPanel.HeightUnits(rowCount, 3);
         float top = MathF.Max(6f, (MenuWidgets.DesignHeightUnits - heightUnits) * 0.5f);
         UiRect panel = _widgets.Centered(top, OptionsPanel.PanelWidthUnits, heightUnits);
         UiRect row = _widgets.Inside(panel, 14f, 46f + rowIndex * OptionsPanel.RowHeightUnits, OptionsPanel.PanelWidthUnits - 28f, OptionsPanel.RowHeightUnits);
@@ -361,15 +364,60 @@ public sealed class MenuPanelTests
         List<MenuOptionRow> rows = Rows(p);
         Func<MenuWidgets, MenuAction> build = w => OptionsPanel.Build(w, rows, backdrop: false);
         Step(build, out _);
-        float heightUnits = 50f + rows.Count * OptionsPanel.RowHeightUnits + 8f + 2f * MenuWidgets.ButtonPitchUnits + 8f;
+        float heightUnits = OptionsPanel.HeightUnits(rows.Count, 3);
         float top = MathF.Max(6f, (MenuWidgets.DesignHeightUnits - heightUnits) * 0.5f);
         UiRect panel = _widgets.Centered(top, OptionsPanel.PanelWidthUnits, heightUnits);
         float buttonsTop = 46f + rows.Count * OptionsPanel.RowHeightUnits + 8f;
         float x = (OptionsPanel.PanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f;
         UiRect keys = _widgets.Inside(panel, x, buttonsTop, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
-        UiRect back = _widgets.Inside(panel, x, buttonsTop + MenuWidgets.ButtonPitchUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
+        UiRect camera = _widgets.Inside(panel, x, buttonsTop + MenuWidgets.ButtonPitchUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
+        UiRect back = _widgets.Inside(panel, x, buttonsTop + 2f * MenuWidgets.ButtonPitchUnits, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
 
         Assert.Equal(MenuAction.KeyBindings, Click(build, Centre(keys)));
+        Assert.Equal(MenuAction.Camera, Click(build, Centre(camera)));
+        Assert.Equal(MenuAction.Back, Click(build, Centre(back)));
+    }
+
+    [Fact]
+    public void Options_AndCameraScreens_FitTheDesignHeight()
+    {
+        // The rows Game really builds: the standard ones plus the audio header, toggle and four volumes.
+        GameSettings settings = new(new Vector2i(1440, 1024));
+        DesktopClientConfig config = new();
+        List<MenuOptionRow> options = MenuOptionRows.CreateStandard(settings, config, () => { }, () => { });
+        options.Add(MenuOptionRow.Header("Audio"));
+        for (int i = 0; i < 5; i++)
+        {
+            options.Add(MenuOptionRow.Toggle("Audio " + i, () => false, _ => { }));
+        }
+
+        List<MenuOptionRow> camera = MenuOptionRows.CreateCameraRows(settings, config, () => { });
+
+        Assert.True(OptionsPanel.HeightUnits(options.Count, 3) <= MenuWidgets.DesignHeightUnits, "Options");
+        Assert.True(OptionsPanel.HeightUnits(camera.Count, 1) <= MenuWidgets.DesignHeightUnits, "Camera");
+        Assert.DoesNotContain(options, r => camera.Any(c => c.Label == r.Label));
+        // Every row and button of both screens is drawn.
+        InventoryFakeCanvas optionsCanvas = Step(w => OptionsPanel.Build(w, options, backdrop: false), out _);
+        Assert.True(optionsCanvas.HasText(OptionsPanel.CameraLabel));
+        Assert.True(optionsCanvas.HasText(OptionsPanel.KeyBindingsLabel));
+        Assert.True(optionsCanvas.HasText(OptionsPanel.BackLabel));
+        InventoryFakeCanvas cameraCanvas = Step(w => CameraOptionsPanel.Build(w, camera, backdrop: false), out _);
+        Assert.True(cameraCanvas.HasText("CAMERA"));
+        Assert.True(cameraCanvas.HasText(camera[^1].Label));
+        Assert.True(cameraCanvas.HasText(OptionsPanel.BackLabel));
+    }
+
+    [Fact]
+    public void CameraScreen_BackButtonReturnsBack()
+    {
+        List<MenuOptionRow> rows = Rows(new Probe());
+        Func<MenuWidgets, MenuAction> build = w => CameraOptionsPanel.Build(w, rows, backdrop: false);
+        Step(build, out _);
+        float heightUnits = OptionsPanel.HeightUnits(rows.Count, 1);
+        float top = MathF.Max(6f, (MenuWidgets.DesignHeightUnits - heightUnits) * 0.5f);
+        UiRect panel = _widgets.Centered(top, OptionsPanel.PanelWidthUnits, heightUnits);
+        UiRect back = _widgets.Inside(panel, (OptionsPanel.PanelWidthUnits - MenuWidgets.ButtonWidthUnits) * 0.5f, 46f + rows.Count * OptionsPanel.RowHeightUnits + 8f, MenuWidgets.ButtonWidthUnits, MenuWidgets.ButtonHeightUnits);
+
         Assert.Equal(MenuAction.Back, Click(build, Centre(back)));
     }
 

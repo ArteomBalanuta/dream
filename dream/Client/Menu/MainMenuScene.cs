@@ -13,6 +13,7 @@ public sealed class MainMenuScene
 {
     private readonly SinglePlayerLauncher _launcher;
     private readonly IReadOnlyList<MenuOptionRow> _optionRows;
+    private readonly IReadOnlyList<MenuOptionRow> _cameraRows;
     private readonly MenuScreenState _screen = new();
     // Why the last session ended, or a failed start; shown under the buttons until the player acts.
     private string? _notice;
@@ -31,10 +32,12 @@ public sealed class MainMenuScene
         string? sessionEndReason = null,
         MultiplayerDefaults? multiplayer = null,
         Action<MultiplayerDefaults>? persistMultiplayer = null,
-        IMenuClipboard? clipboard = null)
+        IMenuClipboard? clipboard = null,
+        IReadOnlyList<MenuOptionRow>? cameraRows = null)
     {
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
         _optionRows = optionRows ?? throw new ArgumentNullException(nameof(optionRows));
+        _cameraRows = cameraRows ?? [];
         _persistMultiplayer = persistMultiplayer;
         _clipboard = clipboard;
         _saved = multiplayer ?? new MultiplayerDefaults("127.0.0.1", RemoteClientOptions.DefaultPort, RemoteClientOptions.DefaultPort, "dream-client");
@@ -95,6 +98,7 @@ public sealed class MainMenuScene
             case MenuScreen.Options:
             case MenuScreen.Credits:
             case MenuScreen.KeyBindings:
+            case MenuScreen.Camera:
                 return key == MenuKey.Escape ? Handle(MenuAction.Back) : MenuAction.None;
             default:
                 return MenuAction.None;
@@ -257,6 +261,8 @@ public sealed class MainMenuScene
                 return OptionsPanel.Build(w, _optionRows, backdrop: true);
             case MenuScreen.KeyBindings:
                 return KeyBindingsPanel.Build(w, backdrop: true);
+            case MenuScreen.Camera:
+                return CameraOptionsPanel.Build(w, _cameraRows, backdrop: true);
             case MenuScreen.Credits:
                 return MainMenuPanel.BuildCredits(w);
             case MenuScreen.Multiplayer:

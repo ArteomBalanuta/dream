@@ -116,12 +116,12 @@ public static class MenuOptionRows
                     config.AdminHud = value;
                     settings.SetAdminHudAvailable(value);
                 },
-                persist),
-            .. CreateCameraRows(settings, config, persist)
+                persist)
         ];
     }
 
-    // The tactical camera lines. Every setter writes the live settings (sanitised) and then the saved config.
+    // The tactical camera lines, shown on the Camera screen reached from Options. Every setter writes the
+    // live settings (sanitised) and then the saved config.
     public static List<MenuOptionRow> CreateCameraRows(GameSettings settings, DesktopClientConfig config, Action persist)
     {
         ArgumentNullException.ThrowIfNull(settings);

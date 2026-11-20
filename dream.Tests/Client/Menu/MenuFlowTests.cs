@@ -53,8 +53,13 @@ public class MenuFlowTests
         Assert.Equal(MenuScreen.KeyBindings, state.Current);
         Assert.True(state.Apply(MenuAction.Back));
         Assert.Equal(MenuScreen.Options, state.Current);
+        Assert.True(state.Apply(MenuAction.Camera));
+        Assert.Equal(MenuScreen.Camera, state.Current);
+        Assert.True(state.Apply(MenuAction.Back));
+        Assert.Equal(MenuScreen.Options, state.Current);
         Assert.True(state.Apply(MenuAction.Back));
         Assert.Equal(MenuScreen.Root, state.Current);
+        Assert.False(state.Apply(MenuAction.Camera));
         Assert.True(state.Apply(MenuAction.Credits));
         Assert.Equal(MenuScreen.Credits, state.Current);
         Assert.True(state.Apply(MenuAction.Back));

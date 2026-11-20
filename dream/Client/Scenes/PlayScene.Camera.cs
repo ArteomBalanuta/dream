@@ -1,4 +1,5 @@
 using Dream.Client.CameraControl;
+using Dream.Client.Input;
 using Dream.Rendering.Core;
 using Dream.Rendering.Ui;
 using OpenTK.Mathematics;
@@ -19,10 +20,10 @@ public partial class PlayScene
     private ClickMoveHost? _cameraPickHost;
     private float _cameraFrameSeconds;
     private Vector2 _cameraPointerPixel;
-    private bool _cameraConfineApplied;
-    private Box2i _cameraConfineRect;
+    private readonly CameraConfineApplier _cameraConfine = new();
     private bool _cameraWindowSynced;
     private bool _cameraLastFocused;
+    private bool _cameraWindowFocused;
     private bool _cameraLastHovered;
 
     // True while a rotation drag is held: the cursor shows the Grab sprite.
@@ -77,11 +78,29 @@ public partial class PlayScene
             rig.LatchZoomAnchor(ResolveZoomAnchor());
         }
 
-        return rig.Advance(playerFocus, in frame, _cameraFrameSeconds);
+        TacticalCameraPose pose = rig.Advance(playerFocus, in frame, _cameraFrameSeconds);
+        SyncAnchorModeToSettings(rig);
+        return pose;
+    }
+
+    // The Y key flips the rig's mode; the Camera options row reads the settings, so the new mode is written back
+    // (Game persists it with the rest of the client config). _cameraSettingsApplied follows, so EnsureCamera does
+    // not push the same value into the rig again.
+    private void SyncAnchorModeToSettings(TacticalCameraRig rig)
+    {
+        if (rig.AnchorMode == _settings.TacticalCamera.AnchorMode)
+        {
+            return;
+        }
+
+        _settings.SetTacticalCamera(_settings.TacticalCamera with { AnchorMode = rig.AnchorMode });
+        _cameraSettingsApplied = _settings.TacticalCamera;
+        _cameraSampler!.Settings = _settings.TacticalCamera;
     }
 
     // The point a zoom gesture keeps under the cursor: the hovered enemy's anchor, else what the ground pick under
-    // the cursor hits, else null (zoom about the view centre).
+    // the cursor hits, else where the cursor ray meets the horizontal plane through the view target, else null
+    // (zoom about the view centre).
     private Vector3? ResolveZoomAnchor()
     {
         _cameraPickHost ??= new ClickMoveHost(this);
@@ -95,7 +114,40 @@ public partial class PlayScene
             return pick.Point;
         }
 
+        Dream.Simulation.Players.Camera? camera = _render.LastWorldCamera;
+        if (camera is not null
+            && WorldCursorPicker.TryBuildRay(
+                camera.GetViewMatrix(),
+                _render.ProjectionMatrix,
+                _cameraPointerPixel,
+                _render.ViewportSize,
+                out Vector3 origin,
+                out Vector3 direction)
+            && TryIntersectPlaneY(origin, direction, _runtime.LastViewTarget.Y, out Vector3 onPlane))
+        {
+            return onPlane;
+        }
+
         return null;
+    }
+
+    // Where a ray meets the horizontal plane y = planeY, in front of the origin; false when it runs parallel or away.
+    internal static bool TryIntersectPlaneY(Vector3 origin, Vector3 direction, float planeY, out Vector3 point)
+    {
+        point = default;
+        if (MathF.Abs(direction.Y) < 1e-5f)
+        {
+            return false;
+        }
+
+        float t = (planeY - origin.Y) / direction.Y;
+        if (!float.IsFinite(t) || t < 0f)
+        {
+            return false;
+        }
+
+        point = origin + direction * t;
+        return true;
     }
 
     // Executes a parsed cam: capture step. Each snaps the goal and the current pose, so the frame is deterministic.
@@ -150,6 +202,8 @@ public partial class PlayScene
             OnCameraFocusChanged(focused);
         }
 
+        _cameraWindowFocused = focused;
+
         if (!_cameraWindowSynced || hovered != _cameraLastHovered)
         {
             OnCameraCursorEnterLeave(hovered);
@@ -172,43 +226,28 @@ public partial class PlayScene
         _cameraSampler!.OnCursorEnterLeave(inside, _clientPresentationTimeSeconds);
     }
 
-    // Per frame: clips the cursor or lets it go per the policy, touching the OS only when the decision or the
-    // rectangle changes. clientRectScreen is the client area in screen pixels.
+    // Per frame: clips the cursor or lets it go per the policy. The focus is the one the host passed to
+    // SyncCameraWindowState this frame, not last frame's. clientRectScreen is the client area in screen pixels.
     public void ApplyCursorConfinement(bool minimised, bool fullscreenLike, Box2i clientRectScreen)
     {
         EnsureCamera();
         bool want = CursorConfinePolicy.ShouldConfine(
             _settings.TacticalCamera.ConfineMode,
-            _windowFocused,
+            _cameraWindowFocused,
             minimised,
             fullscreenLike,
             _settings.PauseMenuVisible || _settings.SettingsVisible,
             LoadingOverlayVisible,
             inPlay: true);
-        if (want == _cameraConfineApplied && (!want || clientRectScreen == _cameraConfineRect))
-        {
-            return;
-        }
-
         ICursorConfiner confiner = _cameraConfiner ??= CursorConfiners.CreateForPlatform();
-        if (want)
-        {
-            confiner.Confine(clientRectScreen);
-            _cameraConfineRect = clientRectScreen;
-        }
-        else
-        {
-            confiner.Release();
-        }
-
-        _cameraConfineApplied = want;
+        _cameraConfine.Apply(confiner, want, _cameraWindowFocused, clientRectScreen);
     }
 
-    // Always lets the cursor go: the Lead calls it from Dispose.
+    // Always lets the cursor go: Game calls it from its teardown paths.
     public void ReleaseCameraResources()
     {
         _cameraConfiner?.Release();
-        _cameraConfineApplied = false;
+        _cameraConfine.Reset();
     }
 
     private void EnsureCamera()
@@ -231,5 +270,46 @@ public partial class PlayScene
             _cameraSampler!.Settings = current;
             _cameraSettingsApplied = current;
         }
+    }
+}
+
+// The decision half of the cursor clip, free of the scene so a test can drive it with a fake confiner. It touches
+// the OS only when the wish or the rectangle changes, on every focus-gained edge (another program may have taken
+// the clip while the window was away) and whenever the confiner reports the clip is no longer in force.
+internal sealed class CameraConfineApplier
+{
+    private bool _applied;
+    private bool _lastFocused;
+    private Box2i _rect;
+
+    public void Apply(ICursorConfiner confiner, bool want, bool focused, Box2i clientRectScreen)
+    {
+        bool focusGained = focused && !_lastFocused;
+        _lastFocused = focused;
+        if (!want)
+        {
+            if (_applied)
+            {
+                confiner.Release();
+                _applied = false;
+            }
+
+            return;
+        }
+
+        if (_applied && !focusGained && clientRectScreen == _rect && confiner.IsConfined)
+        {
+            return;
+        }
+
+        confiner.Confine(clientRectScreen);
+        _rect = clientRectScreen;
+        _applied = true;
+    }
+
+    public void Reset()
+    {
+        _applied = false;
+        _lastFocused = false;
     }
 }

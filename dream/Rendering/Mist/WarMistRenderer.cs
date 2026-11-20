@@ -79,18 +79,21 @@ public sealed class WarMistRenderer : IDisposable
     // The GL program handle, for the shader warm-up's bookkeeping.
     public int ProgramHandle => _shader?.Handle ?? 0;
 
-    // Draws the slices around the focus over the world and restores the world pass state afterwards:
+    // Draws the slices over the world and restores the world pass state afterwards:
     // depth writes on, blending off, face culling as it was, no VAO, texture units 0 and 1 empty.
-    public void Draw(Matrix4 viewProjection, Vector3 focus, double timeSeconds, ExplorationMemory memory)
+    // The slab is a square of half side slabHalfExtent centred on slabCentre (the view target of a panned camera)
+    // while the density and clear field stays centred on focus (the player). The slab only has to cover what the
+    // view shows, so the caller sizes it to the view footprint at the farthest zoom.
+    public void Draw(Matrix4 viewProjection, Vector3 focus, Vector3 slabCentre, float slabHalfExtent, double timeSeconds, ExplorationMemory memory)
     {
         Shader shader = _shader ?? throw new ObjectDisposedException(nameof(WarMistRenderer));
 
         // The window is not clipped to the map: past the edge the slices carry on over the void, so
         // the veil has no visible rim there (the exploration texture clamps to its edge texel).
-        float minX = focus.X - WarMistField.HalfExtent;
-        float minZ = focus.Z - WarMistField.HalfExtent;
-        float maxX = focus.X + WarMistField.HalfExtent;
-        float maxZ = focus.Z + WarMistField.HalfExtent;
+        float minX = slabCentre.X - slabHalfExtent;
+        float minZ = slabCentre.Z - slabHalfExtent;
+        float maxX = slabCentre.X + slabHalfExtent;
+        float maxZ = slabCentre.Z + slabHalfExtent;
 
         bool cullWasEnabled = GL.IsEnabled(EnableCap.CullFace);
         GL.Enable(EnableCap.DepthTest);
@@ -145,6 +148,10 @@ public sealed class WarMistRenderer : IDisposable
             GL.Enable(EnableCap.CullFace);
         }
     }
+
+    // The slab on the focus: what the pass did before the camera could pan.
+    public void Draw(Matrix4 viewProjection, Vector3 focus, double timeSeconds, ExplorationMemory memory) =>
+        Draw(viewProjection, focus, focus, WarMistField.HalfExtent, timeSeconds, memory);
 
     public void Dispose()
     {
