@@ -50,6 +50,58 @@ public sealed class AudioOutputBackendTests
         Assert.Equal(short.MaxValue, dst[7]);
     }
 
+    [Theory]
+    [InlineData("\topenal\n", true, "OpenAL")]
+    [InlineData("OPENAL", false, "OpenAL")]
+    [InlineData("  WinMM	", false, "WinMM")]
+    [InlineData("   ", true, "WinMM")]
+    [InlineData("   ", false, "OpenAL")]
+    public void WhitespaceAndCaseAreTolerated(string value, bool isWindows, string expected)
+    {
+        Assert.Equal(expected, AudioOutputFactory.Resolve(Env(value), isWindows).ToString());
+    }
+
+    [Fact]
+    public void ResolveReadsOnlyTheBackendVariableAndRejectsANullReader()
+    {
+        List<string> asked = [];
+        AudioOutputFactory.Resolve(name => { asked.Add(name); return null; }, isWindows: true);
+        Assert.Equal(["DREAM_AUDIO_BACKEND"], asked);
+        Assert.Throws<ArgumentNullException>(() => AudioOutputFactory.Resolve(null!, isWindows: true));
+        Assert.Throws<ArgumentNullException>(() => AudioOutputFactory.Create(null!));
+    }
+
+    // The dump switch is what decides "no device"; Create tests DumpPath, which is read once at type load,
+    // so precedence over the backend choice itself cannot be driven from a test without a seam. Pin the parser.
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("  ", null)]
+    [InlineData(" out.wav ", "out.wav")]
+    public void DumpPathParsingTrims(string? value, string? expected)
+    {
+        Assert.Equal(expected, AudioDiagnostics.ResolveDump(value));
+    }
+
+    [Fact]
+    public void ConvertHandlesMismatchedLengthsAndNegativeRounding()
+    {
+        short[] dst = [7, 7, 7, 7];
+        OpenALOutput.ConvertToPcm16([0.5f, -0.5f], dst);
+        Assert.InRange(dst[0], 16383, 16384);
+        Assert.InRange(dst[1], -16384, -16383);
+        Assert.Equal(7, dst[2]);
+        Assert.Equal(7, dst[3]);
+
+        short[] small = new short[1];
+        OpenALOutput.ConvertToPcm16([1f, 1f, 1f], small);
+        Assert.Equal(short.MaxValue, small[0]);
+
+        short[] untouched = [7, 7];
+        OpenALOutput.ConvertToPcm16([], untouched);
+        Assert.Equal([(short)7, (short)7], untouched);
+    }
+
     // With no openal32.dll (or no device) opening must throw, never hang or crash, so GameAudio falls back to silence.
     [Fact]
     public void OpenAlOpenFailureThrowsOrOpensCleanly()

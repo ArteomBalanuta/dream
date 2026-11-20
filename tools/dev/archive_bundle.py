@@ -154,6 +154,15 @@ def selftest():
         expect("stray db", verify("linux-x64", make("linux-x64", "n4", extra=("config/player-profiles.db-wal",))), True)
         expect("stray imgui.ini", verify("win-x64", make("win-x64", "n5", extra=("imgui.ini",))), True)
         expect("foreign native", verify("linux-x64", make("linux-x64", "n6", extra=("glfw3.dll",))), True)
+        expect("win dll in linux stage", verify("linux-x64", make("linux-x64", "n7", extra=("libbulletc.dll",))), True)
+        expect("linux so in win stage", verify("win-x64", make("win-x64", "n8", extra=("libbulletc.so",))), True)
+        expect("versioned so in win stage", verify("win-x64", make("win-x64", "n9", extra=("libglfw.so.3",))), True)
+        expect("account tokens", verify("linux-x64", make("linux-x64", "n10", extra=("account-tokens.json",))), True)
+        expect("nested account tokens", verify("win-x64", make("win-x64", "n11", extra=("config/account-tokens.json",))), True)
+        expect("nested imgui.ini", verify("win-x64", make("win-x64", "n12", extra=("config/imgui.ini",))), True)
+        expect("nested db-wal", verify("linux-x64", make("linux-x64", "n13", extra=("a/b/player-profiles.db-wal",))), True)
+        expect("nested foreign so allowed", verify("win-x64", make("win-x64", "n14", extra=("sub/x.so",))), False)
+        expect("managed dll allowed in linux", verify("linux-x64", make("linux-x64", "n15", extra=("Foo.dll",))), False)
         t = os.path.join(tmp, "ok.tar.gz")
         pack("linux-x64", make("linux-x64", "a1"), t)
         expect("good tar", verify("linux-x64", t), False)
@@ -181,6 +190,12 @@ def selftest():
                 nm = i.filename.replace("dream-t-win-x64/", "x/", 1) if i.filename.endswith("dream.exe") else i.filename
                 o.writestr(nm, s.read(i))
         expect("two top-level folders", verify("win-x64", two), True)
+        flat = os.path.join(tmp, "flat.zip")
+        with zipfile.ZipFile(z) as s, zipfile.ZipFile(flat, "w") as o:
+            for i in s.infolist():
+                o.writestr(i.filename.split("/", 1)[1], s.read(i))
+        expect("zip with no top-level folder", verify("win-x64", flat), True)
+        expect("win zip verified as linux", verify("linux-x64", z), True)
     for f in fails:
         print("SELFTEST FAIL: " + f)
     print("selftest: %s" % ("FAILED" if fails else "ok"))
