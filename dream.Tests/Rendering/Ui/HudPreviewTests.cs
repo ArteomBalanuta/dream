@@ -437,8 +437,6 @@ public class HudPreviewTests
         b.BeginFrame(in lay);
         router.BeginFrame(new UiPointer(pointer, false, false, true));
         ClassicHud.Build(b, router, view, in lay, t, new NoActions());
-        HoverInfoPanel.Build(b, router, view, in lay, t);
-        CursorPanel.Build(b, router, view, in lay, t);
         router.EndFrame();
     }
 
