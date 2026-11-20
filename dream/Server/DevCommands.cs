@@ -1,4 +1,5 @@
 using System.Globalization;
+using Dream.Simulation.Players;
 
 namespace Dream.Server;
 
@@ -11,7 +12,8 @@ public enum DevCommandKind : byte
     Clear,
     Heal,
     SetHealth,
-    SetMana
+    SetMana,
+    Boost
 }
 
 // One parsed /dev subcommand. Which fields count depends on the kind:
@@ -48,6 +50,13 @@ public static class DevCommands
 
     public const int MaxGiveCount = 20;
 
+    // The dev loadout. Deliberately far below PlayerCombatStats.AttributeCeiling (10000): the ceiling has
+    // been a clamp attractor before, and a value sitting on it is indistinguishable from a value that was
+    // clamped to it. 500 is already an order of magnitude past the top shipped enemy (GraveHowler, 40).
+    public const int DefaultBoostAttribute = 500;
+
+    public const int DefaultBoostLevel = 50;
+
     public const float MaxClearRadius = 1000f;
 
     // Metres; far past any map, so a typo is refused instead of travelling to the clamp.
@@ -55,7 +64,8 @@ public static class DevCommands
 
     public const string Usage =
         "Dev: help | spawn <enemy> [1-16] [1-16 m] | tp <x> <z> | tp camp <key> | tp npc <key> | tp spawn | "
-        + "give <item> [common|uncommon|rare] [1-20] | clear [radius m] | heal | hp <n> | mana <n>. Chain with ';' (up to 8).";
+        + "give <item> [common|uncommon|rare] [1-20] | clear [radius m] | heal | hp <n> | mana <n> | "
+        + "boost [attribute] (admin + stats + level). Chain with ';' (up to 8).";
 
     private const string SpawnUsage = "Usage: spawn <enemy> [count 1-16] [distance 1-16 m]";
 
@@ -77,6 +87,25 @@ public static class DevCommands
         if (Is(verb, "help"))
         {
             command = new DevCommand(DevCommandKind.Help, string.Empty, null, 0f, 0f, 0, 0f, null);
+            return true;
+        }
+
+        // boost: the one-line "make this character worth testing with" - admin, attributes, level, full
+        // vitals. No argument takes DefaultBoostAttribute.
+        if (Is(verb, "boost"))
+        {
+            int attribute = DefaultBoostAttribute;
+            if (tokens.Length > 2
+                || (tokens.Length == 2
+                    && (!int.TryParse(tokens[1], NumberStyles.None, CultureInfo.InvariantCulture, out attribute)
+                        || attribute < 1
+                        || attribute > PlayerCombatStats.AttributeCeiling)))
+            {
+                error = $"Usage: boost [attribute 1-{PlayerCombatStats.AttributeCeiling}]";
+                return false;
+            }
+
+            command = new DevCommand(DevCommandKind.Boost, string.Empty, null, 0f, 0f, attribute, 0f, null);
             return true;
         }
 

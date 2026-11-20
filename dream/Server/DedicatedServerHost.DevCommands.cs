@@ -1,6 +1,7 @@
 using Dream.Multiplayer.Diagnostics;
 using Dream.Multiplayer.Protocol;
 using Dream.Multiplayer.Sessions;
+using Dream.Simulation.Persistence;
 using Dream.Simulation.Runtime;
 
 namespace Dream.Server;
@@ -88,6 +89,7 @@ public sealed partial class DedicatedServerHost
                 DevCommandKind.Heal => runtime.DevHeal(session),
                 DevCommandKind.SetHealth => runtime.DevSetHealth(session, command.Count),
                 DevCommandKind.SetMana => runtime.DevSetMana(session, command.Count),
+                DevCommandKind.Boost => DevBoost(runtime, session, sender.Name, command.Count),
                 _ => (false, DevCommands.Usage)
             };
             NetworkDiagnosticsLog.Write(
@@ -95,6 +97,39 @@ public sealed partial class DedicatedServerHost
                 $"player={SanitizeForLog(sender.Name)} verb={command.Kind} ok={ok}");
             Reply((ok ? DevCommandText.ReplyPrefix : DevCommandText.ErrorPrefix) + message);
         }
+    }
+
+    // boost = the seat's stats (runtime) plus the admin role (account). The role lives on the ACCOUNT, not
+    // the seat, so it cannot be set by the runtime, and it is written through the persistence queue rather
+    // than inline: a synchronous SQLite write on the tick thread is exactly what that queue exists to avoid.
+    //
+    // The role therefore lands a moment after the reply, which is fine - the host re-reads the role and
+    // sanctions of connected accounts on a timer, so it reaches this very session without a reconnect. The
+    // reply says "queued" rather than "granted" because claiming otherwise would be a guess about a write
+    // that has not run yet.
+    private (bool Ok, string Message) DevBoost(
+        WorldSessionRuntime runtime,
+        PlayerSessionId session,
+        string senderName,
+        int attribute)
+    {
+        (bool ok, string message) = runtime.DevBoost(session, attribute, DevCommands.DefaultBoostLevel);
+        if (!ok)
+        {
+            return (ok, message);
+        }
+
+        IAccountRepository? accounts = runtime.AccountRepository;
+        PersistenceWriteQueue? writes = runtime.PersistenceWrites;
+        string name = senderName;
+        if (accounts == null || writes == null)
+        {
+            return (true, message + "; admin not granted (no account store on this server)");
+        }
+
+        return writes.Enqueue(() => accounts.TrySetRole(name, 1))
+            ? (true, message + "; admin queued")
+            : (true, message + "; admin not granted (the write queue refused)");
     }
 
     // Dev commands are on for this server AND the connection is a loopback one. Never the role.

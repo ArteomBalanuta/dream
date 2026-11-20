@@ -5,6 +5,7 @@ using Dream.Simulation.Content;
 using Dream.Simulation.Determinism;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Inventory;
+using Dream.Simulation.Players;
 using Dream.Simulation.World;
 using Dream.Simulation.World.Geometry;
 
@@ -294,6 +295,40 @@ public sealed partial class WorldSessionRuntime
 
         _devClearScratch.Clear();
         return (true, radius <= 0f ? $"cleared {removed} enemies" : $"cleared {removed} enemies within {Meters(radius)} m");
+    }
+
+    // The dev loadout: attributes, level and full vitals in one line, so a fresh character is worth
+    // testing with. The admin role is NOT set here - it lives on the account, not the seat, and the host
+    // owns that write (DedicatedServerHost.DevCommands).
+    //
+    // ApplyStats and ApplyProgression are used rather than poking BaseStats, because max health and max
+    // mana are derived from vitality, energy and level: setting the fields alone would leave the bars
+    // stale until something else happened to recalculate them.
+    internal (bool Ok, string Message) DevBoost(PlayerSessionId session, int attribute, int level)
+    {
+        if (!TryGetDevSeat(session, out ConnectedPlayer? player, out IAuthoritativePlayerTarget? seat, out string? refusal))
+        {
+            return (false, refusal!);
+        }
+
+        int value = Math.Clamp(attribute, 1, PlayerCombatStats.AttributeCeiling);
+        PlayerCombatStats stats = new()
+        {
+            Strength = value,
+            Vitality = value,
+            Agility = value,
+            Energy = value,
+            AttackSpeed = seat!.Combatant.BaseStats.AttackSpeed
+        };
+
+        seat.Combatant.ApplyStats(stats);
+        seat.Combatant.ApplyProgression(Math.Max(1, level), seat.Combatant.Experience);
+
+        int maxHealth = seat.Combatant.Health.MaxHealth;
+        seat.Combatant.Health.SetAuthoritativeState(maxHealth, maxHealth);
+        seat.Combatant.SetMana(seat.Combatant.MaxMana);
+        player!.VitalsDirty = true;
+        return (true, $"boosted to level {seat.Combatant.Level}, attributes {value}, {maxHealth} health, {seat.Combatant.MaxMana} mana");
     }
 
     internal (bool Ok, string Message) DevHeal(PlayerSessionId session)
