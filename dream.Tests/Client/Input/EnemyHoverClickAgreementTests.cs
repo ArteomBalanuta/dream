@@ -7,7 +7,8 @@ using Dream.Simulation.Players;
 
 namespace Dream.Tests.Client.Input;
 
-// The cursor's sword must show exactly when a right click at the same spot would start an attack.
+// The cursor's sword must show exactly when a right click at the same spot would start an attack: the host's
+// enemy answer (what the scene serves from the world hover) and the click controller agree in every mode.
 public class EnemyHoverClickAgreementTests
 {
     private sealed class Nav : INavWorld
@@ -103,7 +104,7 @@ public class EnemyHoverClickAgreementTests
     public void HoverAnswer_MatchesWhetherARightClickAttacks(PlayerInteractionMode mode, string what)
     {
         Host host = new() { Mode = mode, NextPick = PickFor(what) };
-        bool hover = new EnemyHoverProbe(host).Evaluate(new WorldPointerState(Spot, false, false, false), true, true);
+        bool hover = ((IClickMoveHost)host).TryGetEnemyAnchorAt(Spot, out _);
 
         ClickMoveController click = new(host, new Pathing());
         click.OnFrame(new WorldPointerState(Spot, false, false, false), true);

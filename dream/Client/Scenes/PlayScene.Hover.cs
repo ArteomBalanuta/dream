@@ -79,6 +79,8 @@ public partial class PlayScene
             || _render.CameraDragging
             || InventoryUiState.Current.ModalOpen
             || InventoryUiState.Current.DragActive;
+        // Deliberate: with an item menu open or an item dragged the cursor shows no hover, so a right press in
+        // the world is a ground pick (it never attacks an enemy the cursor did not show).
         HoverTargetId label = ToHoverTarget(_render.ClassicHoveredLabel);
         Dream.Simulation.Players.Camera? camera = _render.LastWorldCamera;
         _hoverHost ??= new ClickMoveHost(this);
@@ -140,7 +142,15 @@ public partial class PlayScene
             return;
         }
 
-        _hoverComposer.Compose(target);
+        // Gone with nothing kept to show (it vanished before the panel ever described it): no panel, rather
+        // than an empty frame for the defeated hold.
+        if (!_hoverComposer.Compose(target) && _hoverComposer.Info.Target.IsNone)
+        {
+            _render.HoverPanel = default;
+            _render.HoverInfo = null;
+            return;
+        }
+
         _render.HoverPanel = new HoverPanelState(_hover.PanelVisible, _hover.PanelAlpha, target.Kind);
         _render.HoverInfo = _hoverComposer.Info;
     }

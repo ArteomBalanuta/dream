@@ -191,6 +191,9 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
     // False until the atlas is ready, so a loading frame draws nothing.
     public bool Draw(in ClassicHudFrame frame)
     {
+        // A frame that does not build the labels (not ready, or one that throws before WorldLabelsPanel runs)
+        // must not leave last frame's label hover behind: the world hover would pin it as the target.
+        _view.HoveredLabel = default;
         UiSpriteTable? sprites = _backend.Sprites;
         if (_backend.State != ClassicHudBackendState.Ready || sprites is null)
         {

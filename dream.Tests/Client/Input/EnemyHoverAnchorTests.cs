@@ -98,7 +98,7 @@ public sealed class EnemyHoverAnchorTests
         Vector3 origin = new(6.5f, 1.5f, 10.5f);
         Host host = new(world, registry, origin, Vector3.UnitX);
 
-        Assert.True(new EnemyHoverProbe(host).Evaluate(Pointer(), true, true, out Vector3 anchor));
+        Assert.True(host.TryGetEnemyAnchorAt(Vector2.Zero, out Vector3 anchor));
 
         Assert.True(host.TryPick(Vector2.Zero, out ClickPick click));
         Assert.Equal(ClickPickKind.Enemy, click.Kind);
@@ -114,35 +114,8 @@ public sealed class EnemyHoverAnchorTests
         registry.Add(Wolf(2000, new Vector3(8.5f, 1.5f, 20.5f)));
         Host host = new(world, registry, new Vector3(6.5f, 1.5f, 10.5f), Vector3.UnitX);
 
-        Assert.False(new EnemyHoverProbe(host).Evaluate(Pointer(), true, true, out Vector3 anchor));
+        Assert.False(host.TryGetEnemyAnchorAt(Vector2.Zero, out Vector3 anchor));
         Assert.Equal(Vector3.Zero, anchor);
-    }
-
-    // The gate that matters for the frame budget, measured through the probe rather than on the picker
-    // in isolation: this is the call the play scene makes, and it is the one that would silently fall
-    // back to the allocating default if the override were dropped.
-    [Fact]
-    public void TheProbePath_AllocatesNothing_OverAnEnemyAndOverEmptyGround()
-    {
-        FloorWorld world = new();
-        EnemyRegistry registry = new();
-        registry.Add(Wolf(2000, new Vector3(8.5f, 1.5f, 10.5f)));
-        EnemyHoverProbe onEnemy = new(new Host(world, registry, new Vector3(6.5f, 1.5f, 10.5f), Vector3.UnitX));
-        EnemyHoverProbe onGround = new(new Host(world, registry, new Vector3(5.5f, 10f, 5.5f), -Vector3.UnitY));
-        WorldPointerState pointer = Pointer();
-
-        // Stated once, here, rather than counted inside the measured block: AllocationAssert runs the
-        // delegate at least 164 times, so any count taken in there is a function of its own loop. What
-        // matters is that these two really are the hit and the miss, so the measurement below is of a
-        // probe doing its work and not of one short-circuiting.
-        Assert.True(onEnemy.Evaluate(pointer, true, true, out _));
-        Assert.False(onGround.Evaluate(pointer, true, true, out _));
-
-        AllocationAssert.AtMost(0, () =>
-        {
-            onEnemy.Evaluate(pointer, true, true, out _);
-            onGround.Evaluate(pointer, true, true, out _);
-        });
     }
 
     // And that the shipped scene really overrides it, which no unit test can reach: PlayScene owns a GLFW
@@ -162,6 +135,38 @@ public sealed class EnemyHoverAnchorTests
         Assert.Contains("TryGetHoveredEnemy(", body, StringComparison.Ordinal);
         Assert.DoesNotContain("TryPick(", body, StringComparison.Ordinal);
         Assert.DoesNotContain("WorldCursorPicker.", body, StringComparison.Ordinal);
+    }
+
+    // A right click must attack exactly the enemy the cursor shows: TryPick takes the world hover's enemy and
+    // otherwise makes a ground pick with no enemy resolution of its own (which could disagree with the hover).
+    [Fact]
+    public void ThePlayScene_ClickPick_TakesTheHoveredEnemy_AndNoOtherEnemy()
+    {
+        string scene = ReadRepoFile("dream", "Client", "Scenes", "PlayScene.cs");
+        int method = scene.IndexOf("public bool TryPick(", StringComparison.Ordinal);
+        Assert.True(method > 0);
+        int nextMethod = scene.IndexOf("\n        public ", method + 1, StringComparison.Ordinal);
+        Assert.True(nextMethod > method);
+        string body = scene[method..nextMethod];
+        Assert.Contains("TryGetHoveredEnemy(", body, StringComparison.Ordinal);
+        Assert.Contains("resolveEnemy: null", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("_scene._runtime.Enemies, origin", body, StringComparison.Ordinal);
+    }
+
+    // The hover is updated before anything reads it in the same update, and a press forces a fresh pick, so
+    // the click and the aim never act on a throttled answer from before the press.
+    [Fact]
+    public void ThePlayScene_UpdatesTheHover_BeforeTheAimAndTheClick_AndForcesAPickOnAPress()
+    {
+        string update = ReadRepoFile("dream", "Client", "Scenes", "PlayScene.Update.cs");
+        int hover = update.IndexOf("UpdateWorldHover(", StringComparison.Ordinal);
+        int aim = update.IndexOf("_cursorAim.OnFrame(", StringComparison.Ordinal);
+        int click = update.IndexOf("_clickMove.OnFrame(", StringComparison.Ordinal);
+        Assert.True(hover > 0 && aim > hover && click > hover, "UpdateWorldHover must run before the aim and the click");
+
+        string wiring = ReadRepoFile("dream", "Client", "Scenes", "PlayScene.Hover.cs");
+        Assert.Contains("pointer.LeftDown && !_hoverLeftWasDown", wiring, StringComparison.Ordinal);
+        Assert.Contains("pointer.RightDown && !_hoverRightWasDown", wiring, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(params string[] parts)

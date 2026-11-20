@@ -61,6 +61,23 @@ public class ActorWorldLabelBuilderTests
         Assert.Equal("Lv 1  87/100", label.HealthLabel);
     }
 
+    // The actor the hover info panel shows loses its floating label (the panel says the same thing);
+    // only that one, and only when asked.
+    [Fact]
+    public void AppendEnemyLabels_SkipsOnlyTheHoveredEnemy()
+    {
+        EnemyActor wolf = CreateEnemy("Wolf", new Vector3(2f, 0f, 3f), actorId: 2000, maxHealth: 100);
+        EnemyActor bear = CreateEnemy("Bear", new Vector3(6f, 0f, 3f), actorId: 2001, maxHealth: 100);
+        List<WorldActorLabelState> labels = [];
+
+        ActorWorldLabelBuilder.AppendEnemyLabels([wolf, bear], labels, healthLabels: null, skipActorId: 2000);
+        Assert.Equal("Bear", Assert.Single(labels).DisplayName);
+
+        labels.Clear();
+        ActorWorldLabelBuilder.AppendEnemyLabels([wolf, bear], labels, healthLabels: null);
+        Assert.Equal(2, labels.Count);
+    }
+
     private static EnemyActor CreateEnemy(string displayName, Vector3 position, int actorId, int maxHealth)
     {
         EnemyCombatant combatant = new(() => position, actorId: actorId, maxHealth: maxHealth, attackDamage: 10, attackIntervalSeconds: 1f);
