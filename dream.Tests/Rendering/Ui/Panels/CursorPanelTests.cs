@@ -56,6 +56,24 @@ public class CursorPanelTests
         Assert.Empty(c.Calls);
     }
 
+    [Fact]
+    public void AttackIsDrawnOverAnEnemy_AndGrabStillWinsOverIt()
+    {
+        UiLayout l = UiLayout.Create(1920, 1080, 0f);
+        HudView over = StatusBarTestData.View();
+        over.PointerOverEnemy = true;
+
+        StatusBarFakeInput hover = new() { Pointer = new UiPointer(new Vector2(10f, 10f), false, false, true) };
+        StatusBarRecordingCanvas c = new(StatusBarTestData.Table);
+        CursorPanel.Build(c, hover, over, l, StatusBarTestData.Table);
+        Assert.Equal("cursor.attack", Assert.Single(c.Calls).Name);
+
+        StatusBarFakeInput drag = new() { Pointer = new UiPointer(new Vector2(10f, 10f), true, false, true), ActiveDragPayload = 3 };
+        StatusBarRecordingCanvas c2 = new(StatusBarTestData.Table);
+        CursorPanel.Build(c2, drag, over, l, StatusBarTestData.Table);
+        Assert.Equal("cursor.grab", Assert.Single(c2.Calls).Name);
+    }
+
     private sealed class PlainInput : IUiInput
     {
         public int ActiveDragPayload => -1;
