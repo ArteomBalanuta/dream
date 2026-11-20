@@ -379,6 +379,47 @@ def check_cursors(errs, C, cur):
             errs.append(f"{name}: pivot not upper-left")
 
 
+def attack_errors(pointer, attack, pivot):
+    """The sword must be small, unlike the gauntlet, and the hotspot must sit on its tip."""
+    errs = []
+    pa, aa = pointer[..., 3] > 128, attack[..., 3] > 128
+    ratio = aa.sum() / max(pa.sum(), 1)
+    if ratio > 0.60:
+        errs.append(f"cursor.attack covers {ratio:.0%} of the pointer's opaque area, want <= 60%")
+    shape = iou(pointer, attack)
+    if shape >= 0.5:
+        errs.append(f"cursor.attack silhouette IoU with the pointer is {shape:.2f}, want < 0.5")
+    ys, xs = np.nonzero(aa)
+    if not len(xs):
+        errs.append("cursor.attack is empty")
+    else:
+        d = np.sqrt((xs - pivot[0]) ** 2 + (ys - pivot[1]) ** 2).min()
+        if d > 2.0:
+            errs.append(f"cursor.attack: nearest opaque pixel is {d:.1f} px from the pivot, want <= 2")
+    return errs
+
+
+def self_test():
+    """Each attack gate must be able to fail on a synthetic sprite."""
+    errs = []
+    blank = np.zeros((128, 128, 4), np.uint8)
+    pointer = blank.copy()
+    pointer[10:90, 10:60, 3] = 255
+    small = blank.copy()
+    small[10:40, 70:76, 3] = 255
+    if attack_errors(pointer, small, (70, 10)):
+        errs.append("self_test: a small distinct sword with a tip pivot was rejected")
+    big = blank.copy()
+    big[10:80, 70:120, 3] = 255
+    if not any("area" in e for e in attack_errors(pointer, big, (70, 10))):
+        errs.append("self_test: an oversized attack cursor passed the area gate")
+    if not any("IoU" in e for e in attack_errors(pointer, pointer.copy(), (10, 10))):
+        errs.append("self_test: an attack cursor equal to the pointer passed the IoU gate")
+    if not any("pivot" in e for e in attack_errors(pointer, small, (20, 100))):
+        errs.append("self_test: a pivot far from the art passed the pivot gate")
+    return errs
+
+
 def check_layout(errs, doc):
     lay = doc["meta"]["layout"]
     want = {"talon": [128, -3, 71, 52], "dragon": [0, -52, 118, 58], "setting": [92, -5, 62, 56], "gem": [98, -2, 50, 50]}
@@ -388,7 +429,7 @@ def check_layout(errs, doc):
 
 
 def main():
-    errs = []
+    errs = self_test()
     check_generator(errs)
     for path in (HUD, CUR):
         errs += U.validate_atlas(path, {"require4": True})
@@ -405,6 +446,7 @@ def main():
         check_dragon(errs, S, doc)
         check_misc(errs, S, doc)
         check_cursors(errs, C, cur)
+        errs += attack_errors(C("cursor.pointer"), C("cursor.attack"), cur["sprites"]["cursor.attack"]["pivot"])
         check_states(errs, S, C)
     if "--fast" not in sys.argv:
         import gen_hud
