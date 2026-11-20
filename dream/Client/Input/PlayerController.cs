@@ -134,9 +134,17 @@ public static class PlayerController
     // cursor, raw W/A/S/D would steer relative to the cursor. The play camera is the fixed isometric
     // one, so screen up/right are constant; if first/third-person input is ever revived, this needs a
     // per-view basis. Diagonals come out unit length; the facing's pitch is ignored (yaw only).
-    public static (float Forward, float Strafe) Project(Vector2 cameraSpaceAxes, Vector3 facing)
+    public static (float Forward, float Strafe) Project(Vector2 cameraSpaceAxes, Vector3 facing) =>
+        Project(cameraSpaceAxes, facing, DefaultGroundForward);
+
+    // The fixed isometric view's screen-up on the ground.
+    public static Vector3 DefaultGroundForward { get; } = Flatten(-IsometricView.FocusToCamera);
+
+    // As above for a rotated tactical camera: groundForward is the camera's screen up on the ground
+    // (TacticalCameraPose.GroundForward); screen right is derived from it.
+    public static (float Forward, float Strafe) Project(Vector2 cameraSpaceAxes, Vector3 facing, Vector3 groundForward)
     {
-        Vector3 screenForward = Flatten(-IsometricView.FocusToCamera);
+        Vector3 screenForward = groundForward;
         Vector3 screenRight = Vector3.Normalize(Vector3.Cross(screenForward, Vector3.UnitY));
         Vector3 desired = (screenForward * cameraSpaceAxes.Y) + (screenRight * cameraSpaceAxes.X);
         if (desired.LengthSquared > 0.000001f)

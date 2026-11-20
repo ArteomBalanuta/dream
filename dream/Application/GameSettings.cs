@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using Dream.Client.CameraControl;
 using Dream.Configuration;
 using Dream.Rendering.Hud;
 using Dream.Rendering.ViewModels;
@@ -69,6 +70,9 @@ public class GameSettings
     // The configured HUD scale; 0 is auto. See ResolvedUiScale for the scale in use.
     public float UiScaleSetting { get; private set; }
 
+    // Tactical camera tuning for the isometric view. Always sanitised.
+    public TacticalCameraSettings TacticalCamera { get; private set; } = TacticalCameraSettings.Default;
+
     public RuntimeState CurrentRuntimeState { get; private set; } = new(RuntimeMode.Gameplay);
 
     public int WindowWidth { get; private set; }
@@ -91,6 +95,7 @@ public class GameSettings
             MouseSensitivity = clientConfig.MouseSensitivity;
             NoclipSpeed = clientConfig.NoclipSpeed;
             FloatingCombatText = clientConfig.FloatingCombatText;
+            TacticalCamera = clientConfig.TacticalCamera.Sanitized();
         }
 
         HudOptions hud = hudOptions ?? HudOptions.ResolveFromEnvironment(clientConfig);
@@ -107,6 +112,12 @@ public class GameSettings
     public void SetUiScale(float configured)
     {
         UiScaleSetting = HudOptions.SanitizeUiScale(configured);
+    }
+
+    public void SetTacticalCamera(TacticalCameraSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        TacticalCamera = settings.Sanitized();
     }
 
     public void ApplyResolution(Vector2i size)

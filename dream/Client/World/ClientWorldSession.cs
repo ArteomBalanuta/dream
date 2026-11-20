@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using OpenTK.Mathematics;
 using Dream.Application;
+using Dream.Client.CameraControl;
 using Dream.Client.Input;
 using Dream.Client.Presentation;
 using Dream.Client.Replication;
@@ -56,7 +57,19 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
     }
 
     // The point the isometric camera looked at in the last capture; fog is measured from it.
+    // The player's isometric focus of the last capture (what the war mist follows). Equal to LastPlayerFocus.
     public Vector3 LastCameraFocus { get; private set; }
+
+    public Vector3 LastPlayerFocus => LastCameraFocus;
+
+    // The tactical camera pose of the last isometric capture, and the point it looks at (the fog origin and the
+    // export centre). Before any capture: the default pose on the origin.
+    public TacticalCameraPose LastCameraPose { get; private set; } = TacticalCameraPose.Default(Vector3.Zero);
+
+    public Vector3 LastViewTarget => LastCameraPose.Target;
+
+    // Screen up on the ground for the last pose: the basis of the movement keys.
+    public Vector3 CurrentGroundForward => LastCameraPose.GroundForward;
 
     // The local player's interpolated pose from the last capture; the model is drawn from it so it
     // moves with the camera. In first person it is the raw body pose.
@@ -196,7 +209,8 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         CameraViewMode cameraViewMode = CameraViewMode.FirstPerson,
         bool isDead = false,
         int respawnSeconds = 0,
-        float frameSeconds = 0f)
+        float frameSeconds = 0f,
+        Func<Vector3, TacticalCameraPose>? poseForPlayerFocus = null)
     {
         // The returned state's camera stays a new instance per capture: callers (and tests) may keep
         // a state across captures and compare cameras, so only the intermediate camera is reused.
@@ -223,11 +237,15 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
         }
 
         Camera presentationCamera;
+        Vector3? exportCentre = null;
         if (cameraViewMode == CameraViewMode.Isometric)
         {
             LastCameraFocus = _isometricFocus.Advance(_firstPersonCameraScratch.Position, frameSeconds);
-            presentationCamera = new Camera(LastCameraFocus);
-            IsometricView.ResolveInto(LastCameraFocus, presentationCamera);
+            TacticalCameraPose pose = poseForPlayerFocus?.Invoke(LastCameraFocus) ?? TacticalCameraPose.Default(LastCameraFocus);
+            LastCameraPose = pose;
+            presentationCamera = new Camera(pose.Target);
+            pose.ResolveInto(presentationCamera);
+            exportCentre = pose.Target;
         }
         else
         {
@@ -239,7 +257,7 @@ public sealed class ClientWorldSession : IClientWorldState, IDisposable
 
         long renderExportStart = Stopwatch.GetTimestamp();
         GeometryRenderExport visibleWorld = Map.CapturePresentationGeometryRenderExport(
-            presentationCamera.Position,
+            exportCentre ?? presentationCamera.Position,
             maxRenderDistance);
         double renderExportMilliseconds = Stopwatch.GetElapsedTime(renderExportStart).TotalMilliseconds;
 

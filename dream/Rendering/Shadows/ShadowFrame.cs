@@ -50,9 +50,9 @@ public struct ShadowFrame
     public static ShadowFrame None => default;
 
     /// <summary>Builds the sun half of a frame for the dominant light. <paramref name="strength"/> 0 keeps it inert.</summary>
-    public static ShadowFrame ForSun(Vector3 focus, Vector3 lightDirection, float elevationSin, int resolution, float strength)
+    public static ShadowFrame ForSun(Vector3 focus, Vector3 lightDirection, float elevationSin, int resolution, float strength, Vector3? viewForwardGround = null)
     {
-        (Matrix4 lightViewProjection, float texel, float depthRange) = SunShadowVolume.Build(focus, lightDirection, elevationSin, resolution);
+        (Matrix4 lightViewProjection, float texel, float depthRange) = SunShadowVolume.Build(focus, lightDirection, elevationSin, resolution, viewForwardGround);
         ShadowFrame frame = default;
         frame.SunLightViewProjection = lightViewProjection;
         frame.SunTextureMatrix = SunShadowVolume.ToTextureSpace(in lightViewProjection);
