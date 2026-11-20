@@ -79,13 +79,56 @@ public class HoverInfoPanelTests
         Assert.Equal(0, c.Count);
     }
 
-    private sealed class LowRoomCanvas(UiSpriteTable table) : IUiCanvas
+    [Fact]
+    public void ReserveCoversTheWorstCasePanelAndWhatDrawsAfterIt()
+    {
+        Assert.Equal(
+            HoverInfoPanel.FrameQuads + (HoverInfoPanel.QuadsPerBar * HoverInfo.MaxBars) + (HoverInfoPanel.MaxRows * HoverInfoPanel.MaxGlyphsPerRow * 2),
+            HoverInfoPanel.WorstCaseQuads);
+        Assert.True(HoverInfoPanel.ReserveQuads >= HoverInfoPanel.WorstCaseQuads + HoverInfoPanel.DownstreamQuads);
+    }
+
+    [Fact]
+    public void DrawsAtTheReserveAndSkipsOneBelow()
+    {
+        UiLayout l = UiLayout.Create(1920, 1080, 0f);
+        LowRoomCanvas at = new(StatusBarTestData.Table, HoverInfoPanel.ReserveQuads);
+        HoverInfoPanel.Build(at, Input(), ViewFor(EnemyInfo()), in l, StatusBarTestData.Table);
+        Assert.True(at.Count > 0);
+        LowRoomCanvas below = new(StatusBarTestData.Table, HoverInfoPanel.ReserveQuads - 1);
+        HoverInfoPanel.Build(below, Input(), ViewFor(EnemyInfo()), in l, StatusBarTestData.Table);
+        Assert.Equal(0, below.Count);
+    }
+
+    [Fact]
+    public void ACleared_Target_DrawsNothing()
+    {
+        HoverInfo cleared = EnemyInfo();
+        cleared.Target = default;
+        Assert.Empty(Run(ViewFor(cleared)).Calls);
+    }
+
+    [Fact]
+    public void WillDraw_MatchesBuild()
+    {
+        HoverInfo cleared = EnemyInfo();
+        cleared.Target = default;
+        Assert.True(HoverInfoPanel.WillDraw(new HoverPanelState(true, 1f, HoverKind.Enemy), EnemyInfo()));
+        Assert.False(HoverInfoPanel.WillDraw(new HoverPanelState(false, 1f, HoverKind.Enemy), EnemyInfo()));
+        Assert.False(HoverInfoPanel.WillDraw(new HoverPanelState(true, 0f, HoverKind.Enemy), EnemyInfo()));
+        Assert.False(HoverInfoPanel.WillDraw(new HoverPanelState(true, float.NaN, HoverKind.Enemy), EnemyInfo()));
+        Assert.False(HoverInfoPanel.WillDraw(new HoverPanelState(true, float.PositiveInfinity, HoverKind.Enemy), EnemyInfo()));
+        Assert.False(HoverInfoPanel.WillDraw(new HoverPanelState(true, 1f, HoverKind.Enemy), null));
+        Assert.False(HoverInfoPanel.WillDraw(new HoverPanelState(true, 1f, HoverKind.Enemy), cleared));
+    }
+
+    private sealed class LowRoomCanvas(UiSpriteTable table, int headroom = -1) : IUiCanvas
     {
         private readonly StatusBarRecordingCanvas _inner = new(table, recording: false);
 
         public int Count => _inner.Count;
 
-        public int QuadHeadroom => HoverInfoPanel.ReserveQuads - 1;
+        public int QuadHeadroom => headroom < 0 ? HoverInfoPanel.ReserveQuads - 1 : headroom;
 
         public void Sprite(in UiSprite s, UiRect dst, UiColor tint) => _inner.Sprite(in s, dst, tint);
 

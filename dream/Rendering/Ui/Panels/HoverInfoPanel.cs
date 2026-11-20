@@ -14,8 +14,20 @@ public static class HoverInfoPanel
     public const float PlayerWidthUnits = 124f;
     public const float OtherWidthUnits = 110f;
 
-    // Optional: skip when the batch is nearly full, as the world labels do. A panel is about 100 quads.
-    public const int ReserveQuads = 512;
+    // Worst case of the panel's own quads: the nine-slice frame, every bar (frame, trough, fill, lit edge), and a
+    // glyph quad plus its shadow quad for every glyph of every row. A row is cut to the panel width, so a row holds
+    // at most MaxGlyphsPerRow glyphs; the rows are title, subtitle, the bars' texts, the lines and the hint.
+    public const int FrameQuads = 9;
+    public const int QuadsPerBar = 4;
+    public const int MaxGlyphsPerRow = 32;
+    public const int MaxRows = 3 + HoverInfo.MaxBars + HoverInfo.MaxLines;
+    public const int WorstCaseQuads = FrameQuads + (QuadsPerBar * HoverInfo.MaxBars) + (MaxRows * MaxGlyphsPerRow * 2);
+
+    // What the item tooltip, the context menu, the drag ghost and the cursor still need after this panel.
+    public const int DownstreamQuads = 256;
+
+    // Optional: skip when the batch cannot hold the panel and what draws after it, as the world labels do.
+    public const int ReserveQuads = WorstCaseQuads + DownstreamQuads;
 
     private static readonly UiColor HostileTitle = new(0xB8, 0x4A, 0x42, 255);
     private static readonly UiColor FriendlyTitle = new(0xE6, 0xDD, 0xC4, 255);
@@ -50,11 +62,16 @@ public static class HoverInfoPanel
         _ => new UiColor(0x8A, 0x22, 0x20, 255)
     };
 
+    // True when Build has anything to draw for this state and info; the world label of the hovered actor yields
+    // to the panel exactly when this holds.
+    public static bool WillDraw(in HoverPanelState state, HoverInfo? info) =>
+        state.Visible && float.IsFinite(state.Alpha) && state.Alpha > 0f && info is not null && !info.Target.IsNone;
+
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s)
     {
         HoverPanelState state = v.HoverPanel;
         HoverInfo? info = v.HoverInfo;
-        if (!state.Visible || !(state.Alpha > 0f) || info is null || c.QuadHeadroom < ReserveQuads)
+        if (!WillDraw(in state, info) || c.QuadHeadroom < ReserveQuads)
         {
             return;
         }
@@ -85,7 +102,7 @@ public static class HoverInfoPanel
             + (lines * pitch)
             + (hasHint ? pitch : 0f);
 
-        Vector2 pos = HoverPanelPlacement.AtPointer(pointer.Position, w, h, in l, v.InventoryOpen, CursorRect(v, s, pointer.Position, scale));
+        Vector2 pos = HoverPanelPlacement.AtPointer(pointer.Position, w, h, in l, v.InventoryOpen, CursorRect(v, s, pointer, scale));
         UiRect panel = new(pos.X, pos.Y, w, h);
         if (s.TryGet(UiSpriteNames.TipPanel, out UiSprite tip))
         {
@@ -133,9 +150,10 @@ public static class HoverInfoPanel
     }
 
     // The cursor sprite's rect at the pointer, so the panel can stay clear of it. Without a sprite, the 32 u box.
-    private static UiRect CursorRect(HudView v, UiSpriteTable s, Vector2 position, float scale)
+    private static UiRect CursorRect(HudView v, UiSpriteTable s, UiPointer pointer, float scale)
     {
-        UiCursorKind kind = UiCursor.Select(false, false, v.HoverCursorKind);
+        Vector2 position = pointer.Position;
+        UiCursorKind kind = UiCursor.Select(false, pointer.LeftDown, v.HoverCursorKind);
         if (s.TryGet(UiCursor.SpriteName(kind), out UiSprite sprite) || s.TryGet(UiSpriteNames.CursorPointer, out sprite))
         {
             return UiCursor.Rect(in sprite, position, scale);
