@@ -48,7 +48,16 @@ internal enum HudCaptureVerb : byte
     // dev:<sub>[;<sub>...] stages the world through the /dev chat command; A = replies to wait for.
     Dev,
     // tod:<hours>|off sets the client-only visual time of day; A = minutes 0..1439, -1 = off.
-    TimeOfDay
+    TimeOfDay,
+    // cam:yaw:<deg> / cam:zoom:<metres> / cam:pan:<dx>:<dz> snap the tactical camera; values ride in A and B
+    // as thousandths (HudCaptureStepSpec.CamValueA / CamValueB).
+    CamYaw,
+    CamZoom,
+    CamPan,
+    // cam:free, cam:follow set the anchor mode; cam:reset puts the camera back on the default pose.
+    CamFree,
+    CamFollow,
+    CamReset
 }
 
 // Keys a capture script can hold, by name (keys:w+space:30).
@@ -86,6 +95,16 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
     public int BurstSlotB => B & 0xFFFF;
 
     public int BurstMoves => B >> 16;
+
+    // Camera step values (yaw degrees, zoom metres, pan dx and dz metres) are kept in thousandths.
+    public const float CamScale = 1000f;
+    public const float CamMaxMagnitude = 100000f;
+
+    public float CamValueA => A / CamScale;
+
+    public float CamValueB => B / CamScale;
+
+    public bool IsCameraStep => Verb is >= HudCaptureVerb.CamYaw and <= HudCaptureVerb.CamReset;
 
     // Slot names for the script: bag anchors are 0..63 (row * 8 + col), the twelve wells 100..111, named
     // main, off, head, body, hands, feet, legs, neck, ring1, ring2, back and pet.
@@ -279,9 +298,54 @@ internal readonly record struct HudCaptureStepSpec(HudCaptureVerb Verb, int A, i
             case "tod" when parts.Length == 2 && TryParseTimeOfDay(parts[1], out int minutes):
                 spec = new(HudCaptureVerb.TimeOfDay, minutes, 0);
                 return true;
+            case "cam" when parts.Length >= 2:
+                return TryParseCamera(parts, out spec);
             default:
                 return false;
         }
+    }
+
+    // cam:yaw:<deg>, cam:zoom:<metres>, cam:pan:<dx>:<dz>, cam:free, cam:follow, cam:reset.
+    private static bool TryParseCamera(string[] parts, out HudCaptureStepSpec spec)
+    {
+        spec = default;
+        switch (parts[1])
+        {
+            case "yaw" when parts.Length == 3 && TryParseCamNumber(parts[2], out int yaw):
+                spec = new(HudCaptureVerb.CamYaw, yaw, 0);
+                return true;
+            case "zoom" when parts.Length == 3 && TryParseCamNumber(parts[2], out int zoom) && zoom > 0:
+                spec = new(HudCaptureVerb.CamZoom, zoom, 0);
+                return true;
+            case "pan" when parts.Length == 4 && TryParseCamNumber(parts[2], out int dx) && TryParseCamNumber(parts[3], out int dz):
+                spec = new(HudCaptureVerb.CamPan, dx, dz);
+                return true;
+            case "free" when parts.Length == 2:
+                spec = new(HudCaptureVerb.CamFree, 0, 0);
+                return true;
+            case "follow" when parts.Length == 2:
+                spec = new(HudCaptureVerb.CamFollow, 0, 0);
+                return true;
+            case "reset" when parts.Length == 2:
+                spec = new(HudCaptureVerb.CamReset, 0, 0);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // A finite decimal (invariant culture) of sane size, as thousandths.
+    private static bool TryParseCamNumber(string text, out int thousandths)
+    {
+        thousandths = 0;
+        if (!float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float value)
+            || !float.IsFinite(value) || MathF.Abs(value) > CamMaxMagnitude)
+        {
+            return false;
+        }
+
+        thousandths = (int)MathF.Round(value * CamScale);
+        return true;
     }
 
     // "off" is -1; otherwise decimal hours in [0,24) (invariant culture) as whole minutes 0..1439.

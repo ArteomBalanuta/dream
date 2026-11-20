@@ -1,4 +1,5 @@
 using Dream.Application;
+using Dream.Client.CameraControl;
 using Dream.Client.Startup;
 using Dream.Rendering.Hud;
 using Dream.Server;
@@ -44,6 +45,9 @@ public sealed class DesktopClientConfig
     // HUD scale; 0 is auto (fit the window), other values snap to quarter steps in 1..4.
     public float UiScale { get; set; }
 
+    // Tactical camera tuning (edge pan, rotation, zoom); keys camera_* in the text config.
+    public TacticalCameraSettings TacticalCamera { get; set; } = TacticalCameraSettings.Default;
+
     // Sound on or off, and the 0..1 volume sliders (Dream.Client.Audio.AudioVolumes reads these).
     public bool AudioEnabled { get; set; } = true;
 
@@ -81,6 +85,7 @@ public sealed class DesktopClientConfig
         CameraViewMode = settings.CameraViewMode;
         FloatingCombatText = settings.FloatingCombatText;
         UiScale = settings.UiScaleSetting;
+        TacticalCamera = settings.TacticalCamera;
         Sanitize();
     }
 
@@ -107,6 +112,7 @@ public sealed class DesktopClientConfig
 
         MsaaSamples = MsaaSettings.Sanitize(MsaaSamples);
         UiScale = HudOptions.SanitizeUiScale(UiScale);
+        TacticalCamera = (TacticalCamera ?? TacticalCameraSettings.Default).Sanitized();
         VolumeMaster = SanitizeVolume(VolumeMaster, 0.8f);
         VolumeSfx = SanitizeVolume(VolumeSfx, 0.8f);
         VolumeMusic = SanitizeVolume(VolumeMusic, 0.5f);

@@ -1,3 +1,4 @@
+using Dream.Client.CameraControl;
 using Dream.Client.Presentation;
 using OpenTK.Mathematics;
 
@@ -21,9 +22,11 @@ public static class SunShadowVolume
     /// <paramref name="lightDirection"/> points TOWARD the light. <paramref name="elevationSin"/> is its sine of
     /// elevation (it only sizes the caster extension). The returned DepthRange is the world-unit length of the
     /// ortho depth interval, so a world-unit bias converts to depth units as bias / DepthRange.
+    /// <paramref name="viewForwardGround"/> is the camera's current ground forward for a rotated tactical camera;
+    /// null keeps the fixed view's static ViewForwardGround.
     /// </summary>
     public static (Matrix4 LightViewProjection, float TexelWorld, float DepthRange) Build(
-        Vector3 focus, Vector3 lightDirection, float elevationSin, int resolution)
+        Vector3 focus, Vector3 lightDirection, float elevationSin, int resolution, Vector3? viewForwardGround = null)
     {
         if (resolution <= 0)
         {
@@ -35,7 +38,7 @@ public static class SunShadowVolume
         float texel = side / resolution;
         float extension = ShadowSettings.CasterExtensionFor(elevationSin);
 
-        Vector3 centre = focus + ViewForwardGround * ShadowSettings.ReceiverCentreOffset;
+        Vector3 centre = focus + (viewForwardGround ?? ViewForwardGround) * ShadowSettings.ReceiverCentreOffset;
         Vector3 up = MathF.Abs(toLight.Y) > 0.99f ? Vector3.UnitZ : Vector3.UnitY;
 
         // The view's ORIGIN is fixed at the world origin (not at the focus): the light-space coordinates of the
@@ -109,6 +112,9 @@ public static class SunShadowVolume
 
     /// <summary>The ground-plane direction the fixed camera looks along (from the camera toward the focus).</summary>
     public static Vector3 ViewForwardGround { get; } = ComputeViewForwardGround();
+
+    /// <summary>The ground forward of a tactical camera pose, for Build's viewForwardGround.</summary>
+    public static Vector3 ViewForwardGroundFor(TacticalCameraPose pose) => pose.GroundForward;
 
     private static Vector3 ComputeViewForwardGround()
     {
