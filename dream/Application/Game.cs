@@ -918,8 +918,22 @@ public class Game : GameWindow
     private IMenuClipboard SystemClipboard => _systemClipboard ??= new WindowClipboard(this);
 
     // The system clipboard through GLFW. A clipboard that holds no text (or that GLFW cannot read) is empty.
+    //
+    // It is no longer "[menu]": the chat line pastes through this same instance, so a Ctrl+V at the chat
+    // prompt was reporting itself as a menu error.
     private sealed class WindowClipboard(Game window) : IMenuClipboard
     {
+        // GLFW THROWS when the clipboard simply holds no text - on Windows that surfaces as "Element not
+        // found" - and that is not a failure: this interface's contract is that no text means null. The
+        // only thing separating it from a real fault is the exception message, which is localised and a
+        // Win32 implementation detail, so matching on it would be a guess that breaks on a non-English
+        // machine.
+        //
+        // So the message is not classified, it is DEDUPLICATED: each distinct failure is reported once.
+        // The first occurrence keeps all of its diagnostic value, and holding Ctrl+V over an empty
+        // clipboard stops writing a line to stderr per keypress (it wrote seven in one session).
+        private string? _reportedFailure;
+
         public string? GetText()
         {
             try
@@ -928,7 +942,13 @@ public class Game : GameWindow
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[menu] clipboard read failed: {ex.Message}");
+                if (!string.Equals(_reportedFailure, ex.Message, StringComparison.Ordinal))
+                {
+                    _reportedFailure = ex.Message;
+                    Console.Error.WriteLine(
+                        $"[clipboard] read returned no text ({ex.Message}); further identical reads stay silent");
+                }
+
                 return null;
             }
         }
@@ -942,7 +962,7 @@ public class Game : GameWindow
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[menu] clipboard write failed: {ex.Message}");
+                Console.Error.WriteLine($"[clipboard] write failed: {ex.Message}");
                 return false;
             }
         }
