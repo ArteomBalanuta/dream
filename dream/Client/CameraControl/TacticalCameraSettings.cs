@@ -27,8 +27,9 @@ public sealed record TacticalCameraSettings
     public float ZoomSmoothingSeconds { get; init; } = 0.10f;
     public bool InvertZoom { get; init; }
     public float MinDistance { get; init; } = 10f;
-    public float MaxDistance { get; init; } = 26f;               // a test pins it inside TacticalCameraLimits
-    public float LeashMetres { get; init; } = 16f;               // a test pins it inside TacticalCameraLimits
+    // The farthest zoom whose view still fits the sun shadow volume (derived, not restated).
+    public float MaxDistance { get; init; } = TacticalCameraLimits.MaxDistance;
+    public float LeashMetres { get; init; } = 16f;               // sanitised to at most TacticalCameraLimits.LeashMetres
 
     public float DefaultYawDegrees => IsometricView.YawDegrees;
     public float PitchDegrees => IsometricView.PitchDegrees;
@@ -54,8 +55,8 @@ public sealed record TacticalCameraSettings
             ZoomStepRatio = Clamp(ZoomStepRatio, 1.02f, 1.5f, 1.15f),
             ZoomSmoothingSeconds = Clamp(ZoomSmoothingSeconds, 0f, 0.5f, 0.10f),
             MinDistance = Clamp(MinDistance, 4f, IsometricView.Distance, 10f),
-            MaxDistance = Clamp(MaxDistance, IsometricView.Distance, 40f, 26f),
-            LeashMetres = Clamp(LeashMetres, 0f, 40f, 16f),
+            MaxDistance = Clamp(MaxDistance, IsometricView.Distance, TacticalCameraLimits.MaxDistance, TacticalCameraLimits.MaxDistance),
+            LeashMetres = Clamp(LeashMetres, 0f, TacticalCameraLimits.LeashMetres, MathF.Min(16f, TacticalCameraLimits.LeashMetres)),
         };
     }
 

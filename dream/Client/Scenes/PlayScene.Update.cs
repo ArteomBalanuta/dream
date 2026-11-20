@@ -103,9 +103,14 @@ public partial class PlayScene
                 pointerFocused,
                 _render.PointerOverEnemy ? hoveredEnemyAnchor : null);
             _clickMove.OnFrame(pointer, allowGameplayInput, pointerFocused);
+            // The camera reads the same pointer sample (its OverHud blocks the wheel). Its gate is its own: death
+            // does not close it, and it takes the real focus, never the capture's stand-in.
+            UpdateCameraInput(keyboardState, mouseState, in pointer, loadingGated: false);
         }
         else
         {
+            // A closed gate still reaches the sampler, so a rotation drag held into the loading screen is released.
+            UpdateCameraInput(keyboardState, mouseState, default, loadingGated: true);
             _render.PointerOverEnemy = false;
         }
 
@@ -227,7 +232,11 @@ public partial class PlayScene
             return command;
         }
 
-        (float forward, float strafe) = PlayerController.Project(_tickCameraAxes, _runtime.Player.Camera.Front);
+        // Screen up follows the camera's current yaw, so W walks up the screen at any rotation.
+        (float forward, float strafe) = PlayerController.Project(
+            _tickCameraAxes,
+            _runtime.Player.Camera.Front,
+            CurrentCameraGroundForward);
         return command with { MoveIntent = command.MoveIntent with { ForwardAxis = forward, StrafeAxis = strafe } };
     }
 

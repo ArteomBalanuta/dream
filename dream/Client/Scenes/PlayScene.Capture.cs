@@ -557,6 +557,19 @@ public partial class PlayScene
                 _captureIdleFrames = spec.A;
                 _captureWritesPng = false;
                 break;
+            case HudCaptureVerb.CamYaw:
+            case HudCaptureVerb.CamZoom:
+            case HudCaptureVerb.CamPan:
+            case HudCaptureVerb.CamFree:
+            case HudCaptureVerb.CamFollow:
+            case HudCaptureVerb.CamReset:
+                // Snaps the camera pose (no smoothing), then lets one frame render it before the next step.
+                ApplyCaptureCamera(spec);
+                Console.WriteLine($"[hud-capture] {name}: {CameraStatusText()}");
+                _capturePhase = CapturePhase.Idle;
+                _captureIdleFrames = 1;
+                _captureWritesPng = false;
+                break;
             case HudCaptureVerb.Dev:
                 // The parse already validated the step; rebuild the line from the (lowercased) step text.
                 _captureWritesPng = false;
@@ -842,7 +855,8 @@ public partial class PlayScene
         Vector3 front = _runtime.Player.Camera.Front;
         (float forwardAxis, float strafeAxis) = _tickCameraAxes == Vector2.Zero
             ? (0f, 0f)
-            : PlayerController.Project(_tickCameraAxes, front);
+            : PlayerController.Project(_tickCameraAxes, front, CurrentCameraGroundForward);
+        Console.WriteLine($"[hud-capture] status {tag}: {CameraStatusText()}");
         Console.WriteLine(
             $"[hud-capture] status {tag}: pos {at.X:0.00},{at.Y:0.00},{at.Z:0.00} facing {front.X:0.00},{front.Z:0.00} (yaw {MathHelper.RadiansToDegrees(MathF.Atan2(front.Z, front.X)):0}) " +
             $"axes fwd {forwardAxis:0.00} strafe {strafeAxis:0.00} keys {_captureKeys} pointer {_captureLast.Position.X:0},{_captureLast.Position.Y:0} left {_captureLast.LeftDown} aimOwnsFacing {_cursorAim.OwnsFacing} aimedAtTarget {_cursorAim.AimedAtTarget}");

@@ -46,6 +46,9 @@ public sealed class HudView
     // True while the pointer is over a live enemy a click would attack (set by the scene each frame).
     public bool PointerOverEnemy { get; set; }
 
+    // True while a camera rotation drag is held (set by the scene each frame).
+    public bool CameraDragging { get; set; }
+
     private static readonly IReadOnlyList<FloatingCombatTextRenderState> NoCombatText = Array.Empty<FloatingCombatTextRenderState>();
     private static readonly IReadOnlyList<HudWorldLabel> NoLabels = Array.Empty<HudWorldLabel>();
 

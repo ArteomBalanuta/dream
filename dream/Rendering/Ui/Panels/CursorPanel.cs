@@ -9,6 +9,6 @@ public static class CursorPanel
     public static void Build(IUiCanvas c, IUiInput i, HudView v, in UiLayout l, UiSpriteTable s)
     {
         UiPointer p = i.Pointer;
-        UiCursor.Draw(c, s, in p, l.Scale, UiCursor.Select(i.ActiveDragPayload >= 0, p.LeftDown, v.PointerOverEnemy));
+        UiCursor.Draw(c, s, in p, l.Scale, UiCursor.Select(i.ActiveDragPayload >= 0 || v.CameraDragging, p.LeftDown, v.PointerOverEnemy));
     }
 }

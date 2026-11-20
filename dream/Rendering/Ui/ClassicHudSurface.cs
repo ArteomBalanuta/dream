@@ -65,6 +65,9 @@ public readonly struct ClassicHudFrame
 
     // True while the pointer is over a live enemy a click would attack.
     public bool PointerOverEnemy { get; init; }
+
+    // True while a camera rotation drag is held.
+    public bool CameraDragging { get; init; }
 }
 
 // The timing of the liquid gems, pure and allocation free. The surface advances the eased levels and the
@@ -212,6 +215,7 @@ public sealed class ClassicHudSurface : IHudActions, IDisposable
         v.Vendor = frame.Vendor;
         v.Quickbar = frame.Quickbar;
         v.PointerOverEnemy = frame.PointerOverEnemy;
+        v.CameraDragging = frame.CameraDragging;
 
         UiLayout layout = UiLayout.Create(frame.Width, frame.Height, frame.ConfiguredScale);
         Input.BeginFrame(frame.Pointer);

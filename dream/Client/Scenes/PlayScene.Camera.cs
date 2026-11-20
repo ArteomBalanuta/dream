@@ -21,6 +21,9 @@ public partial class PlayScene
     private Vector2 _cameraPointerPixel;
     private bool _cameraConfineApplied;
     private Box2i _cameraConfineRect;
+    private bool _cameraWindowSynced;
+    private bool _cameraLastFocused;
+    private bool _cameraLastHovered;
 
     // True while a rotation drag is held: the cursor shows the Grab sprite.
     public bool CameraRotateDragHeld => _cameraSampler?.RotateDragHeld ?? false;
@@ -28,8 +31,7 @@ public partial class PlayScene
     // Screen up on the ground for the last rendered pose: the basis of W/A/S/D.
     public Vector3 CurrentCameraGroundForward => _runtime.CurrentGroundForward;
 
-    // The OS-level cursor clip. The host sets the real one (Win32CursorConfiner) before the first frame; without
-    // one, confinement does nothing.
+    // The OS-level cursor clip; the platform's own (Win32CursorConfiner on Windows) unless a host sets another.
     public void SetCameraConfiner(ICursorConfiner confiner)
     {
         ArgumentNullException.ThrowIfNull(confiner);
@@ -54,6 +56,7 @@ public partial class PlayScene
         Vector2i size = _render.ViewportSize;
         float layoutScale = UiScale.Resolve(size.X, size.Y, _settings.UiScaleSetting);
         _cameraSampler!.Collect(mouse, keys, size, layoutScale, in pointer, gate, _clientPresentationTimeSeconds);
+        _render.CameraDragging = _cameraSampler.RotateDragHeld;
     }
 
     // Per Render, before CapturePresentationState: the delegate that turns the player focus into this frame's pose.
@@ -137,6 +140,26 @@ public partial class PlayScene
             $"cam target={pose.Target.X:0.00},{pose.Target.Y:0.00},{pose.Target.Z:0.00} yaw={pose.YawDegrees:0.0} dist={pose.Distance:0.00} offset={offset.X:0.00},{offset.Z:0.00} mode={rig.AnchorMode.ToString().ToLowerInvariant()}");
     }
 
+    // Per frame from the host, before Update and Render: the window focus and whether the OS cursor is over the
+    // client area (GLFW's hovered attribute). Only changes reach the sampler, and the first call seeds it, so the
+    // cursor leaving for another monitor stops edge pan even if no leave event was ever delivered.
+    public void SyncCameraWindowState(bool focused, bool hovered)
+    {
+        if (!_cameraWindowSynced || focused != _cameraLastFocused)
+        {
+            OnCameraFocusChanged(focused);
+        }
+
+        if (!_cameraWindowSynced || hovered != _cameraLastHovered)
+        {
+            OnCameraCursorEnterLeave(hovered);
+        }
+
+        _cameraWindowSynced = true;
+        _cameraLastFocused = focused;
+        _cameraLastHovered = hovered;
+    }
+
     public void OnCameraFocusChanged(bool focused)
     {
         EnsureCamera();
@@ -159,7 +182,7 @@ public partial class PlayScene
             _windowFocused,
             minimised,
             fullscreenLike,
-            _settings.SettingsVisible,
+            _settings.PauseMenuVisible || _settings.SettingsVisible,
             LoadingOverlayVisible,
             inPlay: true);
         if (want == _cameraConfineApplied && (!want || clientRectScreen == _cameraConfineRect))
@@ -167,7 +190,7 @@ public partial class PlayScene
             return;
         }
 
-        ICursorConfiner confiner = _cameraConfiner ??= new InertCursorConfiner();
+        ICursorConfiner confiner = _cameraConfiner ??= CursorConfiners.CreateForPlatform();
         if (want)
         {
             confiner.Confine(clientRectScreen);
@@ -208,15 +231,5 @@ public partial class PlayScene
             _cameraSampler!.Settings = current;
             _cameraSettingsApplied = current;
         }
-    }
-
-    // Stands in until the host supplies a real confiner.
-    private sealed class InertCursorConfiner : ICursorConfiner
-    {
-        public bool IsConfined { get; private set; }
-
-        public void Confine(Box2i clientRectScreen) => IsConfined = false;
-
-        public void Release() => IsConfined = false;
     }
 }

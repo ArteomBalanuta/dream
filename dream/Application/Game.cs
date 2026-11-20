@@ -444,6 +444,20 @@ public class Game : GameWindow
         return ClassicCursorPolicy.Decide(active, false, IsFocused, state);
     }
 
+    // The tactical camera's window facts, once per frame: focus and whether the OS cursor is over the client area
+    // (polled, so a cursor that left for another monitor is known even without a leave event), then the cursor clip.
+    // The client rectangle is in screen pixels: GLFW's window position is the client area's top-left.
+    private unsafe void SyncPlayCameraWindow(PlayScene scene)
+    {
+        bool hovered = GLFW.GetWindowAttrib(WindowPtr, WindowAttributeGetBool.Hovered);
+        scene.SyncCameraWindowState(IsFocused, hovered);
+        bool minimised = WindowState == WindowState.Minimized || ClientSize.X <= 0 || ClientSize.Y <= 0;
+        bool fullscreenLike = WindowState == WindowState.Fullscreen
+            || (WindowBorder == WindowBorder.Hidden && WindowState == WindowState.Maximized);
+        Box2i clientRect = new(Location, Location + ClientSize);
+        scene.ApplyCursorConfinement(minimised, fullscreenLike, clientRect);
+    }
+
     // The title screen or the connection screen: advance it and enter the world when a session connects.
     private void UpdateFrontEnd()
     {
@@ -589,6 +603,7 @@ public class Game : GameWindow
         Stopwatch frameStopwatch = Stopwatch.StartNew();
         if (_playScene != null)
         {
+            SyncPlayCameraWindow(_playScene);
             _playScene.Render(args, IsFocused, MouseState, size => ClientSize = size);
             RenderLoadingOverlay();
             RenderPauseMenu();

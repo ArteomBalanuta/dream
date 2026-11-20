@@ -152,6 +152,8 @@ public partial class PlayScene
         _disposed = true;
 
         List<Exception>? failures = null;
+        // First: a clipped OS cursor must never outlive the play scene.
+        RunDisposeStep(ReleaseCameraResources, ref failures);
         RunDisposeStep(_render.Dispose, ref failures);
         RunDisposeStep(DisposeGpuTimer, ref failures);
         RunDisposeStep(DisposeSky, ref failures);

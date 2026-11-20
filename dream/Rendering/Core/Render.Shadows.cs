@@ -66,7 +66,7 @@ public partial class Render
         SelectPointLights(cameraPosition, in view);
 
         float strength = ShadowCasterPass.Strength;
-        ShadowFrame frame = BuildSunFrame(in _frameLighting, focus, strength, ShadowSettings.SunResolution);
+        ShadowFrame frame = BuildSunFrame(in _frameLighting, focus, strength, ShadowSettings.SunResolution, ShadowViewForwardGround);
         FireShadowAtlas.FillSlots(in _selectedLights, focus, ShadowSettings.CastingFireCount, strength, ref frame, _selectedLightCarriers, _selectedLightFlicker, _selectedLightWander);
         SetShadowFrame(in frame);
         frame.WriteSunTo(ref _frameLighting);
@@ -100,7 +100,8 @@ public partial class Render
     /// The dominant light's shadow volume, or <see cref="ShadowFrame.None"/> when no light is up. Dominance is the shader's own
     /// rule (lighting.glsl dreamSunVisibility): the sun while its intensity is at least the moon's, else the moon.
     /// </summary>
-    internal static ShadowFrame BuildSunFrame(in FrameLighting lighting, Vector3 focus, float strength, int resolution)
+    internal static ShadowFrame BuildSunFrame(
+        in FrameLighting lighting, Vector3 focus, float strength, int resolution, Vector3? viewForwardGround = null)
     {
         Vector4 light = lighting.SunDirection.W >= lighting.MoonDirection.W ? lighting.SunDirection : lighting.MoonDirection;
         if (!(light.W > 0f) || !(light.Y > 0f))
@@ -108,7 +109,7 @@ public partial class Render
             return ShadowFrame.None;
         }
 
-        return ShadowFrame.ForSun(focus, light.Xyz, light.Y, resolution, strength);
+        return ShadowFrame.ForSun(focus, light.Xyz, light.Y, resolution, strength, viewForwardGround);
     }
 
     private void InitializeShadows()
