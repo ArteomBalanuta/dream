@@ -177,6 +177,38 @@ public class PostToneContractTests
         Assert.True(checkedCount > 10000);
     }
 
+    // The invariant is w <= 1, so a strength above 1 must be clamped, not trusted. Unclamped, strength
+    // 1.5 on (0, 0, 0.01) lifts red to 0.015 and the max channel moves. Both strengths here are
+    // far past the resolver's own clamp, because PostSettings.NeutraliseShadows is public.
+    [Theory]
+    [InlineData(1.5f)]
+    [InlineData(100f)]
+    public void NeutraliseShadows_LeavesTheMaxChannelBitExact_AtStrengthsAboveOne(float strength)
+    {
+        Assert.True(Max(UnclampedNeutralise(new Vector3(0f, 0f, 0.01f), strength)) > 0.01f,
+            "the premise moved: an unclamped strength should break the invariant");
+        foreach (Vector3 c in DarkColourGrid())
+        {
+            Vector3 o = PostSettings.NeutraliseShadows(c, strength);
+            Assert.Equal(BitConverter.SingleToInt32Bits(Max(c)), BitConverter.SingleToInt32Bits(Max(o)));
+            Assert.Equal(PostSettings.NeutraliseShadows(c, 1f), o);
+        }
+    }
+
+    private static Vector3 UnclampedNeutralise(Vector3 c, float strength)
+    {
+        float x = Math.Clamp(Max(c) / PostSettings.ShadowNeutraliseEdge, 0f, 1f);
+        float w = (1f - (x * x * (3f - (2f * x)))) * strength;
+        return c + ((new Vector3(Max(c)) - c) * w);
+    }
+
+    [Fact]
+    public void TheShaderClampsTheStrength_SoTheInvariantDoesNotRestOnTheCaller()
+    {
+        string tone = File.ReadAllText(Path.Combine(RepoRoot.Find(), "dream", "shaders", "postTone.glsl"));
+        Assert.Matches(@"\*\s*clamp\(strength,\s*0\.0,\s*1\.0\)\s*;", tone);
+    }
+
     // The synthetic negative: the obvious alternative, mixing toward luma, must FAIL the assertion
     // above, or the assertion could not tell the right form from the wrong one.
     private static Vector3 MixTowardLuma(Vector3 c, float strength)
@@ -243,6 +275,8 @@ public class PostToneContractTests
         Vector3 inside = PostSettings.NeutraliseShadows(chroma * (edge - 1e-5f), 1f);
         Vector3 outside = PostSettings.NeutraliseShadows(chroma * edge, 1f);
         Assert.True((inside - (chroma * edge)).Length < 1e-3f, $"a step at the edge: {inside} vs {outside}");
+        Assert.True((outside - (chroma * edge)).Length < 1e-6f, $"the pixel on the edge was changed: {outside}");
+        Assert.True((inside - outside).Length < 1e-3f, $"a step across the edge: {inside} vs {outside}");
     }
 
     [Fact]

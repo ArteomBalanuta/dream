@@ -30,8 +30,9 @@ public sealed class PostChain : IDisposable
     public const string BlurShaderFile = "postBlurFragment.glsl";
     public const string ResolveShaderFile = "postResolveFragment.glsl";
 
-    // Every uniform the three fragment shaders declare. A test checks these against the sources, so
-    // a uniform cannot be added to a shader and left unset here.
+    // Every uniform the three fragment shaders declare. PostChainUniformContractTests checks these
+    // against the sources in both directions, so a uniform cannot be added to a shader and left
+    // unset here, and a misspelt name cannot silently resolve to location -1.
     public static readonly string[] BrightUniformNames = ["uScene", "uSourceTexel"];
     public static readonly string[] BlurUniformNames = ["uSource", "uDirection"];
     public static readonly string[] ResolveUniformNames = ["uScene", "uBloom", "uBloomStrength", "uShadowNeutralise"];
@@ -52,11 +53,11 @@ public sealed class PostChain : IDisposable
     private int _bloomWidth;
     private int _bloomHeight;
 
-    public PostChain(float bloomStrength)
+    public PostChain(float bloomStrength, float shadowNeutraliseStrength)
     {
         GLUtils.AssertRenderThread("Post chain creation");
         _bloomStrength = Math.Clamp(bloomStrength, 0f, 2f);
-        _shadowNeutralise = PostSettings.ResolveShadowNeutraliseStrengthFromEnvironment();
+        _shadowNeutralise = Math.Clamp(shadowNeutraliseStrength, 0f, 1f);
         _bright = new Shader(AssetPaths.Shader(VertexShaderFile), AssetPaths.Shader(BrightShaderFile));
         try
         {

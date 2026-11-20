@@ -1,4 +1,5 @@
 using System.Globalization;
+using OpenTK.Mathematics;
 
 namespace Dream.Rendering.Post;
 
@@ -93,18 +94,18 @@ public static class PostSettings
     /// The shadow neutralisation, in C#, exactly as <c>dreamToneNeutraliseShadows</c> computes it:
     /// c + (max - c) * w, in the subtractive form so the max channel is returned bit for bit.
     /// </summary>
-    public static OpenTK.Mathematics.Vector3 NeutraliseShadows(OpenTK.Mathematics.Vector3 c, float strength)
+    public static Vector3 NeutraliseShadows(Vector3 c, float strength)
     {
         float m = MathF.Max(MathF.Max(c.X, c.Y), c.Z);
         float x = Math.Clamp(m / ShadowNeutraliseEdge, 0f, 1f);
         float smooth = x * x * (3f - (2f * x));
-        float w = (1f - smooth) * strength;
+        float w = (1f - smooth) * Math.Clamp(strength, 0f, 1f);
         if (w <= 0f)
         {
             return c;
         }
 
-        return new OpenTK.Mathematics.Vector3(
+        return new Vector3(
             c.X + ((m - c.X) * w), c.Y + ((m - c.Y) * w), c.Z + ((m - c.Z) * w));
     }
 

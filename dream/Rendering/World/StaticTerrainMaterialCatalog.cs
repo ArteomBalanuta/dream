@@ -1,4 +1,5 @@
 using Dream.Assets;
+using Dream.Rendering.Actors;
 using Dream.Simulation.World.Geometry;
 using OpenTK.Mathematics;
 
@@ -21,11 +22,11 @@ public static class StaticTerrainMaterialCatalog
     private static readonly StaticTerrainMaterialRole[] GrassRoles =
         [StaticTerrainMaterialRole.Top, StaticTerrainMaterialRole.Side, StaticTerrainMaterialRole.Bottom];
     private static readonly StaticTerrainMaterialRole[] SingleRole = [StaticTerrainMaterialRole.Single];
-    // The opt-in material response (uEquipSurface: x metallic, y roughness; z, w unread by the world
+    // The opt-in material response (metallic, roughness; grain and accentMix are unread by the world
     // shader): a wet-slate sheen that catches the moon and a torch. Only Stone and Rock use it;
-    // every other material keeps Vector4.Zero, which is "no response".
+    // every other material keeps EquipmentSurface.None, which is "no response".
     // Declared BEFORE MaterialsBySlot: static initialisers run in textual order, and the table reads it.
-    private static readonly Vector4 StoneSurface = new(0.05f, 0.50f, 0f, 0f);
+    private static readonly EquipmentSurface StoneSurface = new(Metallic: 0.05f, Roughness: 0.50f, Grain: 0f, AccentMix: 0f);
 
     private static readonly StaticTerrainMaterial[] MaterialsBySlot = CreateMaterialTable();
 
@@ -135,7 +136,7 @@ public static class StaticTerrainMaterialCatalog
         };
     }
 
-    private static StaticTerrainMaterial Single(GeometryMaterialId materialId, string texturePath, Vector4 surface = default)
+    private static StaticTerrainMaterial Single(GeometryMaterialId materialId, string texturePath, EquipmentSurface? surface = null)
     {
         return new StaticTerrainMaterial(
             materialId,
@@ -143,7 +144,7 @@ public static class StaticTerrainMaterialCatalog
             new Vector4(1f, 1f, 1f, 1f),
             texturePath)
         {
-            Surface = surface
+            Surface = surface ?? EquipmentSurface.None
         };
     }
 

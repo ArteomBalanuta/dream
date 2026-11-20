@@ -477,8 +477,9 @@ public sealed class Shader : IDisposable
     // `uEquipSurface` (x metallic, y roughness, z grain, w accentMix): the equipment material
     // response in enemyFragment.glsl. Zero - EquipmentSurface.None, what the equipment renderers
     // set at the end of their pass - skips the whole block, so every other draw is unchanged. A
-    // program without the uniform (every world fragment shader declares it now - cubeFragment.glsl
-    // as the opt-in terrain response - but a program may still have optimized it out) has location -1 and uploads nothing, exactly like SetEmissiveFactor.
+    // program without the uniform (every world fragment shader declares one now, cubeFragment.glsl
+    // as the opt-in terrain response, but the compiler may still have optimised it out) has
+    // location -1 and uploads nothing, exactly like SetEmissiveFactor.
     public void SetEquipmentSurface(Vector4 surface)
     {
         if (_equipmentSurfaceLocation < 0 || surface.Equals(_uploadedEquipmentSurface))

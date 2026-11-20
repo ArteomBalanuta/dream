@@ -76,7 +76,10 @@ const float DreamShadowNeutraliseEdge = 0.08;
 vec3 dreamToneNeutraliseShadows(vec3 c, float strength)
 {
     float m = max(max(c.r, c.g), c.b);
-    float w = (1.0 - smoothstep(0.0, DreamShadowNeutraliseEdge, m)) * strength;
+    // The clamp is the invariant, not a courtesy: the max channel survives only while w <= 1. At
+    // w > 1 a channel is pushed past m and the max channel moves. Enforced here, in the C# mirror
+    // and in PostChain's constructor, so no caller can break it.
+    float w = (1.0 - smoothstep(0.0, DreamShadowNeutraliseEdge, m)) * clamp(strength, 0.0, 1.0);
     if (w <= 0.0) { return c; }
     // c + (m - c) * w, NOT mix(c, vec3(m), w): the max channel's term is exactly
     // (m - m) * w = 0, so m survives bit-for-bit. mix() computes m*(1-w) + m*w,

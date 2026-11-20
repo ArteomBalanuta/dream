@@ -226,7 +226,9 @@ public partial class PlayScene
 
         try
         {
-            _postChain = new PostChain(PostSettings.ResolveBloomStrengthFromEnvironment());
+            _postChain = new PostChain(
+                PostSettings.ResolveBloomStrengthFromEnvironment(),
+                PostSettings.ResolveShadowNeutraliseStrengthFromEnvironment());
         }
         catch (Exception exception)
         {

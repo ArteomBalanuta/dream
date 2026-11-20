@@ -308,6 +308,15 @@ public class WeaponMeshCatalogTests
         // Deliberate asymmetry: the Membrane wings are a large area and an unshaded emissive pins them flat.
         Vector3 e = ArmourMeshCatalog.Emissive(ArmourMaterial.Arcane);
         Assert.True(MathF.Max(e.X, MathF.Max(e.Y, e.Z)) < PostSettings.Knee);
+
+        // Pin the asymmetry itself, not just "under the knee" (which passes for anything up to 0.80):
+        // the armour is a sixth of the gem on every channel, so the ratio cannot drift unnoticed.
+        Vector3 gem = WeaponMeshCatalog.Emissive(WeaponMaterial.Arcane);
+        Assert.InRange(e.X / gem.X, 0.14f, 0.19f);
+        Assert.InRange(e.Y / gem.Y, 0.14f, 0.19f);
+        Assert.InRange(e.Z / gem.Z, 0.14f, 0.19f);
+        Assert.True(MathF.Max(e.X, MathF.Max(e.Y, e.Z)) < 0.25f, "a large-area emissive that high pins the wings flat");
+        Assert.True(MathF.Max(gem.X, MathF.Max(gem.Y, gem.Z)) > PostSettings.Knee, "the gem must reach the bloom");
     }
 
     [Fact]
