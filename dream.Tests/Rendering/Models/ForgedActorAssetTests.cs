@@ -243,6 +243,92 @@ public class ForgedActorAssetTests
         Assert.True(maxVertexShift > 1e-3f, $"No vertex moved at t>0 (max shift {maxVertexShift}).");
     }
 
+    // The skeleton's own gate on the forged asset, the way the hound's is: one skin inside the joint
+    // budget (above AnimatedModelData.MaxSupportedJoints LoadSkinning silently returns null and the
+    // mesh draws in bind pose), every primitive skinned, and a rig that really moves.
+    [Fact]
+    public void TheSkeleton_IsSkinned_WithinTheJointBudget()
+    {
+        GltfSkinningAnalysisResult analysis = GltfSkinningAnalysis.Analyze(SkeletonAssetDefinition.ModelPath);
+
+        Assert.True(analysis.HasSkins);
+        Assert.True(analysis.HasSkinnedPrimitives);
+        Assert.InRange(analysis.JointCount, 1, 32);
+        Assert.True(analysis.JointCount <= AnimatedModelData.MaxSupportedJoints);
+    }
+
+    [Fact]
+    public void TheSkeleton_SkinsEveryPrimitive_WithWeightsThatSumToOne()
+    {
+        ModelRoot model = ModelRoot.Load(SkeletonAssetDefinition.ModelPath);
+
+        Assert.Single(model.LogicalSkins);
+        foreach (MeshPrimitive primitive in model.LogicalMeshes.SelectMany(mesh => mesh.Primitives))
+        {
+            Assert.NotNull(primitive.GetVertexAccessor("JOINTS_0"));
+            Assert.NotNull(primitive.GetVertexAccessor("WEIGHTS_0"));
+            IReadOnlyList<System.Numerics.Vector4> weights = primitive.GetVertexAccessor("WEIGHTS_0").AsVector4Array();
+            for (int i = 0; i < weights.Count; i++)
+            {
+                System.Numerics.Vector4 w = weights[i];
+                Assert.Equal(1f, w.X + w.Y + w.Z + w.W, 3);
+            }
+        }
+    }
+
+    [Fact]
+    public void TheSkeleton_DeformsAwayFromTheBindPose_AndItsVerticesMove()
+    {
+        AnimatedModelData data = AnimatedModelData.Load(SkeletonAssetDefinition.ModelPath);
+        ModelRoot model = data.Model;
+        Node meshNode = model.LogicalNodes.First(node => node.Mesh != null && node.Skin != null);
+        Matrix4 meshWorld = meshNode.WorldMatrix.ToOpenTK();
+
+        AnimatedModelInstance instance = new(data.Skeleton);
+        Matrix4[] bind = instance.ComputeJointMatrices(meshWorld).ToArray();
+
+        instance.PlayLoop(SkeletonAssetDefinition.MoveClip);
+        instance.Update(0.25f);
+        Assert.True(instance.TimeSeconds > 0f);
+        Matrix4[] posed = instance.ComputeJointMatrices(meshWorld).ToArray();
+
+        float maxJointShift = 0f;
+        for (int i = 0; i < bind.Length; i++)
+        {
+            maxJointShift = MathF.Max(maxJointShift, (posed[i].Row3.Xyz - bind[i].Row3.Xyz).Length);
+        }
+
+        Assert.True(maxJointShift > 1e-3f, $"No joint moved at t>0 (max shift {maxJointShift}); the mesh would draw in bind pose.");
+
+        MeshPrimitive primitive = meshNode.Mesh!.Primitives[0];
+        IReadOnlyList<System.Numerics.Vector3> positions = primitive.GetVertexAccessor("POSITION").AsVector3Array();
+        IReadOnlyList<System.Numerics.Vector4> joints = primitive.GetVertexAccessor("JOINTS_0").AsVector4Array();
+        IReadOnlyList<System.Numerics.Vector4> weights = primitive.GetVertexAccessor("WEIGHTS_0").AsVector4Array();
+
+        float maxVertexShift = 0f;
+        for (int i = 0; i < positions.Count; i++)
+        {
+            Vector4 position = new(positions[i].X, positions[i].Y, positions[i].Z, 1f);
+            Vector3 atBind = Vector4.TransformRow(position, Weighted(bind, joints[i], weights[i])).Xyz;
+            Vector3 atPose = Vector4.TransformRow(position, Weighted(posed, joints[i], weights[i])).Xyz;
+            maxVertexShift = MathF.Max(maxVertexShift, (atPose - atBind).Length);
+        }
+
+        Assert.True(maxVertexShift > 1e-3f, $"No vertex moved at t>0 (max shift {maxVertexShift}).");
+    }
+
+    // Until the asset is forged, the measurement must not throw inside a draw: a missing GLB resolves
+    // to a uniform scale of 1. This one passes with no asset on disk.
+    [Fact]
+    public void ResolvingTheSkeletonsScale_NeverThrows_EvenBeforeTheAssetIsForged()
+    {
+        float scale = 0f;
+        Exception? thrown = Record.Exception(() => scale = SkeletonAssetDefinition.VisualScale);
+
+        Assert.Null(thrown);
+        Assert.True(scale > 0f);
+    }
+
     // C1 / F2: the villagers are rigid part hierarchies with the shared node names, so the pose
     // layers and the held-item lookups keep working for anything posed by node name. A skin here
     // would silently cost every node override.
