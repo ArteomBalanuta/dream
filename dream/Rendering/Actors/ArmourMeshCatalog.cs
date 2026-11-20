@@ -198,8 +198,9 @@ public static class ArmourMeshCatalog
     // chevron however the mesh was sculpted. Emissive is added AFTER the gain, so it is a constant
     // the shading cannot modulate: at 0.55 of blue on an albedo whose lit blue reaches about 0.37,
     // three fifths of every wing texel was a value no light could change, and the whole piece sat at
-    // its ceiling. It is now about a third of that, which leaves the lit range in charge of the form
-    // and still glows clearly at midnight, where an emissive is actually for.
+    // its ceiling. It is now (0.09, 0.035, 0.17): about a third of that old value, and about a sixth of
+    // the weapon gem's (0.55, 0.22, 1.00), which was raised later to reach the bloom. That leaves the lit
+    // range in charge of the form and still glows clearly at midnight, where an emissive is actually for.
     public static Vector3 Emissive(ArmourMaterial material) => material switch
     {
         ArmourMaterial.Arcane => new Vector3(0.09f, 0.035f, 0.17f),

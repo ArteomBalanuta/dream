@@ -27,10 +27,12 @@ public sealed class Shader : IDisposable
     public const string EmissiveUvScrollUniformName = "material.emissiveUvScroll";
     public const string TimeUniformName = "uTime";
 
-    // The equipment material response (enemyFragment.glsl). Only HeldWeaponRenderer and
-    // WornArmourRenderer ever set them; every other draw leaves uEquipSurface at zero, which is
-    // what makes the shader's whole material block a no-op. Programs that do not declare them
-    // (cubeFragment.glsl, the HUD programs) resolve to -1 and upload nothing.
+    // The material response ABI (enemyFragment.glsl, and cubeFragment.glsl's opt-in terrain
+    // response, which declares uEquipSurface and uEquipEye but not uEquipDetail). The equipment
+    // renderers and the terrain pass (StaticTerrainMaterial.Surface) set them; every other draw
+    // leaves uEquipSurface at zero, which is what makes the shader's whole material block a no-op.
+    // Programs that do not declare them (the HUD programs; uEquipDetail in the cube program)
+    // resolve to -1 and upload nothing.
     public const string EquipmentSurfaceUniformName = "uEquipSurface";
     public const string EquipmentEyeUniformName = "uEquipEye";
     public const string EquipmentDetailUniformName = "uEquipDetail";
@@ -475,8 +477,9 @@ public sealed class Shader : IDisposable
     // `uEquipSurface` (x metallic, y roughness, z grain, w accentMix): the equipment material
     // response in enemyFragment.glsl. Zero - EquipmentSurface.None, what the equipment renderers
     // set at the end of their pass - skips the whole block, so every other draw is unchanged. A
-    // program without the uniform (it is not declared in cubeFragment.glsl, and a program may also
-    // have optimized it out) has location -1 and uploads nothing, exactly like SetEmissiveFactor.
+    // program without the uniform (every world fragment shader declares one now, cubeFragment.glsl
+    // as the opt-in terrain response, but the compiler may still have optimised it out) has
+    // location -1 and uploads nothing, exactly like SetEmissiveFactor.
     public void SetEquipmentSurface(Vector4 surface)
     {
         if (_equipmentSurfaceLocation < 0 || surface.Equals(_uploadedEquipmentSurface))

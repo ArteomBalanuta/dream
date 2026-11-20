@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
+using Dream.Rendering.Post;
 using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 
@@ -292,6 +293,56 @@ public class WeaponMeshCatalogTests
         Assert.True(Value(WeaponMaterial.DarkIron) <= Value(WeaponMaterial.Leather));
         Assert.True(Value(WeaponMaterial.Leather) < Value(WeaponMaterial.Wood));
         Assert.True(Value(WeaponMaterial.Wood) < Value(WeaponMaterial.Steel));
+    }
+
+    // MEASURED, and the name says only what is true: the gem's emissive clears the knee, so it
+    // CONTRIBUTES to the bloom. It does not produce a visible halo, and raising it further will not
+    // make one - the constraint is area, not amplitude.
+    //
+    // At tod 22 the gem renders about 5x6 px. Its measured peak of 0.906 inverts through the
+    // shoulder to a scene value of 1.0255, so the overflow feeding the bright pass is 0.2255. But
+    // the bright pass is quarter-resolution in each axis, so those 30 px are under two bloom texels,
+    // and the separable blur then spreads them over roughly 36: the halo peaks at about 0.87 of one
+    // 8-bit step, below quantisation. Measured at 8-16 px from the core it is 0.15 of a step, and
+    // the grade-OFF frame has no halo either - so the bloom is working and the gem is too small to
+    // use it. An emissive would need roughly 16x16 px on screen to glow.
+    //
+    // What the raise did buy is a brighter, more saturated violet core. Keep the assertion: a larger
+    // Arcane part later WILL bloom, and this pins the catalogue value that makes that true.
+    [Fact]
+    public void WeaponArcaneEmissive_ClearsTheKnee_SoItContributesToTheBloom()
+    {
+        Vector3 e = WeaponMeshCatalog.Emissive(WeaponMaterial.Arcane);
+        Assert.True(MathF.Max(e.X, MathF.Max(e.Y, e.Z)) > PostSettings.Knee, "bloom only sees the overflow above the knee");
+    }
+
+    [Fact]
+    public void ArmourArcaneEmissive_StaysBelowTheKnee_ByDesign()
+    {
+        // Deliberate asymmetry: the Membrane wings are a large area and an unshaded emissive pins them flat.
+        Vector3 e = ArmourMeshCatalog.Emissive(ArmourMaterial.Arcane);
+        Assert.True(MathF.Max(e.X, MathF.Max(e.Y, e.Z)) < PostSettings.Knee);
+
+        // Pin the asymmetry itself, not just "under the knee" (which passes for anything up to 0.80):
+        // the armour is a sixth of the gem on every channel, so the ratio cannot drift unnoticed.
+        Vector3 gem = WeaponMeshCatalog.Emissive(WeaponMaterial.Arcane);
+        Assert.InRange(e.X / gem.X, 0.14f, 0.19f);
+        Assert.InRange(e.Y / gem.Y, 0.14f, 0.19f);
+        Assert.InRange(e.Z / gem.Z, 0.14f, 0.19f);
+        Assert.True(MathF.Max(e.X, MathF.Max(e.Y, e.Z)) < 0.25f, "a large-area emissive that high pins the wings flat");
+        Assert.True(MathF.Max(gem.X, MathF.Max(gem.Y, gem.Z)) > PostSettings.Knee, "the gem must reach the bloom");
+    }
+
+    [Fact]
+    public void EveryArcanePart_IsAGem_SoALargePartCannotInheritALamp()
+    {
+        foreach (string id in WeaponMeshCatalog.KnownVisualIds)
+        {
+            foreach (WeaponPart part in WeaponMeshCatalog.Resolve(id).Parts.Where(p => p.Material == WeaponMaterial.Arcane))
+            {
+                Assert.True(part.Shape == EquipmentShape.Gem, $"{id}: an Arcane part must be a Gem");
+            }
+        }
     }
 
     [Fact]

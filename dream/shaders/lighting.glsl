@@ -70,8 +70,8 @@ const float SunShadowTapSpacing = 1.5;
 bool dreamShadowMapIsSun() { return uSunDirection.w >= uMoonDirection.w; }
 
 // 1.0 = fully lit, 0.0 = fully shadowed, of the DOMINANT light's term (sun, else moon, matching the map).
-// It multiplies that term in dreamDirectShaded (clouds.glsl) and the equipment specular lobe in enemyFragment.glsl: one call
-// site each, the other light's term gets exactly 1.0. dreamDirect stays textually unchanged (the engine contract enginelook.py restates).
+// It multiplies that term in dreamDirectShaded (clouds.glsl), the equipment specular lobe in enemyFragment.glsl and the
+// world material response's lobe in cubeFragment.glsl: one call site each, the other light's term gets exactly 1.0. dreamDirect stays textually unchanged (the engine contract enginelook.py restates).
 float dreamSunVisibility(vec3 fragPos, vec3 n)
 {
 #if DREAM_SUN_SHADOW_LIVE
