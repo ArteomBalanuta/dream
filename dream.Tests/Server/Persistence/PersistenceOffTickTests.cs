@@ -26,6 +26,9 @@ public sealed class PersistenceOffTickTests
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSessionId session = new("session-a");
         host.JoinSession(session.Value, "Player A");
+        // A join restores the mode from the profile, and a new character now starts in Combat.
+        // This test builds, so it says so rather than inheriting the old Building default.
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
         runtime.Enemies.Clear();
         world.ResetCounts();
         profiles.ResetCounts();
@@ -58,6 +61,9 @@ public sealed class PersistenceOffTickTests
         using RuntimeAuthoritativeSessionHost host = new(runtime);
         PlayerSessionId session = new("session-a");
         host.JoinSession(session.Value, "Player A");
+        // A join restores the mode from the profile, and a new character now starts in Combat.
+        // This test builds, so it says so rather than inheriting the old Building default.
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
         world.BlockWrites();
 
         Task<AuthoritativeActionResult> place = Task.Run<AuthoritativeActionResult>(() => host.ProcessAction(new PlayerActionMessage(session, 1, new BuildUseIntent(new Vector3(7f, 1f, 7f)))));

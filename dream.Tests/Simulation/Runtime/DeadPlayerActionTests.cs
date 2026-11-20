@@ -96,6 +96,9 @@ public sealed class DeadPlayerActionTests
         run.Host.JoinSession("deadman", "Deadman");
         PlayerSessionId session = new("deadman");
         WorldSessionRuntime runtime = run.Runtime;
+        // A join restores the mode from the profile, and a new character now starts in Combat.
+        // This test builds, so it says so rather than inheriting the old Building default.
+        runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
         IAuthoritativePlayerTarget target = WaveIRuntimeKit.Target(runtime, "deadman");
         target.SetWorldPosition(new Vector3(30f, 1.5f, 30f));
         run.Advance(3);

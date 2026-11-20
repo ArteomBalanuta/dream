@@ -31,6 +31,9 @@ public sealed class WaveT2LampPersistenceTests
         using (RuntimeAuthoritativeSessionHost host = new(runtime))
         {
             host.JoinSession(SessionId.Value, PlayerName);
+            // A join restores the mode from the profile, and a new character now starts in Combat.
+            // This test builds, so it says so rather than inheriting the old Building default.
+            runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
             runtime.Enemies.Clear();
             PlaceLamp(host);
             Assert.Equal(GeometryMaterialId.Lamp, runtime.Map.TryGetCubeAtCell(7, 1, 7)!.MaterialId);
@@ -65,6 +68,9 @@ public sealed class WaveT2LampPersistenceTests
         using (RuntimeAuthoritativeSessionHost host = new(runtime))
         {
             host.JoinSession(SessionId.Value, PlayerName);
+            // A join restores the mode from the profile, and a new character now starts in Combat.
+            // This test builds, so it says so rather than inheriting the old Building default.
+            runtime.SetAuthoritativeInteractionMode(PlayerInteractionMode.Building);
             runtime.Enemies.Clear();
             PlaceLamp(host);
             lampId = (int)Assert.Single(runtime.WorldPersistence!.LoadPlacedCubes()).ObjectId.Value;

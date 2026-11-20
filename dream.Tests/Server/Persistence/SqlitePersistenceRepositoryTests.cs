@@ -68,7 +68,8 @@ public sealed class SqlitePersistenceRepositoryTests
 
         Assert.Equal("player-two", created.PlayerName);
         Assert.Equal("player-two", created.DisplayName);
-        Assert.Equal(PlayerInteractionMode.Building, created.InteractionMode);
+        // A new character starts ready to fight: the left button only attacks in Combat.
+        Assert.Equal(PlayerInteractionModeExtensions.Default, created.InteractionMode);
         // A new character is created at the attribute ceiling, and its health seed is what
         // player.max_health ("50 + vitality * 5") makes of that vitality.
         int attribute = Dream.Simulation.Players.PlayerStatRules.NewCharacterAttribute;

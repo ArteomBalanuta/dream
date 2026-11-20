@@ -48,6 +48,10 @@ public sealed class WaveCTesterBuildingsOutliveBuilderWireTests(ITestOutputHelpe
             Vector3 cellTwo = new(MathF.Floor(position.X), 1f, MathF.Floor(position.Z) + 1f);
             brokenCell = new GeometryCellKey((int)cellOne.X, 1, (int)cellOne.Z);
             standingCell = new GeometryCellKey((int)cellTwo.X, 1, (int)cellTwo.Z);
+            // A join restores the mode from the profile, and a new character now starts in Combat. A builds
+            // here, so it requests Building the way a real client does, and lets the tick apply it.
+            await a.SendCommandAsync(PlayerInteractionMode.Building, PlayerMoveIntent.None, Vector3.UnitZ, attack: false);
+            await TickAsync(server, 2);
             Assert.True(server.Host.TryEnqueueServerAction(new PlayerActionMessage(new PlayerSessionId(SessionA), 9001, new BuildUseIntent(cellOne))));
             Assert.True(server.Host.TryEnqueueServerAction(new PlayerActionMessage(new PlayerSessionId(SessionA), 9002, new BuildUseIntent(cellTwo))));
             await TickAsync(server, 3);
