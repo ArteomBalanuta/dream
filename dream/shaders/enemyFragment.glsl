@@ -39,12 +39,14 @@ uniform vec3 uActorTintOffset;
 
 // The world hover's rim light (ActorHighlight.Rim): an ADDITIVE, view-dependent edge glow for the one
 // hovered actor, because the multiplicative tint above cannot lift a near-black model. rgb is the rim
-// colour in the same linear lit space as `lit` (before dreamExpose); w is reserved. uActorRimEye is the
+// colour in the same linear lit space as `lit` (before dreamExpose); w is the flat share of it every facing
+// fragment gets (a near-black model seen from above shows almost no grazing edge, so an edge alone is
+// invisible on it; the fill lifts the whole facing body a little, the edge on top of it). uActorRimEye is the
 // real eye in world space (uCameraPosition is the fog origin, not the eye). Zero rgb - the default of an
 // unset uniform - skips the whole block, so every other draw computes exactly what it did before.
 uniform vec4 uActorRim;
 uniform vec3 uActorRimEye;
-const float ActorRimPower = 2.5;
+const float ActorRimPower = 2.0;
 
 // ---- The equipment material response (HeldWeaponRenderer / WornArmourRenderer only). ----
 // x metallic, y roughness, z grain, w accentMix (EquipmentSurface.ToUniform). Zero - the default of
@@ -376,7 +378,7 @@ void main()
     if (uActorRim.r + uActorRim.g + uActorRim.b > 0.0) {
         vec3 rimView = normalize(uActorRimEye - fragPos);
         float rimNdv = dot(n, rimView);
-        vec3 hoverRim = uActorRim.rgb * pow(1.0 - clamp(rimNdv, 0.0, 1.0), ActorRimPower) * (rimNdv > 0.0 ? 1.0 : 0.0);
+        vec3 hoverRim = uActorRim.rgb * mix(pow(1.0 - clamp(rimNdv, 0.0, 1.0), ActorRimPower), 1.0, clamp(uActorRim.w, 0.0, 1.0)) * (rimNdv > 0.0 ? 1.0 : 0.0);
         float hoverRoom = max((1.0 / max(uLightingParams.x, 0.01)) - max(lit.r, max(lit.g, lit.b)), 0.0);
         float hoverPeak = max(hoverRim.r, max(hoverRim.g, hoverRim.b));
         lit += hoverRim * (hoverPeak > hoverRoom ? hoverRoom / hoverPeak : 1.0);

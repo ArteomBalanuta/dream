@@ -30,7 +30,8 @@ public sealed class ActorHighlightTests
     public void RimFor_IsTheRimOnlyForTheHighlightedId()
     {
         Vector4 on = ActorHighlight.RimFor(7, 7);
-        Assert.Equal(new Vector4(ActorHighlight.Rim, 0f), on);
+        Assert.Equal(new Vector4(ActorHighlight.Rim, ActorHighlight.RimFill), on);
+        Assert.InRange(ActorHighlight.RimFill, 0.05f, 0.35f);
         Assert.Equal(Vector4.Zero, ActorHighlight.RimFor(7, 8));
         Assert.Equal(Vector4.Zero, ActorHighlight.RimFor(null, 7));
     }

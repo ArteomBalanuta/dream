@@ -15,7 +15,9 @@ public sealed class ActorRimShaderContractTests
     {
         Assert.Contains("uniform vec4 uActorRim;", Shader);
         Assert.Contains("uniform vec3 uActorRimEye;", Shader);
-        Assert.Matches(@"const float ActorRimPower = [2-3]\.\d+;", Shader);
+        Assert.Matches(@"const float ActorRimPower = [1-3]\.\d+;", Shader);
+        // The flat fill is a clamped share of the same colour, so it can never exceed the edge.
+        Assert.Contains("mix(pow(1.0 - clamp(rimNdv, 0.0, 1.0), ActorRimPower), 1.0, clamp(uActorRim.w, 0.0, 1.0))", Shader);
     }
 
     [Fact]
