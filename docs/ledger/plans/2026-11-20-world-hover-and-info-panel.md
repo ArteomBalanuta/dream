@@ -1,7 +1,9 @@
 # Plan: unified world hover and the hover info panel
 
 - Date: 2026-11-20
-- Status: proposed, not started
+- Status: wave 1 built and integrated on `integrate/world-hover` (see `docs/ledger/work-log/2026-11-20-world-hover.md`);
+  wave 2 (model highlight) not started. As built, the Lead wired click-to-move through `ClickMoveHost.TryPick`
+  (not `ClickMoveController`) and retired `EnemyHoverProbe`.
 - Base: `master` at `4d404c81`
 - Audit: `docs/ledger/analysis/2026-11-20-world-hover-audit.md`
 - Delivery: `CLAUDE.md` team workflow with `parallel-agent-delivery` (contracts frozen first, 3 parallel
