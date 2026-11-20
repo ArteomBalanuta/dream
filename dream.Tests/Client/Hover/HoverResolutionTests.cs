@@ -67,6 +67,25 @@ public sealed class HoverResolutionTests
     }
 
     [Fact]
+    public void TheTieWindowIsMeasuredFromTheNearest_NotChained_InEveryOrder()
+    {
+        // NPC 0.5, remote player 0.8, enemy 1.1 (above a base depth): the enemy is outside the window of the
+        // nearest, so the remote player (priority) beats the NPC.
+        float t = HoverPriority.DepthTieMetres;
+        CountingSource npc = new(HoverKind.Npc, 1, 5f);
+        CountingSource player = new(HoverKind.RemotePlayer, 2, 5f + (t * 0.85f));
+        CountingSource enemy = new(HoverKind.Enemy, 3, 5f + (t * 1.7f));
+        IHoverSource[] all = [npc, player, enemy];
+
+        int[][] perms = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+        foreach (int[] p in perms)
+        {
+            Assert.True(Pick([all[p[0]], all[p[1]], all[p[2]]], Ray(), out HoverHit hit));
+            Assert.Equal(new HoverTargetId(HoverKind.RemotePlayer, 2), hit.Target);
+        }
+    }
+
+    [Fact]
     public void NothingBehindTheWallIsPicked()
     {
         CountingSource behind = new(HoverKind.Enemy, 1, 9f);
