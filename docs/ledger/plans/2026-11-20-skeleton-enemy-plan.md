@@ -69,15 +69,29 @@ The authored stat row, which WS-C writes verbatim and WS-A does not read:
 
 ```json
 { "key": "RisenSkeleton", "displayName": "Risen Skeleton", "level": 6,
-  "strength": 30, "vitality": 48, "attackSpeed": 0.681818,
-  "aggroRange": 12, "attackRange": 1.5, "moveSpeed": 3.4, "patrolSpeed": 1.15,
-  "attackIntervalSeconds": 1.55, "visualKey": "enemy.skeleton",
+  "strength": 30, "vitality": 48, "attackSpeed": 0.689655,
+  "aggroRange": 13, "attackRange": 1.5, "moveSpeed": 3.6, "patrolSpeed": 1.25,
+  "attackIntervalSeconds": 1.45, "visualKey": "enemy.skeleton",
   "spawnRole": "NightExtra", "lootTable": "risen-skeleton",
   "goldMin": 25, "goldMax": 60, "maxHealth": 520 }
 ```
 
+**This row was corrected twice during the wave, and both corrections came from the track building
+against it.** The first draft authored `attackSpeed` as 0.681818, which is not the attack interval's
+reciprocal — `EnemyKindsMigrationTests:54` pins `attackSpeed == 1 / attackIntervalSeconds` to five
+decimals, and all four shipped kinds satisfy it exactly. The second draft chased at 3.4 with a 1.55
+interval, both of which sit on the WRONG SIDE of the level-5 Ashen Prowler, contradicting the rule
+`EnemyTemplate.cs` states in the comment the same change was editing: the chase speeds rise with the
+tier and the intervals fall with it. Every number above now interpolates monotonically between the
+Prowler (5) and the Grave Howler (8): patrol 1.2 -> 1.25 -> 1.3, chase 3.5 -> 3.6 -> 3.8, interval
+1.5 -> 1.45 -> 1.4, aggro 12 -> 13 -> 14, health 400 -> 520 -> 700, strength 24 -> 30 -> 40.
+
+The lesson is not about arithmetic. A tier's numbers are a *sequence*, and a new tier inserted into
+one is only correct if every column still reads monotonically — checking each number against its
+own validity gate passes a row that is individually legal and collectively wrong.
+
 It sits **last** in the array, which is what keeps `FindTemplate` returning DireWolf for the night
-slot and Wolf for the day slot. `attackRange` is 1.5 rather than the family's 1.35 because this is
+slot and Wolf for the day slot; that ordering is now pinned by its own test. `attackRange` is 1.5 rather than the family's 1.35 because this is
 the first enemy that swings a blade instead of biting, and the reach is the one number that should
 differ. Tier 6 sits between the Ashen Prowler (5) and the Grave Howler (8); the chase speed follows
 the shipped rule — faster than the player's walk, slower than the player's sprint, rising with tier.
