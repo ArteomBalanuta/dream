@@ -60,11 +60,10 @@ Key facts to report:
 For server-only scalability numbers (no windows, no GPU), use the load tests in `dream.Tests/Load`. They seed a temp SQLite world, start `DedicatedServerService` on loopback, connect bots over the real `RemoteClientSession`, and write `artifacts/load/<scenario>.json` plus a `.md` summary.
 
 ```bash
-MSYS_NO_PATHCONV=1 dotnet build dream/dream.csproj -c Release
 DREAM_LOAD_TEST=1 MSYS_NO_PATHCONV=1 dotnet test dream.Tests/dream.Tests.csproj -c Release "/p:BaseOutputPath=<absolute repo path>/artifacts/verify-bin/" --filter "FullyQualifiedName~ServerLoadTests.Smoke8"
 ```
 
-- Why the Release build comes first: `dream.Tests.csproj` has a `CopyDreamNativeRuntime` target that copies `libbulletc*` and `BulletSharp.dll.config` from `dream\bin\<Configuration>\net10.0` into the test output. The `/p:BaseOutputPath=...` override moves the test run's own outputs (including the referenced `dream` project) to the override folder, so the separate `dotnet build dream/dream.csproj -c Release` without an override is what fills `dream\bin\Release\net10.0` for that copy. If that folder is empty, the copy finds nothing.
+- Natives: `libbulletc.dll` / `libbulletc.so` come from the `dream` project's own RID-conditioned `None` items (`dream/dream.csproj`), so the test build copies them into its output through the project reference; there is no `CopyDreamNativeRuntime` target and no separate Release build of `dream` is needed first. A stale `libbulletc-*` or `BulletSharp.dll.config` left in an old output folder is deleted by the `DeleteStaleBulletNatives` build target.
 - The override must be an absolute path inside the repo, because repo-relative tests find the repo root from their output folder.
 - GC mode: the test host runs workstation concurrent GC, the same as production (`dream.csproj` sets no GC options; `dream.Tests.csproj` sets `ServerGarbageCollection=false` on purpose). Every report states it: the `.md` header prints `GC mode: workstation concurrent (matches production)` and the JSON has `environment.serverGc`. If a report says SERVER GC (for example `DOTNET_gcServer=1` is set in the shell), its GC counts, managed memory and tick percentiles do not represent production; rerun with `DOTNET_gcServer=0`.
 - Scenarios: `Smoke8`, `Players32`, `World10k`, `Soak` (30 minutes). `DREAM_LOAD_DURATION_SECONDS` shortens any of them.

@@ -100,9 +100,10 @@ else {
     if (Test-Path $src) { Remove-Item -Recurse -Force $src }
     New-Item -ItemType Directory -Force -Path $src | Out-Null
     $tarFile = Join-Path $distSrc "$fullSha.tar"
-    git archive --format=tar -o $tarFile HEAD
+    git -c core.autocrlf=false archive --format=tar -o $tarFile HEAD
     if ($LASTEXITCODE -ne 0) { Fail "git archive failed ($LASTEXITCODE)" }
-    tar -xf $tarFile -C $src
+    # Python, not tar: GNU tar (Git Bash) reads 'G:\...' as a remote host.
+    & $py -I -c "import sys, tarfile; t = tarfile.open(sys.argv[1]); t.extractall(sys.argv[2], filter='data')" $tarFile $src
     if ($LASTEXITCODE -ne 0) { Fail "extracting the HEAD export failed ($LASTEXITCODE)" }
     Remove-Item -Force $tarFile
 

@@ -24,8 +24,8 @@ REQUIRED = {
 }
 # *.zip: the game loads no archive, so a zip in a bundle is a local asset pack that leaked in (redistribution unclear)
 FORBIDDEN = ["*player-profiles.db*", "account-tokens.json", "imgui.ini", "*.zip"]
-# uncompressed size cap (the clean bundle is about MAX_BYTES / 1.5); a bundle past it has swallowed untracked files
-MAX_BYTES = 0
+# uncompressed size cap (the clean win-x64 bundle measured 585 MB, so about 1.5x headroom); a bundle past it has swallowed untracked files
+MAX_BYTES = 900 * 1024 * 1024
 # native files of the other platform at the bundle root (managed .dll files are fine in a linux bundle)
 FOREIGN = {"win-x64": ["*.so", "*.so.*", "*.dylib"], "linux-x64": ["*.exe", "libbulletc.dll", "cimgui.dll",
            "glfw3.dll", "e_sqlite3.dll", "vcomp140.dll", "OpenAL32.dll", "soft_oal.dll"]}
