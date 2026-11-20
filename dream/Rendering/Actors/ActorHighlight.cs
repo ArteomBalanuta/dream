@@ -15,11 +15,16 @@ public static class ActorHighlight
     // near-black model the multiplicative Lift cannot. Warm bone/gold, brightest where the surface turns edge-on
     // to the eye (pow 2.5). The shader caps it to the headroom under the clip point (1 / exposure minus the
     // fragment's own peak), so it reads as a gold edge at noon and at night and never clips beside a brazier.
-    public static readonly Vector3 Rim = new(0.60f, 0.46f, 0.22f);
+    public static readonly Vector3 Rim = new(0.64f, 0.40f, 0.18f);
+
+    // The share of Rim every camera-facing fragment gets regardless of angle (uActorRim.w). Seen from the
+    // isometric camera a dark body faces up and has almost no grazing edge, so the edge alone barely shows on a
+    // near-black wolf (measured: same-pose captures were indistinguishable); a small flat share lifts the body.
+    public const float RimFill = 0.07f;
 
     // The rim uniform to draw an actor with: Rim for the highlighted id, zero (off) for every other.
     public static Vector4 RimFor(int? highlightId, int actorId) =>
-        highlightId is int id && id == actorId ? new Vector4(Rim.X, Rim.Y, Rim.Z, 0f) : Vector4.Zero;
+        highlightId is int id && id == actorId ? new Vector4(Rim.X, Rim.Y, Rim.Z, RimFill) : Vector4.Zero;
 
     // The tint offset to draw an actor with: its own offset, lifted. Multiplicative, so a dark-tinted enemy
     // (the Dire Wolf's -0.45) stays darker than a plain highlighted one, and -1 (black) stays black.
