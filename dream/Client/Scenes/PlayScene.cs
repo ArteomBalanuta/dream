@@ -173,6 +173,25 @@ public partial class PlayScene : IDisposable
 
         public PlayerInteractionMode Mode => _scene._runtime.InteractionMode;
 
+        public bool IsEnemyAt(OpenTK.Mathematics.Vector2 screenPosition)
+        {
+            Dream.Simulation.Players.Camera? camera = _scene._render.LastWorldCamera;
+            INavWorld? world = World;
+            if (camera is null || world is null)
+            {
+                return false;
+            }
+
+            return WorldCursorPicker.TryBuildRay(
+                    camera.GetViewMatrix(),
+                    _scene._render.ProjectionMatrix,
+                    screenPosition,
+                    _scene._render.ViewportSize,
+                    out Vector3 origin,
+                    out Vector3 direction)
+                && WorldCursorPicker.PickHoveredEnemy(world, _scene._runtime.Enemies, origin, direction) is not null;
+        }
+
         public bool TryPick(OpenTK.Mathematics.Vector2 screenPosition, out ClickPick pick)
         {
             pick = default;

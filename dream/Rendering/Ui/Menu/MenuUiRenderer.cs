@@ -60,6 +60,12 @@ public sealed class MenuUiRenderer : IDisposable
     // True when the last Draw put a sprite cursor on screen (the OS cursor is then hidden).
     public bool CursorDrawn { get; private set; }
 
+    // True when a Draw this frame will put the sprite cursor on screen (given an interactive pointer): the
+    // atlas is ready and has the pointer sprite. Lets the OS cursor be hidden for the same frame instead of
+    // one frame late, which CursorDrawn (the last Draw) cannot do.
+    public bool CursorWillDraw =>
+        IsReady && _atlas.Table is { } table && table.TryGet(UiCursor.SpriteName(UiCursorKind.Pointer), out _);
+
     public bool IsReady => !_disposed && _atlas.State == UiAtlasState.Ready;
 
     // Null with a reason when the glyphs, shader or atlas cannot be set up; Game then skips the menus.

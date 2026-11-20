@@ -50,6 +50,13 @@ public interface IClickMoveHost
     // False without a camera of last frame, or when the cursor points at nothing.
     bool TryPick(Vector2 screenPosition, out ClickPick pick);
 
+    // Whether a click at this position would target a live enemy. The default asks the full pick; a host
+    // that runs it every frame overrides it with an allocation-free path that must agree with TryPick.
+    bool IsEnemyAt(Vector2 screenPosition) =>
+        TryPick(screenPosition, out ClickPick pick)
+        && pick.Kind == ClickPickKind.Enemy
+        && pick.Target is { IsAlive: true };
+
     void SetFacing(Vector3 direction);
 
     // The character's current facing (the resolver's movement basis).
