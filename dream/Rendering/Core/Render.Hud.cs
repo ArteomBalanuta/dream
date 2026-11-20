@@ -5,6 +5,7 @@ using Dream.Multiplayer.Sessions;
 using Dream.Rendering.Actors;
 using Dream.Rendering.Hud;
 using Dream.Rendering.Ui;
+using Dream.Rendering.Ui.Panels;
 using Dream.Simulation.Inventory;
 using Dream.Simulation.Enemies;
 using Dream.Simulation.Players;
@@ -36,6 +37,21 @@ public partial class Render
 
     // Set by the scene every update; carried into the classic HUD frame.
     public bool PointerOverEnemy { get; set; }
+
+    // The world hover for the classic HUD, set by the scene: the kind under the pointer (cursor), and the info
+    // panel's state and content (HoverInfo null: no panel).
+    public HoverKind HoverCursorKind { get; set; }
+
+    public HoverPanelState HoverPanel { get; set; }
+
+    public HoverInfo? HoverInfo { get; set; }
+
+    // The clickable world label the classic HUD's pointer rested on last frame, or default.
+    // Only from a frame the classic HUD really built: after a fault (latched to ImGui), a skipped frame or a
+    // switch to the ImGui surface the last label hover would otherwise stay pinned as the world hover target.
+    public HudLabelClick ClassicHoveredLabel => _classicLabelsBuilt ? _classicSurface?.HoveredLabel ?? default : default;
+
+    private bool _classicLabelsBuilt;
 
     // Set by the scene every update while a camera rotation drag is held: the cursor shows Grab.
     public bool CameraDragging { get; set; }
@@ -310,6 +326,9 @@ public partial class Render
             Vendor = Vendor,
             Quickbar = Quickbar,
             PointerOverEnemy = PointerOverEnemy,
+            HoverCursorKind = HoverCursorKind,
+            HoverPanel = HoverPanel,
+            HoverInfo = HoverInfo,
             CameraDragging = CameraDragging
         };
         HudSurfaceSelector selector = HudSelector(settings);
@@ -355,8 +374,12 @@ public partial class Render
         _classicLabels.Clear();
         List<WorldActorLabelState> labels = _worldActorLabels;
         labels.Clear();
-        ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels);
-        ActorWorldLabelBuilder.AppendEnemyLabels(activeEnemies, labels, _actorHealthLabels, enemyPoseSource, enemyRenderTick);
+        // The actor the hover info panel shows loses its floating label while the panel is up.
+        HoverTargetId panel = HoverInfoPanel.WillDraw(HoverPanel, HoverInfo) ? HoverInfo!.Target : HoverTargetId.None;
+        int? skipPlayer = panel.Kind == HoverKind.RemotePlayer ? (int)panel.Id : null;
+        int? skipEnemy = panel.Kind == HoverKind.Enemy ? (int)panel.Id : null;
+        ActorWorldLabelBuilder.AppendRemotePlayerLabels(remotePlayers, labels, _actorHealthLabels, skipPlayer);
+        ActorWorldLabelBuilder.AppendEnemyLabels(activeEnemies, labels, _actorHealthLabels, enemyPoseSource, enemyRenderTick, skipEnemy);
         for (int i = 0; i < labels.Count; i++)
         {
             WorldActorLabelState label = labels[i];
@@ -407,9 +430,11 @@ public partial class Render
                     combatFeedback, rejectionMessage, status, inventory, enemyPoseSource, enemyRenderTick,
                     out classicAction, out classicClose);
                 _classicCursorActive = drew && !settings.SettingsVisible;
+                _classicLabelsBuilt = drew;
             }
             catch (Exception ex)
             {
+                _classicLabelsBuilt = false;
                 classicAction = null;
                 classicClose = false;
                 LatchClassicHud(selector, ex.Message, ex);
@@ -418,6 +443,7 @@ public partial class Render
         else
         {
             _classicCursorActive = false;
+            _classicLabelsBuilt = false;
         }
 
         // Read by DrawHudInterface: with the classic surface it keeps only Settings and Build.

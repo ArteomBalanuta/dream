@@ -123,6 +123,36 @@ public sealed class GroundLabelTests : IDisposable
         Assert.All(boxes, b => Assert.True(float.IsFinite(b.Center.Y) && b.Size.X > 0f));
     }
 
+    [Fact]
+    public void OnlyTheHighlightedItemsBoxIsLifted()
+    {
+        List<WorldBox> plain = new();
+        List<WorldBox> lit = new();
+        ClientGroundItemCache ground = CacheWith(At(1, 3f, 3f), At(2, 4f, 3f));
+        ClientNpcCache npcs = NpcAt(ReplicatedActorIdRanges.FirstNpcId, 5f, 0f);
+
+        WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, plain);
+        WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, lit, highlightItemId: 2);
+
+        Assert.Equal(plain[0].Color, lit[0].Color);
+        Assert.Equal(ActorHighlight.Box(plain[1].Color), lit[1].Color);
+        Assert.NotEqual(plain[1].Color, lit[1].Color);
+    }
+
+    [Fact]
+    public void AHighlightIdMatchingNoItem_LiftsNothing()
+    {
+        List<WorldBox> plain = new();
+        List<WorldBox> lit = new();
+        ClientGroundItemCache ground = CacheWith(At(1, 3f, 3f));
+        ClientNpcCache npcs = NpcAt(ReplicatedActorIdRanges.FirstNpcId, 5f, 0f);
+
+        WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, plain);
+        WorldEntityRenderer.CollectBoxes(ground, npcs, Vector3.Zero, lit, highlightItemId: 99);
+
+        Assert.Equal(plain[0].Color, lit[0].Color);
+    }
+
     // ---- the label panel ----
 
     private static HudView ViewWith(params HudWorldLabel[] labels) => new() { InventoryOpen = true, Labels = labels };
@@ -168,6 +198,42 @@ public sealed class GroundLabelTests : IDisposable
 
         Assert.Equal([77L], actions.Pickups);
         Assert.Equal([ReplicatedActorIdRanges.FirstNpcId], actions.Talks);
+    }
+
+    private HudLabelClick HoverAt(Vector2 at, HudView view, PickActions actions)
+    {
+        _scene.Input.Pointer = at;
+        WorldLabelsPanel.Build(_scene.Canvas, _scene.Input, view, _scene.Layout, actions);
+        _scene.Input.EndFrame();
+        return view.HoveredLabel;
+    }
+
+    // A clickable label under the pointer stands for its entity in the world hover: the panel reports which
+    // one, by its click target (never its place in the list), and forgets it as soon as the pointer leaves or
+    // the labels go dead under the HUD.
+    [Fact]
+    public void TheHoveredClickableLabel_IsReported_AndClearedWhenThePointerLeaves()
+    {
+        PickActions actions = new();
+        HudLabelClick npc = new(HudLabelClickKind.InteractNpc, ReplicatedActorIdRanges.FirstNpcId);
+        HudView view = ViewWith(
+            new HudWorldLabel(new Vector2(300f, 200f), "Torch", "", new HudLabelClick(HudLabelClickKind.PickUpGround, 77)),
+            new HudWorldLabel(new Vector2(700f, 200f), "Mara", "", npc),
+            new HudWorldLabel(new Vector2(1000f, 200f), "Wolf", "Lv 1  10/10"));
+
+        HoverAt(new Vector2(700f, 205f), view, actions);
+        Assert.Equal(npc, HoverAt(new Vector2(700f, 205f), view, actions));
+
+        Assert.Equal(default, HoverAt(new Vector2(500f, 205f), view, actions));
+        // An actor label has no click, so it is no hover proxy.
+        Assert.Equal(default, HoverAt(new Vector2(1000f, 205f), view, actions));
+
+        // Over the status bar the labels are dead: a stale hover must not survive into that frame.
+        HoverAt(new Vector2(300f, 205f), view, actions);
+        Assert.Equal(new HudLabelClick(HudLabelClickKind.PickUpGround, 77), HoverAt(new Vector2(300f, 205f), view, actions));
+        UiRect bar = _scene.Layout.Bar;
+        Assert.Equal(default, HoverAt(new Vector2(bar.X + (bar.W * 0.5f), bar.Y + (bar.H * 0.5f)), view, actions));
+        Assert.Empty(actions.Pickups);
     }
 
     [Fact]

@@ -81,6 +81,7 @@ public static class ClassicHud
         QuestLogPanel.Build(c, v, l, Quests, Party);
         NoticePanel.Build(c, v, l);
         ChatPanel.Build(c, v, l, Chat);
+        HoverInfoPanel.Build(c, i, v, l, s);    // the hovered world thing; item tooltips stay above it
         ItemOverlays.Build(c, i, v, l, s, a);   // tooltip, context menu, confirm, drag ghost
         CursorPanel.Build(c, i, v, l, s);
     }

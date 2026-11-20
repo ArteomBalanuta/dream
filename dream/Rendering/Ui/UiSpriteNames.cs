@@ -115,6 +115,10 @@ public static class UiSpriteNames
     public const string CursorGrab = "cursor.grab";
     public const string CursorForbid = "cursor.forbid";
     public const string CursorAttack = "cursor.attack";
+    // Not in Required: an atlas without them still draws the pointer there (UiCursor.Draw falls back).
+    public const string CursorTalk = "cursor.talk";
+    public const string CursorTake = "cursor.take";
+    public const string CursorUse = "cursor.use";
 
     private static readonly string[] DigitNames = ["dmg.0", "dmg.1", "dmg.2", "dmg.3", "dmg.4", "dmg.5", "dmg.6", "dmg.7", "dmg.8", "dmg.9"];
 

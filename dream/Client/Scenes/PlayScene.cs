@@ -70,7 +70,6 @@ public partial class PlayScene : IDisposable
     private bool _localPlayerWasMoving;
     private ClickMoveController? _clickMoveController;
     private CursorAimController? _cursorAimController;
-    private EnemyHoverProbe? _enemyHoverProbe;
     // W/A/S/D of the current frame in camera space; projected to forward/strafe per tick, once that
     // tick's facing is known (PlayScene.Update).
     private OpenTK.Mathematics.Vector2 _tickCameraAxes;
@@ -123,9 +122,6 @@ public partial class PlayScene : IDisposable
     private ClickMoveController _clickMove =>
         _clickMoveController ??= new ClickMoveController(new ClickMoveHost(this), new NavPathing());
 
-    private EnemyHoverProbe _enemyHover =>
-        _enemyHoverProbe ??= new EnemyHoverProbe(new ClickMoveHost(this));
-
     private CursorAimController _cursorAim =>
         _cursorAimController ??= new CursorAimController(new CursorAimHost(this));
 
@@ -173,37 +169,17 @@ public partial class PlayScene : IDisposable
 
         public PlayerInteractionMode Mode => _scene._runtime.InteractionMode;
 
-        // The hover probe runs this every frame, so it takes the allocation-free pick (no closure, no
-        // delegate, no target object) rather than the interface default's full TryPick. The anchor is
-        // the same one EnemyClickTarget reports, which is what keeps it in step with a real click.
+        // The enemy the world hover shows (this update's answer, for this update's pointer - which is the
+        // only position the scene ever asks about), so the aim and the zoom anchor agree with the cursor.
         public bool TryGetEnemyAnchorAt(OpenTK.Mathematics.Vector2 screenPosition, out Vector3 anchor)
         {
             anchor = default;
-            Dream.Simulation.Players.Camera? camera = _scene._render.LastWorldCamera;
-            INavWorld? world = World;
-            if (camera is null || world is null)
+            if (!_scene.TryGetHoveredEnemy(out Dream.Simulation.Enemies.EnemyActor enemy))
             {
                 return false;
             }
 
-            if (!WorldCursorPicker.TryBuildRay(
-                    camera.GetViewMatrix(),
-                    _scene._render.ProjectionMatrix,
-                    screenPosition,
-                    _scene._render.ViewportSize,
-                    out Vector3 origin,
-                    out Vector3 direction))
-            {
-                return false;
-            }
-
-            Dream.Simulation.Enemies.EnemyActor? hovered = WorldCursorPicker.PickHoveredEnemy(world, _scene._runtime.Enemies, origin, direction);
-            if (hovered is null)
-            {
-                return false;
-            }
-
-            anchor = hovered.Combatant.GetCombatAnchorWorldPosition();
+            anchor = enemy.Combatant.GetCombatAnchorWorldPosition();
             return true;
         }
 
@@ -228,7 +204,20 @@ public partial class PlayScene : IDisposable
                 return false;
             }
 
-            pick = WorldCursorPicker.Pick(world, _scene._runtime.Enemies, origin, direction);
+            // An enemy click targets exactly the enemy the cursor shows (the world hover, picked fresh on the
+            // press frame); otherwise the click is a ground pick with no enemy resolution of its own, so the
+            // two can never disagree.
+            if (_scene.TryGetHoveredEnemy(out Dream.Simulation.Enemies.EnemyActor enemy))
+            {
+                pick = new ClickPick(
+                    ClickPickKind.Enemy,
+                    default,
+                    enemy.Combatant.GetCombatAnchorWorldPosition(),
+                    new EnemyClickTarget(enemy, _scene._runtime.Enemies));
+                return true;
+            }
+
+            pick = WorldCursorPicker.Pick(world, origin, direction, resolveEnemy: null);
             return pick.Kind != ClickPickKind.None;
         }
 

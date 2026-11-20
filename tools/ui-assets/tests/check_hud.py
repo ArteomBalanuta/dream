@@ -59,7 +59,7 @@ for st in NHP:
     SIZES_U[f"chat.btn.{st}"] = (14, 14)
     SIZES_U[f"chat.scroll.up.{st}"] = (14, 9)
     SIZES_U[f"chat.scroll.down.{st}"] = (14, 9)
-CURSORS = ("cursor.pointer", "cursor.pressed", "cursor.grab", "cursor.attack", "cursor.forbid")
+CURSORS = ("cursor.pointer", "cursor.pressed", "cursor.grab", "cursor.attack", "cursor.forbid", "cursor.talk", "cursor.take", "cursor.use")
 
 # sprite, rect px (x, y, w, h), token. Only the sprites whose colour is a design rule remain probes.
 PROBES = [
@@ -389,7 +389,7 @@ def check_cursors(errs, C, cur):
             errs.append(f"{name}: pivot not on the art")
         if px >= 64 or py >= 64:
             errs.append(f"{name}: pivot not upper-left")
-    for name in ("cursor.pointer", "cursor.attack"):
+    for name in ("cursor.pointer", "cursor.attack", "cursor.talk", "cursor.take", "cursor.use"):
         d = tip_distance(C(name), cur["sprites"][name]["pivot"])
         if d > TIP_PX:
             errs.append(f"{name}: pivot is {d:.1f} px from the solid tip, want <= {TIP_PX}")
@@ -415,9 +415,77 @@ def attack_errors(pointer, attack, pivot):
     return errs
 
 
+# Per new world cursor: the largest share of the pointer's opaque area and the largest silhouette IoU with it.
+# The take cursor is a hand like the pointer, so it is allowed to be as big and to overlap more.
+KIND_LIMITS = {"cursor.talk": (0.60, 0.5), "cursor.take": (1.30, 0.75), "cursor.use": (0.60, 0.5)}
+
+
+SOLID_MSG = "pivot is not on a solid pixel"
+
+
+def kind_errors(name, pointer, img, pivot):
+    """A talk, take or use cursor must be about the pointer's size, not its shape, with the hotspot on its solid tip."""
+    errs = []
+    max_ratio, max_iou = KIND_LIMITS[name]
+    pa, aa = pointer[..., 3] > 128, img[..., 3] > 128
+    if not aa.any():
+        return [f"{name} is empty"]
+    ratio = aa.sum() / max(pa.sum(), 1)
+    if ratio > max_ratio:
+        errs.append(f"{name} covers {ratio:.0%} of the pointer's opaque area, want <= {max_ratio:.0%}")
+    if ratio < 0.10:
+        errs.append(f"{name} covers only {ratio:.0%} of the pointer's opaque area, want >= 10%")
+    shape = iou(pointer, img)
+    if shape >= max_iou:
+        errs.append(f"{name} silhouette IoU with the pointer is {shape:.2f}, want < {max_iou}")
+    d = tip_distance(img, pivot)
+    if d > TIP_PX:
+        errs.append(f"{name}: pivot is {d:.1f} px from the solid tip, want <= {TIP_PX}")
+    px, py = pivot
+    # The pixel itself: a window around it would always hold the tip, since the tip gate allows 1.5 px.
+    if not (0 <= py < img.shape[0] and 0 <= px < img.shape[1]) or img[py, px, 3] < 250:
+        errs.append(f"{name}: {SOLID_MSG}")
+    return errs
+
+
+def kind_self_test():
+    """Each talk/take/use gate must be able to fail on a synthetic sprite."""
+    errs = []
+    blank = np.zeros((128, 128, 4), np.uint8)
+    pointer = blank.copy()
+    pointer[10:90, 10:60, 3] = 255
+    good = blank.copy()
+    good[10:60, 70:90, 3] = 255
+    big = blank.copy()
+    big[5:125, 65:125, 3] = 255
+    tipdot = blank.copy()
+    tipdot[10:60, 70:90, 3] = 200
+    tipdot[10, 70, 3] = 255
+    tiny = blank.copy()
+    tiny[10:14, 70:72, 3] = 255
+    for name in KIND_LIMITS:
+        if kind_errors(name, pointer, good, (70, 10)):
+            errs.append(f"self_test: a distinct small {name} with a tip pivot was rejected")
+        if not any("area" in e for e in kind_errors(name, pointer, big, (65, 5))):
+            errs.append(f"self_test: an oversized {name} passed the area gate")
+        if not any("IoU" in e for e in kind_errors(name, pointer, pointer.copy(), (10, 10))):
+            errs.append(f"self_test: a {name} equal to the pointer passed the IoU gate")
+        if not any("pivot" in e for e in kind_errors(name, pointer, good, (20, 100))):
+            errs.append(f"self_test: a {name} pivot far from the art passed the pivot gate")
+        # (71, 10) is 1 px from the solid tip at (70, 10), so it passes the tip-distance gate, but alpha there is 200
+        got = kind_errors(name, pointer, tipdot, (71, 10))
+        if f"{name}: {SOLID_MSG}" not in got or any("from the solid tip" in e for e in got):
+            errs.append(f"self_test: a {name} pivot on a translucent pixel passed the solid pixel gate")
+        if not any("want >= 10%" in e for e in kind_errors(name, pointer, tiny, (70, 10))):
+            errs.append(f"self_test: a too small {name} passed the size floor")
+        if not any("empty" in e for e in kind_errors(name, pointer, blank, (0, 0))):
+            errs.append(f"self_test: an empty {name} passed")
+    return errs
+
+
 def self_test():
     """Each attack gate must be able to fail on a synthetic sprite."""
-    errs = []
+    errs = kind_self_test()
     blank = np.zeros((128, 128, 4), np.uint8)
     pointer = blank.copy()
     pointer[10:90, 10:60, 3] = 255
@@ -438,7 +506,7 @@ def self_test():
         errs.append("self_test: a pivot on the art but far from the tip passed the pivot gate")
     # a dark halo around the point must not count as the tip
     halo = small.copy()
-    halo[5:10, 70:76, 3] = 200
+    halo[5:10, 70:90, 3] = 200
     if not any("pivot" in e for e in attack_errors(pointer, halo, (72, 6))):
         errs.append("self_test: a pivot on the halo, short of the solid tip, passed the pivot gate")
     return errs
@@ -471,6 +539,8 @@ def main():
         check_misc(errs, S, doc)
         check_cursors(errs, C, cur)
         errs += attack_errors(C("cursor.pointer"), C("cursor.attack"), cur["sprites"]["cursor.attack"]["pivot"])
+        for name in KIND_LIMITS:
+            errs += kind_errors(name, C("cursor.pointer"), C(name), cur["sprites"][name]["pivot"])
         check_states(errs, S, C)
     if "--fast" not in sys.argv:
         import gen_hud

@@ -43,8 +43,25 @@ public sealed class HudView
     public const int BackpackSlots = BagGrid.CellCount;
     public const int WornSlots = 12;
 
-    // True while the pointer is over a live enemy a click would attack (set by the scene each frame).
-    public bool PointerOverEnemy { get; set; }
+    // The kind of world thing under the pointer this frame (set by the scene each frame); drives the cursor.
+    public HoverKind HoverCursorKind { get; set; }
+
+    // True while the pointer is over a live enemy a click would attack. Kept for the existing callers: it is
+    // HoverCursorKind == Enemy, and setting it sets that kind (or None).
+    public bool PointerOverEnemy
+    {
+        get => HoverCursorKind == HoverKind.Enemy;
+        set => HoverCursorKind = value ? HoverKind.Enemy : HoverKind.None;
+    }
+
+    // The hover info panel's visibility and fade this frame, and what it shows (null: nothing to show).
+    public HoverPanelState HoverPanel { get; set; }
+
+    public HoverInfo? HoverInfo { get; set; }
+
+    // The clickable world label (ground item, NPC) the pointer rests on, written by WorldLabelsPanel during the
+    // build and read by the scene next update: a label stands for its entity in the world hover.
+    public HudLabelClick HoveredLabel { get; set; }
 
     // True while a camera rotation drag is held (set by the scene each frame).
     public bool CameraDragging { get; set; }

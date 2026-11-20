@@ -132,7 +132,7 @@ public static class WorldCursorPicker
 
     // Distance along the ray to the first blocked cell (the same march Pick makes), or infinity when the
     // ray leaves the map without meeting one.
-    private static float WallDistance(INavWorld world, Vector3 origin, Vector3 direction)
+    public static float WallDepth(INavWorld world, Vector3 origin, Vector3 direction)
     {
         int steps = (int)(MarchMaxMetres / MarchStepMetres);
         for (int i = 0; i <= steps; i++)
@@ -160,7 +160,7 @@ public static class WorldCursorPicker
     // delegate or target object, so the per-frame hover probe can run it every frame.
     public static EnemyActor? PickHoveredEnemy(INavWorld world, EnemyRegistry enemies, Vector3 origin, Vector3 direction)
     {
-        float wallDistance = WallDistance(world, origin, direction);
+        float wallDistance = WallDepth(world, origin, direction);
         EnemyActor? hit = enemies.TryResolveHit(origin, direction, EnemyMaxDistance, EnemyHitRadius);
         if (hit is null || !EnemyClickTarget.IsLive(hit, enemies))
         {

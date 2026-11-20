@@ -26,8 +26,12 @@ public partial class Render
 
     public int LastWorldEntityBoxCount => _worldEntityBoxes.Count;
 
+    // The ground item the world hover rests on (its item instance id): its box draws lifted.
+    public long? HighlightGroundItemId { get; set; }
+
     // The villagers' models, created on the first frame that draws them (a field initializer
     // cannot see `this`, and Render's constructor does not need one more renderer).
+
     public NpcModelRenderer Npcs => _npcModelRenderer ??= new NpcModelRenderer(this);
 
     // Draws the flat boxes of the ground items, the villagers' models, and remembers what the HUD
@@ -52,7 +56,7 @@ public partial class Render
         Npcs.Draw(camera, npcs, deltaTime);
 
         _worldEntityBoxes.Clear();
-        WorldEntityRenderer.CollectBoxes(ground, npcs, camera.Position, _worldEntityBoxes);
+        WorldEntityRenderer.CollectBoxes(ground, npcs, camera.Position, _worldEntityBoxes, HighlightGroundItemId);
         if (_worldEntityBoxes.Count == 0)
         {
             return;

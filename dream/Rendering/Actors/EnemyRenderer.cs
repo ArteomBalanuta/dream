@@ -109,7 +109,12 @@ public sealed class EnemyRenderer
 
                 Shader shader = _render.GetShader(renderState.ShaderName);
                 model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-                ApplyTint(model, shader, visual.TintOffset);
+                ApplyTint(
+                    model,
+                    shader,
+                    ActorHighlight.EnemyTint(HighlightActorId, actorId, visual.TintOffset),
+                    ActorHighlight.RimFor(HighlightActorId, actorId),
+                    camera.Position);
                 model.RenderPrepared(shader, instance, renderState.ModelMatrix);
                 model.EndRender();
                 _casters.Add(model, instance, renderState.ModelMatrix);
@@ -218,12 +223,17 @@ public sealed class EnemyRenderer
 
             Shader shader = _render.GetShader(dying.Last.ShaderName);
             model.BeginRender(shader, camera.GetViewMatrix(), _render.ProjectionMatrix, enableCulling: false);
-            ApplyTint(model, shader, dying.Last.TintOffset);
+            // A corpse is never rimmed, whatever id the hover holds.
+            ApplyTint(model, shader, dying.Last.TintOffset, Vector4.Zero, camera.Position);
             model.RenderPrepared(shader, dying.Instance, dying.Last.ModelMatrix);
             model.EndRender();
             _casters.Add(model, dying.Instance, dying.Last.ModelMatrix);
         }
     }
+
+    // The enemy the world hover rests on (combat actor id): drawn lifted. A corpse in the death linger is
+    // never highlighted, it keeps its plain tint.
+    public int? HighlightActorId { get; set; }
 
     // The tint last uploaded, the program it went to and the model that carries it to the MASK
     // variant on a program switch (AnimatedModel.ActorTintOffset).
@@ -236,45 +246,70 @@ public sealed class EnemyRenderer
     // touching the variant, so the base program's value alone cannot say whether the variant is clean.
     private bool _maskTintDirty;
 
-    private void ApplyTint(AnimatedModel model, Shader shader, Vector3 tint)
+    // The hover rim (uActorRim / uActorRimEye) last uploaded to the base program, same bookkeeping as the tint.
+    // The rim shares _maskTintDirty: it is set when a non-zero rim is handed to a model.
+    private Vector4 _appliedRim;
+
+    private void ApplyTint(AnimatedModel model, Shader shader, Vector3 tint, Vector4 rim, Vector3 rimEye)
     {
         model.ActorTintOffset = tint;
-        _maskTintDirty |= !tint.Equals(Vector3.Zero);
+        model.ActorRim = rim;
+        model.ActorRimEye = rimEye;
+        _maskTintDirty |= !tint.Equals(Vector3.Zero) || !rim.Equals(Vector4.Zero);
         _tintShader = shader;
         _tintModel = model;
-        if (tint.Equals(_appliedTint))
+        if (!tint.Equals(_appliedTint))
         {
-            return;
+            // The base program is bound by BeginRender; its MASK variant is written by the model on a switch.
+            shader.SetVector3(TintUniformName, tint);
+            _appliedTint = tint;
         }
 
-        // The base program is bound by BeginRender; its MASK variant is written by the model on a switch.
-        shader.SetVector3(TintUniformName, tint);
-        _appliedTint = tint;
+        if (!rim.Equals(_appliedRim))
+        {
+            shader.SetVector4(RimUniformName, rim);
+            _appliedRim = rim;
+        }
+
+        // The eye is uploaded on EVERY rimmed draw, never from a cache: other draws of this program (the ground
+        // scatter's foliage, through AnimatedModel.BindProgram) write their own zero eye into it between frames,
+        // so a cached "already there" would leave a still camera's hovered enemy rimmed toward the world origin.
+        // One upload per hovered draw.
+        if (!rim.Equals(Vector4.Zero))
+        {
+            shader.SetVector3(RimEyeUniformName, rimEye);
+        }
     }
 
     // Back to zero in the base program, the model and the MASK variant. A no-op when nothing was tinted.
     private void ResetTint()
     {
-        if (_tintShader is null || _tintModel is null || (_appliedTint.Equals(Vector3.Zero) && !_maskTintDirty))
+        if (_tintShader is null || _tintModel is null || (_appliedTint.Equals(Vector3.Zero) && _appliedRim.Equals(Vector4.Zero) && !_maskTintDirty))
         {
             return;
         }
 
         _tintModel.ActorTintOffset = Vector3.Zero;
+        _tintModel.ActorRim = Vector4.Zero;
         _tintShader.Use();
         _tintShader.SetVector3(TintUniformName, Vector3.Zero);
+        _tintShader.SetVector4(RimUniformName, Vector4.Zero);
         if (_tintShader.AlphaMaskVariant is { } maskProgram)
         {
             maskProgram.Use();
             maskProgram.SetVector3(TintUniformName, Vector3.Zero);
+            maskProgram.SetVector4(RimUniformName, Vector4.Zero);
             _tintShader.Use();
         }
 
         _appliedTint = Vector3.Zero;
+        _appliedRim = Vector4.Zero;
         _maskTintDirty = false;
     }
 
     private const string TintUniformName = "uActorTintOffset";
+    private const string RimUniformName = "uActorRim";
+    private const string RimEyeUniformName = "uActorRimEye";
 
     // One enemy's per-frame animation step: start the clip if it changed, set the rate it plays at,
     // then advance the enemy's own instance by deltaTime. Called once per enemy per frame; allocates

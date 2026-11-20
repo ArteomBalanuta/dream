@@ -1229,6 +1229,53 @@ def cursor_attack():
     return cursor_render(r)
 
 
+def _ring(ca, cb, ra, rb, n=20):
+    """A closed polygon on the cursor axis: centre (a, b), semi-axes along and across the finger."""
+    return [cp(ca + ra * math.cos(t), cb + rb * math.sin(t)) for t in (2 * math.pi * k / n for k in range(n))]
+
+
+def cursor_talk():
+    """A speech sigil: a blued steel bubble whose tail is the hotspot, three gold engraved dashes inside."""
+    r = Relief(CUR, CUR, "#3A4048", 0.0, 0.9)
+    r.plate([cp(0.0, 0.0), cp(5.0, -2.4), cp(8.0, 2.2)], 3.2, 0.8, "round", alb="#566270", gloss=0.9)
+    r.plate(_ring(15.0, 0.0, 7.6, 6.8), 3.0, 1.4, "round", alb="#566270", gloss=0.9)
+    r.plate(_ring(15.0, 0.0, 5.8, 5.0), 3.6, 0.8, "round", alb="#262A31", gloss=0.3)
+    for b in (-2.8, 0.0, 2.8):
+        r.sweep([cp(12.4, b), cp(17.6, b)], 0.55, 5.2, alb="hud.gold.mid", gloss=0.7, step_px=2.0)
+    r.sweep([cp(9.4, -4.6), cp(12.0, -6.4)], 0.3, 5.6, alb="#9AA3AE", gloss=1.0, step_px=1.0)
+    return cursor_render(r)
+
+
+def cursor_take():
+    """An open gauntlet reaching to grasp: four fluted fingers fanned out from the knuckles, thumb hooked in."""
+    r = Relief(CUR, CUR, "#3A4048", 0.0, 0.9)
+    steel = "#566270"
+    r.plate([cp(21.0, -5.8), cp(21.0, 5.8), cp(29.5, 8.6), cp(31.5, 4), cp(31.5, -4), cp(29.5, -8.6)], 0.2, 2.2, "round", alb="#262A31")
+    r.plate([cp(20.2, -6.2), cp(20.2, 6.2), cp(22.0, 6.6), cp(22.0, -6.6)], 3.0, 0.6, "round", alb="hud.gold.mid", gloss=0.6)
+    r.plate([cp(14.0, -6.4), cp(14.0, 6.4), cp(20.0, 6.0), cp(20.0, -6.0)], 2.0, 1.3, "round", alb=steel)
+    for k, b in enumerate((-4.5, -1.5, 1.5, 4.5)):
+        reach = (6.4, 3.4, 2.6, 5.0)[k]
+        r.sweep([cp(14.5, b), cp(9.0, b * 1.45), cp(reach + 1.5, b * 1.9), cp(reach, b * 1.7 - 0.6)], [1.3, 1.2, 1.05, 0.85], 4.2, alb=steel, step_px=2.0)
+        r.sweep([cp(10.5, b * 1.4 - 1.0), cp(10.5, b * 1.4 + 1.0)], 0.2, 5.6, alb="#0E1013", gloss=0.2, step_px=1.0)
+    r.sweep([cp(17, 5.6), cp(12.0, 8.4), cp(8.0, 6.6)], [1.8, 1.3, 0.9], 4.4, alb=steel, step_px=2.0)
+    r.sweep([cp(15.0, 7.0)], 0.42, 6.4, alb="#9AA3AE", gloss=1.0, step_px=1.0)
+    return cursor_render(r)
+
+
+def cursor_use():
+    """A key on the axis: the bit is the hotspot end, a gold bow and a steel shaft with two teeth."""
+    r = Relief(CUR, CUR, "#3A4048", 0.0, 0.9)
+    r.sweep([cp(0.0, 0.0), cp(17.0, 0.0)], 0.95, 4.2, alb="#B4BCC6", gloss=1.0, step_px=2.0)
+    for a in (2.2, 5.6):
+        r.plate([cp(a, 0.5), cp(a, 3.2), cp(a + 2.0, 3.2), cp(a + 2.0, 0.5)], 4.0, 0.6, "round", alb="#B4BCC6", gloss=1.0)
+    r.sweep([cp(8.0, -0.5), cp(16.0, -0.5)], 0.14, 5.4, alb="#F2F4F6", gloss=1.0, step_px=1.0)
+    r.sweep([cp(17.0, -2.6), cp(17.0, 2.6)], [0.6, 0.6], 4.8, alb="hud.gold.mid", gloss=0.7, step_px=2.0)
+    r.plate(_ring(23.0, 0.0, 5.6, 5.6), 3.0, 1.5, "round", alb="hud.gold.mid", gloss=0.7)
+    r.plate(_ring(23.0, 0.0, 3.0, 3.0), 3.6, 0.8, "round", alb="#262A31", gloss=0.2)
+    r.sweep([cp(19.0, -3.0), cp(20.0, -4.0)], 0.3, 5.6, alb="hud.gold.bright", gloss=0.9, step_px=1.0)
+    return cursor_render(r)
+
+
 def cursor_forbid():
     img = cursor_render(gauntlet("point"))
     cx, cy, rad = 22.5, 22.5, 7.2
@@ -1745,6 +1792,7 @@ def cursor_sprites():
         U.Sprite("cursor.grab", cursor_grab(), pivot=(44, 44)),
         U.Sprite("cursor.attack", attack, pivot=tip_pivot(attack)),
         U.Sprite("cursor.forbid", cursor_forbid(), pivot=piv),
+        *[U.Sprite(n, im, pivot=tip_pivot(im)) for n, im in (("cursor.talk", cursor_talk()), ("cursor.take", cursor_take()), ("cursor.use", cursor_use()))],
     ]
 
 
