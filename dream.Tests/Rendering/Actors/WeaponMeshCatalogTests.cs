@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
 using Xunit;
 using Dream.Rendering.Actors;
+using Dream.Rendering.Post;
 using Dream.Simulation.Content;
 using Dream.Simulation.Inventory;
 
@@ -292,6 +293,33 @@ public class WeaponMeshCatalogTests
         Assert.True(Value(WeaponMaterial.DarkIron) <= Value(WeaponMaterial.Leather));
         Assert.True(Value(WeaponMaterial.Leather) < Value(WeaponMaterial.Wood));
         Assert.True(Value(WeaponMaterial.Wood) < Value(WeaponMaterial.Steel));
+    }
+
+    [Fact]
+    public void WeaponArcaneEmissive_PeaksAboveTheKnee_SoItBlooms()
+    {
+        Vector3 e = WeaponMeshCatalog.Emissive(WeaponMaterial.Arcane);
+        Assert.True(MathF.Max(e.X, MathF.Max(e.Y, e.Z)) > PostSettings.Knee, "bloom only sees the overflow above the knee");
+    }
+
+    [Fact]
+    public void ArmourArcaneEmissive_StaysBelowTheKnee_ByDesign()
+    {
+        // Deliberate asymmetry: the Membrane wings are a large area and an unshaded emissive pins them flat.
+        Vector3 e = ArmourMeshCatalog.Emissive(ArmourMaterial.Arcane);
+        Assert.True(MathF.Max(e.X, MathF.Max(e.Y, e.Z)) < PostSettings.Knee);
+    }
+
+    [Fact]
+    public void EveryArcanePart_IsAGem_SoALargePartCannotInheritALamp()
+    {
+        foreach (string id in WeaponMeshCatalog.KnownVisualIds)
+        {
+            foreach (WeaponPart part in WeaponMeshCatalog.Resolve(id).Parts.Where(p => p.Material == WeaponMaterial.Arcane))
+            {
+                Assert.True(part.Shape == EquipmentShape.Gem, $"{id}: an Arcane part must be a Gem");
+            }
+        }
     }
 
     [Fact]
