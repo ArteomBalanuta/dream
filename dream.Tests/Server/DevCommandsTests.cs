@@ -1,4 +1,5 @@
 using Xunit;
+using Dream.Rendering.Ui.Panels;
 using Dream.Server;
 
 namespace Dream.Tests.Server;
@@ -167,5 +168,70 @@ public sealed class DevCommandsTests
     public void Unknown_OrEmpty_IsRefusedWithTheUsage(string sub)
     {
         Assert.Contains("spawn", Refused(sub), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("tod 21:30", 21.5f)]
+    [InlineData("tod night", 22f)]
+    [InlineData("tod 21 30", 21.5f)]
+    [InlineData("tod 6.25", 6.25f)]
+    [InlineData("tod DAWN", 6f)]
+    [InlineData("TOD 0", 0f)]
+    public void TimeOfDay_AcceptsTheTimeForms(string sub, float hours)
+    {
+        DevCommand command = Parse(sub);
+
+        Assert.Equal(DevCommandKind.TimeOfDay, command.Kind);
+        Assert.Equal(hours, command.X);
+    }
+
+    [Theory]
+    [InlineData("tod")]
+    [InlineData("tod 24")]
+    [InlineData("tod 25:00")]
+    [InlineData("tod 1 2 3")]
+    [InlineData("tod noonish")]
+    public void TimeOfDay_BadTimes_AreRefusedWithItsUsage(string sub)
+    {
+        Assert.StartsWith("Usage: tod", Refused(sub), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("tod off")]
+    [InlineData("TOD OFF")]
+    public void TimeOfDay_Off_IsRefused_BecauseTheClockKeepsRunning(string sub)
+    {
+        Assert.Contains("keeps running", Refused(sub), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Help_EveryParsedVerbStartsALine_AndTheListFitsOneChatMessage()
+    {
+        foreach (string verb in new[] { "help", "spawn", "tp", "give", "clear", "heal", "hp", "mana", "boost", "tod" })
+        {
+            Assert.Contains(DevCommands.HelpLines, line => line.StartsWith(verb + " ", StringComparison.Ordinal));
+        }
+
+        Assert.True(DevCommands.HelpLines.Count + 1 <= ChatHudState.MaxLinesPerMessage);
+        Assert.All(DevCommands.HelpLines, line => Assert.True(line.Length <= ChatHudState.MaxTextChars, line));
+        Assert.Contains('\n', DevCommands.Help);
+        Assert.Equal(string.Join('\n', DevCommands.HelpLines), DevCommands.Help);
+    }
+
+    // The negative of the loop above: a verb the grammar does not know is not in the list.
+    [Fact]
+    public void Help_DoesNotListAVerbTheGrammarRefuses()
+    {
+        Assert.False(DevCommands.TryParse("frobnicate", out _, out _));
+        Assert.DoesNotContain(DevCommands.HelpLines, line => line.StartsWith("frobnicate", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnknownVerb_ReplyIsTheClippedVerbThenTheWholeHelp()
+    {
+        string error = Refused("frobnicate" + new string('x', 40));
+
+        Assert.StartsWith("Unknown dev command 'frobnicate" + new string('x', 14) + "'.\n", error, StringComparison.Ordinal);
+        Assert.EndsWith(DevCommands.Help, error, StringComparison.Ordinal);
     }
 }

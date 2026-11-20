@@ -13,7 +13,8 @@ public enum DevCommandKind : byte
     Heal,
     SetHealth,
     SetMana,
-    Boost
+    Boost,
+    TimeOfDay
 }
 
 // One parsed /dev subcommand. Which fields count depends on the kind:
@@ -22,6 +23,7 @@ public enum DevCommandKind : byte
 //   Give:      Key = item key, Rarity (null = common), Count.
 //   Clear:     Distance = radius in metres, 0 for every enemy.
 //   SetHealth, SetMana: Count = the value (the runtime clamps it).
+//   TimeOfDay: X = the hours in [0, 24).
 public readonly record struct DevCommand(
     DevCommandKind Kind,
     string Key,
@@ -62,10 +64,32 @@ public static class DevCommands
     // Metres; far past any map, so a typo is refused instead of travelling to the clamp.
     public const float MaxCoordinate = 100000f;
 
-    public const string Usage =
-        "Dev: help | spawn <enemy> [1-16] [1-16 m] | tp <x> <z> | tp camp <key> | tp npc <key> | tp spawn | "
-        + "give <item> [common|uncommon|rare] [1-20] | clear [radius m] | heal | hp <n> | mana <n> | "
-        + "boost [attribute] (admin + stats + level). Chain with ';' (up to 8).";
+    // The reply to a bare /dev and to "help": one ServerChatMessage, one line per command. The count and the
+    // line length stay inside what the chat panel shows of one message (ChatHudState.MaxLinesPerMessage and
+    // MaxTextChars; a test pins both).
+    public static IReadOnlyList<string> HelpLines { get; } =
+    [
+        "Dev commands (chain with ';', up to 8):",
+        "help - show this list",
+        "spawn <enemy> [1-16] [1-16 m] - spawn enemies near you",
+        "tp <x> <z> - teleport to a map position",
+        "tp camp|npc <key> - teleport to a camp or an npc",
+        "tp spawn - teleport to the world spawn",
+        "give <item> [common|uncommon|rare] [1-20] - get items",
+        "clear [radius m] - remove enemies",
+        "heal - refill health and mana",
+        "hp <n> - set your health",
+        "mana <n> - set your mana",
+        "boost [attribute] - admin, stats and level for testing",
+        "tod <time> - jump world time forward (HH:MM, hours, dawn|morning|noon|dusk|evening|midnight|night)"
+    ];
+
+    public static string Help { get; } = string.Join('\n', HelpLines);
+
+    private const string TimeOfDayUsage = "Usage: tod <HH:MM | hours 0-24 | dawn|morning|noon|dusk|evening|midnight|night>";
+
+    private const string TimeOfDayOffText =
+        "tod off is not supported: the world clock keeps running. Use tod <time> to jump it forward.";
 
     private const string SpawnUsage = "Usage: spawn <enemy> [count 1-16] [distance 1-16 m]";
 
@@ -76,7 +100,7 @@ public static class DevCommands
     public static bool TryParse(string? subcommand, out DevCommand command, out string error)
     {
         command = default;
-        error = Usage;
+        error = "Unknown dev command ''.\n" + Help;
         if (string.IsNullOrWhiteSpace(subcommand))
         {
             return false;
@@ -148,6 +172,11 @@ public static class DevCommands
             return true;
         }
 
+        if (Is(verb, "tod"))
+        {
+            return TryParseTimeOfDay(tokens, out command, out error);
+        }
+
         if (Is(verb, "spawn"))
         {
             return TryParseSpawn(tokens, out command, out error);
@@ -163,8 +192,35 @@ public static class DevCommands
             return TryParseGive(tokens, out command, out error);
         }
 
-        error = $"Unknown dev command '{Clip(verb)}'. {Usage}";
+        error = $"Unknown dev command '{Clip(verb)}'.\n" + Help;
         return false;
+    }
+
+    // "tod <t>", or "tod <h> <m>": the capture harness's dev: step turns the colons of dev:tod:21:30 into
+    // spaces, so two tokens are joined back into h:m before parsing.
+    private static bool TryParseTimeOfDay(string[] tokens, out DevCommand command, out string error)
+    {
+        command = default;
+        error = TimeOfDayUsage;
+        if (tokens.Length == 2 && Is(tokens[1], "off"))
+        {
+            error = TimeOfDayOffText;
+            return false;
+        }
+
+        string? text = tokens.Length switch
+        {
+            2 => tokens[1],
+            3 => tokens[1] + ":" + tokens[2],
+            _ => null
+        };
+        if (text == null || !WorldTimeOfDay.TryParse(text, out double hours))
+        {
+            return false;
+        }
+
+        command = new DevCommand(DevCommandKind.TimeOfDay, string.Empty, null, (float)hours, 0f, 0, 0f, null);
+        return true;
     }
 
     private static bool TryParseSpawn(string[] tokens, out DevCommand command, out string error)

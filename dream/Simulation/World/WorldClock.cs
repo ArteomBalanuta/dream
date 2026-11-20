@@ -6,8 +6,8 @@ namespace Dream.Simulation.World;
 //
 // Since wave T2 it is a gameplay input: the wolf population step (WorldSessionRuntime.Enemies)
 // keeps a second wolf at night. Phase is a pure function of the persisted world ticks,
-// TicksPerDay and the number of ticks run, so those three are lockstep inputs: servers that must
-// stay in lockstep need the same values. Advance runs first in AdvanceAuthoritativeTick, before
+// TicksPerDay, the number of ticks run and any jumps (JumpForward), so those are lockstep inputs:
+// servers that must stay in lockstep need the same values. Advance runs first in AdvanceAuthoritativeTick, before
 // any gameplay. The clock itself stays out of SimulationStateChecksum and WorldStateChecksum; what
 // it changes (the extra wolf's actor and id) is hashed there like any other enemy.
 public sealed class WorldClock
@@ -40,6 +40,29 @@ public sealed class WorldClock
     public void Advance()
     {
         WorldTicks++;
+        WorldDayPhase phase = WorldDayPhases.At(TimeOfDay01);
+        if (phase == Phase)
+        {
+            return;
+        }
+
+        WorldDayPhase previous = Phase;
+        Phase = phase;
+        PhaseChanged?.Invoke(previous, phase);
+    }
+
+    // Moves the clock forward by ticks at once (the /dev tod command). Raises PhaseChanged once, with the
+    // phase before and after, when the jump lands in another phase; the phases skipped over get no event.
+    // Allocation-free.
+    public void JumpForward(long ticks)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(ticks);
+        if (ticks == 0)
+        {
+            return;
+        }
+
+        WorldTicks += ticks;
         WorldDayPhase phase = WorldDayPhases.At(TimeOfDay01);
         if (phase == Phase)
         {
