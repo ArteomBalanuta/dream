@@ -131,14 +131,18 @@ public static class EnemyVisualCatalog
         BeastAssetDefinition.DieClip,
         BeastAssetDefinition.GallopClip,
         PatrolReferenceSpeed,
-        // The hound is the GraveHowler's model and the howler chases at 6.0.
+        // The ground speed the hound's gallop clip was authored for, not a simulation chase speed.
         6.0f,
         GaitThresholdSpeed,
         GaitHysteresisSpeed);
 
-    // The skeleton has ONE gait, so its Sprint is its Move and the gait choice is a no-op. Its
-    // sprint reference is the RisenSkeleton's authored chase speed (3.6), the way the hound's is the
-    // Grave Howler's 6.0, so the walk clip's stride is scaled to the speed it actually chases at.
+    // The skeleton has ONE gait, so its Sprint is its Move and the gait choice is a no-op. One clip
+    // has one authored ground speed, so BOTH references are the same number: a reference speed is the
+    // speed a clip was authored for, not the enemy's simulated chase speed. Two different numbers on
+    // one clip would make the playback rate drop when the gait latch flips at the start of a chase
+    // (EnemyVisualState snaps the forwarded speed from 1.6 up to 2.0 there), halving the stride
+    // mid-cycle with no clip rename to hide it. The value is PatrolReferenceSpeed, inherited from the
+    // wolf rather than measured from the skeleton's walk stride.
     public static readonly EnemyClipSet SkeletonClips = new(
         SkeletonAssetDefinition.IdleClip,
         SkeletonAssetDefinition.MoveClip,
@@ -146,7 +150,7 @@ public static class EnemyVisualCatalog
         SkeletonAssetDefinition.DieClip,
         SkeletonAssetDefinition.MoveClip,
         PatrolReferenceSpeed,
-        3.6f,
+        PatrolReferenceSpeed,
         GaitThresholdSpeed,
         GaitHysteresisSpeed);
 

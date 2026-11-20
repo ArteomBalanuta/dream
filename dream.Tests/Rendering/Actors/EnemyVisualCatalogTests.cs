@@ -262,9 +262,40 @@ public sealed class EnemyVisualCatalogTests
         // Liveness: the wolf and hound have two gaits, so the same comparison can say "different".
         Assert.NotEqual(EnemyVisualCatalog.WolfClips.Move, EnemyVisualCatalog.WolfClips.Sprint);
         Assert.NotEqual(EnemyVisualCatalog.HoundClips.Move, EnemyVisualCatalog.HoundClips.Sprint);
-        // The stride is scaled to its authored chase speed (3.6), so a chase at it plays at rate 1.
-        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 3.6f), 4);
-        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, 1.4f), 4);
+        // One clip, one authored ground speed: both references are the same number.
+        Assert.Equal(clips.MoveReferenceSpeed, clips.SprintReferenceSpeed);
+        Assert.Equal(1.0f, clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, clips.MoveReferenceSpeed), 4);
+    }
+
+    // EnemyVisualState snaps the speed it forwards to min(speed, threshold - hysteresis) on the walk
+    // gait and max(speed, threshold) on the sprint gait, so a chase that accelerates steps from
+    // 1.6 to 2.0 at the latch. With Sprint == Move there is no clip rename to hide a rate drop there,
+    // so the playback rate must never fall as the measured speed rises across that step.
+    [Fact]
+    public void TheSkeletonsPlaybackRate_DoesNotDrop_AcrossTheGaitLatch()
+    {
+        EnemyClipSet clips = EnemyVisualCatalog.SkeletonClips;
+        float justUnder = clips.SprintSpeedThreshold - clips.GaitHysteresisSpeed;
+        float justOver = clips.SprintSpeedThreshold;
+
+        float before = clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, justUnder);
+        float after = clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, justOver);
+        Assert.True(after >= before, $"The stride rate dropped from {before} to {after} across the gait latch.");
+
+        float previous = 0f;
+        for (float speed = 0.1f; speed <= 6f; speed += 0.05f)
+        {
+            float rate = clips.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, speed);
+            Assert.True(rate >= previous, $"The stride rate fell from {previous} to {rate} at speed {speed}.");
+            previous = rate;
+        }
+
+        // Liveness: the hound's two references differ, and its rate does drop at the latch, which is
+        // exactly what the gallop clip swap hides and a single clip cannot.
+        EnemyClipSet hound = EnemyVisualCatalog.HoundClips;
+        Assert.True(
+            hound.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, hound.SprintSpeedThreshold)
+            < hound.ResolvePlaybackSpeed(EnemyBehaviorState.Chasing, hound.SprintSpeedThreshold - hound.GaitHysteresisSpeed));
     }
 
     // Read the same way as the hound's: the skeleton key appears once, under the RisenSkeleton kind.
@@ -323,6 +354,7 @@ public sealed class EnemyVisualCatalogTests
         Dream.Tests.Utilities.AllocationAssert.AtMost(0, () =>
         {
             _ = EnemyVisualCatalog.Resolve("enemy.dire-wolf");
+            _ = EnemyVisualCatalog.Resolve(EnemyVisualCatalog.SkeletonKey);
             _ = EnemyVisualCatalog.Resolve(null);
             _ = EnemyVisualCatalog.Resolve("nope");
         });
